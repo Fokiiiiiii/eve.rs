@@ -68,8 +68,8 @@ internal sealed class Rig : IAsyncDisposable
             controlledStructureInventory: controlledStructureInventory,
             dockableAssetLocation: dockableAssetLocation,
             capsuleerDeliveriesAccess: capsuleerDeliveriesAccess,
-            crystalDamage: async (itemIds, token) => (await Modules.ModuleConditionsAsync(itemIds, token))
-                .ToDictionary(entry => entry.Key, entry => entry.Value.Damage));
+            crystalDamage: async (itemIds, token) => (await Items.GetManyAsync(itemIds, token))
+                .ToDictionary(item => item.Id, Eve.Ships.CrystalDamageState.DamageOf));
     }
 
     /// <summary>Ships that these reads never ask anything of.</summary>
@@ -705,7 +705,7 @@ public class InvBrokerTests
     }
 
     [PgFact]
-    public async Task Crystal_damage_lists_only_owned_damageable_crystals_from_persisted_module_conditions()
+    public async Task Crystal_damage_lists_only_owned_damageable_crystals_from_persisted_item_damage()
     {
         await using var rig = await Rig.CreateAsync();
         const int crystalTypeId = 12552;
@@ -717,10 +717,7 @@ public class InvBrokerTests
         var freshCrystal = await rig.AddAsync(crystalTypeId, Rig.Character, Rig.Station, singleton: true);
         var foreignCrystal = await rig.AddAsync(crystalTypeId, Rig.Character + 1, Rig.Station, singleton: true);
         var tritanium = await rig.AddAsync(Rig.Tritanium, Rig.Character, Rig.Station);
-        await rig.Modules.SetModuleConditionsAsync(new Dictionary<long, Eve.Fitting.ModuleCondition>
-        {
-            [damagedCrystal] = new(0.375, 0, 0, false),
-        });
+        await rig.Ships.SetCustomInfoAsync(damagedCrystal, "0.375");
 
         var result = Assert.IsType<PyDict>(await rig.CallAsync(
             Rig.Session(), "GetDamageForCrystals", null,

@@ -106,7 +106,8 @@ public sealed partial class DogmaIMService
                 outcome = rounds is null
                     ? await ships.CompleteReloadAsync(characterId, plan, GunRounds.Idle, cancellationToken)
                     : await rounds.AdjustAsync(
-                        session, plan.ModuleId, plan.ChargeTypeId, new RoundsChange.Add(room.Capacity, room.Available),
+                        session, plan.ModuleId, plan.ChargeTypeId,
+                        new RoundsChange.Add(room.Capacity, room.Available, await ships.CrystalWearForReloadAsync(characterId, plan, cancellationToken)),
                         gun => ships.CompleteReloadAsync(characterId, plan, gun, cancellationToken), cancellationToken);
             }
         }

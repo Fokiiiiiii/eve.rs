@@ -1,6 +1,7 @@
 using Eve.Dogma;
 using Eve.Inventory;
 using Eve.Npc;
+using Eve.Ships;
 using Eve.Space;
 using static Eve.Services.Space.Effects.ModuleAttributes;
 
@@ -34,7 +35,14 @@ internal sealed class TurretEffect : ShipEffect
     protected override string? Refusal(ModuleEffectContext module)
     {
         var charge = module.Snapshot.ChargeOf(module.Module);
-        return (charge is null ? !FiresWithoutCharge(module) : charge.Quantity < ChargesPerCycle(module.Attributes)) ? "NO_AMMO" : null;
+        if (charge is null)
+        {
+            return FiresWithoutCharge(module) ? null : "NO_AMMO";
+        }
+        var crystalWear = CrystalWearOf(module, charge);
+        return crystalWear is { } wear && wear.Damage >= wear.HitPoints || charge.Quantity < (crystalWear is null ? ChargesPerCycle(module.Attributes) : 1)
+            ? "NO_AMMO"
+            : null;
     }
 
     /// <summary>
@@ -88,12 +96,23 @@ internal sealed class TurretEffect : ShipEffect
         ChargeGroups.All(a => !module.Attributes.TryGetValue(a, out var group) || (int)group <= 0)
         && new[] { EmDamage, ThermalDamage, KineticDamage, ExplosiveDamage }.Any(a => module.Attributes.TryGetValue(a, out var damage) && damage > 0);
 
+    private static SimCrystalWear? CrystalWearOf(ModuleEffectContext module, Eve.Inventory.Item charge)
+    {
+        var wear = CrystalDamageState.WearOf(module.Statics, charge);
+        return wear is null ? null : new SimCrystalWear(wear.VolatilityChance, wear.VolatilityDamage, wear.HitPoints, wear.Damage);
+    }
+
     protected override SimEffect Build(ModuleEffectContext module)
     {
         var charge = module.Snapshot.ChargeOf(module.Module);
         var attributes = module.Attributes;
         var damageSource = charge is null ? attributes : module.World.Attributes(charge.Id);
         var multiplier = Math.Max(0, module.Value(DamageMultiplier, 1));
+        var crystalWear = charge is null ? null : CrystalWearOf(module, charge);
+        if (charge is not null && CrystalDamageState.IsDamageable(module.Statics, charge.TypeId) && crystalWear is null)
+        {
+            throw new InvalidDataException($"damageable crystal type {charge.TypeId} has incomplete volatility attributes");
+        }
         double Shot(int attribute) => NpcArmament.Round6(Math.Max(0, damageSource.TryGetValue(attribute, out var damage) && double.IsFinite(damage) ? damage : 0) * multiplier);
         var guid = NpcArmament.ActivationEffect(module.Type, module.Statics)?.Guid.Trim() ?? "";
         var fx = guid.Equals("none", StringComparison.OrdinalIgnoreCase) ? "" : guid;
@@ -103,7 +122,8 @@ internal sealed class TurretEffect : ShipEffect
         var gun = new SimTurret(
             module.Module.TypeId, fx, [Shot(EmDamage), Shot(ThermalDamage), Shot(KineticDamage), Shot(ExplosiveDamage)], optimal, Math.Max(0, NpcArmament.Round6(module.Value(Falloff, 0))),
             Math.Max(0, NpcArmament.Round6(module.Value(TrackingSpeed, 0))), Math.Max(1, NpcArmament.Round6(module.Value(OptimalSigRadius, 40_000))),
-            charge is null ? null : new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, ChargesPerCycle(attributes), Reloads: module.Value(ReloadTime, 0) > 0), Spool: SpoolOf(attributes),
+            charge is null ? null : new SimTurretCharge(charge.TypeId, charge.Flag, charge.Quantity, crystalWear is null ? ChargesPerCycle(attributes) : 0,
+                Reloads: crystalWear is null && module.Value(ReloadTime, 0) > 0, CrystalWear: crystalWear), Spool: SpoolOf(attributes),
             Aoe: AoeOf(attributes), Arc: ArcOf(attributes), RequiresGunnery: module.Type.RequiredSkills.Contains(GunnerySkill));
         SimChange[] told = [new(module.ModuleId, CapacitorNeed, capacitor), new(module.ModuleId, Speed, Three(duration)), new(module.ModuleId, MaxRange, optimal)];
         return new SimEffect(module.ModuleId, module.Module.TypeId, module.Effect.Id, fx, duration, capacitor, Math.Max(1, module.Repeat), Math.Max(0, module.TargetId), null, null, told, told, gun);

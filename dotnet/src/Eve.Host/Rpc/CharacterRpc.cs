@@ -65,8 +65,8 @@ internal sealed partial class CharacterServicesComposition
                     return null;
                 return new DockableAssetLocation(location.Id, location.SolarSystemId, location.TypeId);
             },
-            crystalDamage: async (itemIds, token) => (await modules.ModuleConditionsAsync(itemIds, token))
-                .ToDictionary(entry => entry.Key, entry => entry.Value.Damage),
+            crystalDamage: async (itemIds, token) => (await items.GetManyAsync(itemIds, token))
+                .ToDictionary(item => item.Id, Eve.Ships.CrystalDamageState.DamageOf),
             characterSessions: characterSessions);
         return [
             new SkillMgr2Service(),

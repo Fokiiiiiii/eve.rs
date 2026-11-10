@@ -46,7 +46,7 @@ public sealed partial class CharacterShips
     }
 
     private sealed class AmmoWork(
-        PgItemStore items, NpgsqlConnection connection, NpgsqlTransaction transaction, ShipSnapshot snapshot, Dictionary<long, Item> stacks,
+        PgItemStore items, DogmaStatic statics, NpgsqlConnection connection, NpgsqlTransaction transaction, ShipSnapshot snapshot, Dictionary<long, Item> stacks,
         long sourceOwnerId, long? destinationOwnerId, CancellationToken cancellationToken)
     {
         public List<AmmoEvent> Events { get; } = [];
@@ -107,7 +107,8 @@ public sealed partial class CharacterShips
             if (charge is not null)
             {
                 Charges[module.Flag] = charge;
-                World.Add(ItemDogma.Of(charge, charge.OwnerId, charge.LocationId, charge.Flag));
+                var damageAttributeId = CrystalDamageState.IsDamageable(statics, charge.TypeId) ? statics.AttributeId("damage") : null;
+                World.Add(ItemDogma.Of(charge, charge.OwnerId, charge.LocationId, charge.Flag, crystalDamageAttributeId: damageAttributeId));
                 World.SetValue(charge.Id, ShipSnapshot.QuantityCharge, charge.Quantity);
             }
         }
@@ -250,7 +251,7 @@ public sealed partial class CharacterShips
         var flag = containerSource ? ContainerFlag : place?.Flag ?? destinationFlag ?? ContainerFlag;
         var stacks = (sourceContainerContents ?? await items.InLocationAsync(location, inventoryOwnerId, cancellationToken))
             .Where(i => i.OwnerId == inventoryOwnerId && i.Flag == flag && !i.Singleton).ToDictionary(i => i.Id);
-        return new AmmoWork(items, connection, transaction, snapshot, stacks, inventoryOwnerId,
+        return new AmmoWork(items, statics, connection, transaction, snapshot, stacks, inventoryOwnerId,
             containerDestination || containerSource ? inventoryOwnerId : null, cancellationToken);
     }
 
@@ -786,6 +787,26 @@ public sealed partial class CharacterShips
             .Where(i => i.OwnerId == sourceOwnerId && i.Flag == sourceFlag && !i.Singleton && i.TypeId == plan.ChargeTypeId
                 && (named.Count == 0 || named.Contains(i.Id))).Sum(i => i.Quantity);
         return (capacity, available);
+    }
+
+    /// <summary>The SDE volatility rule and persisted wear of the crystal selected for a reload, when it is damageable.</summary>
+    public async Task<CrystalWear?> CrystalWearForReloadAsync(long characterId, ReloadPlan plan, CancellationToken cancellationToken = default)
+    {
+        await statics.EnsureTypesAsync([plan.ChargeTypeId], cancellationToken);
+        if (!CrystalDamageState.IsDamageable(statics, plan.ChargeTypeId))
+        {
+            return null;
+        }
+        foreach (var itemId in plan.SourceItemIds)
+        {
+            if (await items.GetAsync(itemId, cancellationToken) is { OwnerId: var owner, TypeId: var type } item
+                && owner == (plan.SourceOwnerId ?? characterId) && type == plan.ChargeTypeId
+                && CrystalDamageState.WearOf(statics, item) is { } wear)
+            {
+                return wear;
+            }
+        }
+        return null;
     }
 
     /// <summary>

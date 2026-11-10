@@ -21,7 +21,7 @@ namespace Eve.Host.Tests;
 public sealed class HomeStationHostTests
 {
     [PgFact]
-    public async Task Registered_invbroker_returns_persisted_crystal_damage_from_module_state()
+    public async Task Registered_invbroker_returns_persisted_crystal_damage_from_item_state()
     {
         await using var rig = await HomeStationPgRig.CreateAsync();
         var character = await rig.CreateCharacterAsync();
@@ -37,14 +37,9 @@ public sealed class HomeStationHostTests
         await using (var transaction = await connection.BeginTransactionAsync())
         {
             crystalId = await items.CreateAsync(connection, transaction,
-                new NewItem(crystalTypeId, character.Id, rig.LocalOfficeStation.Id, ItemFlags.Hangar, 1, true));
+                new NewItem(crystalTypeId, character.Id, rig.LocalOfficeStation.Id, ItemFlags.Hangar, 1, true, CustomInfo: "0.375"));
             await transaction.CommitAsync();
         }
-        var modules = new PgModuleStateStore(rig.Source, rig.FittingSchema);
-        await modules.SetModuleConditionsAsync(new Dictionary<long, ModuleCondition>
-        {
-            [crystalId] = new(0.375, 0, 0, false),
-        });
         var session = new ClientSession { CharacterId = character.Id };
         var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("invbroker"));
 

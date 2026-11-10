@@ -188,7 +188,8 @@ public sealed class ShipSnapshot
         }
         foreach (var charge in charges)
         {
-            world.Add(ItemDogma.Of(charge, characterId, shipId, charge.Flag, mutation: provenance.GetValueOrDefault(charge.Id)));
+            var damageAttributeId = CrystalDamageState.IsDamageable(statics, charge.TypeId) ? statics.AttributeId("damage") : null;
+            world.Add(ItemDogma.Of(charge, characterId, shipId, charge.Flag, mutation: provenance.GetValueOrDefault(charge.Id), crystalDamageAttributeId: damageAttributeId));
             world.SetValue(charge.Id, QuantityCharge, charge.Quantity);
         }
         foreach (var augmentation in augmentations.OrderBy(i => i.Id))

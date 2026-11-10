@@ -10,7 +10,7 @@ namespace Eve.Services.Space.Tests;
 /// <summary>A gun that takes charges: what the host tells the simulation to fire (the damage of the charge, its rounds), the refusal of an empty gun, and the rounds the simulation says were spent.</summary>
 public class AmmoHostTests
 {
-    private const int RailgunI = 10678, Antimatter = 222, Slot = 28;
+    private const int RailgunI = 10678, Antimatter = 222, GatlingPulseLaserI = 450, ImperialNavyMultifrequencyS = 23071, Slot = 28;
 
     /// <summary>A pilot in space whose slot 28 holds a 125mm Railgun I (online), loaded with antimatter when <paramref name="loaded"/>.</summary>
     internal static async Task<(ClientSession Session, Eve.Characters.Created Character, long Gun)> ArmedInSpaceAsync(Rig rig, bool loaded)
@@ -55,6 +55,65 @@ public class AmmoHostTests
         var told = rig.Sim.Heard.OfType<SimActivate>().Last().Effect.OnChanges.Single(c => c.AttributeId == 54);
         Assert.Equal(turret.OptimalRange, told.Value);
         Assert.Equal(snapshot.World.Get(gun, 54), turret.OptimalRange, 3);
+    }
+
+    [PgFact]
+    public async Task A_damageable_laser_crystal_keeps_its_round_and_is_worn_by_each_firing_cycle()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, character.ShipId + 3, character.ShipId, Rig.Station, ItemFlags.Hangar, null));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Skills.GrantAsync(connection, transaction, character.CharacterId,
+                [new Eve.Skills.CharacterSkill(3303, 1, 0), new Eve.Skills.CharacterSkill(3300, 1, 0)]);
+            await transaction.CommitAsync();
+        }
+        var laser = (await rig.Ships.GrantAsync(character.CharacterId, GatlingPulseLaserI, 1, singleton: true))!.Single().After;
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, laser.Id, Rig.Station, character.ShipId, Slot, 1));
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.SetOnlineAsync(character.CharacterId, character.ShipId, laser.Id, true));
+        var stack = (await rig.Ships.GrantAsync(character.CharacterId, ImperialNavyMultifrequencyS, 10, singleton: false))!.Single().After;
+        Assert.IsType<Eve.Ships.AmmoChanged>(await rig.Ships.LoadAmmoAsync(character.CharacterId, character.ShipId, [laser.Id], [stack.Id], Rig.Station));
+        var crystal = (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!.Charges.Single();
+
+        var session = await rig.SessionAsync(character, 1);
+        var oid = await rig.BindShipAsync(session);
+        await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
+        await rig.BindBeyonceAsync(session);
+        Events.Of(session);
+
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, laser.Id, "targetAttack", 980050000105, 1000, CancellationToken.None));
+        var charge = Assert.IsType<SimTurret>(Assert.IsType<SimActivate>(rig.Sim.Heard.Last()).Effect.Turret).Charge!;
+
+        // A laser crystal is a durable item, not a round spent by each cycle.
+        Assert.Equal(0, charge.PerCycle);
+        Assert.Equal(new SimCrystalWear(1, 0.00025, 1, 0), charge.CrystalWear);
+
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, laser.Id, 1, crystal.TypeId, 0.00025));
+        Item? worn = null;
+        for (var attempt = 0; attempt < 100 && (worn = await rig.Items.GetAsync(crystal.Id))?.CustomInfo is null; attempt++)
+        {
+            await Task.Delay(50);
+        }
+        Assert.NotNull(worn?.CustomInfo);
+        Assert.Equal(0.00025, double.Parse((await rig.Items.GetAsync(crystal.Id))!.CustomInfo!, System.Globalization.CultureInfo.InvariantCulture), 12);
+        var snapshot = (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!;
+        Assert.Equal(1, snapshot.Charges.Single().Quantity);
+        Assert.Equal(0.00025, snapshot.World.Get(crystal.Id, 3), 12);
+
+        // The simulator reports absolute wear so a duplicate cycle delivery cannot add it twice.
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, laser.Id, 1, crystal.TypeId, 0.00025));
+        await Task.Delay(100);
+        Assert.Equal("0.00025", (await rig.Items.GetAsync(crystal.Id))!.CustomInfo);
+
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, laser.Id, 0, crystal.TypeId, 1.0));
+        for (var attempt = 0; attempt < 100 && await rig.Items.GetAsync(crystal.Id) is not null; attempt++)
+        {
+            await Task.Delay(50);
+        }
+        Assert.Null(await rig.Items.GetAsync(crystal.Id));
+        Assert.Empty((await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!.Charges);
     }
 
     [PgFact]

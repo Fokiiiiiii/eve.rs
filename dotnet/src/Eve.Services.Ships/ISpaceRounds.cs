@@ -10,7 +10,7 @@ public abstract record RoundsChange
     {
     }
 
-    public sealed record Add(long Capacity, long Available) : RoundsChange;
+    public sealed record Add(long Capacity, long Available, CrystalWear? CrystalWear = null) : RoundsChange;
 
     public sealed record Remove(long Quantity) : RoundsChange;
 }

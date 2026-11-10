@@ -757,6 +757,25 @@ public sealed class PgItemStore
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }
 
+    /// <summary>Reads a bounded set of item rows in one query, preserving their decoded custom info.</summary>
+    public async Task<IReadOnlyList<Item>> GetManyAsync(IEnumerable<long> ids, CancellationToken cancellationToken = default)
+    {
+        var requested = ids.Where(id => id > 0).Distinct().ToArray();
+        if (requested.Length == 0)
+        {
+            return [];
+        }
+        await using var command = _source.CreateCommand($"SELECT {Columns} FROM {_schema}.items WHERE id = ANY($1) ORDER BY id");
+        command.Parameters.Add(new NpgsqlParameter { Value = requested });
+        var found = new List<Item>(requested.Length);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            found.Add(Read(reader));
+        }
+        return found;
+    }
+
     /// <summary>Finds and locks only items carrying this exact run/room/recipient scope.</summary>
     public async Task<IReadOnlyList<Item>> FindRunSpaceItemsAsync(
         NpgsqlConnection connection,

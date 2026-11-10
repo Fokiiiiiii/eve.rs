@@ -18,7 +18,8 @@ internal sealed class ControlTowerReadModel(PgDeployedStore deployed)
         var towers = await deployed.ByKindAsync("control_tower", cancellationToken);
         return [.. towers
             .Where(tower => tower.CorporationId == corporationId && tower.GroupId == ControlTowerGroupId &&
-                tower.TypeId > 0 && tower.DeployableId > 0 && tower.SolarSystemId > 0)
+                tower.TypeId > 0 && tower.DeployableId > 0 && tower.SolarSystemId > 0 &&
+                tower.ActivateAtMs != long.MaxValue)
             .OrderBy(tower => tower.DeployableId)
             .Select(tower => new ControlTowerRow(tower.TypeId, tower.DeployableId, tower.SolarSystemId))];
     }

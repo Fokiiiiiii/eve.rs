@@ -460,6 +460,9 @@ internal static class HostComposition
             unanchorControlTower: space is null ? null : (session, itemId, cancellationToken) => space.ControlTowerUnanchor is { } unanchor
                 ? new ValueTask(unanchor(session, itemId, cancellationToken))
                 : throw new InvalidOperationException("the control towers are not wired on this server"),
+            anchorControlTower: space is null ? null : (session, itemId, position, cancellationToken) => space.ControlTowerAnchor is { } anchor
+                ? new ValueTask(anchor(session, itemId, position, cancellationToken))
+                : throw new InvalidOperationException("the control towers are not wired on this server"),
             contractReadModel: contractReadModel,
             contractWriteModel: contractWriteModel,
             contractInventoryReader: characterServices.Count > 0

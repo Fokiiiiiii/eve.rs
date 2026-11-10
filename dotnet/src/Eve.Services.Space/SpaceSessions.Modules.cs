@@ -123,6 +123,9 @@ public sealed partial class SpaceSessions
     public async Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
     {
         RequirePublicMoveSettled(session);
+        if (IsControlTowerOnlineEffect(effectName) && ControlTowerModuleOperation is { } towerOperation
+            && await towerOperation(session, moduleId, true, cancellationToken).ConfigureAwait(false) is { } towerResult)
+            return towerResult;
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot) || session.CharacterId is not { } characterId)
         {
@@ -723,6 +726,9 @@ public sealed partial class SpaceSessions
     public async Task<ModuleResult?> DeactivateAsync(ClientSession session, long moduleId, string effectName, CancellationToken cancellationToken)
     {
         RequirePublicMoveSettled(session);
+        if (IsControlTowerOnlineEffect(effectName) && ControlTowerModuleOperation is { } towerOperation
+            && await towerOperation(session, moduleId, false, cancellationToken).ConfigureAwait(false) is { } towerResult)
+            return towerResult;
         var id = (ulong)session.SessionId;
         if (!_pilots.TryGetValue(id, out var pilot) || session.CharacterId is null)
         {
@@ -770,6 +776,10 @@ public sealed partial class SpaceSessions
 
     internal static bool EffectNameMatches(string running, string requested) =>
         string.Equals(running, requested, StringComparison.Ordinal);
+
+    private static bool IsControlTowerOnlineEffect(string effectName) =>
+        string.Equals(effectName, "onlineForStructures", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(effectName, "901", StringComparison.Ordinal);
 
     /// <summary>
     /// The ship a pilot flies as dogma has it now: the stored module states, with the modules the pilot has started (<see cref="Pilot.ActiveModules"/>) active.

@@ -31,6 +31,10 @@ public sealed partial class SpaceContainers
         {
             throw MachoErrors.ThrowUserError("FakeItemNotFound");
         }
+        if (_space.IsWarping(session))
+        {
+            throw MachoErrors.ThrowUserError("ShipInWarp");
+        }
         if (_space.IsInAbyssalRun(session))
         {
             throw LaunchRefuse("Ship or container launch is not available in Abyssal Deadspace.");
@@ -97,6 +101,10 @@ public sealed partial class SpaceContainers
             {
                 throw Unavailable();
             }
+            if (_space.IsWarping(session))
+            {
+                throw MachoErrors.ThrowUserError("ShipInWarp");
+            }
             if (!pose.Accepted || pose.Position.Count < 3 || pose.Direction.Count < 3 ||
                 pose.Position.Take(3).Any(value => !double.IsFinite(value)) ||
                 pose.Direction.Take(3).Any(value => !double.IsFinite(value)))
@@ -127,6 +135,10 @@ public sealed partial class SpaceContainers
                 Kind: isShip ? SpaceItemKind.LaunchedShip : SpaceItemKind.ContainerOrWreck,
                 SourceContainerId: sourceId);
 
+            if (_space.IsWarping(session))
+            {
+                throw MachoErrors.ThrowUserError("ShipInWarp");
+            }
             await using (var connection = await _source.OpenConnectionAsync(cancellationToken))
             await using (var transaction = await connection.BeginTransactionAsync(cancellationToken))
             {

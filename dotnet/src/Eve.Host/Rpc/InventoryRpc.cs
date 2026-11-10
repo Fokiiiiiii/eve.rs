@@ -53,6 +53,7 @@ internal sealed partial class CharacterServicesComposition
             capsuleerDeliveriesAccess: HostInventoryServiceFactory.CapsuleerDeliveriesAccessOf(corporations),
             characterSessions: characterSessions));
         var inventoryBroker = new IndustryInventoryChangePublisher(marketInventoryBroker, industryMonitor);
+        var characterEnergy = new Eve.Services.Space.Beacons.AnalysisBeaconStore(source, spaceSchema);
 
         return
         [
@@ -79,9 +80,11 @@ internal sealed partial class CharacterServicesComposition
                     var changes = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(9), InventoryWire.Id(before.Quantity))]);
                     session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(row), changes, PyNone.Instance);
                     await industryMonitor.InventoryChangedAsync(session, ct);
-                }),
+                },
+                inventorySchema: inventorySchema),
             new Eve.Host.DynamicItemRpcService(items, itemMutations, dogma, itemTypes, ships),
-            new Eve.Host.CharacterEnergyMgrRpcService(mailCache, now),
+            new Eve.Host.CharacterEnergyMgrRpcService(mailCache, now,
+                (characterId, template, token) => characterEnergy.ReadCharacterEnergyAsync(characterId, template, now(), token)),
             new Eve.Host.PaperDollServerRpcService(characters),
             planetMgr,
             planetRegistry,

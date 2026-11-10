@@ -2851,3 +2851,7 @@ Security review follow-up: `officeManager.GetMyCorporationsOffices` now consumes
 ## GameStore persistence audit fixes (2026-11-09)
 
 - The seven verified findings from the GameStore audit are fixed with PostgreSQL regressions. The GameStore and Importer slices pass on `eve_p3` and `eve_p9`; selected Host results, the single optional skip, and the notification-test synchronization fix are recorded with the EveJS/client checks in [GameStore audit fixes](audit-fixes-gamestore.md).
+
+## Wormhole scheduler slim-state retry audit (2026-11-10)
+
+- The confirmed P2 is fixed: failed age-bucket slim updates retry through the durable scheduler, including after a scheduler restart. The end-to-end regression and client/EveJS evidence are recorded in [scheduler audit fixes](audit-fixes-scheduler.md).

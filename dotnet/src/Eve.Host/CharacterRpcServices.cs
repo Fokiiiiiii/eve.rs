@@ -2,25 +2,27 @@ using Eve.Characters;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Services.Space.Beacons;
 
 namespace Eve.Host;
 
 public sealed class CharacterEnergyMgrRpcService : IService
 {
-    private const double DefaultCapacity = 100;
-    private const double DefaultRechargeSeconds = 792;
     private readonly Eve.GameStore.GameStoreCache? _store;
     private readonly Func<long> _now;
+    private readonly Func<long, CharacterEnergyState, CancellationToken, Task<CharacterEnergyState?>>? _persistedCharacterEnergy;
 
-    public CharacterEnergyMgrRpcService(Eve.GameStore.GameStoreCache? store = null, Func<long>? nowUnixMs = null)
-        => (_store, _now) = (store, nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+    public CharacterEnergyMgrRpcService(Eve.GameStore.GameStoreCache? store = null, Func<long>? nowUnixMs = null,
+        Func<long, CharacterEnergyState, CancellationToken, Task<CharacterEnergyState?>>? persistedCharacterEnergy = null)
+        => (_store, _now, _persistedCharacterEnergy) =
+            (store, nowUnixMs ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), persistedCharacterEnergy);
 
     public string Name => "characterEnergyMgr";
     public bool HasMethod(string method) => method == "GetMyEnergyState";
 
-    public ValueTask<PyValue> CallAsync(ServiceCall call)
+    public async ValueTask<PyValue> CallAsync(ServiceCall call)
     {
-        if (!HasMethod(call.Method)) return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        if (!HasMethod(call.Method)) return PyNone.Instance;
         call.Cancellation.ThrowIfCancellationRequested();
         if (call.Args.Count != 0 || !HasOnlyTransportKwargs(call.Kwargs))
             throw MachoErrors.ThrowUserError("CHARACTER_ENERGY_ARGUMENTS_INVALID");
@@ -28,34 +30,19 @@ public sealed class CharacterEnergyMgrRpcService : IService
         var raw = characterId > 0
             ? _store?.Read("characterEnergyState", $"/characters/{characterId}").Data as System.Text.Json.Nodes.JsonObject
             : null;
-        var nowFileTime = Py.FileTimeFromUnixMs(_now());
-        var min = Read(raw, "minEnergyLevel", "_minEnergyLevel", 0);
-        var capacity = Read(raw, "quiescentEnergyLevel", "_quiescentEnergyLevel", DefaultCapacity);
-        if (capacity <= min) capacity = min + 1;
-        var increase = Math.Max(double.Epsilon, Read(raw, "energyIncreasePerRechargeTick", "_energyIncreasePerRechargeTick", 1));
-        var period = Math.Max(double.Epsilon, Read(raw, "rechargeTickPeriod", "_rechargeTickPeriod", DefaultRechargeSeconds));
-        var energy = Math.Clamp(Read(raw, "energyLevel", "_energyLevel", capacity), min, capacity);
-        var last = ReadLong(raw, "lastRechargeTickTimestamp", "_lastRechargeTickTimestamp", nowFileTime);
-        if (nowFileTime >= last)
-        {
-            energy = Math.Min(capacity, energy + ((nowFileTime - last) / 10_000_000d / period) * increase);
-            last = nowFileTime;
-        }
-        return ValueTask.FromResult<PyValue>(new PyObjectEx(ObjectExKind.Ex1,
-            Py.Tuple(new PyToken("characterenergy.characterEnergyState.CharacterEnergyState"),
-                Py.List(Py.Number(energy), new PyLong(last), Py.Number(increase), Py.Number(period), Py.Number(min), Py.Number(capacity))), [], []));
+        var now = _now();
+        var state = CharacterEnergyState.FromGameStore(raw, now);
+        if (characterId > 0 && _persistedCharacterEnergy is { } readPersisted)
+            state = await readPersisted(characterId, state, call.Cancellation) ?? state.At(now);
+        else
+            state = state.At(now);
+        return state.ToClientValue(now);
     }
 
     private static bool HasOnlyTransportKwargs(PyValue? kwargs) =>
         kwargs is PyNone ||
         kwargs is PyDict dict && dict.Entries.All(entry => JsSemantics.StringValue(entry.Key) == "machoVersion");
 
-    private static double Read(System.Text.Json.Nodes.JsonObject? source, string first, string second, double fallback) =>
-        double.TryParse((source?[first] ?? source?[second])?.ToString(), System.Globalization.NumberStyles.Float,
-            System.Globalization.CultureInfo.InvariantCulture, out var value) && double.IsFinite(value) ? value : fallback;
-    private static long ReadLong(System.Text.Json.Nodes.JsonObject? source, string first, string second, long fallback) =>
-        long.TryParse((source?[first] ?? source?[second])?.ToString(), System.Globalization.NumberStyles.Integer,
-            System.Globalization.CultureInfo.InvariantCulture, out var value) ? value : fallback;
 }
 
 public sealed class PaperDollServerRpcService : IService

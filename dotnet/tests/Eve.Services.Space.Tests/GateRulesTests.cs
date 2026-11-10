@@ -20,7 +20,8 @@ public sealed class GateRulesTests
         groupsOfList: new Dictionary<int, IReadOnlySet<int>> { [579] = new HashSet<int> { FrigateGroup, 1022 } },
         destinationOf: new Dictionary<long, long> { [TurnurGate] = ZarzakhGate, [ZarzakhGate] = TurnurGate },
         typeOfGate: new Dictionary<long, int> { [TurnurGate] = TollType },
-        tollOfType: new Dictionary<int, AlignmentToll> { [TollType] = Toll });
+        tollOfType: new Dictionary<int, AlignmentToll> { [TollType] = Toll },
+        systemOfGate: new Dictionary<long, int> { [TurnurGate] = 30_002_086, [ZarzakhGate] = 30_100_000 });
 
     [Fact]
     public void A_gate_with_a_list_admits_only_the_ship_groups_of_the_list()
@@ -46,6 +47,8 @@ public sealed class GateRulesTests
         Assert.Null(rules.DestinationOf(42));
         Assert.Same(Toll, rules.TollOf(TurnurGate));
         Assert.Null(rules.TollOf(ZarzakhGate));
+        Assert.Equal(30_002_086, rules.SolarSystemOf(TurnurGate));
+        Assert.Null(rules.SolarSystemOf(42));
     }
 
     [Fact]

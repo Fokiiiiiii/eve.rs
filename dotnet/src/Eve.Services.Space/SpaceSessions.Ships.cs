@@ -97,9 +97,10 @@ public sealed partial class SpaceSessions
                 string? refusal;
                 try
                 {
+                    await PrepareSolarSystemAsync(systemId, token);
                     if (inStructure && PlaceStructuresAsync is { } placeStructures)
                         await placeStructures(systemId, token);
-                      refusal = await _sim.EnterAsync(new SimEnter(sessionId, SimSceneKey.SolarSystem(systemId), EnterHow.Undock, placeId, spec), token);
+                    refusal = await _sim.EnterAsync(new SimEnter(sessionId, SimSceneKey.SolarSystem(systemId), EnterHow.Undock, placeId, spec), token);
                     if (refusal is null)
                         await PlaceWormholeEndsAsync(systemId, token);
                     if (refusal is null)

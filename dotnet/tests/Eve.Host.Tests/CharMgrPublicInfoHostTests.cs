@@ -10,6 +10,48 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
+    public async Task Chat_user_data_uses_character_identity_and_current_militia_projection()
+    {
+        var character = new Character(
+            900001, 1, "Pilot & One", 1, 1, 1, 10, 35, 1376, 1000006, 500003, null,
+            60015249, 60015249, 30100032, 20010001, 10001004, null,
+            new DateTimeOffset(2020, 1, 2, 3, 4, 5, TimeSpan.Zero), null, null)
+        {
+            DirectFactionId = 500003,
+        };
+        var service = new CharMgrService(
+            null!,
+            null!,
+            (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<PyValue>>([]),
+            (_, _) => ValueTask.FromResult<string?>(null),
+            (_, _, _) => ValueTask.CompletedTask,
+            (_, _) => ValueTask.FromResult(0d),
+            (_, _) => ValueTask.FromResult<long?>(null),
+            readOrganizationInfo: (_, _) => ValueTask.FromResult<IReadOnlyDictionary<long, CharMgrOrganizationInfo>>(
+                new Dictionary<long, CharMgrOrganizationInfo>
+                {
+                    [character.Id] = new CharMgrOrganizationInfo(1000006, 9900001, 500001),
+                }),
+            readCharacterById: (id, _) => ValueTask.FromResult(id == character.Id ? character : null));
+
+        var data = await service.ReadChatUserDataAsync(character.Id);
+        Assert.Equal(new CharMgrChatUserData(character.Id, character.Name, character.TypeId, true, 1000006, 9900001, 500001), data);
+        Assert.Null(await service.ReadChatUserDataAsync(character.Id + 1));
+
+        var withoutMilitiaProjection = new CharMgrService(
+            null!,
+            null!,
+            (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<PyValue>>([]),
+            (_, _) => ValueTask.FromResult<string?>(null),
+            (_, _, _) => ValueTask.CompletedTask,
+            (_, _) => ValueTask.FromResult(0d),
+            (_, _) => ValueTask.FromResult<long?>(null),
+            readCharacterById: (id, _) => ValueTask.FromResult(id == character.Id ? character : null));
+        var fallback = await withoutMilitiaProjection.ReadChatUserDataAsync(character.Id);
+        Assert.Equal(500003, fallback?.WarFactionId);
+    }
+
+    [Fact]
     public async Task Char_mgr_get_public_info_returns_client_keyval_through_host_with_macho_version()
     {
         var first = new Character(

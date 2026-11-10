@@ -110,6 +110,8 @@ public static partial class SimCodec
     }
 
     private static bool ValidMoonChunkPhase(string phase) => phase is "tractor_phase" or "stasis_phase" or "fracture_phase";
+    private static bool ValidMoonChunkModule(long moduleId, int moduleTypeId) =>
+        (moduleId == 0 && moduleTypeId == 0) || (moduleId > 0 && moduleTypeId > 0);
 
     /// <summary>A dynamic slim-item field value (protocol 76); see <c>ReadSlimValue</c>. The same limits are checked on the way out.</summary>
     private static void WriteSlimValue(Writer w, SimSlimValue value, int depth)
@@ -1554,7 +1556,7 @@ private static void WriteStructureDamageCorrelation(
                 break;
             case SimUpsertMoonChunk m:
                 if (m.ChunkId <= 0 || m.SolarSystemId <= 0 || m.TypeId <= 0 || m.GroupId <= 0 || m.CategoryId <= 0 || m.OwnerId <= 0 || m.GraphicId <= 0 ||
-                    m.SourceStructureId <= 0 || m.ModuleId <= 0 || m.ModuleTypeId <= 0 || m.MoonId <= 0 || m.PhaseStartedFileTime <= 0 ||
+                    m.SourceStructureId <= 0 || !ValidMoonChunkModule(m.ModuleId, m.ModuleTypeId) || m.MoonId <= 0 || m.PhaseStartedFileTime <= 0 ||
                     m.Name.Length == 0 || m.Name.Length > ushort.MaxValue || !ValidMoonChunkPhase(m.Phase) ||
                     m.Position.Count != 3 || m.Position.Any(value => !double.IsFinite(value)) ||
                     m.Direction.Count != 3 || m.Direction.Any(value => !double.IsFinite(value)) || !double.IsFinite(m.Radius) || m.Radius <= 0)

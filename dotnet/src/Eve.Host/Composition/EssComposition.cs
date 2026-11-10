@@ -14,12 +14,16 @@ using static Eve.Host.HostConfiguration;
 namespace Eve.Host;
 
 /// <summary>
-/// The Encounter Surveillance Systems: their store, the calls of the client's essMgr and dynamic resource cache, the ESS ball each one has in space, the clock
-
-/// is no ESS in any system.
+/// The Encounter Surveillance Systems: their store, the calls of the client's essMgr and dynamic resource cache, each SDE-eligible Main Bank in space, and the clock.
 /// </summary>
 internal sealed partial class CharacterServicesComposition
 {
+    private const long GeneratedEssItemIdBase = 8_440_000_000_000_000;
+    private const int KnownSpaceSolarSystemMinimum = 30_000_000;
+    private const int KnownSpaceSolarSystemMaximum = 30_999_999;
+    private const int ZarzakhSolarSystemId = 30_100_000;
+    private static readonly HashSet<int> NonClaimableEssRegionIds = [10000070, 10000004, 10000017, 10000019];
+
     private string essSchema = default!;
     private PgEssStore? _ess;
     private PgDynamicBountyStore? _dynamicBounty;
@@ -37,18 +41,11 @@ internal sealed partial class CharacterServicesComposition
         sovereigntyOwnerOf: SovereigntyOwnerOfAsync,
         corporationOf: CharacterCorporationOfAsync);
 
-    /// <summary>
-    /// The ESS placement that the operator asks for. Each system's ESS is registered at start; a malformed entry stops the host, so that it does not run with
-    /// an ESS it was not given.
-    /// </summary>
+    /// <summary>Registers an ESS for every claimable nullsec system from the pinned SDE, then applies any explicit operator overrides.</summary>
     private async Task RegisterEssSystemsAsync()
     {
         var entries = Env("EVE_ESS_SYSTEMS", "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        if (entries.Length == 0)
-        {
-            return;   // no ESS: the SDE's system names are not needed
-        }
-        _essQuadrantBySystem = await ReadEssQuadrantsAsync();
+        var overrides = new List<(int SystemId, long EssId, long? OwnerId)>();
         foreach (var entry in entries)
         {
             var parts = entry.Split(':');
@@ -59,8 +56,37 @@ internal sealed partial class CharacterServicesComposition
                 throw new InvalidOperationException($"EVE_ESS_SYSTEMS: '{entry}' is not solarSystemId:essId[:ownerId]");
             }
             var owner = parts.Length == 3 ? long.Parse(parts[2], CultureInfo.InvariantCulture) : (long?)null;
-            await Ess.RegisterAsync(systemId, essId, owner, now());
+            overrides.Add((systemId, essId, owner));
         }
+        _essQuadrantBySystem = await ReadEssQuadrantsAsync();
+        var deploymentSystems = await ReadClaimableEssDeploymentSystemsAsync();
+        await Ess.RegisterManyAsync(deploymentSystems, now());
+        foreach (var (systemId, essId, ownerId) in overrides)
+            await Ess.RegisterAsync(systemId, essId, ownerId, now());
+    }
+
+    /// <summary>Claimable nullsec is known space with non-positive security, no faction marker, and outside the SDE's non-conquerable regions.</summary>
+    private async Task<IReadOnlyList<(int SolarSystemId, long EssId)>> ReadClaimableEssDeploymentSystemsAsync()
+    {
+        var eligible = new List<(int SolarSystemId, long EssId)>();
+        await using var connection = await source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT key::bigint, (doc->>'regionID')::integer, (doc->>'securityStatus')::double precision, NULLIF(doc->>'factionID', '')::bigint " +
+            "FROM sde.\"mapSolarSystems\" WHERE key::bigint BETWEEN $1 AND $2 ORDER BY ord", connection);
+        command.Parameters.AddWithValue(KnownSpaceSolarSystemMinimum);
+        command.Parameters.AddWithValue(KnownSpaceSolarSystemMaximum);
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            var systemId = checked((int)reader.GetInt64(0));
+            var regionId = reader.GetInt32(1);
+            var security = reader.GetDouble(2);
+            var factionId = reader.IsDBNull(3) ? (long?)null : reader.GetInt64(3);
+            if (systemId == ZarzakhSolarSystemId || NonClaimableEssRegionIds.Contains(regionId) || security > 0 || factionId is > 0)
+                continue;
+            eligible.Add((systemId, checked(GeneratedEssItemIdBase + systemId)));
+        }
+        return eligible;
     }
 
     /// <summary>The quadrant of each solar system, from the SDE's system names (the quadrant lists name systems, not ids).</summary>
@@ -187,9 +213,7 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>The system's reserve quadrant as the cache manager lists its keys (null when the system is in no quadrant).</summary>
     private string? EssQuadrantOf(int systemId) => _essQuadrantBySystem.TryGetValue(systemId, out var quadrant) ? quadrant : null;
 
-    /// <summary>
-    /// The ESS balls use the deterministic SDE anchor placement rule and the ESS type's static geometry when available, then enter space with the host.
-    /// </summary>
+    /// <summary>The ESS balls use deterministic SDE anchor placement and the ESS type's static geometry when available.</summary>
     private async Task PlaceEssBallsAsync(ISimulation simulation)
     {
         var type = dogma.Type(EssRules.TypeEncounterSurveillanceSystem);
@@ -207,7 +231,7 @@ internal sealed partial class CharacterServicesComposition
             throw new InvalidDataException($"The SDE has an unusable radius for ESS type {EssRules.TypeEncounterSurveillanceSystem}.");
         }
         var anchors = new Eve.Services.Space.Sites.SdeSiteAnchors(sde);
-        foreach (var state in await Ess.ListAsync())
+        foreach (var state in await Ess.ListPlacementsAsync())
         {
             var systemAnchors = await anchors.OfAsync(state.SolarSystemId);
             var (_, position) = Eve.Services.Space.Sites.SitePlacement.Place(systemAnchors, $"ess:{state.SolarSystemId}:{state.EssId}");

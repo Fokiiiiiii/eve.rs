@@ -268,6 +268,17 @@ public sealed partial class ShipService(
         return None;
     }
 
+    /// <summary><c>ScoopToSMA(shipID)</c>: takes an abandoned ship into the active ship's maintenance bay.</summary>
+    [Method("ScoopToSMA")]
+    public async ValueTask<PyValue> ScoopToSMA(ServiceCall call)
+    {
+        if (!_binding.Owns(call) || IdOf(call.Arg(0)) is not { } shipId || shipId <= 0 || rowOf is null || call.Session.CharacterId is null)
+            return None;
+        var changed = await space.ScoopToSMAAsync(call.Session, shipId, call.Cancellation);
+        ShipNotifications.SendItemChange(call.Session, changed, rowOf);
+        return None;
+    }
+
     /// <summary><c>Undock(shipID, ignoreContraband, onlineModules=)</c>: answers the bound object and the time it can be used from again.</summary>
     /// <summary>The client call <c>Board(shipID, oldShipID)</c> used by its active-ship switch.</summary>
     /// <summary>The client call <c>LeaveShip(shipID)</c> returns the capsule made active by the session.</summary>

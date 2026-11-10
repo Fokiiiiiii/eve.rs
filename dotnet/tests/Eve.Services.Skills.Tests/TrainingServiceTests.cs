@@ -29,20 +29,19 @@ public class TrainingServiceTests
         ((IService)rig.Handler).CallAsync(new ServiceCall { Method = method, Args = args, Kwargs = kwargs ?? PyNone.Instance, Session = session, CallId = new PyInt(1) }).AsTask();
 
     [PgFact]
-    public async Task Saving_a_queue_tells_the_client_the_queue_and_every_client_of_the_account()
+    public async Task Saving_a_queue_tells_the_client_the_queue()
     {
         var (rig, session, sink) = await ReadyAsync();
         await using var owned = rig;
         Assert.Equal(PyNone.Instance, await Call(rig, session, "SaveNewQueue", [Queue((0, 3301, 2), (1, 3301, 3))]));
 
         var notes = Notes.Of(sink);
-        Assert.Equal([("OnNewSkillQueueSaved", "charid"), ("OnMultipleCharactersTrainingUpdated", "userid")], notes.Select(n => (n.Name, n.IdType)));
+        Assert.Equal([("OnNewSkillQueueSaved", "charid")], notes.Select(n => (n.Name, n.IdType)));
         var lines = ((PyList)notes[0].Args[0]).Items.Select(Notes.Fields).ToArray();
         Assert.Equal([3301L, 3301], lines.Select(l => Notes.Number(l["trainingTypeID"])));
         Assert.Equal([2L, 3], lines.Select(l => Notes.Number(l["trainingToLevel"])));
         Assert.Equal([250L, 1415], lines.Select(l => Notes.Number(l["trainingStartSP"])));
         Assert.Equal(Notes.Number(lines[0]["trainingEndTime"]), Notes.Number(lines[1]["trainingStartTime"])); // the second line begins where the first ends
-        Assert.Empty(notes[1].Args);
     }
 
     [PgFact]
@@ -52,7 +51,7 @@ public class TrainingServiceTests
         await using var owned = rig;
         await Call(rig, session, "SaveNewQueue", [Queue((0, 3301, 2))], Activate(false));
         var notes = Notes.Of(sink);
-        Assert.Equal(["OnNewSkillQueueSaved", "OnSkillQueuePausedServer", "OnMultipleCharactersTrainingUpdated"], notes.Select(n => n.Name));
+        Assert.Equal(["OnNewSkillQueueSaved", "OnSkillQueuePausedServer"], notes.Select(n => n.Name));
         var line = Notes.Fields(((PyList)notes[0].Args[0]).Items[0]);
         Assert.Equal((PyNone.Instance, PyNone.Instance), (line["trainingStartTime"], line["trainingEndTime"]));
         Assert.Equal("clientID", notes[1].IdType);
@@ -134,7 +133,7 @@ public class TrainingServiceTests
         var (rig, session, sink) = await ReadyAsync(localTimers: shared, scheduleAnnouncer: true);
         await using var owned = rig;
         Assert.Equal(PyNone.Instance, await Call(rig, session, "CharStartTrainingSkillByTypeID", [new PyInt(3301)]));
-        Assert.Equal(["OnNewSkillQueueSaved", "OnMultipleCharactersTrainingUpdated"], Notes.Of(sink).Select(n => n.Name));
+        Assert.Equal(["OnNewSkillQueueSaved"], Notes.Of(sink).Select(n => n.Name));
         Assert.True(shared.IsSet($"skills.training:{Character}"));
 
         Assert.Equal(PyNone.Instance, await Call(rig, session, "CharStartTrainingSkillByTypeID", [new PyInt(99)]));            // no such skill
@@ -333,7 +332,7 @@ public class TrainingServiceTests
 
         Assert.False((await rig.Training.ViewAsync(other, 34)).State.Running);
         Assert.True((await rig.Training.ViewAsync(Character, 34)).State.Running);
-        Assert.Equal(["OnNewSkillQueueSaved", "OnSkillQueuePausedServer", "OnMultipleCharactersTrainingUpdated"], Notes.Of(otherSink).Select(n => n.Name));
+        Assert.Equal(["OnServerSkillsChanged", "OnMultipleCharactersTrainingUpdated"], Notes.Of(otherSink).Select(n => n.Name));
         Assert.Equal(["OnMultipleCharactersTrainingUpdated"], Notes.Of(sink).Select(n => n.Name));
 
         // a second run finds nothing over the limit: the queue of the character that still runs is kept

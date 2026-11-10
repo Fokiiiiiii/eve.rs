@@ -24,7 +24,7 @@ public sealed class SkillQueueContractTests
 
         await announcer.AnnounceSavedAsync(session, new QueueSaved(paused, Paused: true));
         Assert.Equal(
-            ["OnNewSkillQueueSaved", "OnSkillQueuePausedServer", "OnMultipleCharactersTrainingUpdated"],
+            ["OnNewSkillQueueSaved", "OnSkillQueuePausedServer"],
             Notes.Of(sink).Select(note => note.Name));
 
         Notes.Of(sink);

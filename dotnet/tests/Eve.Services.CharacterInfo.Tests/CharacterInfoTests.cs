@@ -826,12 +826,12 @@ public class CharMgrTests
         Assert.Equal(Id(4), await Call("CreateLabel", new PyStr("Wing"), Id(5)));
         Assert.Equal(new CharMgrContact(2001, true, -10, 1), Assert.Single(state.Contacts));
         Assert.IsType<PyNone>(await Call("AssignLabels", new PyList([Id(2001), Id(2002)]), new PyLong(4)));
-        Assert.Equal(new CharMgrContact(2001, true, -10, 5), Assert.Single(state.Contacts));
-        Assert.IsType<PyNone>(await Call("AddContact", Id(2002), Id(-10), PyBool.False));
-        Assert.Equal(new[] { new CharMgrContact(2001, true, -10, 5), new CharMgrContact(2002, false, -10, 0) },
+        Assert.Equal(new[] { new CharMgrContact(2001, true, -10, 5) },
             state.Contacts.OrderBy(contact => contact.ContactId));
+        Assert.IsType<PyNone>(await Call("AddContact", new PyLong(2002), new PyInt(0),
+            PyBool.False, PyBool.False, new PyStr("")));
         Assert.IsType<PyNone>(await Call("AssignLabels", new PyList([Id(2002)]), new PyLong(4)));
-        Assert.Equal(new[] { new CharMgrContact(2001, true, -10, 5), new CharMgrContact(2002, false, -10, 4) },
+        Assert.Equal(new[] { new CharMgrContact(2001, true, -10, 5), new CharMgrContact(2002, false, 0, 4) },
             state.Contacts.OrderBy(contact => contact.ContactId));
         Assert.IsType<PyNone>(await Call("EditLabel", new PyLong(1), new PyStr("Fleet pilots"), Id(9)));
         Assert.IsType<PyNone>(await Call("RemoveLabels", new PyList([Id(2001)]), new PyLong(1)));
@@ -841,7 +841,7 @@ public class CharMgrTests
         {
             [1] = new("Fleet pilots", 9), [8] = new("Next", 6),
         }, state.Labels);
-        Assert.Equal(new[] { new CharMgrContact(2001, true, -10, 0), new CharMgrContact(2002, false, -10, 0) },
+        Assert.Equal(new[] { new CharMgrContact(2001, true, -10, 0), new CharMgrContact(2002, false, 0, 0) },
             state.Contacts.OrderBy(contact => contact.ContactId));
         var beforeOversizedInput = state;
         var oversizedIds = new PyList(Enumerable.Range(1, 501).Select(id => (PyValue)Id(id)).ToArray());

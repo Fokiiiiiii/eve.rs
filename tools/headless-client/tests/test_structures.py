@@ -694,6 +694,9 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
             f"select count(*) from {dbseed.schema('SPACE')}.deployed "
             f"where deployable_id = {tower} and kind = 'control_tower' and corporation_id = {corporation}"
         ) == "1", "ship.Drop did not place the corporation's control tower"
+        assert dbseed.sql(
+            f"select owner_id from {dbseed.schema('INVENTORY')}.items where id = {tower}"
+        ) == str(corporation), "ship.Drop did not transfer the tower to its launching corporation"
         dbseed.sql(
             f"update {dbseed.schema('SPACE')}.deployed set activate_at_ms = {int(time.time() * 1000) - 1}, tower_state = 'online' "
             f"where deployable_id = {tower}"
@@ -721,8 +724,7 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
         item = dbseed.sql(
             f"select owner_id, location_id, flag, custom_info from {dbseed.schema('INVENTORY')}.items where id = {tower}"
         )
-        # Drop assigns a POS tower to its corporation; Scoop returns the hull to this pilot's cargo below.
-        assert item.startswith(f"{corporation}|{LEGAL_SYSTEM}|") and "unanchor" in item.lower(), item
+        assert item == f"{corporation}|{LEGAL_SYSTEM}|0|evejs:structure-unanchor:hull:{tower}", item
 
         try:
             assert client.call_bound(ship[0], "Scoop", tower, None) is None

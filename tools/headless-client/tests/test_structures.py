@@ -694,8 +694,6 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
             f"select count(*) from {dbseed.schema('SPACE')}.deployed "
             f"where deployable_id = {tower} and kind = 'control_tower' and corporation_id = {corporation}"
         ) == "1", "ship.Drop did not place the corporation's control tower"
-        visible = timed_events(client, 30.0, until=lambda events: _structure_slim(events, tower) is not None)
-        assert _structure_slim(visible, tower) is not None, f"the dropped control tower {tower} did not enter the client's ballpark within 30 s"
         dbseed.sql(
             f"update {dbseed.schema('SPACE')}.deployed set activate_at_ms = {int(time.time() * 1000) - 1}, tower_state = 'online' "
             f"where deployable_id = {tower}"

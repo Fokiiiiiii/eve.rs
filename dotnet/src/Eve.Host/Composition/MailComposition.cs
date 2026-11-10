@@ -319,6 +319,7 @@ internal sealed partial class CharacterServicesComposition
             source, mailStore, mailCache, mailStoreOwner, mailSendWriter.MutationGate, now,
             (characterId, args) => characterSessions.Of(characterId)?.SendNotification("OnNotificationReceived", "clientID", args));
         notificationMailbox = mailbox;
+        new Eve.Host.Persistence.Billing.CharacterBillNotifications(mailbox).Subscribe(foundations.Events);
         new Eve.Host.Persistence.Mail.CharacterBiomassMailNotifications(characters, corporations, mailSendWriter)
             .Subscribe(foundations.Events);
         new Eve.Host.Persistence.Structures.MoonOwnerNotifications(

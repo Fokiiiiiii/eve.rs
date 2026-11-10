@@ -246,13 +246,8 @@ public interface ISimulation
     /// <summary>The host puts an Upwell structure in space (protocol 59).</summary>
     void PlaceStructure(SimPlaceStructure structure);
 
-    /// <summary>Queues an Upwell structure; bounded transports wait for outbound capacity and return false when disconnected.</summary>
-    Task<bool> PlaceStructureAsync(SimPlaceStructure structure, CancellationToken cancellationToken = default)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        PlaceStructure(structure);
-        return Task.FromResult(IsConnected);
-    }
+    /// <summary>Puts an Upwell structure in space without dropping the simulation link when the outbound queue is full.</summary>
+    Task<bool> PlaceStructureAsync(SimPlaceStructure structure, CancellationToken cancellationToken = default);
 
     /// <summary>The host puts a wormhole end in space (protocol 63).</summary>
     void PlaceWormhole(SimPlaceWormhole wormhole);

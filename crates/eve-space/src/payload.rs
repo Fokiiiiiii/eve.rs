@@ -152,6 +152,76 @@ pub fn add_abyssal_scene_objects(stamp: u32, system: &SolarSystem) -> Result<Vec
         .collect()
 }
 
+/// A moon chunk's non-damageable ball and its drill effect. The ball is sent first so `MultiEffect` can resolve its target.
+pub fn add_moon_chunk(stamp: u32, system: &SolarSystem, index: usize) -> Result<Vec<Value>, BallError> {
+    let body = &system.bodies[index];
+    if body.kind != BodyKind::MoonChunk {
+        return Ok(Vec::new());
+    }
+    let buffer = state_buffer(ADD_BALLS, stamp, &[rigid_ball(system, index)])?;
+    let slim = Value::Dict(
+        slim::body_entries(system, body).into_iter().map(|(key, value)| (word(key), value)).collect(),
+    );
+    let ball = action(stamp, "AddBalls2", [tuple([buffer, list([slim])])]);
+    Ok(vec![ball, moon_chunk_effect(stamp, body)])
+}
+
+/// `OnSpecialFX` for the refinery's Standup Moon Drill. `effectStarted` is the sim FILETIME when this phase began.
+pub fn moon_chunk_effect(stamp: u32, body: &crate::world::Body) -> Value {
+    let Detail::MoonChunk {
+        source_structure_id,
+        module_id,
+        module_type_id,
+        moon_id,
+        phase,
+        phase_started_filetime,
+    } = &body.detail
+    else {
+        return action(stamp, "OnSpecialFX", []);
+    };
+    action(
+        stamp,
+        "OnSpecialFX",
+        [
+            id(*source_structure_id),
+            id(*module_id),
+            int(i64::from(*module_type_id)),
+            id(body.id),
+            Value::None,
+            text("effects.MultiEffect"),
+            int(0),
+            int(1),
+            int(1),
+            int(-1),
+            Value::None,
+            Value::None,
+            int(0),
+            Value::Dict(vec![
+                (word("phase"), text(phase.clone())),
+                (word("moonID"), id(*moon_id)),
+                (word("effectStarted"), filetime(*phase_started_filetime)),
+                (word("sequence"), text("moon_mining")),
+                (
+                    word("triggers"),
+                    list([text("moduleID"), text("moonID"), text("shipID"), text("targetID")]),
+                ),
+            ]),
+        ],
+    )
+}
+
+/// Replays every persisted moon chunk to a pilot who enters a loaded system.
+pub fn add_moon_chunks(stamp: u32, system: &SolarSystem) -> Vec<Value> {
+    system
+        .bodies
+        .iter()
+        .enumerate()
+        .filter(|(_, body)| body.kind == BodyKind::MoonChunk)
+        .filter_map(|(index, _)| add_moon_chunk(stamp, system, index).ok())
+        .flatten()
+        .collect()
+}
+
 /// `AddBalls2` for a wormhole end of the system (the body at `index`): its ball, and its slim item with an empty damage state (a wormhole has no hit points).
 pub fn add_wormhole(stamp: u32, system: &SolarSystem, index: usize, now: i64) -> Result<Value, BallError> {
     let buffer = state_buffer(ADD_BALLS, stamp, &[rigid_ball(system, index)])?;

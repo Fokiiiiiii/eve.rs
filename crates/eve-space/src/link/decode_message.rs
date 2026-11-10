@@ -50,6 +50,22 @@ fn read_abyssal_count(
     Ok(count)
 }
 
+fn read_structure_modules(reader: &mut Reader) -> Result<Vec<StructureModule>, DecodeError> {
+    let count = read_abyssal_count(reader, 256, "structure modules")?;
+    let mut modules = Vec::with_capacity(count);
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..count {
+        let item_id = reader.i64()?;
+        let type_id = reader.i32()?;
+        let flag_id = reader.i32()?;
+        if item_id <= 0 || type_id <= 0 || flag_id <= 0 || !seen.insert(item_id) {
+            return Err(DecodeError::BadValue("structure modules"));
+        }
+        modules.push(StructureModule { item_id, type_id, flag_id });
+    }
+    Ok(modules)
+}
+
 fn read_abyssal_modifiers(reader: &mut Reader) -> Result<Vec<AbyssalAttributeModifier>, DecodeError> {
     let count = read_abyssal_count(reader, MAX_ABYSSAL_MODIFIERS, "Abyssal modifiers")?;
     let mut modifiers = Vec::with_capacity(count);
@@ -1554,7 +1570,16 @@ impl Message {
                 let (vitals, shield_recharge_ms, limits) = read_structure_health(&mut r)?;
                 let status = read_structure_status(&mut r)?;
                 let planet_id = r.i64()?;
-                if !(radius.is_finite() && radius >= 0.0) {
+                let modules = read_structure_modules(&mut r)?;
+                let closest_moon_id = r.i64()?;
+                if !(radius.is_finite() && radius >= 0.0)
+                    || structure_id <= 0
+                    || solar_system_id <= 0
+                    || type_id <= 0
+                    || group_id <= 0
+                    || owner_id <= 0
+                    || closest_moon_id < 0
+                {
                     return Err(DecodeError::BadValue("structure"));
                 }
                 Message::PlaceStructure(Box::new(StructurePlacement {
@@ -1573,6 +1598,8 @@ impl Message {
                     limits,
                     status,
                     planet_id,
+                    modules,
+                    closest_moon_id,
                 }))
             }
             kind::STRUCTURE_DAMAGED => {
@@ -1641,6 +1668,87 @@ impl Message {
                 let structure_id = r.i64()?;
                 let status = read_structure_status(&mut r)?;
                 Message::SetStructureState { solar_system_id, structure_id, status }
+            }
+            kind::SET_STRUCTURE_MOON_MINING_STATE => {
+                let solar_system_id = r.i32()?;
+                let structure_id = r.i64()?;
+                let closest_moon_id = r.i64()?;
+                let modules = read_structure_modules(&mut r)?;
+                if solar_system_id <= 0 || structure_id <= 0 || closest_moon_id < 0 {
+                    return Err(DecodeError::BadValue("structure moon-mining state"));
+                }
+                Message::SetStructureMoonMiningState {
+                    solar_system_id,
+                    structure_id,
+                    closest_moon_id,
+                    modules,
+                }
+            }
+            kind::UPSERT_MOON_CHUNK => {
+                let chunk_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let name = r.text()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let category_id = r.i32()?;
+                let owner_id = r.i64()?;
+                let graphic_id = r.i32()?;
+                let position = read_vector(&mut r)?;
+                let direction = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let source_structure_id = r.i64()?;
+                let module_id = r.i64()?;
+                let module_type_id = r.i32()?;
+                let moon_id = r.i64()?;
+                let phase = r.text()?;
+                let phase_started_filetime = r.i64()?;
+                if chunk_id <= 0
+                    || solar_system_id <= 0
+                    || type_id <= 0
+                    || group_id <= 0
+                    || category_id <= 0
+                    || owner_id <= 0
+                    || graphic_id <= 0
+                    || !radius.is_finite()
+                    || radius <= 0.0
+                    || source_structure_id <= 0
+                    || module_id <= 0
+                    || module_type_id <= 0
+                    || moon_id <= 0
+                    || phase_started_filetime <= 0
+                    || !matches!(phase.as_str(), "tractor_phase" | "stasis_phase" | "fracture_phase")
+                    || position.iter().chain(direction.iter()).any(|value| !value.is_finite())
+                {
+                    return Err(DecodeError::BadValue("moon chunk"));
+                }
+                Message::UpsertMoonChunk(Box::new(MoonChunkPlacement {
+                    chunk_id,
+                    solar_system_id,
+                    name,
+                    type_id,
+                    group_id,
+                    category_id,
+                    owner_id,
+                    graphic_id,
+                    position,
+                    direction,
+                    radius,
+                    source_structure_id,
+                    module_id,
+                    module_type_id,
+                    moon_id,
+                    phase,
+                    phase_started_filetime,
+                }))
+            }
+            kind::REMOVE_MOON_CHUNK => {
+                let solar_system_id = r.i32()?;
+                let chunk_id = r.i64()?;
+                let effect = r.i32()?;
+                if solar_system_id <= 0 || chunk_id <= 0 || !matches!(effect, 0 | 3) {
+                    return Err(DecodeError::BadValue("moon chunk removal"));
+                }
+                Message::RemoveMoonChunk { solar_system_id, chunk_id, effect }
             }
             kind::REMOVE_PROBE => Message::RemoveProbe { probe_id: r.i64()? },
             // a disruptor and an inhibitor have the same placement (the kind says which of the two it is)

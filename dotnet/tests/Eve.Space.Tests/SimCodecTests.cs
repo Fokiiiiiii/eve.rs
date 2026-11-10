@@ -628,7 +628,17 @@ public class SimCodecTests
             "RemoveProbe" => new SimRemoveProbe(Wide(c, "probeId")),
             "PlaceStructure" => new SimPlaceStructure(Wide(c, "structureId"), (int)c["solarSystemId"]!, (string)c["typeName"]!, (int)c["typeId"]!,
                 (int)c["groupId"]!, VectorOf(c["position"]!), (double)c["radius"]!, Wide(c, "ownerId"), (int)c["corporationId"]!, (int)c["allianceId"]!,
-                HealthOf(c), StatusOf(c["status"]!), (long)c["planetId"]!),
+                HealthOf(c), StatusOf(c["status"]!), (long)c["planetId"]!,
+                c["modules"] is JsonArray modules ? modules.Select(module => new SimStructureModule(
+                    Wide(module!, "itemId"), (int)module!["typeId"]!, (int)module["flagId"]!)).ToArray() : [],
+                c["closestMoonId"] is JsonNode closestMoonId ? long.Parse(closestMoonId.ToString(), CultureInfo.InvariantCulture) : 0),
+            "SetStructureMoonMiningState" => new SimSetStructureMoonMiningState((int)c["solarSystemId"]!, Wide(c, "structureId"), Wide(c, "closestMoonId"),
+                ((JsonArray)c["modules"]!).Select(module => new SimStructureModule(Wide(module!, "itemId"), (int)module!["typeId"]!, (int)module["flagId"]!)).ToArray()),
+            "UpsertMoonChunk" => new SimUpsertMoonChunk(Wide(c, "chunkId"), (int)c["solarSystemId"]!, (string)c["name"]!, (int)c["typeId"]!,
+                (int)c["groupId"]!, (int)c["categoryId"]!, Wide(c, "ownerId"), (int)c["graphicId"]!, VectorOf(c["position"]!), VectorOf(c["direction"]!),
+                (double)c["radius"]!, Wide(c, "sourceStructureId"), Wide(c, "moduleId"), (int)c["moduleTypeId"]!, Wide(c, "moonId"), (string)c["phase"]!,
+                Wide(c, "phaseStartedFileTime")),
+            "RemoveMoonChunk" => new SimRemoveMoonChunk((int)c["solarSystemId"]!, Wide(c, "chunkId"), (int)c["effect"]!),
             "StructureDamageCandidatesRequest" => new SimStructureDamageCandidatesRequest(
                 Session(), Wide(c, "structureId"), Wide(c, "moduleId"), (int)c["effectId"]!, (ulong)Wide(c, "activationNonce"),
                 Wide(c, "controlLeaseGeneration"), (ulong)Wide(c, "cycleId"), (uint)(int)c["pulseHopOrdinal"]!,
@@ -712,7 +722,7 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-          Assert.Equal(["AbyssalFieldMembership", "Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "CrimewatchFlagActive", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "EnsureAbyssalEnvironmentObject", "EnsureAbyssalEnvironmentObjectReply", "EnsureAbyssalLootContainer", "EnsureAbyssalLootContainerReply", "EnsureAbyssalRewardCache", "EnsureAbyssalRewardCacheReply", "EnsureAbyssalScene", "EnsureAbyssalSceneObject", "EnsureAbyssalSceneObjectReply", "EnsureAbyssalSceneReply", "EnsureAbyssalTracePublished", "EnsureAbyssalTracePublishedReply", "EnsureTournamentBeacon", "EnsureTournamentBeaconReply", "Enter", "EnterPublicParticipant", "EnterPublicParticipantReply", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "GetAbyssalParticipantPose", "GetAbyssalParticipantPoseReply", "GetSceneBody", "GetSceneBodyReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "MoveAbyssalParticipant", "MoveAbyssalParticipantReply", "MovePublicParticipant", "MovePublicParticipantReply", "Notify", "PlaceAccelerationGate", "PlaceAnalysisBeacon", "PlaceBattlefieldScoreboard", "PlaceCapturePoint", "PlaceContainer", "PlaceControlTower", "PlaceCynoBeacon", "PlaceDeadspacePocket", "PlaceDisruptor", "PlaceInhibitor", "PlaceObservatory", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "QueryTournamentWreck", "QueryTournamentWreckReply", "ReadTournamentCutoff", "ReadTournamentCutoffReply", "ReadTournamentMetrics", "ReadTournamentMetricsReply", "RebindAbyssalSession", "RebindAbyssalSessionReply", "RefreshAbyssalNpc", "RefreshAbyssalNpcReply", "Refused", "RegisterTournamentCutoff", "RegisterTournamentCutoffReply", "RegisterTournamentMetrics", "RegisterTournamentMetricsReply", "ReleaseTournamentCutoff", "ReleaseTournamentCutoffReply", "ReleaseTournamentMetrics", "ReleaseTournamentMetricsReply", "RemoteDecloakPing", "RemoveAbyssalParticipant", "RemoveAbyssalParticipantReply", "RemoveAbyssalScene", "RemoveAbyssalSceneReply", "RemoveAbyssalTrace", "RemoveAbyssalTraceReply", "RemoveCynoBeacon", "RemoveDeployed", "RemoveProbe", "RemoveStructure", "RemoveTournamentBeacon", "RemoveTournamentBeaconReply", "RemoveTournamentWreck", "RemoveTournamentWreckReply", "RemoveUnpilotedShip", "RemoveUnpilotedShipReply", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "ServiceNotify", "SetAnalysisBeaconState", "SetDisruptorActive", "SetSlimField", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState"], kinds);
+          Assert.Equal(new[] {"AbyssalFieldMembership", "Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "CrimewatchFlagActive", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "EnsureAbyssalEnvironmentObject", "EnsureAbyssalEnvironmentObjectReply", "EnsureAbyssalLootContainer", "EnsureAbyssalLootContainerReply", "EnsureAbyssalRewardCache", "EnsureAbyssalRewardCacheReply", "EnsureAbyssalScene", "EnsureAbyssalSceneObject", "EnsureAbyssalSceneObjectReply", "EnsureAbyssalSceneReply", "EnsureAbyssalTracePublished", "EnsureAbyssalTracePublishedReply", "EnsureTournamentBeacon", "EnsureTournamentBeaconReply", "Enter", "EnterPublicParticipant", "EnterPublicParticipantReply", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "GetAbyssalParticipantPose", "GetAbyssalParticipantPoseReply", "GetSceneBody", "GetSceneBodyReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "MoveAbyssalParticipant", "MoveAbyssalParticipantReply", "MovePublicParticipant", "MovePublicParticipantReply", "Notify", "PlaceAccelerationGate", "PlaceAnalysisBeacon", "PlaceBattlefieldScoreboard", "PlaceCapturePoint", "PlaceContainer", "PlaceControlTower", "PlaceCynoBeacon", "PlaceDeadspacePocket", "PlaceDisruptor", "PlaceInhibitor", "PlaceObservatory", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "QueryTournamentWreck", "QueryTournamentWreckReply", "ReadTournamentCutoff", "ReadTournamentCutoffReply", "ReadTournamentMetrics", "ReadTournamentMetricsReply", "RebindAbyssalSession", "RebindAbyssalSessionReply", "RefreshAbyssalNpc", "RefreshAbyssalNpcReply", "Refused", "RegisterTournamentCutoff", "RegisterTournamentCutoffReply", "RegisterTournamentMetrics", "RegisterTournamentMetricsReply", "ReleaseTournamentCutoff", "ReleaseTournamentCutoffReply", "ReleaseTournamentMetrics", "ReleaseTournamentMetricsReply", "RemoteDecloakPing", "RemoveAbyssalParticipant", "RemoveAbyssalParticipantReply", "RemoveAbyssalScene", "RemoveAbyssalSceneReply", "RemoveAbyssalTrace", "RemoveAbyssalTraceReply", "RemoveCynoBeacon", "RemoveDeployed", "RemoveMoonChunk", "RemoveProbe", "RemoveStructure", "RemoveTournamentBeacon", "RemoveTournamentBeaconReply", "RemoveTournamentWreck", "RemoveTournamentWreckReply", "RemoveUnpilotedShip", "RemoveUnpilotedShipReply", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "ServiceNotify", "SetAnalysisBeaconState", "SetDisruptorActive", "SetSlimField", "SetStructureMoonMiningState", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState", "UpsertMoonChunk" }.Order(), kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);    }
 
     [Theory]
@@ -745,6 +755,43 @@ public class SimCodecTests
         var frame = SimCodec.Encode(message);
         Assert.Equal(84, frame[4]);
         Assert.Equal(message, SimCodec.Decode(frame.AsMemory(4)));
+    }
+
+    [Fact]
+    public void Moon_mining_transport_messages_round_trip_structure_modules_and_each_chunk_phase()
+    {
+        const long structureId = 1_040_000_000_001;
+        const long drillId = 1_040_000_000_002;
+        const long chunkId = 1_040_000_000_003;
+        const long moonId = 40_000_004;
+        var module = new SimStructureModule(drillId, 45_009, 164);
+        SimMessage[] messages =
+        [
+            new SimSetStructureMoonMiningState(30_000_001, structureId, moonId, [module]),
+            new SimUpsertMoonChunk(chunkId, 30_000_001, "Moon chunk", 46_030, 1_940, 25, 98_000_001, 12_345,
+                [100, 200, 300], [0, 0, 1], 10_000, structureId, drillId, 45_009, moonId, "tractor_phase", 134_351_688_000_000_000),
+            new SimUpsertMoonChunk(chunkId, 30_000_001, "Moon chunk", 46_030, 1_940, 25, 98_000_001, 12_345,
+                [400, 500, 600], [0, 0, 1], 10_000, structureId, drillId, 45_009, moonId, "stasis_phase", 134_351_688_050_000_000),
+            new SimUpsertMoonChunk(chunkId, 30_000_001, "Moon chunk", 46_030, 1_940, 25, 98_000_001, 12_345,
+                [400, 500, 600], [0, 0, 1], 10_000, structureId, drillId, 45_009, moonId, "fracture_phase", 134_351_688_060_000_000),
+            new SimRemoveMoonChunk(30_000_001, chunkId, 3),
+        ];
+        foreach (var message in messages)
+        {
+            var encoded = SimCodec.Encode(message);
+            var decoded = SimCodec.Decode(encoded.AsMemory(4));
+            Assert.Equal(message.GetType(), decoded.GetType());
+            Assert.Equal(Convert.ToHexString(encoded), Convert.ToHexString(SimCodec.Encode(decoded)));
+        }
+
+        var place = new SimPlaceStructure(structureId, 30_000_001, "Athanor", 35_835, 1_406, [1, 2, 3], 30_000,
+            98_000_001, 98_000_001, 0,
+            new SimStructureHealth(1, 1, 1, Enumerable.Repeat(1d, 12).ToArray(), 110_000, [5_000, 5_000, 5_000], [500, 500, 500]),
+            new SimStructureStatus(110, 3, null, null, null), 0, [module], moonId);
+        var placeFrame = SimCodec.Encode(place);
+        var placeRoundTrip = SimCodec.Decode(placeFrame.AsMemory(4));
+        Assert.Equal(typeof(SimPlaceStructure), placeRoundTrip.GetType());
+        Assert.Equal(Convert.ToHexString(placeFrame), Convert.ToHexString(SimCodec.Encode(placeRoundTrip)));
     }
 
     [Theory]

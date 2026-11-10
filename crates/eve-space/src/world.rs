@@ -26,6 +26,8 @@ pub enum BodyKind {
     /// A static transfer or origin conduit in one isolated Abyssal room.
     AbyssalConduit,
     AbyssalEnvironment,
+    /// A moon extraction's non-mineable shell ball, persisted by the host.
+    MoonChunk,
 }
 
 /// The category of a structure's item (`categoryID` 65 in the client).
@@ -59,6 +61,10 @@ pub enum Detail {
         status: StructureStatus,
         /// The planet of a customs office (0 for an Upwell structure): see `StructurePlacement::planet_id`.
         planet_id: i64,
+        /// Fitted hardpoint/service modules on the slim structure ball.
+        modules: Vec<crate::link::StructureModule>,
+        /// The moon the Standup Moon Drill aims at, zero when no refinery profile exists.
+        closest_moon_id: i64,
     },
     Stargate {
         destination_system: i32,
@@ -92,6 +98,14 @@ pub enum Detail {
     },
     AbyssalEnvironment {
         direction: Vec3,
+    },
+    MoonChunk {
+        source_structure_id: i64,
+        module_id: i64,
+        module_type_id: i32,
+        moon_id: i64,
+        phase: String,
+        phase_started_filetime: i64,
     },
 }
 

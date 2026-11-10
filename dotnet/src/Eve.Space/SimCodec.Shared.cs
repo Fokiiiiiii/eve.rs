@@ -48,6 +48,9 @@ public static partial class SimCodec
         public const byte ReleaseTournamentCutoffReply = 147;
         public const byte RemoveUnpilotedShip = 156;
         public const byte RemoveUnpilotedShipReply = 157;
+        public const byte UpsertMoonChunk = 158;
+        public const byte RemoveMoonChunk = 159;
+        public const byte SetStructureMoonMiningState = 160;
         public const byte Docked = 10;
         public const byte Refused = 11;
         public const byte Accepted = 12;

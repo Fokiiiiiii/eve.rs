@@ -8,6 +8,8 @@ mod decode_message;
 mod encode;
 #[cfg(test)]
 mod field_partition_tests;
+#[cfg(test)]
+mod moon_mining_tests;
 mod payload;
 mod reader;
 mod tournament_cutoff;
@@ -43,7 +45,7 @@ use crate::weapons::{Aoe, Arc, Charge, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 93;
+pub const PROTOCOL_VERSION: u16 = 94;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -310,6 +312,39 @@ pub struct StructurePlacement {
     /// The planet whose customs office this is (protocol 67); 0 for an Upwell structure. An office is an orbital of its planet: its slim item has
     /// the planet and the level the client's office window reads.
     pub planet_id: i64,
+    /// Fitted hardpoint/service modules, as `(itemID, typeID, flagID)` in the client slim.
+    pub modules: Vec<StructureModule>,
+    /// The refinery moon its Standup Moon Drill aims at; zero means no profile is set.
+    pub closest_moon_id: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StructureModule {
+    pub item_id: i64,
+    pub type_id: i32,
+    pub flag_id: i32,
+}
+
+/// A moon chunk ball and the phase of the refinery drill effect that targets it (protocol 94).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MoonChunkPlacement {
+    pub chunk_id: i64,
+    pub solar_system_id: i32,
+    pub name: String,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub category_id: i32,
+    pub owner_id: i64,
+    pub graphic_id: i32,
+    pub position: [f64; 3],
+    pub direction: [f64; 3],
+    pub radius: f64,
+    pub source_structure_id: i64,
+    pub module_id: i64,
+    pub module_type_id: i32,
+    pub moon_id: i64,
+    pub phase: String,
+    pub phase_started_filetime: i64,
 }
 
 /// A wormhole end the host puts in space (protocol 63): its body in `solar_system_id`, its client-visible slim state and the far end it leads to (the other
@@ -1372,6 +1407,21 @@ pub enum Message {
         structure_id: i64,
         status: crate::world::StructureStatus,
     },
+    /// The host updates the refinery's module fit and target moon so the V24 client can resolve the drill's turret and aim.
+    SetStructureMoonMiningState {
+        solar_system_id: i32,
+        structure_id: i64,
+        closest_moon_id: i64,
+        modules: Vec<StructureModule>,
+    },
+    /// The host places a moon chunk or updates its pose and `moon_mining` effect phase.
+    UpsertMoonChunk(Box<MoonChunkPlacement>),
+    /// The host removes a moon chunk; effect 0 is quiet, 3 is the fracture explosion.
+    RemoveMoonChunk {
+        solar_system_id: i32,
+        chunk_id: i64,
+        effect: i32,
+    },
     /// A structure's hit was told to the host (simulation to host, protocol 60): the layer it emptied, if any, and whether a layer's repair is paused.
     StructureDamaged {
         structure_id: i64,
@@ -1777,6 +1827,9 @@ impl Message {
             Self::RemoveWormhole { .. } => kind::REMOVE_WORMHOLE,
             Self::RemoveStructure { .. } => kind::REMOVE_STRUCTURE,
             Self::SetStructureState { .. } => kind::SET_STRUCTURE_STATE,
+            Self::SetStructureMoonMiningState { .. } => kind::SET_STRUCTURE_MOON_MINING_STATE,
+            Self::UpsertMoonChunk(_) => kind::UPSERT_MOON_CHUNK,
+            Self::RemoveMoonChunk { .. } => kind::REMOVE_MOON_CHUNK,
             Self::StructureDamaged { .. } => kind::STRUCTURE_DAMAGED,
             Self::PlaceProbe(_) => kind::PLACE_PROBE,
             Self::RemoveProbe { .. } => kind::REMOVE_PROBE,

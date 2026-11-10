@@ -10,6 +10,12 @@ pub const RELEASE_TOURNAMENT_METRICS_REPLY: u8 = 153;
 pub const RELEASE_TOURNAMENT_CUTOFF_REPLY: u8 = 147;
 pub const REMOVE_UNPILOTED_SHIP: u8 = 156;
 pub const REMOVE_UNPILOTED_SHIP_REPLY: u8 = 157;
+/// The host places or updates a persisted moon chunk and the Standup drill's current phase (protocol 94).
+pub const UPSERT_MOON_CHUNK: u8 = 158;
+/// The host removes a moon chunk, optionally playing its fracture effect (protocol 94).
+pub const REMOVE_MOON_CHUNK: u8 = 159;
+/// The host updates the V24-visible drill modules and target moon on a structure (protocol 94).
+pub const SET_STRUCTURE_MOON_MINING_STATE: u8 = 160;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

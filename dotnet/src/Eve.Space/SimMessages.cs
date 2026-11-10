@@ -1265,10 +1265,26 @@ public sealed record SimStructureHealth(
 /// its unanchoring time and whether it is repaired (none when the client should show no repair). The simulation shows them and decides nothing.</summary>
 public sealed record SimStructureStatus(int State, int UpkeepState, (long Start, long End, long? Paused)? Timer, long? Unanchoring, bool? Repairing);
 
+/// <summary>A fitted item the client uses to build hardpoints on a structure's slim ball (itemID, typeID and flagID).</summary>
+public sealed record SimStructureModule(long ItemId, int TypeId, int FlagId);
+
 /// <summary>An Upwell structure the host puts in space, as a body of the system with its slim state (protocol 59). It stays until <see cref="SimRemoveStructure"/>.</summary>
 public sealed record SimPlaceStructure(
     long StructureId, int SolarSystemId, string Name, int TypeId, int GroupId, IReadOnlyList<double> Position, double Radius, long OwnerId, int CorporationId,
-    int AllianceId, SimStructureHealth Health, SimStructureStatus Status, long PlanetId = 0) : SimMessage;
+    int AllianceId, SimStructureHealth Health, SimStructureStatus Status, long PlanetId = 0,
+    IReadOnlyList<SimStructureModule>? Modules = null, long ClosestMoonId = 0) : SimMessage;
+
+/// <summary>Updates the client-visible fitted modules and target moon on an Upwell structure already in the scene.</summary>
+public sealed record SimSetStructureMoonMiningState(int SolarSystemId, long StructureId, long ClosestMoonId, IReadOnlyList<SimStructureModule> Modules) : SimMessage;
+
+/// <summary>A durable moon chunk in space and the drill's current client effect phase.</summary>
+public sealed record SimUpsertMoonChunk(
+    long ChunkId, int SolarSystemId, string Name, int TypeId, int GroupId, int CategoryId, long OwnerId, int GraphicId,
+    IReadOnlyList<double> Position, IReadOnlyList<double> Direction, double Radius,
+    long SourceStructureId, long ModuleId, int ModuleTypeId, long MoonId, string Phase, long PhaseStartedFileTime) : SimMessage;
+
+/// <summary>Takes a moon chunk out of space; effect 0 removes it quietly, effect 3 plays its fracture explosion.</summary>
+public sealed record SimRemoveMoonChunk(int SolarSystemId, long ChunkId, int Effect) : SimMessage;
 
 /// <summary>The simulation says a hit emptied a layer of a structure (<c>Depleted</c>: 0 none, 1 shield, 2 armor, 3 hull) or paused its repair
 /// (<c>OverThreshold</c>), to the host (simulation to host, protocol 60).</summary>

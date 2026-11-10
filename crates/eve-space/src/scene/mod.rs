@@ -18,6 +18,7 @@ mod directional;
 mod docking;
 mod heat;
 mod jump;
+mod moon_chunks;
 mod movement;
 mod scan_targets;
 mod session;

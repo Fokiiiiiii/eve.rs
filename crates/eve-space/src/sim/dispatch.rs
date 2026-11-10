@@ -833,6 +833,9 @@ impl Sim {
             | Message::PlaceWormhole(..)
             | Message::RemoveWormhole { .. }
             | Message::SetStructureState { .. }
+            | Message::SetStructureMoonMiningState { .. }
+            | Message::UpsertMoonChunk(..)
+            | Message::RemoveMoonChunk { .. }
             | Message::PlaceProbe(..)
             | Message::RemoveProbe { .. }
             | Message::PlaceDisruptor(..)
@@ -1821,6 +1824,36 @@ impl Sim {
             Message::SetStructureState { solar_system_id, structure_id, status } => {
                 match self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
                     Some(scene) => scene.set_structure_state(structure_id, status, now),
+                    None => Vec::new(),
+                }
+            }
+            Message::SetStructureMoonMiningState {
+                solar_system_id,
+                structure_id,
+                closest_moon_id,
+                modules,
+            } => match self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
+                Some(scene) => {
+                    scene.set_structure_moon_mining_state(structure_id, closest_moon_id, modules, now)
+                }
+                None => Vec::new(),
+            },
+            Message::UpsertMoonChunk(chunk) => {
+                let chunk = *chunk;
+                let system_id = chunk.solar_system_id;
+                let scene_key = SceneKey::solar_system(system_id);
+                if !self.scenes.contains_key(&scene_key) {
+                    let Ok(system) = self.universe.system(system_id) else { return Ok(Vec::new()) };
+                    self.scenes.insert(scene_key, self.universe.scene_of(system));
+                }
+                self.scenes
+                    .get_mut(&scene_key)
+                    .map(|scene| scene.upsert_moon_chunk(chunk, now))
+                    .unwrap_or_default()
+            }
+            Message::RemoveMoonChunk { solar_system_id, chunk_id, effect } => {
+                match self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
+                    Some(scene) => scene.remove_moon_chunk(chunk_id, effect, now),
                     None => Vec::new(),
                 }
             }

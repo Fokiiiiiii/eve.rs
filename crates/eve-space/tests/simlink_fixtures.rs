@@ -7,7 +7,7 @@ use eve_space::link::{
     AbyssalAttributeModifier, AbyssalBoundaryDamagePoint, AbyssalBoundaryProfile, AbyssalEnvironmentField,
     AbyssalEnvironmentProfile, AbyssalModifierOperation, AbyssalSceneObject, AbyssalSceneSpec, AbyssalTrace,
     AbyssalTraceStatus, ChargeOp, ContainerPlacement, DecodeError, DirectionalTarget, Enter, How,
-    LaunchDrone, Message, ScanTarget, SceneKey, Spawn, WreckPlacement,
+    LaunchDrone, Message, MoonChunkPlacement, ScanTarget, SceneKey, Spawn, StructureModule, WreckPlacement,
 };
 use eve_space::missiles::{Blast, Missile};
 use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote, Rules};
@@ -47,6 +47,19 @@ fn text(case: &Value, field: &str) -> String {
 
 fn wide(case: &Value, field: &str) -> i64 {
     text(case, field).parse().unwrap()
+}
+
+fn structure_modules(case: &Value) -> Vec<StructureModule> {
+    case["modules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|module| StructureModule {
+            item_id: module["itemId"].as_str().unwrap().parse().unwrap(),
+            type_id: module["typeId"].as_i64().unwrap() as i32,
+            flag_id: module["flagId"].as_i64().unwrap() as i32,
+        })
+        .collect()
 }
 
 fn scene_key(value: &Value) -> SceneKey {
@@ -1680,6 +1693,8 @@ fn message_of(case: &Value) -> Message {
                 repair_pause: std::array::from_fn(|i| case["repairPause"][i].as_f64().unwrap()),
             },
             status: status_of(&case["status"]),
+            modules: structure_modules(case),
+            closest_moon_id: wide(case, "closestMoonId"),
         })),
         "StructureDamaged" => Message::StructureDamaged {
             structure_id: wide(case, "structureId"),
@@ -1736,6 +1751,36 @@ fn message_of(case: &Value) -> Message {
             solar_system_id: number("solarSystemId") as i32,
             structure_id: wide(case, "structureId"),
             status: status_of(&case["status"]),
+        },
+        "SetStructureMoonMiningState" => Message::SetStructureMoonMiningState {
+            solar_system_id: number("solarSystemId") as i32,
+            structure_id: wide(case, "structureId"),
+            closest_moon_id: wide(case, "closestMoonId"),
+            modules: structure_modules(case),
+        },
+        "UpsertMoonChunk" => Message::UpsertMoonChunk(Box::new(MoonChunkPlacement {
+            chunk_id: wide(case, "chunkId"),
+            solar_system_id: number("solarSystemId") as i32,
+            name: text(case, "name"),
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            category_id: number("categoryId") as i32,
+            owner_id: wide(case, "ownerId"),
+            graphic_id: number("graphicId") as i32,
+            position: vector_of(case, "position"),
+            direction: vector_of(case, "direction"),
+            radius: case["radius"].as_f64().unwrap(),
+            source_structure_id: wide(case, "sourceStructureId"),
+            module_id: wide(case, "moduleId"),
+            module_type_id: number("moduleTypeId") as i32,
+            moon_id: wide(case, "moonId"),
+            phase: text(case, "phase"),
+            phase_started_filetime: wide(case, "phaseStartedFileTime"),
+        })),
+        "RemoveMoonChunk" => Message::RemoveMoonChunk {
+            solar_system_id: number("solarSystemId") as i32,
+            chunk_id: wide(case, "chunkId"),
+            effect: number("effect") as i32,
         },
         "DamageableEntityUpserted" => Message::DamageableEntityUpserted {
             solar_system_id: number("solarSystemId") as i32,

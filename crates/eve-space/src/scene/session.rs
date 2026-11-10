@@ -327,6 +327,7 @@ impl Scene {
         };
         // login visual priming adds ships only; structures and private scene objects still need their balls.
         added_actions.extend(payload::add_structures(first, &system, now));
+        added_actions.extend(payload::add_moon_chunks(first, &system));
         added_actions.extend(abyssal_scene_objects);
         added_actions.extend(trace_adds);
         let added = (!added_actions.is_empty()).then_some(added_actions);

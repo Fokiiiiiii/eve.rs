@@ -2898,6 +2898,8 @@ pub(crate) fn structure_placement(scene: &Scene, at: i64) -> crate::link::Struct
         corporation_id: 98_000_001,
         alliance_id: 0,
         planet_id: 0,
+        modules: Vec::new(),
+        closest_moon_id: 0,
         vitals: crate::health::Vitals {
             shield_capacity: 1_000.0,
             armor_hp: 500.0,
@@ -3042,6 +3044,136 @@ fn a_structure_placed_while_a_pilot_is_in_the_system_is_added_to_its_view_and_it
     assert!(
         scene.remove_structure(STRUCTURE, NOON + 3 * SECOND).is_empty(),
         "a structure already gone is left alone"
+    );
+}
+
+#[test]
+fn moon_chunk_ball_targets_the_refinery_module_and_replays_each_drill_phase() {
+    use crate::link::{MoonChunkPlacement, StructureModule};
+
+    const DRILL: i64 = 1_040_000_000_002;
+    const CHUNK: i64 = 1_040_000_000_003;
+    const MOON: i64 = 40_000_004;
+    let mut scene = scene();
+    scene.bind(SESSION, NOON);
+
+    let module = StructureModule { item_id: DRILL, type_id: 45_009, flag_id: 164 };
+    let placement = crate::link::StructurePlacement {
+        name: "Athanor".to_string(),
+        type_id: 35_835,
+        group_id: 1_406,
+        modules: vec![module.clone()],
+        closest_moon_id: MOON,
+        ..structure_placement(&scene, NOON)
+    };
+    scene.place_structure(placement, NOON);
+    let structure = scene.system.bodies[scene.structure_index(STRUCTURE).unwrap()].clone();
+    let fields = crate::slim::body_entries(&scene.system, &structure);
+    assert_eq!(
+        fields.iter().find(|(name, _)| *name == "modules").map(|(_, value)| value.clone()),
+        Some(crate::wire::list([crate::wire::tuple([
+            crate::wire::id(DRILL),
+            crate::wire::int(45_009),
+            crate::wire::int(164),
+        ])]))
+    );
+    assert_eq!(
+        fields.iter().find(|(name, _)| *name == "closestMoonID").map(|(_, value)| value.clone()),
+        Some(crate::wire::id(MOON))
+    );
+
+    let chunk = MoonChunkPlacement {
+        chunk_id: CHUNK,
+        solar_system_id: scene.solar_system_id(),
+        name: "Moon chunk".to_string(),
+        type_id: 46_030,
+        group_id: 1_940,
+        category_id: 25,
+        owner_id: 1,
+        graphic_id: 12_345,
+        position: [100.0, 200.0, 300.0],
+        direction: [0.0, 0.0, 1.0],
+        radius: 10_000.0,
+        source_structure_id: STRUCTURE,
+        module_id: DRILL,
+        module_type_id: 45_009,
+        moon_id: MOON,
+        phase: "tractor_phase".to_string(),
+        phase_started_filetime: NOON,
+    };
+    let added = scene.upsert_moon_chunk(chunk.clone(), NOON + SECOND);
+    assert_eq!(added.len(), 1);
+    assert_eq!(action_names(&added[0]), ["AddBalls2", "OnSpecialFX"]);
+    let Out::Notify { args, .. } = &added[0] else {
+        panic!("moon chunk update must be a destiny notification")
+    };
+    let Value::List(actions) = &args[0] else { panic!("destiny notification actions must be a list") };
+    let Value::Tuple(fx_action) = &actions[1] else { panic!("effect action must be a tuple") };
+    let Value::Tuple(fx_call) = &fx_action[1] else { panic!("effect call must be a tuple") };
+    assert_eq!(fx_call[0], crate::wire::word("OnSpecialFX"));
+    let Value::Tuple(fx_args) = &fx_call[1] else { panic!("OnSpecialFX arguments must be a tuple") };
+    assert_eq!(fx_args.len(), 14);
+    assert_eq!(fx_args[0], crate::wire::id(STRUCTURE));
+    assert_eq!(fx_args[1], crate::wire::id(DRILL));
+    assert_eq!(fx_args[2], crate::wire::int(45_009));
+    assert_eq!(fx_args[3], crate::wire::id(CHUNK));
+    assert_eq!(fx_args[5], crate::wire::text("effects.MultiEffect"));
+    let Value::Dict(graphic_info) = &fx_args[13] else { panic!("MultiEffect needs graphicInfo") };
+    let graphic_field = |name: &'static str| {
+        graphic_info.iter().find(|(key, _)| key == &crate::wire::word(name)).map(|(_, value)| value.clone())
+    };
+    assert_eq!(graphic_field("sequence"), Some(crate::wire::text("moon_mining")));
+    assert_eq!(graphic_field("phase"), Some(crate::wire::text("tractor_phase")));
+    assert_eq!(graphic_field("moonID"), Some(crate::wire::id(MOON)));
+    assert_eq!(graphic_field("effectStarted"), Some(crate::wire::filetime(NOON)));
+    assert_eq!(
+        graphic_field("triggers"),
+        Some(crate::wire::list(
+            ["moduleID", "moonID", "shipID", "targetID"].map(|name| crate::wire::text(name))
+        ))
+    );
+
+    assert!(
+        scene.upsert_moon_chunk(chunk.clone(), NOON + 2 * SECOND).is_empty(),
+        "replaying a committed phase is idempotent"
+    );
+    let mut stasis = chunk.clone();
+    stasis.position = [400.0, 500.0, 600.0];
+    stasis.phase = "stasis_phase".to_string();
+    stasis.phase_started_filetime = NOON + 5 * SECOND;
+    let moved = scene.upsert_moon_chunk(stasis.clone(), NOON + 3 * SECOND);
+    assert_eq!(action_names(&moved[0]), ["SetBallPosition", "OnSpecialFX"]);
+    let mut fracture = stasis.clone();
+    fracture.phase = "fracture_phase".to_string();
+    fracture.phase_started_filetime = NOON + 6 * SECOND;
+    let fired = scene.upsert_moon_chunk(fracture, NOON + 4 * SECOND);
+    assert_eq!(action_names(&fired[0]), ["OnSpecialFX"]);
+
+    let mut newcomer = spec();
+    newcomer.ship_id += 100;
+    newcomer.character_id += 100;
+    newcomer.owner_id += 100;
+    scene
+        .enter_in_space(SESSION + 1, newcomer, [20_000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON + 5 * SECOND)
+        .unwrap();
+    let bound = scene.bind(SESSION + 1, NOON + 6 * SECOND);
+    assert!(
+        bound.iter().any(|out| action_names(out).contains(&"OnSpecialFX".to_string())),
+        "a pilot binding after restart gets the active chunk effect"
+    );
+
+    let removed = scene.remove_moon_chunk(CHUNK, 3, NOON + 7 * SECOND);
+    assert_eq!(action_names(&removed[0]), ["TerminalPlayDestructionEffect", "RemoveBalls"]);
+    assert!(scene.system.bodies.iter().all(|body| body.id != CHUNK));
+    assert!(
+        scene.remove_moon_chunk(CHUNK, 3, NOON + 8 * SECOND).is_empty(),
+        "duplicate removal does not replay the explosion"
+    );
+    let mut invalid = chunk;
+    invalid.phase = "unrecognized_phase".to_string();
+    assert!(
+        scene.upsert_moon_chunk(invalid, NOON + 9 * SECOND).is_empty(),
+        "an unknown moon-mining phase is refused"
     );
 }
 

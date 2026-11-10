@@ -44,6 +44,9 @@ public sealed record HostOptions
     /// <summary>Persist account session start before the initial state is sent.</summary>
     public Func<ClientSession, CancellationToken, Task>? SessionOpenedAsync { get; init; }
 
+    /// <summary>Persist character session end before close handlers announce the character as offline.</summary>
+    public Func<ClientSession, Task>? SessionClosingAsync { get; init; }
+
     /// <summary>Persist account session end when its actor closes.</summary>
     public Func<ClientSession, Task>? SessionClosedAsync { get; init; }
 }
@@ -699,6 +702,17 @@ internal sealed class SessionActor
         }
         finally
         {
+            if (_options.SessionClosingAsync is { } closing)
+            {
+                try
+                {
+                    await closing(_session);
+                }
+                catch (Exception error)
+                {
+                    _options.Log?.Invoke($"session {_session.SessionId}: could not persist character logoff ({error.GetType().Name})");
+                }
+            }
             _session.Close();
             try
             {

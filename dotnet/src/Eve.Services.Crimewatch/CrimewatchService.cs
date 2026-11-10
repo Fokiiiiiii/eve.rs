@@ -96,7 +96,7 @@ public sealed partial class CrimewatchService(
 
     /// <summary>
     /// <c>GetClientStates()</c>: <c>((weapons, pvp, npc, criminal, disapproval), engagements, (criminals, suspects), safetyLevel)</c>. Each timer is <c>(state, expiry)</c>, idle with no
-    /// expiry while it does not run; the engagements are a dictionary of the other character to the FILETIME when it ends; the flagged are two sets of the character ids flagged in the
+    /// expiry while it does not run; engagements map the other character to the FILETIME when they end or <c>-1</c> while combat runs; the flagged are two sets of character IDs in the
     /// system the pilot is in.
     /// </summary>
     [Method("GetClientStates")]
@@ -105,7 +105,9 @@ public sealed partial class CrimewatchService(
         var now = nowUnixMs();
         var character = call.Session.CharacterId;
         var safety = character is { } id ? await store.SafetyOfAsync(id, call.Cancellation) : SafetyLevel.Full;
-        var timers = (character is { } own ? await store.StateOfAsync(own, call.Cancellation) : CombatState.Idle).TimersAt(now);
+        var timers = character is { } own
+            ? await runtime.ClientTimersOfAsync(own, call.Cancellation)
+            : CombatState.Idle.TimersAt(now);
         var system = call.Session.GetInt("solarsystemid") ?? call.Session.GetInt("solarsystemid2") ?? 0;
         var (criminals, suspects) = system > 0 ? await store.FlaggedInAsync(system, now, call.Cancellation) : ([], []);
         var engagements = character is { } pilot
@@ -114,7 +116,9 @@ public sealed partial class CrimewatchService(
         var engagementWire = new PyDict([.. engagements.OrderBy(entry => entry.Key).Select(entry =>
             new KeyValuePair<PyValue, PyValue>(
                 InventoryWire.Id(entry.Key),
-                new PyLong(Py.FileTimeFromUnixMs(entry.Value))))]);
+                new PyLong(entry.Value == CrimewatchRuntime.LimitedEngagementTimeoutOngoing
+                    ? CrimewatchRuntime.LimitedEngagementTimeoutOngoing
+                    : Py.FileTimeFromUnixMs(entry.Value))))]);
         static PyValue Timer(TimerView timer) => Py.Tuple(new PyInt(timer.State), CrimewatchRuntime.Expiry(timer));
         return Py.Tuple(
             Py.Tuple(Timer(timers.Weapons), Timer(timers.Pvp), Timer(timers.Npc), Timer(timers.Criminal), Timer(timers.Disapproval)),

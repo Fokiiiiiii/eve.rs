@@ -14,12 +14,18 @@ public class SecurityPenaltyTests
     [InlineData(0, 0, 0.5, false)]
     [InlineData(-5, 0, 1.0, false)]
     [InlineData(5, 3, 0.3, true)]
-    public void The_penalty_follows_the_formula_of_the_reference(double attacker, double target, double security, bool capsule)
+    public void The_penalty_follows_the_retail_formula(double attacker, double target, double security, bool capsule)
     {
         var next = SecurityPenalty.Next(attacker, target, security, capsule);
         var modification = (capsule ? -0.25 : -0.025) * security * (1 + (target - attacker) / 100);
-        Assert.Equal(Math.Round(Math.Clamp(attacker + (10 - attacker) * modification, -10, 10), 4, MidpointRounding.AwayFromZero), next);
+        Assert.Equal(Math.Round(Math.Clamp(attacker + (10 + attacker) * modification, -10, 10), 4, MidpointRounding.AwayFromZero), next);
         Assert.True(next < attacker);
+    }
+
+    [Fact]
+    public void Negative_status_loss_uses_the_remaining_distance_to_minus_ten()
+    {
+        Assert.Equal(-0.4699, SecurityPenalty.Next(-0.25, 0, 0.9, false));
     }
 
     [Fact]

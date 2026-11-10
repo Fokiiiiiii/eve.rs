@@ -2,8 +2,8 @@ namespace Eve.Crimewatch;
 
 /// <summary>
 /// What a crime costs the attacker in security status. Shooting a ship
-/// costs 0.025 of the way to 10, a capsule ten times that, each scaled by how safe the system is and by how far the target's standing is from the attacker's:
-/// <c>modification = base × security × (1 + (target − attacker) / 100)</c>, <c>next = attacker + (10 − attacker) × modification</c>, kept between −10 and 10 and rounded to four places.
+/// changes 0.025 of the remaining distance to −10, a capsule ten times that, each scaled by how safe the system is and by how far the target's standing is from the attacker's:
+/// <c>modification = base × security × (1 + (target − attacker) / 100)</c>, <c>next = attacker + (10 + attacker) × modification</c>, kept between −10 and 10 and rounded to four places.
 /// Nothing is lost in null security, and a pilot that has lost for a target in the last minute loses nothing more for it.
 /// </summary>
 public static class SecurityPenalty
@@ -29,6 +29,6 @@ public static class SecurityPenalty
     {
         var previous = Clamp(attacker);
         var modification = (targetIsCapsule ? CapsuleModifier : ShipModifier) * PseudoSecurity(systemSecurity) * (1 + (Clamp(target) - previous) / 100);
-        return Clamp(previous + (Max - previous) * modification);
+        return Clamp(previous + (Max + previous) * modification);
     }
 }

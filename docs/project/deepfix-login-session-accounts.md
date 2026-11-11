@@ -4,49 +4,38 @@ Scope: login handshake, password and SSO credentials, character selection, sessi
 handoff, reconnect and duplicate login, account state (alpha/omega), bans and kicks,
 shutdown and restart of the Host and sim link.
 
-Status: review only. No code change. All three handshake candidates were resolved against the
-V24.01 client and dropped (the client does not depend on the difference).
+Status: review only. No code change. Handshake candidates (maxSessionTime, role, SSO token)
+were dropped earlier because the V24.01 client does not depend on them. The reason-code
+table below found no proven mismatch, so no fix and no new test.
 
 ## Compared sources
 
-- eve.rs: `crates/eve-net/src/handshake.rs`, `hostlink.rs`, `profile.rs`.
-- EveJS v0.12.9: `server/src/network/tcp/handshake.js`, `server/src/network/clientSession.js`.
-- V24.01 client, `Fokiiiiiii/eve-logic`, read through the local codebase-memory index
-  (`home-user-eve-logic`), not whole-file reads.
+- eve.rs: `dotnet/src/Eve.Identity/Accounts.cs` (`LoginRefused`, `Decide`),
+  `dotnet/src/Eve.Host/HostServer.cs` (`FrontConnection.AuthenticateAsync`),
+  `crates/eve-net/src/handshake.rs` (`transport_closed`), `crates/eve-net/tests/front.rs`
+  and `handshake.rs` (existing refused-login tests).
+- V24.01 client, `Fokiiiiiii/eve-logic`, read through the local codebase index
+  (`home-user-eve-logic`).
 
-## Matches (checked, no divergence seen)
+## Reason-code table
 
-- Handshake step order, `QC`/`VK`, `placebo`, `OK CC`, server challenge, handshake result, ack.
-- `challenge_responsehash` `"55087"`, client_id `1000000 * user_id + node_id` (node `0xFFAA`),
-  session id `now_ms * 15 + client_id % 15`, rejected logins get `GPSTransportClosed`.
+| Case | eve.rs sends | Client expects / handles | Result |
+|---|---|---|---|
+| Wrong password | `LoginAuthFailed` (`Accounts.cs` `LoginRefused.BadCredentials`) | `loginII.py` `Login._Connect` (lines 416-498): on `UserError` with msg starting `LoginAuthFailed` it focuses the password field | match |
+| Banned account | `ACCOUNTBANNED` (`Accounts.cs` `LoginRefused.Banned`) | `ExceptionMappingGPCS.py` MESSAGES (line 11-48) maps `ACCOUNTBANNED` to a localized text; `machoNet.py` `OnPeopleWhoShouldntBeLoggedInNotification` (2523-2539) also closes with `ACCOUNTBANNED` | match |
+| Host error during login | `Unavailable` (`Accounts.cs` `LoginRefused.Unavailable`) | not in MESSAGES; `ConnectToServer` (machoNet.py 1555-1714) shows the raw reason text | cosmetic gap, not a code the client expects |
+| Duplicate login | nothing emitted by eve.rs | client has no dedicated duplicate code; the server notification path uses status 5/12/13 with `ACCOUNTBANNED` | no emitter in eve.rs, not a mismatch in a sent code |
+| Server shutdown | no shutdown reason found in eve.rs search | client expects `ACL_SHUTTINGDOWN` (in MESSAGES) | not verified; eve.rs emitter not found |
+| Handshake timeouts, version mismatch | `HANDSHAKE_*` strings not emitted by eve.rs (they are not needed for accepted clients) | in MESSAGES | not exercised |
 
-## Client evidence and candidate outcomes
-
-- Client login reader of the ack: `carbon/common/script/net/machoNet.py` `ConnectToServer`
-  (lines 1555-1714). The only field it reads from `session_init` is `userid`
-  (`response['session_init']['userid']`, around line 1610). `MachoNetService.Authenticate`
-  (line 3440-3453, server side) builds `session_init` from the auth service `loginInfo`.
-- `maxSessionTime`: the only client-side references are the timer
-  `__ClientSessionMaxTimePoll` (machoNet.py 2456-2474, reads an attribute `s.maxSessionTime`
-  of a session object) and `GameUI.__SessionTimeoutTimer`
-  (`eve/client/script/parklife/gameui.py` 294-305). Nothing reads the dict key
-  `session_init['maxSessionTime']`. The client does not need null and tolerates a missing key.
-  DROPPED.
-- `role`: `session_init['role']` is never read by the client (only `userid` is). The role is
-  applied server-side and through session attributes (`machoNetTransport.py`
-  `_AssociateWithSession`, 681-740, which only sets `userid` from the packet). DROPPED.
-- SSO detection: `ConnectionService.Connect` (`carbon/client/script/remote/connectionService.py`
-  66-79) calls `ConnectToServer(address, userid, password, ct)` without an SSO token, so
-  `ssoToken` keeps its default `None`, which `Authenticate` sends as `user_sso_token: None`.
-  eve.rs maps `Value::None` to absent, so a normal password login stays `Password`
-  (`handshake.rs`, `credential_kind`). An empty string is never sent by this path. DROPPED.
-  Side note (not a server divergence): `Connect` passes `ct` into the `sockettype` position of
-  `ConnectToServer`, a client quirk that does not change the server handshake.
+Uncertainty: whether `LoginAuthFailed` is also in the client `cfg.messages` table (which decides
+between the `LoginAuthFailed` path and the generic `OnConnectionFailed` path in
+`ConnectToServer`) was not verifiable from the repo. EveJS sends the same string, so no change.
 
 ## Not checked (remaining)
 
-- `crates/eve-net/src/host.rs`, `server.rs`, `client.rs`, `frame.rs`, and the eve-net tests.
-- The `dotnet/` Host: accounts, alpha/omega, bans, duplicate login, character selection and
-  creation, session change handoff.
-- Sim link restart behaviour, and EveJS account store and role profiles.
+- `dotnet/src/Eve.Host` shutdown and kick paths (grep found no `ACL_SHUTTINGDOWN` emitter).
+- `crates/eve-net/src/host.rs`, `server.rs`, `client.rs`, `frame.rs`.
+- The dotnet Host for alpha/omega, duplicate login state, character selection and creation.
+- Sim link restart behaviour.
 - CI: see the run list for this branch; this record does not claim it is green.

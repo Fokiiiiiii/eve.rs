@@ -734,19 +734,27 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
         if (member is null || (member.Role == Leader && !HasBossJob(member.Job))) return null;
 
         long? successorId = null;
+        var closesFleet = false;
         if (HasBossJob(member.Job))
         {
             await using var successor = Command(connection, transaction,
                 $"SELECT character_id FROM {_schema}.fleet_members WHERE fleet_id = $1 AND character_id <> $2 ORDER BY character_id LIMIT 1",
                 fleetId, characterId);
             var value = await successor.ExecuteScalarAsync(cancellationToken);
-            if (value is null or DBNull) return null;
-            successorId = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+            if (value is null or DBNull) closesFleet = true;
+            else successorId = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
         }
 
         await using (var command = Command(connection, transaction,
             $"DELETE FROM {_schema}.fleet_members WHERE fleet_id = $1 AND character_id = $2", fleetId, characterId))
             await command.ExecuteNonQueryAsync(cancellationToken);
+
+        if (closesFleet)
+        {
+            await using var close = Command(connection, transaction,
+                $"DELETE FROM {_schema}.fleets WHERE fleet_id = $1", fleetId);
+            if (await close.ExecuteNonQueryAsync(cancellationToken) != 1) return null;
+        }
 
         if (successorId is { } nextBoss)
         {

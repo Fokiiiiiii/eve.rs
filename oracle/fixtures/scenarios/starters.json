@@ -1,8 +1,8 @@
 {
  "reference": "EVE.js",
- "referenceCommit": "b637d2a55469ee23d24411ed5a7646391de314d9",
+ "referenceCommit": "evejs-261108.1",
  "recordedAt": "2026-09-29T03:48:04Z",
- "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py",
+ "note": "School corporationID fields refreshed from EveJS 261108.1 characterCreationSchools data; all other values remain from the 2026-09-29 recording.",
  "starters": [
   {
    "bloodlineID": 1,
@@ -133,7 +133,7 @@
           ],
           [
            "corporationID",
-           1000006
+           1000045
           ],
           [
            "allianceID",
@@ -383,7 +383,7 @@
           ],
           [
            "corporationID",
-           1000006
+           1000045
           ],
           [
            "allianceID",
@@ -633,7 +633,7 @@
           ],
           [
            "corporationID",
-           1000044
+           1000171
           ],
           [
            "allianceID",
@@ -883,7 +883,7 @@
           ],
           [
            "corporationID",
-           1000044
+           1000171
           ],
           [
            "allianceID",
@@ -1133,7 +1133,7 @@
           ],
           [
            "corporationID",
-           1000166
+           1000165
           ],
           [
            "allianceID",
@@ -1383,7 +1383,7 @@
           ],
           [
            "corporationID",
-           1000166
+           1000165
           ],
           [
            "allianceID",
@@ -1633,7 +1633,7 @@
           ],
           [
            "corporationID",
-           1000094
+           1000115
           ],
           [
            "allianceID",
@@ -1883,7 +1883,7 @@
           ],
           [
            "corporationID",
-           1000094
+           1000115
           ],
           [
            "allianceID",
@@ -2133,7 +2133,7 @@
           ],
           [
            "corporationID",
-           1000006
+           1000045
           ],
           [
            "allianceID",
@@ -2383,7 +2383,7 @@
           ],
           [
            "corporationID",
-           1000094
+           1000115
           ],
           [
            "allianceID",
@@ -2633,7 +2633,7 @@
           ],
           [
            "corporationID",
-           1000166
+           1000165
           ],
           [
            "allianceID",
@@ -2883,7 +2883,7 @@
           ],
           [
            "corporationID",
-           1000044
+           1000171
           ],
           [
            "allianceID",

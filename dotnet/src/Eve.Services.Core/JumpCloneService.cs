@@ -479,6 +479,7 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
             if (target.LocationId != current)
                 Invalidate(call.Session, target.LocationId, characterId);
             await TellImplantsChangedAsync(call.Session, characterId, shipJump?.LearningUpdate);
+            call.Session.SendNotification("OnJumpCloneTransitionCompleted", "clientID");
             return PyNone.Instance;
         }
 
@@ -507,6 +508,7 @@ public sealed partial class JumpCloneService(Func<long> nowUnixMs, IJumpCloneSto
         if (target.LocationId != current)
             Invalidate(call.Session, target.LocationId, characterId);
         await TellImplantsChangedAsync(call.Session, characterId, result.LearningUpdate);
+        call.Session.SendNotification("OnJumpCloneTransitionCompleted", "clientID");
         return PyNone.Instance;
     }
 

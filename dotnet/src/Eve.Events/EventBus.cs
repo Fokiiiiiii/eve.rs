@@ -408,9 +408,20 @@ public sealed class EventBus
             if (next is null)
             {
                 // nothing for this subscriber: move the cursor over what it does not care about, so that it is not looked at again
-                await Sql.ExecuteAsync(connection, transaction,
-                    Q("UPDATE {schema}.subscribers SET cursor_id = $2, updated_ms = $3 WHERE name = $1 AND cursor_id < $2"), cancellationToken, subscription.Name, horizon, Now);
-                await transaction.CommitAsync(cancellationToken);
+                try
+                {
+                    await Sql.ExecuteAsync(connection, transaction,
+                        Q("UPDATE {schema}.subscribers SET cursor_id = $2, updated_ms = $3 WHERE name = $1 AND cursor_id < $2"), cancellationToken, subscription.Name, horizon, Now);
+                    // Once the update completed, committing this housekeeping cursor is safe and keeps a stop
+                    // cancellation from landing between the statement and COMMIT.
+                    await transaction.CommitAsync(CancellationToken.None);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    // The update itself may still be in flight when the pump is stopped.
+                    await transaction.RollbackAsync(CancellationToken.None);
+                    throw;
+                }
                 return (delivered, null);
             }
 

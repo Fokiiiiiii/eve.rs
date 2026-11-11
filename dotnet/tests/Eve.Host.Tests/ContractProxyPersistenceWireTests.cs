@@ -59,13 +59,34 @@ public partial class HostServerTests
             {
                 await wallets.EnsureAsync(connection, transaction, bidderId);
                 await wallets.EnsureAsync(connection, transaction, 100);
+                await using var bidderBalance = new NpgsqlCommand($"""
+                    UPDATE {walletSchema}.balances SET isk = 1000000
+                    WHERE owner_id = $1 AND account_key = 1000
+                    """, connection, transaction);
+                bidderBalance.Parameters.AddWithValue(bidderId);
+                await bidderBalance.ExecuteNonQueryAsync();
+                await using var openingBalance = new NpgsqlCommand($"""
+                    UPDATE {walletSchema}.balances SET isk = 110000
+                    WHERE owner_id = 100 AND account_key = 1000
+                    """, connection, transaction);
+                await openingBalance.ExecuteNonQueryAsync();
+                await wallets.AdjustAsync(connection, transaction, 100, -10_000m, 0, 72,
+                    "Contract auction broker fee", nowMs, $"contract:{contractId}:create:broker",
+                    CancellationToken.None, referenceId: contractId);
+                await wallets.AdjustAsync(connection, transaction, 100, -100_000m, 0, 74,
+                    "Contract auction deposit", nowMs, $"contract:{contractId}:create:deposit",
+                    CancellationToken.None, referenceId: contractId);
+                await wallets.AdjustAsync(connection, transaction, bidderId, -1_000_000m, 100, 63,
+                    "Contract auction bid escrowed", nowMs, $"contract:{contractId}:bid:seed",
+                    CancellationToken.None, referenceId: contractId);
                 offeredItemId = await itemStore.CreateAsync(connection, transaction,
                     new NewItem(34, 1, 9_300_000_000 + contractId, 0, Quantity: 2), CancellationToken.None);
                 await using var seed = new NpgsqlCommand($"""
                     INSERT INTO {contractsSchema}.contract_records
                         (contract_id, issuer_id, issuer_corporation_id, contract_type, status,
-                         start_station_id, date_expired_filetime, created_at_filetime, title)
-                    VALUES ($1, 100, 84, 2, 0, 3001, $2, $3, 'Auction')
+                         start_station_id, date_expired_filetime, created_at_filetime, title,
+                         price_isk, creation_fee_isk, deposit_isk, auction_accounting_level)
+                    VALUES ($1, 100, 84, 2, 0, 3001, $2, $3, 'Auction', 1000000, 10000, 100000, 0)
                     """, connection, transaction);
                 seed.Parameters.AddWithValue(contractId);
                 seed.Parameters.AddWithValue(nowFileTime - 100);
@@ -74,7 +95,7 @@ public partial class HostServerTests
                 await using var bid = new NpgsqlCommand($"""
                     INSERT INTO {contractsSchema}.contract_bids
                         (contract_id, bidder_id, amount, created_at_filetime, bidder_is_corporation)
-                    VALUES ($1, $2, 500, $3, false)
+                    VALUES ($1, $2, 1000000, $3, false)
                     """, connection, transaction);
                 bid.Parameters.AddWithValue(contractId);
                 bid.Parameters.AddWithValue(bidderId);
@@ -143,27 +164,33 @@ public partial class HostServerTests
                 Assert.Equal((short)4, reader.GetInt16(0));
                 Assert.True(reader.GetInt64(1) > 0);
             }
-            Assert.Equal(0m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
-            await using (var settledTax = source.CreateCommand($"""
-                SELECT sales_tax_isk FROM {contractsSchema}.contract_records WHERE contract_id = $1
-                """))
-            {
-                settledTax.Parameters.AddWithValue(contractId);
-                Assert.Equal(500m, (decimal)(await settledTax.ExecuteScalarAsync())!);
-            }
-            var saleJournal = new List<(int ReferenceType, decimal Amount)>();
-            await using (var entries = source.CreateCommand($"""
+            Assert.Equal(1_090_000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            await using (var sellerJournal = source.CreateCommand($"""
                 SELECT ref_type_id, amount FROM {walletSchema}.journal
-                WHERE owner_id = $1 AND reference_id = $2 AND ref_type_id IN (67, 73)
+                WHERE owner_id = 100 AND reference_id = $1 AND ref_type_id IN (67, 73, 82)
                 ORDER BY id
                 """))
             {
-                entries.Parameters.AddWithValue(100L);
-                entries.Parameters.AddWithValue(contractId);
-                await using var reader = await entries.ExecuteReaderAsync();
-                while (await reader.ReadAsync()) saleJournal.Add((reader.GetInt32(0), reader.GetDecimal(1)));
+                sellerJournal.Parameters.AddWithValue(contractId);
+                var entries = new List<(int RefType, decimal Amount)>();
+                await using var reader = await sellerJournal.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                    entries.Add((reader.GetInt32(0), reader.GetDecimal(1)));
+                Assert.Equal(new[] { (67, 1_000_000m), (73, -10_000m), (82, 100_000m) }, entries);
             }
-            Assert.Equal(new[] { (67, 500m), (73, -500m) }, saleJournal);
+            Assert.Equal(0m, await wallets.AccountBalanceAsync(new WalletAccount(bidderId), CancellationToken.None));
+            await using (var bidderJournal = source.CreateCommand($"""
+                SELECT ref_type_id, amount FROM {walletSchema}.journal
+                WHERE owner_id = $1 AND reference_id = $2 AND ref_type_id = 63
+                """))
+            {
+                bidderJournal.Parameters.AddWithValue(bidderId);
+                bidderJournal.Parameters.AddWithValue(contractId);
+                await using var reader = await bidderJournal.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal((63, -1_000_000m), (reader.GetInt32(0), reader.GetDecimal(1)));
+                Assert.False(await reader.ReadAsync());
+            }
             await using var notice = source.CreateCommand(
                 $"SELECT payload->>'name', payload->>'characterId' FROM {eventsSchema}.outbox WHERE topic=$1 ORDER BY id");
             notice.Parameters.AddWithValue(ContractNotifications.Topic);

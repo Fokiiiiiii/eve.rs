@@ -197,8 +197,28 @@ public sealed class WalletAuditHostRpcTests
             var entryTypes = Assert.IsType<PyList>(Assert.IsType<PySubStream>(cachedParts[1]).Decoded);
             var entryType = Assert.Single(entryTypes.Items,
                 row => Field(row, "entryTypeID") is PyInt { Value: LpStorePurchases.PaymentToLpStoreRefType });
-            Assert.Equal(new PyStr("PaymentToLPStore"), Field(entryType, "entryTypeName"));
+            Assert.Equal(new PyStr("LP Store"), Field(entryType, "entryTypeName"));
             Assert.Equal(new PyInt(59_818), Field(entryType, "entryTypeNameID"));
+            Assert.Equal(new PyInt(234_618), Field(entryType, "entryJournalMessageID"));
+            Assert.Equal(entryTypes.Items.Count, entryTypes.Items
+                .Select(row => Assert.IsType<PyInt>(Field(row, "entryTypeID")).Value)
+                .Distinct().Count());
+            foreach (var expected in new (int Id, int NameMessageId, int? JournalMessageId)[]
+            {
+                (63, 59_855, 234_594),
+                (67, 59_859, 234_598),
+                (73, 59_865, 234_604),
+                (82, 59_874, 234_615),
+                (92, 59_884, 234_554),
+            })
+            {
+                var row = Assert.Single(entryTypes.Items,
+                    candidate => Field(candidate, "entryTypeID") is PyInt { Value: var id } && id == expected.Id);
+                Assert.Equal(new PyInt(expected.NameMessageId), Field(row, "entryTypeNameID"));
+                Assert.Equal(expected.JournalMessageId is { } journalMessageId
+                    ? new PyInt(journalMessageId)
+                    : PyNone.Instance, Field(row, "entryJournalMessageID"));
+            }
         }
         finally
         {

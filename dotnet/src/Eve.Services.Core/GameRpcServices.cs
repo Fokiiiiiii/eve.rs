@@ -224,7 +224,7 @@ public sealed partial class ContractProxyService(
             Reward: info.Reward,
             BrokerFee: fees.BrokerFee,
             Deposit: fees.Deposit,
-            SalesTax: info.ContractType == 2 ? 0m : fees.SalesTax,
+            SalesTax: info.ContractType is 2 or 3 ? 0m : fees.SalesTax,
             WalletAccountKey: info.ForCorp ? CorporationWalletBase + (info.StartStationDivision - CorporationDivisionFirstFlag) : PersonalWalletKey,
             Title: info.Title,
             Description: info.Description,

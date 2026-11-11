@@ -4525,6 +4525,20 @@ public class SpaceServiceTests
         }
     }
 
+    [PgFact]
+    public async Task Fleet_lone_boss_leaving_disbands_the_fleet()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var store = rig.FleetStore;
+        var bossId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var fleetId = await store.CreateAsync(bossId);
+
+        Assert.NotNull(await store.LeaveAsync(fleetId, bossId));
+
+        Assert.Null(await store.SnapshotAsync(fleetId));
+        Assert.Null(await store.FleetIdForCharacterAsync(bossId));
+    }
+
     [Fact]
     public void Fleet_added_bound_manager_and_proxy_rpcs_are_registered_for_dispatch()
     {

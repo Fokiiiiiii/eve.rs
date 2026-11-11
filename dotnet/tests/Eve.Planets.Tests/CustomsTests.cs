@@ -4,22 +4,46 @@ namespace Eve.Planets.Tests;
 
 public class PlanetSurveyTests
 {
-    private static readonly int[] Raw = [2267, 2268, 2270, 2272, 2286, 2287, 2288, 2305, 2306, 2307, 2308, 2309, 2310, 2311];
-
     private sealed class Field(double value) : IResourceField
     {
         public double ValueAt(long planetId, int resourceTypeId, double theta, double phi) => value;
     }
 
     [Fact]
-    public void A_planet_carries_four_distinct_raw_resources_the_same_way_each_time()
+    public void A_barren_planet_carries_exactly_the_resources_in_the_client_distribution()
     {
-        var first = PlanetSurvey.ResourcesOf(40486618, Raw);
-        Assert.Equal(PlanetSurvey.ResourcesPerPlanet, first.Count);
-        Assert.Equal(first.Distinct().Count(), first.Count);
-        Assert.All(first, type => Assert.Contains(type, Raw));
-        Assert.Equal(first, PlanetSurvey.ResourcesOf(40486618, Raw));
-        Assert.Empty(PlanetSurvey.ResourcesOf(40486618, []));
+        Assert.Equal(new[] { 2073, 2267, 2268, 2270, 2288 }, PlanetSurvey.ResourcesOf(2016));
+    }
+
+    [Fact]
+    public void Every_native_planet_type_uses_only_its_positive_client_resource_entries()
+    {
+        var expected = new Dictionary<int, int[]>
+        {
+            [11] = [2073, 2268, 2287, 2288, 2305],
+            [12] = [2073, 2268, 2272, 2286, 2310],
+            [13] = [2267, 2268, 2309, 2310, 2311],
+            [2014] = [2073, 2268, 2286, 2287, 2288],
+            [2015] = [2267, 2272, 2306, 2307, 2308],
+            [2016] = [2073, 2267, 2268, 2270, 2288],
+            [2017] = [2267, 2268, 2308, 2309, 2310],
+            [2063] = [2267, 2270, 2272, 2306, 2308],
+        };
+
+        foreach (var (planetTypeId, resourceTypeIds) in expected)
+            Assert.Equal(resourceTypeIds, PlanetSurvey.ResourcesOf(planetTypeId).Order().ToArray());
+    }
+
+    [Fact]
+    public void A_planet_type_without_a_client_distribution_does_not_receive_invented_resources()
+    {
+        Assert.Empty(PlanetSurvey.ResourcesOf(30889));
+    }
+
+    [Fact]
+    public void An_unmapped_planet_type_uses_the_evejs_compatibility_distribution()
+    {
+        Assert.Equal(new[] { 2073, 2267, 2268, 2270, 2288 }, PlanetSurvey.ResourcesOf(73911));
     }
 
     [Fact]

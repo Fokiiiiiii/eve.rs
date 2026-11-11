@@ -36,25 +36,17 @@ public interface IResourceField
 }
 
 /// <summary>
-/// The survey the server gives a planet (the client's GetPlanetResourceInfo): which resources the planet carries and how much of each, on the
-/// client's display scale. Project rule (PI_DESIGN.md D9): CCP's resource set of a planet is not in the snapshot, so each planet carries
-/// <see cref="ResourcesPerPlanet"/> of the raw resources, chosen by its id; the amounts are the field's, so the survey and the extractor
-/// yields read the same numbers.
+/// The survey the server gives a planet (the client's GetPlanetResourceInfo): resources come from the client-derived planet type distribution;
+/// the displayed qualities come from the deterministic resource field. CCP's native resource harmonic is not in the snapshot (PI_DESIGN.md D1),
+/// so those qualities remain an approximation.
 /// </summary>
 public static class PlanetSurvey
 {
-    public const int ResourcesPerPlanet = 4;
     private const int Rows = 16;
     private const int Columns = 32;
 
-    /// <summary>The raw resources the planet carries: a run of the sorted raw types, starting where the planet's id puts it.</summary>
-    public static IReadOnlyList<int> ResourcesOf(long planetId, IReadOnlyList<int> rawTypes)
-    {
-        if (rawTypes.Count == 0) return [];
-        var sorted = rawTypes.OrderBy(type => type).ToArray();
-        var start = (int)((ulong)planetId * 0x9E3779B97F4A7C15UL >> 33) % sorted.Length;
-        return [.. Enumerable.Range(0, Math.Min(ResourcesPerPlanet, sorted.Length)).Select(i => sorted[(start + i) % sorted.Length])];
-    }
+    /// <summary>The raw resources carried by this planet type, as exposed by the V24.01 client.</summary>
+    public static IReadOnlyList<int> ResourcesOf(int planetTypeId) => PlanetResourceTypes.ForPlanetType(planetTypeId);
 
     /// <summary>
     /// The quality the client shows for a resource: the field's largest value on a sample grid over the sphere, scaled by 255 / 2 (the client's

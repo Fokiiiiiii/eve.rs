@@ -187,6 +187,7 @@ public sealed partial class Colony
     public void CreateLink(long end1, long end2, int typeId, int level)
     {
         (end1, end2) = Ordered(end1, end2);
+        level = Math.Max(0, level);
         if (!Catalog.IsLink(typeId)) throw new PlanetRefusal("InvalidLinkType");
         if (CommandCenter is null) throw new PlanetRefusal("CannotManagePlanetWithoutCommandCenter");
         if (Links.ContainsKey((end1, end2))) throw new PlanetRefusal("LinkAlreadyExists");
@@ -214,6 +215,7 @@ public sealed partial class Colony
     {
         (end1, end2) = Ordered(end1, end2);
         if (!Links.TryGetValue((end1, end2), out var link)) throw new PlanetRefusal("PinDoesNotExist");
+        level = Math.Max(0, level);
         if (level > PlanetRules.LinkMaxLevel) throw new PlanetRefusal("CannotUpgradeLinkAlreadyMaxed");
         if (level > link.Level)
         {

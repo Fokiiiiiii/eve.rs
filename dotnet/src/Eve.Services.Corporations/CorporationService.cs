@@ -16,7 +16,12 @@ public sealed partial class CorporationService(
     [Method("GetEmploymentRecord")]
     public async ValueTask<PyValue> GetEmploymentRecord(ServiceCall call)
     {
-        var id = call.Arg(0) is PyInt n && n.Value > 0 ? n.Value : call.Session.CharacterId ?? 0;
+        var id = call.Arg(0) switch
+        {
+            PyInt n when n.Value > 0 => n.Value,
+            PyLong n when n.Value > 0 => n.Value,
+            _ => call.Session.CharacterId ?? 0,
+        };
         var history = readEmploymentHistory is { } read
             ? await read(id, call.Cancellation)
             : await store.EmploymentAsync(id, call.Cancellation);

@@ -3038,6 +3038,23 @@ fn a_tractor_locked_on_a_wreck_out_of_its_reach_is_refused_with_the_range() {
 }
 
 #[test]
+fn a_tractor_measures_its_reach_from_the_hulls_of_the_ship_and_the_wreck() {
+    let (mut scene, t) = crowd();
+    scene.pilots.get_mut(&A).unwrap().ship.spec.radius = 6_000.0;
+    let wreck = tractor_wreck(&scene, WRECK);
+    scene.place_wreck(wreck, t);
+    lock_for_tractor(&mut scene, WRECK, t);
+    // the centres are 8.02 km apart; less the 6 km ship and the 20 m wreck, the hulls are 2 km apart
+    let ship = scene.pilots[&A].ship.position;
+    scene.wrecks.get_mut(&WRECK).unwrap().position =
+        eve_destiny::Vec3::new(ship.x + 6_000.0 + 20.0 + 2_000.0, ship.y, ship.z);
+    let apart = scene.surface_distance_to_wreck(A, WRECK).expect("the wreck is in the scene");
+    assert!((apart - 2_000.0).abs() < 1e-6, "{apart}");
+    assert!(scene.tractor_target_ok(A, WRECK, 2_000.0));
+    assert!(!scene.tractor_target_ok(A, WRECK, 1_998.0));
+}
+
+#[test]
 fn a_tractor_pulls_its_locked_wreck_to_the_hold_distance_and_lets_go_when_stopped() {
     let (mut scene, t) = crowd();
     let wreck = tractor_wreck(&scene, WRECK);

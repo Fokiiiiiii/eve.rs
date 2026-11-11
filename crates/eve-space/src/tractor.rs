@@ -20,15 +20,17 @@ const PULLED_INERTIA: f64 = 1.0;
 pub(crate) const REACH_GRACE_METERS: f64 = 1.0;
 
 impl Scene {
-    /// The distance from the pilot's ship to the surface of a wreck or a can, or `None` when the pilot has no ship or the wreck is not in the scene.
+    /// The hull-to-hull distance from the pilot's ship to a wreck or a can (the centre distance less both radii, as the client's `_GetSurfaceDistance`),
+    /// or `None` when the pilot has no ship or the wreck is not in the scene.
     pub(crate) fn surface_distance_to_wreck(&self, session: SessionId, wreck_id: i64) -> Option<f64> {
         let wreck = self.wrecks.get(&wreck_id)?;
-        let ship = self.pilots.get(&session)?.ship.position;
+        let pilot = self.pilots.get(&session)?;
+        let ship = pilot.ship.position;
         let centre = ((ship.x - wreck.position.x).powi(2)
             + (ship.y - wreck.position.y).powi(2)
             + (ship.z - wreck.position.z).powi(2))
         .sqrt();
-        Some((centre - wreck.radius.max(0.0)).max(0.0))
+        Some((centre - pilot.ship.spec.radius.max(0.0) - wreck.radius.max(0.0)).max(0.0))
     }
 
     /// Whether a beam of `session` still has its target: a wreck or a can its pilot holds the lock on, within the module's `range` (and its grace).

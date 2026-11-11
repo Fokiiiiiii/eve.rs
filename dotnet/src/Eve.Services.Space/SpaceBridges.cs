@@ -262,7 +262,11 @@ public sealed class SpaceBridges(
             throw Notify("The bridge ship does not have enough jump portal fuel.");
         try
         {
-            return await space.BridgeJumpAsync(session, shipId, bridge.BridgerShipId, bridge.FieldId, solarSystemId, boundObjectId, cancellationToken);
+            var passage = await space.BridgeJumpAsync(session, shipId, bridge.BridgerShipId, bridge.FieldId, solarSystemId, boundObjectId, cancellationToken);
+            // the passenger's client replaces its cached jump timers with the fatigue just written, as a clone jump tells its pilot
+            session.SendNotification("OnJumpTimersUpdated", "clientID",
+                TimerFileTime(next.CooldownUntilMs, now), TimerFileTime(next.FatigueUntilMs, now), new PyLong(Py.FileTimeFromUnixMs(now)));
+            return passage;
         }
         catch
         {
@@ -277,6 +281,10 @@ public sealed class SpaceBridges(
             throw;
         }
     }
+
+    /// <summary>A jump timer as the client reads it: the FILETIME it ends at, or none once it has run out.</summary>
+    private static PyValue TimerFileTime(long untilMs, long nowMs) =>
+        untilMs > nowMs ? new PyLong(Py.FileTimeFromUnixMs(untilMs)) : PyNone.Instance;
 
     /// <summary>The bridges whose time is up are closed: their fleet is told (OnBridgeModeChange, not active). Run by the scheduler.</summary>
     public async Task SweepAsync()

@@ -352,6 +352,13 @@ public class CynoJumpHostTests
 
         var state = await new PgJumpFatigueStore(rig.Source, rig.SpaceSchema).GetAsync(passengerCharacter.CharacterId);
         Assert.Equal((rig.Now + 20 * Minute, rig.Now + 2 * Minute), (state.FatigueUntilMs, state.CooldownUntilMs));
+        // the passenger's client is told its jump timers as the GetTimers tuple: the activation, the fatigue, and when they were written (FILETIMEs)
+        var timers = Assert.Single(Events.Of(passengerSession), timer => timer.Name == "OnJumpTimersUpdated");
+        Assert.Equal("clientID", timers.IdType);
+        Assert.Equal(new PyValue[]
+        {
+            new PyLong(Py.FileTimeFromUnixMs(rig.Now + 2 * Minute)), new PyLong(Py.FileTimeFromUnixMs(rig.Now + 20 * Minute)), new PyLong(Py.FileTimeFromUnixMs(rig.Now)),
+        }, timers.Args);
     }
 
     [PgFact]
@@ -501,6 +508,7 @@ public class CynoJumpHostTests
 
         Assert.Equal(50_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
         Assert.Equal(JumpFatigueState.None, await new PgJumpFatigueStore(rig.Source, rig.SpaceSchema).GetAsync(passenger.CharacterId));
+        Assert.DoesNotContain(Events.Of(passengerSession), timer => timer.Name == "OnJumpTimersUpdated");
         Assert.Single(bridges.Open);
     }
 

@@ -18,7 +18,7 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
-    public async Task Finish_auction_claims_items_and_proceeds_independently()
+    public async Task Finish_auction_claims_items_independently_and_caps_minimum_tax_to_the_small_sale()
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")
             ?? throw new InvalidOperationException("EVE_PG_URL must name the assigned PostgreSQL lane");
@@ -143,7 +143,27 @@ public partial class HostServerTests
                 Assert.Equal((short)4, reader.GetInt16(0));
                 Assert.True(reader.GetInt64(1) > 0);
             }
-            Assert.Equal(500m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            Assert.Equal(0m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            await using (var settledTax = source.CreateCommand($"""
+                SELECT sales_tax_isk FROM {contractsSchema}.contract_records WHERE contract_id = $1
+                """))
+            {
+                settledTax.Parameters.AddWithValue(contractId);
+                Assert.Equal(500m, (decimal)(await settledTax.ExecuteScalarAsync())!);
+            }
+            var saleJournal = new List<(int ReferenceType, decimal Amount)>();
+            await using (var entries = source.CreateCommand($"""
+                SELECT ref_type_id, amount FROM {walletSchema}.journal
+                WHERE owner_id = $1 AND reference_id = $2 AND ref_type_id IN (67, 73)
+                ORDER BY id
+                """))
+            {
+                entries.Parameters.AddWithValue(100L);
+                entries.Parameters.AddWithValue(contractId);
+                await using var reader = await entries.ExecuteReaderAsync();
+                while (await reader.ReadAsync()) saleJournal.Add((reader.GetInt32(0), reader.GetDecimal(1)));
+            }
+            Assert.Equal(new[] { (67, 500m), (73, -500m) }, saleJournal);
             await using var notice = source.CreateCommand(
                 $"SELECT payload->>'name', payload->>'characterId' FROM {eventsSchema}.outbox WHERE topic=$1 ORDER BY id");
             notice.Parameters.AddWithValue(ContractNotifications.Topic);

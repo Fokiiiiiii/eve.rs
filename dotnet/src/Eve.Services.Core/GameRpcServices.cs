@@ -923,7 +923,11 @@ public sealed partial class ContractProxyService(
             ("typeID", new PyInt(item.TypeId)),
             ("quantity", new PyInt(item.Quantity)),
             ("inCrate", item.InCrate ? PyBool.True : PyBool.False),
-            ("isPackage", item.IsPackage ? PyBool.True : PyBool.False));
+            ("isPackage", item.IsPackage ? PyBool.True : PyBool.False),
+            ("copy", new PyInt(item.BlueprintCopy ? 1 : 0)),
+            ("licensedProductionRunsRemaining", new PyInt(item.BlueprintRuns ?? 0)),
+            ("materialLevel", new PyInt(item.MaterialEfficiency)),
+            ("productivityLevel", new PyInt(item.TimeEfficiency)));
 
     private static readonly Descriptor ContractDetailRowDescriptor = Descriptor.FromHeader(new PyObjectEx(
         ObjectExKind.Ex1,
@@ -1011,8 +1015,9 @@ public sealed partial class ContractProxyService(
         ]);
         var items = new PyList(contract.Items.Select(item => (PyValue)new PyPackedRow(ContractDetailItemDescriptor, [
             new PyInt(contract.ContractId), new PyLong(item.ItemId), new PyLong(item.Quantity), new PyInt(item.TypeId),
-            item.InCrate ? PyBool.True : PyBool.False, new PyLong(0), PyNone.Instance, PyNone.Instance,
-            PyNone.Instance, PyNone.Instance, PyNone.Instance, new PyInt(0), new PyLong(item.ItemId),
+            item.InCrate ? PyBool.True : PyBool.False, new PyLong(0), new PyInt(item.TimeEfficiency),
+            new PyInt(item.MaterialEfficiency), item.BlueprintCopy ? PyBool.True : PyBool.False,
+            new PyInt(item.BlueprintRuns ?? 0), Eve.Services.Py.Number(0), new PyInt(0), new PyLong(item.ItemId),
         ])).ToArray());
         var bids = new PyList(contract.Bids.OrderByDescending(bid => bid.Amount)
             .ThenByDescending(bid => bid.CreatedAtFileTime)
@@ -1061,14 +1066,7 @@ public sealed partial class ContractProxyService(
             ("description", new PyStr(contract.Description)))).ToArray();
         var items = new PyDict(bundle.Contracts.Select(contract => new KeyValuePair<PyValue, PyValue>(
             new PyInt(contract.ContractId),
-            Eve.Services.Py.List(contract.Items.Select(item => (PyValue)Eve.Services.Py.KeyVal(
-                ("itemID", new PyInt(item.ItemId)),
-                ("recordID", new PyInt(item.ItemId)),
-                ("itemTypeID", new PyInt(item.TypeId)),
-                ("typeID", new PyInt(item.TypeId)),
-                ("quantity", new PyInt(item.Quantity)),
-                ("inCrate", item.InCrate ? PyBool.True : PyBool.False),
-                ("isPackage", item.IsPackage ? PyBool.True : PyBool.False))).ToArray()))).ToArray());
+            Eve.Services.Py.List(contract.Items.Select(BuildContractItemSearchRow).ToArray()))).ToArray());
         return Eve.Services.Py.KeyVal(
             ("contracts", Eve.Services.Py.List(rows)),
             ("items", items));

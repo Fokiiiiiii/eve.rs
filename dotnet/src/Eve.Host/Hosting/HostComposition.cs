@@ -115,9 +115,11 @@ internal static class HostComposition
             accruedTimeStore = new Eve.Host.Persistence.PgAccruedTimeStore(source, Env("EVE_LOGIN_SCHEMA", schema));
             await accruedTimeStore.MigrateAsync();
             var contractSchema = Env("EVE_CONTRACTS_SCHEMA", Eve.Host.Persistence.PersistenceContractReadModel.DefaultSchema);
+            var inventorySchema = Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema);
             await Eve.Host.Persistence.PersistenceContractReadModel.MigrateAsync(source, contractSchema);
-            contractReadModel = new Eve.Host.Persistence.PersistenceContractReadModel(source, contractSchema);
-            var contractItems = new PgItemStore(source, Env("EVE_INVENTORY_SCHEMA", PgItemStore.DefaultSchema));
+            contractReadModel = new Eve.Host.Persistence.PersistenceContractReadModel(source, contractSchema,
+                Eve.Sde.SdeReader.DefaultSchema, inventorySchema);
+            var contractItems = new PgItemStore(source, inventorySchema);
             var contractWallets = new WalletTransactions(source, Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema));
             raffleProxyStore = new Eve.Host.Persistence.RaffleProxyStore(source, contractItems, contractWallets, options.HyperNetPlexPriceOverride, Env("EVE_RAFFLE_SCHEMA", "raffle"), Eve.Sde.SdeReader.DefaultSchema,
                 Env("EVE_IDENTITY_SCHEMA", Eve.Identity.PgAccountDirectory.DefaultSchema));

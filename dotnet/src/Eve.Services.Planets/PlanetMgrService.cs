@@ -30,9 +30,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     private const long UnboundPlanetKey = -1;
     private readonly Dictionary<string, long> _boundPlanets = [];
     private readonly Dictionary<long, PlanetBody> _bodies = [];
-    private readonly object _rawResourceTypeIdsGate = new();
     private DurableScheduler? _scheduler;
-    private Task<int[]>? _rawResourceTypeIds;
 
     private const string LaunchPlacementJobKind = "planet.launch.place";
     private const long LaunchPlacementRetryMs = 5_000;
@@ -211,28 +209,18 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     public PyValue GetResourceData(ServiceCall call) => Py.KeyVal(("data", PyNone.Instance), ("numBands", new PyInt(0)), ("proximity", PyNone.Instance));
 
     /// <summary>
-    /// GetPlanetResourceInfo: the planet's resources and their quality on the client's display scale (resourceController lists them). The set is the
-    /// project's rule (<see cref="PlanetSurvey"/>, D9); the amounts are the field's.
+    /// GetPlanetResourceInfo: the planet's client-defined resources and their quality on the client's display scale (resourceController lists them).
+    /// The type set follows the client resource distribution; the numeric qualities remain based on the deterministic field (PI_DESIGN.md D1).
     /// </summary>
     [Method("GetPlanetResourceInfo")]
     public async ValueTask<PyValue> GetPlanetResourceInfo(ServiceCall call)
     {
         var planetId = PlanetOf(call);
-        if (dogma is null) return new PyDict([]);
-        Task<int[]> rawResourceTypeIds;
-        lock (_rawResourceTypeIdsGate)
-            rawResourceTypeIds = _rawResourceTypeIds ??= LoadRawResourceTypeIdsAsync();
-        var raw = await rawResourceTypeIds.WaitAsync(call.Cancellation);
-        var survey = PlanetSurvey.ResourcesOf(planetId, raw)
+        var body = await BodyAsync(planetId, call.Cancellation);
+        var survey = PlanetSurvey.ResourcesOf(body.TypeId)
             .Select(type => new KeyValuePair<PyValue, PyValue>(new PyInt(type), new PyReal(PlanetSurvey.QualityOf(field, planetId, type))));
         return new PyDict([.. survey]);
     }
-
-    private async Task<int[]> LoadRawResourceTypeIdsAsync() =>
-        (await dogma!.TypesInGroupsAsync(RawResourceGroups)).Select(type => type.TypeId).ToArray();
-
-    /// <summary>The raw planetary resource groups (SDE 1032, 1033, 1035: solid, liquid-gas, organic).</summary>
-    private static readonly string[] RawResourceGroups = ["Planet Solid - Raw Resource", "Planet Liquid-Gas - Raw Resource", "Planet Organic - Raw Resource"];
 
     /// <summary>UserUpdateNetwork(changes): the batch of the client's command stream, applied in one transaction (clientPlanet.SubmitChanges).</summary>
     [Method("UserUpdateNetwork")]

@@ -2,6 +2,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Ships;
 
 namespace Eve.Services.Core.Tests;
 
@@ -211,6 +212,58 @@ public sealed class SessionStartupRpcServicesTests
             Session = session,
         }).AsTask());
         Assert.Equal("CustomInfo", unavailable.Error.UserErrorMessage);
+    }
+
+    /// <summary>A test that writes through the PostgreSQL store: it is skipped (and says so) without EVE_PG_URL, and never passes silently.</summary>
+    private sealed class PgFactAttribute : FactAttribute
+    {
+        public PgFactAttribute()
+        {
+            if (Environment.GetEnvironmentVariable("EVE_PG_URL") is null)
+            {
+                Skip = "EVE_PG_URL is not set (see tools/dev/pg18.sh)";
+            }
+        }
+    }
+
+    [PgFact]
+    public async Task Jump_timers_read_the_fatigue_the_jumps_wrote_to_postgres_and_fall_back_only_without_a_row()
+    {
+        const long nowMs = 1_790_646_377_000;
+        const int jumper = 2_001_001, expired = 2_001_002, idle = 2_001_003;
+        var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = "jt_" + Guid.NewGuid().ToString("N")[..12];
+        await PgSpaceItemStore.MigrateAsync(source, schema);
+        var store = new PgJumpFatigueStore(source, schema);
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await store.SaveAsync(connection, transaction, jumper, new JumpFatigueState(nowMs + 600_000, nowMs + 120_000));
+            await store.SaveAsync(connection, transaction, expired, new JumpFatigueState(nowMs - 1, nowMs - 1));
+            await transaction.CommitAsync();
+        }
+        ReadJumpTimersCallback legacy = (_, _) => ValueTask.FromResult<JumpTimerState?>(new(101, 202, 303));
+        IService service = new JumpTimersService(JumpTimerReads.Create(store, () => nowMs, legacy));
+
+        var fresh = Assert.IsType<PyTuple>(await service.CallAsync(Call(service, "GetTimers", SessionOf(jumper), [new PyInt(jumper)])));
+        Assert.Equal(new PyTuple([
+            new PyLong(Py.FileTimeFromUnixMs(nowMs + 120_000)),
+            new PyLong(Py.FileTimeFromUnixMs(nowMs + 600_000)),
+            new PyLong(Py.FileTimeFromUnixMs(nowMs)),
+        ]), fresh);
+
+        var ended = Assert.IsType<PyTuple>(await service.CallAsync(Call(service, "GetTimers", SessionOf(expired), [new PyInt(expired)])));
+        Assert.Equal(new PyTuple([PyNone.Instance, PyNone.Instance, PyNone.Instance]), ended);
+
+        var fallback = Assert.IsType<PyTuple>(await service.CallAsync(Call(service, "GetTimers", SessionOf(idle), [new PyInt(idle)])));
+        Assert.Equal(new PyTuple([new PyLong(101), new PyLong(202), new PyLong(303)]), fallback);
+    }
+
+    private static ClientSession SessionOf(int characterId)
+    {
+        var session = new ClientSession();
+        session.Set("charid", new PyInt(characterId));
+        return session;
     }
 
     private static ServiceCall Call(

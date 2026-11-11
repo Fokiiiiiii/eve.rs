@@ -457,18 +457,27 @@ public sealed partial class SpaceSessions
             var seed = string.Create(
                 System.Globalization.CultureInfo.InvariantCulture,
                 $"ship:{pilot.ShipId}:{_nowUnixMs()}");
+            var killmailAttackers = TakeKillmailAttackers(
+                pilot.ShipId, destroyed.KillerShipId, out var killmailDamageTaken, out _);
             death = await _transitions.ExecuteAsync(
                 token => _ships.DestroyShipAsync(
                       pilot.CharacterId, pilot.ShipId, destroyed.WreckKind?.TypeId, seed, token,
-                      inTransaction: RecordDynamicBountyLossInTransactionAsync is { } recordLoss
-                          ? (connection, transaction, lost, innerToken) =>
-                          {
-                              var loss = ShipLossOf(pilot, lost, destroyed);
-                              return loss.Cause == ShipLossCause.Player && loss.KillerCharacterId != loss.CharacterId
-                                  ? recordLoss(connection, transaction, loss, innerToken)
-                                  : Task.CompletedTask;
-                          }
-                          : null),
+                      inTransaction: async (connection, transaction, lost, innerToken) =>
+                      {
+                          var loss = ShipLossOf(pilot, lost, destroyed);
+                          if (RecordDynamicBountyLossInTransactionAsync is { } recordLoss &&
+                              loss.Cause == ShipLossCause.Player && loss.KillerCharacterId != loss.CharacterId)
+                              await recordLoss(connection, transaction, loss, innerToken);
+
+                          if (Events is { } events)
+                              await events.PublishOnceInTransactionAsync(connection, transaction, ShipKillmailEvent.Topic,
+                                  new ShipKillmailEvent(
+                                      lost.Character.Id, lost.Character.CorporationId, lost.Character.AllianceId ?? 0,
+                                      lost.Character.FactionId ?? 0, lost.Ship.Id, lost.Ship.TypeId,
+                                      pilot.SolarSystemId, _nowUnixMs(), killmailDamageTaken,
+                                      destroyed.KillerShipId, killmailAttackers, lost.KillmailItems),
+                                  $"ship:{lost.Ship.Id}", innerToken);
+                      }),
                 result => result is not null,
                 async (result, token) =>
                 {
@@ -665,6 +674,7 @@ public sealed partial class SpaceSessions
     {
         var id = (ulong)pilot.Session.SessionId;
         var session = pilot.Session;
+        var killmailAttackers = TakeKillmailAttackers(pilot.ShipId, destroyed.KillerShipId, out var damageTaken, out _);
         if (await _ships.CharacterAsync(pilot.CharacterId) is not { } character
             || RookieShipOfRace?.Invoke(character.RaceId) is not { } rookie)
         {
@@ -698,6 +708,15 @@ public sealed partial class SpaceSessions
                 _pilots.TryRemove(id, out _);
                 _sim.Leave(id, LeaveWhy.Docked);
                 RaisePodLost(pilot, death.Capsule, destroyed, death.Implants);
+                AnnounceOnce(ShipKillmailEvent.Topic,
+                    new ShipKillmailEvent(
+                        death.Character.Id, death.Character.CorporationId, death.Character.AllianceId ?? 0,
+                        death.Character.FactionId ?? 0, death.Capsule.Id, death.Capsule.TypeId,
+                        pilot.SolarSystemId, _nowUnixMs(), damageTaken, destroyed.KillerShipId,
+                        killmailAttackers,
+                        death.Implants.Select(implant => new ShipDeathItem(
+                            implant.TypeId, PilotAugmentations.ImplantFlag, true, 0, 1, [])).ToArray()),
+                    $"ship:{death.Capsule.Id}");
                 if (death.Corpse is { } corpse)
                 {
                     var type = _statics.Type(corpse.TypeId);

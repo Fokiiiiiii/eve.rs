@@ -178,6 +178,48 @@ public class DroneHostTests
     }
 
     [PgFact]
+    public async Task Letting_a_drone_go_notifies_the_client_that_control_and_its_activity_were_lost()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var flying = await FlyingWithADroneAsync(rig);
+        await LaunchAsync(flying);
+        Events.Of(flying.Session);
+        rig.Sim.DroneAnswer = (sessionId, command, _, droneIds) =>
+        {
+            if (command == SimDroneCommands.Abandon)
+            {
+                foreach (var id in droneIds)
+                {
+                    rig.Sim.Say(new SimDroneReleased(sessionId, id, [0, 0, 0]));
+                }
+            }
+            return new CommandReply(true, 0, null) { Drones = [.. droneIds.Select(id => new SimDroneResult(id, ""))] };
+        };
+
+        var answer = await rig.EntityCallAsync(flying.Session, "CmdAbandonDrone", flying.Entity, new PyList([InventoryWire.Id(flying.Drone)]));
+
+        Assert.Empty(Assert.IsType<PyDict>(answer).Entries);
+        var notices = Events.Of(flying.Session);
+        Assert.Equal(["OnDroneStateChange", "OnDroneActivityChange"], notices.Select(notice => notice.Name));
+        Assert.All(notices, notice => Assert.Equal("charid", notice.IdType));
+        var state = notices[0].Args;
+        Assert.Equal(flying.Drone, Events.Number(state[0]));
+        Assert.Equal(new PyInt(0), state[1]);
+        Assert.Equal(new PyInt(0), state[2]);
+        Assert.Equal(new PyInt(0), state[3]);
+        Assert.Equal(new PyInt(Hobgoblin), state[4]);
+        Assert.Equal(new PyInt(0), state[5]);
+        Assert.Same(PyNone.Instance, state[6]);
+        Assert.Equal([InventoryWire.Id(flying.Drone), PyNone.Instance, PyNone.Instance], notices[1].Args);
+
+        var reconnect = Assert.IsType<PyDict>(await rig.EntityCallAsync(flying.Session, "CmdReconnectToDrones", flying.Entity));
+        Assert.Empty(reconnect.Entries);
+        var reconnectOrder = Assert.Single(rig.Sim.Heard.OfType<SimDroneCommand>(), command => command.Command == SimDroneCommands.Reconnect);
+        Assert.Equal(((ulong)flying.Session.SessionId, 0L, flying.Drone),
+            (reconnectOrder.SessionId, reconnectOrder.TargetId, Assert.Single(reconnectOrder.DroneIds)));
+    }
+
+    [PgFact]
     public async Task A_pilot_scoops_a_nearby_abandoned_drone_before_destiny_removes_it_and_concurrent_retries_are_refused()
     {
         await using var rig = await Rig.CreateAsync();

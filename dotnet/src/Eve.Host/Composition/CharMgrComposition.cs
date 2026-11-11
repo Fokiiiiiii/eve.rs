@@ -50,7 +50,6 @@ internal sealed partial class CharacterServicesComposition
             ReadRecentShipKillmailPageAsync,
             ReadCharacterDescriptionAsync,
             WriteCharacterDescriptionAsync,
-            ReadMedal1GraphicIdAsync,
             (table, path, data) => mailCache.Write(table, path, data),
             (table, path) => mailCache.Remove(table, path));
         return Task.CompletedTask;

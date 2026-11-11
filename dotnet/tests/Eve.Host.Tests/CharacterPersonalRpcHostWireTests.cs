@@ -20,7 +20,6 @@ public partial class HostServerTests
             (_, _) => ValueTask.FromResult<string?>(null),
             (_, _, _) => ValueTask.CompletedTask,
             (_, _) => ValueTask.FromResult(0d),
-            (_, _) => ValueTask.FromResult<long?>(null),
             readPersonalData: (_, _) => ValueTask.FromResult<CharMgrPersonalData?>(CharMgrPersonalData.Empty));
 
         Start(configure: registry => registry.Register(charMgr),

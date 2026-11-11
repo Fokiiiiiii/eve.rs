@@ -21,8 +21,7 @@ of each number and rule, the decisions where the sources differ, and what is not
 - Rules without a client constant: EVE University wiki, page "Faction warfare" (`https://wiki.eveuniversity.org/Faction_warfare`).
   The page marks its upgrade and donation sections as outdated. Where it disagrees with the client the decision is in
   `docs/reference/compat/DEVIATIONS.md`, section "Factional warfare".
-- The live behaviour of EveJS v0.12.9 was not used for FW: it has no system upgrade, no donation tax and no occupancy state
-  (DEVIATIONS says the same).
+- The current EveJS checkout has faction/status/rank/LP read methods (`server/src/services/faction/facWarMgrService.js:197-298`), a VictoryPointState service (`fwVictoryPointMgrService.js:92-143`), and an authored “FW open” activity model for two systems (`fwOpenModel.js:6-19`, `fwOpenRuntime.js`). It does not provide the V24/SDE-wide system upgrade, LP donation, and occupation progression as an end-to-end reference. Do not treat those authored open-site rows as authoritative FW state; this design uses the V24.01 client, pinned SDE and tested eve.rs state owners.
 
 ## Code
 

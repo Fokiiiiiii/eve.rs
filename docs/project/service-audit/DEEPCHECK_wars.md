@@ -1,16 +1,18 @@
 # wars / warsInfoMgr / warRegistry 深掘り監査
 
+> Historical negotiation baseline: the `warRegistry` negotiation rows below were captured before the PostgreSQL provider was added. They are superseded by the 2026-11-11 re-audit in `docs/project/deepfix-planets-sov-warfare.md`; do not treat those rows as current implementation status. Current Host code is in `WarRegistryService.cs` and `WarRegistryNegotiations.cs`, with registered-wire coverage in `WarRegistryHostWireTests`.
+
 ## 結論
 
 V24.01 client に RPC サービス名 `wars` はない。近い Host surface は read RPC `warsInfoMgr` と、`eveMoniker.GetWar()` が作る bound moniker `warRegistry`。`svc.war` はクライアント内サービスで Host service ではない。
 
-静的追跡で、全6件の `warsInfoMgr` RPC と `warRegistry` bound methods を確認した。`GetPublicWarInfo` は2026-11-02にV24.01のcollection契約に合わせ、複数IDからPyListを返すHost wire回帰を追加して修正した（詳細は [deepfix-wars-sov.md](deepfix-wars-sov.md)）。GetWarsByOwnersの実Python set wire coverage、negotiation state/API、clientが呼ぶGM methodsは引き続き未対応または未確認。
+静的追跡で、全6件の `warsInfoMgr` RPC と `warRegistry` bound methods を確認した。`GetPublicWarInfo` は2026-11-02にV24.01のcollection契約に合わせ、複数IDからPyListを返すHost wire回帰を追加して修正した（詳細は [deepfix-wars-sov.md](deepfix-wars-sov.md)）。Negotiation state/API は後続実装され、2026-11-11現在 Host wire + PostgreSQL test を持つ。GetWarsByOwnersの実Python set wire coverage と graphical-client execution は未確認。client GM methods は EveJSにもhandlerがない。
 
 ## サービス名と route
 
 - `eve/client/script/ui/services/wars/war_cso.py:23-68` の `Wars` は local `svc.war`; `GetMoniker()` が `eveMoniker.GetWar()` を Bind する。
 - `eve/common/script/net/eveMoniker.py:185-198` は `Moniker('warRegistry', ...)` を作成。server mode は `IsAllianceOrCorpLocal` を問い合わせる。
-- 実 Host composition は `dotnet/src/Eve.Host/Rpc/CorporationRpc.cs:73,78` で両 service を登録する。wire test `dotnet/tests/Eve.Host.Tests/WarsAndWormholeRpcHostWireTests.cs` は warsInfoMgr のみ手動登録し、PostgreSQL 依存の `[PgFact]`; bound `warRegistry` の Host wire test は見つからなかった。
+- 実 Host composition は `dotnet/src/Eve.Host/Rpc/CorporationRpc.cs:73,78,82-87` で両 service と negotiation store を登録する。`WarRegistryHostWireTests.Registered_war_registry_creates_and_accepts_an_ally_offer_through_macho_with_persisted_state_and_notifications` は実 Host composition と PostgreSQL を通す。下記の negotiation 欄は provider 実装前の履歴記録。
 - local `svc.war` の利用は `corp_ui_wars.py:212,220`, `warLandingPage.py:156`, `warDeclare.py:401,635`, `state.py:1019` など。これらは Host method ではない。
 
 ## warsInfoMgr RPC 全件
@@ -63,7 +65,7 @@ Client calls は `war_cso.py`; UI actions は `warWindows.py`。成功時 client
 ## 未確認と必要な regression
 
 - GetWarsByOwners の実 Python set と bound nested calls を通す Host wire tests が残る。
-- negotiation では persistence、subsequent read、通知順、再起動後の state を Host tests で確認する必要がある。EveJS は `warNegotiationRuntimeState.js` と `warNotificationCenter.js` を使う。
+- negotiation の offer/accept/surrender、保存後 read、wallet/relation settlement、通知順は上記の登録済み Host/PostgreSQL regression が確認する。`Eve.Corporations.Tests/WarRegistryTests.cs` は追加状態遷移とストア経路を確認する。再起動後の negotiation state 専用 Host walk と graphical-client execution はこの再監査では確認していない。
 - negotiationのint/long両形、None/message optional、UserError/exception envelope、bound kwargs、再起動後の状態、GUI clientはこの作業で実行確認していない。
 - GetPublicWarInfoのPostgreSQL Host wire回帰はfocused runでpass。Graphical client検証は未実施。
 ## GetPublicWarInfo merge evidence (2026-11-02)

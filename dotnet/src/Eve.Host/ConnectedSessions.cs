@@ -66,4 +66,23 @@ private readonly Dictionary<long, ClientSession> _byAccount = new();
             return [.. _sessions];
         }
     }
+
+    /// <summary>Asks every connected session to close with the reason. A session that cannot be reached is skipped, so it never blocks the caller. Returns how many were asked.</summary>
+    public int DisconnectAll(string reason)
+    {
+        var asked = 0;
+        foreach (var session in Snapshot())
+        {
+            try
+            {
+                session.RequestDisconnect(reason);
+                asked++;
+            }
+            catch (Exception)
+            {
+                // A session without a front link cannot be told; the shutdown goes on.
+            }
+        }
+        return asked;
+    }
 }

@@ -42,7 +42,7 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
     Eve.Host.Xmpp.XmppListener? xmppListener = null,
     System.Security.Cryptography.X509Certificates.X509Certificate2? xmppCertificate = null,
     Eve.Host.ProjectDiscovery.ScientificReplayComposition? scientificReplay = null, HttpClient? discoveryHttp = null,
-    OnlineStatusNotifications? onlineStatusNotifications = null)
+    OnlineStatusNotifications? onlineStatusNotifications = null, ConnectedSessions? connectedSessions = null)
 {
     internal HostServer Server { get; } = server;
 
@@ -68,6 +68,10 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
 
     internal async Task ShutdownAsync()
     {
+        // Every connected client is told first, so the client shows the reason instead of a dropped socket.
+        // The bounded pause lets the front write the notices before the services go away.
+        if (connectedSessions is not null && connectedSessions.DisconnectAll("ACL_SHUTTINGDOWN") > 0)
+            await Task.Delay(TimeSpan.FromMilliseconds(500));
         try
         {
             if (xmppListener is not null) await xmppListener.DisposeAsync();

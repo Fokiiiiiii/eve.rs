@@ -629,7 +629,7 @@ internal static class HostComposition
             accounts,
             () => MarshalCodec.Encode(config.Current()));
 
-        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway, dataSource, xmppListener, xmppCertificate, scientificReplay, discoveryHttp, onlineStatusNotifications);
+        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway, dataSource, xmppListener, xmppCertificate, scientificReplay, discoveryHttp, onlineStatusNotifications, connected);
         }
         catch
         {

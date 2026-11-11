@@ -37,6 +37,9 @@ Before selecting these paths, the complete `/home/user/eve-logic` tree was searc
 
 - `invbroker` was exercised through `GetInventory`, the resulting bound object, `List`, and `GetCapacity`; the route test checks the returned `util.KeyVal` capacity and row/list shapes (`InvBrokerInventoryHostWireTests.cs:21-100`). The reference implementation uses the same `GetInventory` and `GetCapacity` bound flow (`invBrokerService.js:10824-10860, 12062-12080`).
 - `dogmaIM` weapon-bank RPCs were invoked through Host registration and checked for the map of master module IDs to slave-ID lists and subsequent unlink state (`DogmaWeaponBanksHostWireTests.cs:14-100`). The client calls `remoteDogmaLM.LinkWeapons` and `UnlinkModule` (`clientDogmaLocation.py:752-785`); the sampled response required no shape change.
+- The V24 map view also uses several high-traffic `map` RPCs: kill filters consume `GetHistory` rows (`mapFilterKills.py:21-33`), station-count filters consume `(solarSystemID, count)` pairs (`mapFilterStationCount.py:17-23`), and market range selection indexes `GetStationInfo()` by `stationID` (`marketsvc.py:639-642`). EveJS 261108.1 builds `GetHistory` as a cached `eve.common.script.sys.rowset.Rowset` with ordered columns `solarSystemID`, `value1`, `value2`, `value3` and a one-minute version check (`mapService.js:591-603`); Host uses the same cache wrapper and rowset projection (`StationService.cs:382-388`). The registered-route regression checks the cache tuple, version metadata, header order, tuple rows and `None` fields (`MapRpcHostWireTests.cs:13-90`).
+- For station data, EveJS returns the ordered eight-column `Rowset` with `RowClass=util.Row` (`mapService.js:698-749`); Host returns the same rowset contract from the read side (`StationService.cs:320-328`). The Host wire test checks the `RowClass`, header, row order and scalar widths, plus the separate `GetStationCount` list of tuples (`ClientRowsMapHostWireTests.cs:12-68`). No map rowset or cached-result wire divergence was found in these paths.
+- `GetMyExtraMapInfo` also has the same two-column rowset shape, but its contents differ intentionally from EveJS 261108.1: EveJS returns an empty rowset (`mapService.js:651-654`), while Host supplies current corporation-member locations from the live session registry (`DungeonRpc.cs:42-53`; `StationService.cs:398-412`). The client groups these `characterID`/`locationID` rows into the corporation-member map heatmap (`mapFilterCorpMembers.py:27-45`). The Host route test checks its column order and row values (`MapRpcHostWireTests.cs:182-280`). This is a data result difference, not a marshal-shape difference; the graphical map rendering and live-client member visibility were not checked here. The existing compatibility record is in `docs/reference/compat/DEVIATIONS.md:167-169`.
 
 ## Verification recorded
 
@@ -53,10 +56,19 @@ All database-backed tests below used `eve_p3` (`EVE_PG_URL=postgres://postgres@1
 - The biomass notification dict mismatch was observed as a failing end-to-end assertion before the code change, then passed after the correction.
 - The nested numeric-looking JSON key mismatch was observed as a failing end-to-end assertion before the code change, then passed after both Host converters preserved JSON object keys as strings.
 
+### Follow-up verification (2026-11-11)
+
+- Release builds with `--warnaserror` succeeded with 0 warnings and 0 errors for `Eve.Host.Tests`, `Eve.Marshal.Tests`, and `Eve.Services.CharacterInfo.Tests`.
+- After loading the pinned client SDE build 3396210 and mission data build 3405148 into the newly created `eve_p3`, 15 focused registered-Host wire, notification, map, inventory, config-error, Dogma and marshal-ingress tests passed with 0 failures and 0 skips. Attempts before both SDE schemas were loaded failed during Host startup (first missing `sde.mapSolarSystems`, then missing `sde_mission.skinrComponentPointValues`); the retry after initializing both schemas passed.
+- `Eve.Services.CharacterInfo.Tests`: 83 passed, 0 failed, 0 skipped. `Eve.Marshal.Tests`: 1,192 passed, 0 failed, 0 skipped.
+- Rust `cargo fmt --all -- --check`, `cargo check -p eve-marshal -p eve-oracle`, and `cargo clippy -p eve-marshal -p eve-oracle --all-targets -- -D warnings` passed. `cargo test -p eve-marshal`: 25 passed, 0 failed, 0 ignored; `cargo test -p eve-oracle --test marshal_golden`: 1 passed, 0 failed.
+- Python `tools/headless-client/tests/test_marshal_golden.py`: 999 passed, 0 failed, 0 skipped.
+
 ## Not checked
 
 - The unmodified graphical V24.01 client was not launched. The verification is against source callsites and raw Host packets decoded by the test client.
 - This is a sample of high-traffic Host services, not an exhaustive RPC-by-RPC audit of the full client or all Host registrations.
 - The bitmap/notification UI after the client consumes the mail event was not observed in a graphical session. The payload was checked against `NewMailFormatter` and `OnNotificationReceived` source behavior.
+- The V24 map client was not launched. Map callsite consumers and the reply shapes were checked against source and registered-route tests; actual graphical rendering of map history, station, and corporation-member layers was not observed.
 - EveJS biomass deletion does not implement the Host's existing corporate mail notification flow, so equivalence of that gameplay behavior is not asserted here.
 - The marshal fixtures and selected focused slices were checked; full repository test suites and the live graphical-client suite were not run locally. The two real-simulation tests noted above remain unverified.

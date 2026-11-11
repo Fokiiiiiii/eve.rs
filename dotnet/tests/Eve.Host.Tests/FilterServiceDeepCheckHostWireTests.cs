@@ -133,7 +133,6 @@ public partial class HostServerTests
             readCharacterDescription: (_, _) => ValueTask.FromResult<string?>(null),
             writeCharacterDescription: (_, _, _) => ValueTask.CompletedTask,
             readCharacterSecurityStatus: (_, _) => ValueTask.FromResult(0d),
-            readMedal1GraphicId: (_, _) => ValueTask.FromResult<long?>(null),
             readPersonalData: (_, _) => ValueTask.FromResult<CharMgrPersonalData?>(personal),
             updatePersonalData: (_, update, _) =>
             {

@@ -59,8 +59,10 @@ public sealed class EntosisOwnerNotificationTests
         var mailCache = new GameStoreCache(mailStore, mailOwner, new GameStoreCacheOptions { ProcessRole = PersistenceRoles.World });
         await mailStore.LoadTableAsync("notifications", createIfMissing: true);
         await mailCache.LoadAsync("notifications");
+        var liveNotifications = new List<(long RecipientId, PyValue[] Arguments)>();
         var mailbox = new PersistenceTransactionMailbox(
-            source, mailStore, mailCache, mailOwner, new SemaphoreSlim(1, 1), () => StartedMs, (_, _) => { });
+            source, mailStore, mailCache, mailOwner, new SemaphoreSlim(1, 1), () => StartedMs,
+            (recipientId, arguments) => liveNotifications.Add((recipientId, arguments)));
 
         await DurableScheduler.MigrateAsync(source, schedulerSchema);
         await EventBus.MigrateAsync(source, eventsSchema);
@@ -102,6 +104,17 @@ public sealed class EntosisOwnerNotificationTests
         await bus.PumpAsync();
         Assert.Equal(2, (await RecordsAsync(source, mailStore, member)).Length);
         Assert.Equal(2, (await RecordsAsync(source, mailStore, otherMember)).Length);
+
+        var beforeProbe = liveNotifications.Count;
+        Assert.Equal(1, await mailbox.WriteNotificationsAsync(
+            DefenderAlliance, 999, 6, [member], $"wire-shape-probe:{suffix}",
+            new JsonObject { ["targetNames"] = new JsonObject { ["42"] = "Pilot" } }));
+        Assert.Equal(beforeProbe + 1, liveNotifications.Count);
+        var notificationData = Assert.IsType<PyDict>(liveNotifications[^1].Arguments[4]);
+        var encodedData = Assert.IsType<PyDict>(MarshalCodec.Decode(MarshalCodec.Encode(notificationData)));
+        var targetNames = Assert.IsType<PyDict>(encodedData.Entries.Single(entry =>
+            Eve.Macho.JsSemantics.StringValue(entry.Key) == "targetNames").Value);
+        Assert.Equal(new PyBytes(System.Text.Encoding.UTF8.GetBytes("42")), Assert.Single(targetNames.Entries).Key);
 
         await mailCache.DisposeAsync();
         await mailOwner.DisposeAsync();

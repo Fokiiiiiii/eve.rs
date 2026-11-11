@@ -54,7 +54,6 @@ public sealed partial class CharMgrService(
     Func<long, CancellationToken, ValueTask<string?>> readCharacterDescription,
     Func<long, string, CancellationToken, ValueTask> writeCharacterDescription,
     Func<long, CancellationToken, ValueTask<double>> readCharacterSecurityStatus,
-    Func<long, CancellationToken, ValueTask<long?>> readMedal1GraphicId,
     Func<long, CancellationToken, ValueTask<CharMgrPersonalData?>>? readPersonalData = null,
     Func<long, Func<CharMgrPersonalData, CharMgrPersonalData>, CancellationToken, ValueTask<CharMgrPersonalData?>>? updatePersonalData = null,
     Func<long, long, string?, CancellationToken, ValueTask>? writeActivityStatus = null,
@@ -127,11 +126,24 @@ public sealed partial class CharMgrService(
 
     private static PyValue Nullable(long? value) => value is { } id ? new PyInt(id) : None;
 
-    /// <summary>The public record of a character: <c>util.KeyVal</c> of the fields the client's character windows read.</summary>
-    internal static PyValue PublicInfo(Character c, string description, double securityStatus, long? medal1GraphicId,
-        long? corporationStartedMs = null, long? militiaFactionId = null)
+    private const string PublicInfo3CRowsetName = "carbon.common.script.sys.crowset.CRowset";
+
+    private static readonly Descriptor PublicInfo3Descriptor = Descriptor.FromHeader(new PyObjectEx(
+        ObjectExKind.Ex1,
+        Py.Tuple(new PyToken("blue.DBRowDescriptor"), Py.Tuple(Py.Tuple(
+            Py.Tuple(new PyStr("bounty"), new PyInt(DbType.Cy)),
+            Py.Tuple(new PyStr("title"), new PyInt(DbType.WStr)),
+            Py.Tuple(new PyStr("startDateTime"), new PyInt(DbType.FileTime)),
+            Py.Tuple(new PyStr("description"), new PyInt(DbType.WStr)),
+            Py.Tuple(new PyStr("corporationID"), new PyInt(DbType.I4)),
+            Py.Tuple(new PyStr("militiaFactionID"), new PyInt(DbType.I4)),
+            Py.Tuple(new PyStr("bloodlineID"), new PyInt(DbType.UI1))))),
+        [], []));
+
+    /// <summary>The public record of a character: the 17-field <c>util.KeyVal</c> the client consumes.</summary>
+    internal static PyValue PublicInfo(Character c, string description,
+        long? corporationStartedMs = null, long? warFactionId = null)
     {
-        var empire = EmpireOf(c.CorporationId, c.FactionId);
         return Py.KeyVal(
             ("characterID", new PyInt(c.Id)),
             ("characterName", new PyStr(c.Name)),
@@ -139,24 +151,21 @@ public sealed partial class CharMgrService(
             ("raceID", new PyInt(c.RaceId)),
             ("bloodlineID", new PyInt(c.BloodlineId)),
             ("ancestryID", new PyInt(c.AncestryId)),
-            ("corporationID", new PyInt(c.CorporationId)),
-            ("allianceID", Nullable(c.AllianceId)),
-            ("factionID", Nullable(c.FactionId)),
-            ("empireID", empire == 0 ? None : new PyInt(empire)),
             ("schoolID", new PyInt(c.SchoolId)),
-            ("gender", new PyInt(c.Gender)),
+            // The pinned character-creation school data has no career fields, and the character store has no
+            // career state. The reference therefore returns None for both until an authoritative source exists.
+            ("careerID", None),
+            ("careerSpecialityID", None),
+            ("gender", PyValue.Of(c.Gender != 0)),
             ("createDateTime", FileTime(c.CreatedAt)),
-            ("startDateTime", corporationStartedMs is > 0 ? new PyLong(Py.FileTimeFromUnixMs(corporationStartedMs.Value)) : FileTime(c.CreatedAt)),
-            ("description", new PyStr(description)),
-            ("securityRating", Py.Number(securityStatus)),
-            ("securityStatus", Py.Number(securityStatus)),
-            ("bounty", new PyInt(0)),
-            ("title", new PyStr("")),
-            ("shortName", new PyStr("none")),
-            ("stationID", new PyInt(c.StationId)),
-            ("solarSystemID", new PyInt(c.SolarSystemId)),
-            ("militiaFactionID", Nullable(militiaFactionId is > 0 ? militiaFactionId : null)),
-            ("medal1GraphicID", Nullable(medal1GraphicId)));
+            ("corporationID", new PyInt(c.CorporationId)),
+            ("corporationDateTime", corporationStartedMs is > 0
+                ? new PyLong(Py.FileTimeFromUnixMs(corporationStartedMs.Value))
+                : FileTime(c.CreatedAt)),
+            ("allianceID", Nullable(c.AllianceId)),
+            ("warFactionID", Nullable(warFactionId)),
+            ("age", new PyInt(0)),
+            ("description", new PyStr(description)));
     }
 
     private async ValueTask<bool> CanReadPrivateCorporationMemberInfoAsync(ServiceCall call, long targetCorporationId)
@@ -209,11 +218,38 @@ public sealed partial class CharMgrService(
     private async ValueTask<PyValue> PublicInfoAsync(Character character, CancellationToken cancellationToken)
     {
         var description = await readCharacterDescription(character.Id, cancellationToken) ?? "";
-        var securityStatus = await readCharacterSecurityStatus(character.Id, cancellationToken);
-        var medal1GraphicId = await readMedal1GraphicId(character.Id, cancellationToken);
         var startedMs = readCorporationMemberStartedMs is null ? null : await readCorporationMemberStartedMs(character.Id, cancellationToken);
-        var militiaFactionId = readMilitiaFactionId is null ? null : await readMilitiaFactionId(character, cancellationToken);
-        return PublicInfo(character, description, securityStatus, medal1GraphicId, startedMs, militiaFactionId);
+        var militiaFactionId = readMilitiaFactionId is null
+            ? character.DirectFactionId
+            : await readMilitiaFactionId(character, cancellationToken);
+        return PublicInfo(character, description, startedMs, militiaFactionId);
+    }
+
+    private async ValueTask<PyValue> PublicInfo3Async(Character character, CancellationToken cancellationToken)
+    {
+        var description = await readCharacterDescription(character.Id, cancellationToken) ?? "";
+        var startedMs = readCorporationMemberStartedMs is null ? null : await readCorporationMemberStartedMs(character.Id, cancellationToken);
+        var militiaFactionId = readMilitiaFactionId is null
+            ? character.DirectFactionId
+            : await readMilitiaFactionId(character, cancellationToken);
+        var startDateTime = startedMs is > 0
+            ? new PyLong(Py.FileTimeFromUnixMs(startedMs.Value))
+            : FileTime(character.CreatedAt);
+        var row = new PyPackedRow(PublicInfo3Descriptor,
+        [
+            new PyReal(0),
+            new PyStr(""),
+            startDateTime,
+            new PyStr(description),
+            new PyInt(character.CorporationId),
+            Nullable(militiaFactionId),
+            new PyInt(character.BloodlineId),
+        ]);
+        return new PyObjectEx(
+            ObjectExKind.Ex2,
+            Py.Tuple(Py.Tuple(new PyToken(PublicInfo3CRowsetName)), Py.Dict(("header", PublicInfo3Descriptor.Header))),
+            [row],
+            []);
     }
 
     [Method("GetPublicInfo")]
@@ -222,11 +258,11 @@ public sealed partial class CharMgrService(
             ? await PublicInfoAsync(character, call.Cancellation)
             : None;
 
-    /// <summary>The same record in a list (the client asks for it with a second argument for the character window).</summary>
+    /// <summary>A packed <c>CRowset</c> of the public character details read by the character information window.</summary>
     [Method("GetPublicInfo3")]
     public async ValueTask<PyValue> GetPublicInfo3(ServiceCall call) =>
         await CharacterAsync(call) is { } character
-            ? new PyList([await PublicInfoAsync(character, call.Cancellation)])
+            ? await PublicInfo3Async(character, call.Cancellation)
             : None;
 
     [Method("GetCharacterDescription")]

@@ -118,9 +118,9 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(9), tokenFields["blueprintProductivityLevel"]);
         Assert.Equal("Blueprint reward", JsSemantics.StringValue(tokenFields["label"]));
         Assert.Equal("wire reward", JsSemantics.StringValue(tokenFields["description"]));
-        Assert.Equal(new PyLong(132_000_000_000_000_000), tokenFields["dateTime"]);
-        Assert.Equal(new PyLong(200_000_000_000_000_000), tokenFields["expireDateTime"]);
-        Assert.Equal(new PyLong(132_000_000_000_000_000), tokenFields["availableDateTime"]);
+        Assert.Equal(PackedFileTime(132_000_000_000_000_000), tokenFields["dateTime"]);
+        Assert.Equal(PackedFileTime(200_000_000_000_000_000), tokenFields["expireDateTime"]);
+        Assert.Equal(PackedFileTime(132_000_000_000_000_000), tokenFields["availableDateTime"]);
         Assert.Equal(new PyInt(60_003_760), tokenFields["stationID"]);
         Assert.Equal(new PyInt(1), tokenFields["soulbound"]);
         var multiMassFields = Assert.IsType<PyPackedRow>(redeemTokens.List[1]).Fields()
@@ -365,4 +365,5 @@ public partial class HostServerTests
             return ValueTask.FromResult(_slots);
         }
     }
+
 }

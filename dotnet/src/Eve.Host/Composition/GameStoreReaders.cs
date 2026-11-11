@@ -260,20 +260,6 @@ internal sealed partial class CharacterServicesComposition
         throw new TimeoutException($"Character {characterId} description did not become durable.");
     }
 
-    async ValueTask<long?> ReadMedal1GraphicIdAsync(long characterId, CancellationToken cancellationToken)
-    {
-        if (characterId <= 0)
-            return null;
-        var table = await ReadGameStoreTableAsync("characters", cancellationToken);
-        var key = characterId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        if (table[key] is not JsonObject row)
-            return null;
-        var graphic = CharMgrJsonLong(row["medal1GraphicID"]);
-        if (graphic <= 0)
-            graphic = CharMgrJsonLong(row["medal1GraphicId"]);
-        return graphic > 0 ? graphic : null;
-    }
-
     async ValueTask<double> ReadCharacterSecurityStatusAsync(long characterId, CancellationToken cancellationToken) =>
         await securityStatusOf(characterId, cancellationToken);
 }

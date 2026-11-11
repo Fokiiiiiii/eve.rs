@@ -383,9 +383,9 @@ public sealed class PersistenceMailSendHostAdapter(
                     var data = NotificationData(corporationId, corporationName, title, message, sentFiletime);
                     sendNotification(recipientId,
                     [
-                        new Eve.Marshal.PyLong(notificationId),
+                        Py.Number(notificationId),
                         new Eve.Marshal.PyInt(1004),
-                        new Eve.Marshal.PyLong(corporationId),
+                        Py.Number(corporationId),
                         Py.FileTimeLong(createdFiletimes[recipientId]),
                         data,
                     ]);
@@ -505,9 +505,9 @@ public sealed class PersistenceMailSendHostAdapter(
 
             sendNotification(recipientCharacterId,
             [
-                new Eve.Marshal.PyLong(notificationId),
+                Py.Number(notificationId),
                 new Eve.Marshal.PyInt(1004),
-                new Eve.Marshal.PyLong(senderId),
+                Py.Number(senderId),
                 Py.FileTimeLong(sentFiletime),
                 NotificationData(senderId, senderName, title, message, sentFiletime),
             ]);
@@ -648,9 +648,9 @@ public sealed class PersistenceMailSendHostAdapter(
                 beforeLiveNotification();
                 sendNotification(recipientId,
                 [
-                    new Eve.Marshal.PyLong(existingId),
+                    Py.Number(existingId),
                     new Eve.Marshal.PyInt(typeId),
-                    new Eve.Marshal.PyLong(senderId),
+                    Py.Number(senderId),
                     Py.FileTimeLong(Number(existing["created"])),
                     NotificationWireData(data),
                 ]);
@@ -684,9 +684,9 @@ public sealed class PersistenceMailSendHostAdapter(
             beforeLiveNotification?.Invoke();
             sendNotification(recipientId,
             [
-                new Eve.Marshal.PyLong(notificationId),
+                Py.Number(notificationId),
                 new Eve.Marshal.PyInt(typeId),
-                new Eve.Marshal.PyLong(senderId),
+                Py.Number(senderId),
                 Py.FileTimeLong(created),
                 NotificationWireData(data),
             ]);
@@ -775,19 +775,16 @@ public sealed class PersistenceMailSendHostAdapter(
 
     private static Eve.Marshal.PyValue NotificationWireValue(JsonNode? value)
     {
-        // a nested object keyed by group ids (the located notification's places) is a dict with integer keys
         if (value is JsonObject nested)
         {
             return new Eve.Marshal.PyDict([.. nested.Select(pair => new KeyValuePair<Eve.Marshal.PyValue, Eve.Marshal.PyValue>(
-                long.TryParse(pair.Key, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var key)
-                    ? new Eve.Marshal.PyLong(key)
-                    : new Eve.Marshal.PyStr(pair.Key),
+                new Eve.Marshal.PyStr(pair.Key),
                 NotificationWireValue(pair.Value)))]);
         }
         if (value is not JsonValue scalar)
             return Eve.Marshal.PyNone.Instance;
         if (scalar.TryGetValue<long>(out var integer))
-            return new Eve.Marshal.PyLong(integer);
+            return Py.Number(integer);
         if (scalar.TryGetValue<decimal>(out var amount))
             return new Eve.Marshal.PyReal((double)amount);
         if (scalar.TryGetValue<double>(out var number) && double.IsFinite(number))
@@ -806,13 +803,13 @@ public sealed class PersistenceMailSendHostAdapter(
         long sentFiletime)
     {
         var messageView = Py.KeyVal(
-            ("messageID", new Eve.Marshal.PyLong(Number(message["messageID"]))),
-            ("senderID", new Eve.Marshal.PyLong(senderId)),
+            ("messageID", Py.Number(Number(message["messageID"]))),
+            ("senderID", Py.Number(senderId)),
             ("senderName", new Eve.Marshal.PyStr(senderName)),
             ("sentDate", Py.FileTimeLong(sentFiletime)),
             ("toCharacterIDs", new Eve.Marshal.PyList(
-                ((JsonArray)message["toCharacterIDs"]!).Select(value => (Eve.Marshal.PyValue)new Eve.Marshal.PyLong(Number(value))).ToArray())),
-            ("toListID", message["toListID"] is null ? Eve.Marshal.PyNone.Instance : new Eve.Marshal.PyLong(Number(message["toListID"]))),
+                ((JsonArray)message["toCharacterIDs"]!).Select(value => Py.Number(Number(value))).ToArray())),
+            ("toListID", message["toListID"] is null ? Eve.Marshal.PyNone.Instance : Py.Number(Number(message["toListID"]))),
             ("toCorpOrAllianceID", CorporationOrAllianceIds(message["toCorpOrAllianceID"])),
             ("subject", new Eve.Marshal.PyStr(subject)),
             ("statusMask", new Eve.Marshal.PyInt(0)),
@@ -821,7 +818,7 @@ public sealed class PersistenceMailSendHostAdapter(
             ("trashed", Eve.Marshal.PyBool.False),
             ("replied", Eve.Marshal.PyBool.False),
             ("forwarded", Eve.Marshal.PyBool.False));
-        return Py.KeyVal(
+        return Py.Dict(
             ("senderName", new Eve.Marshal.PyStr(senderName)),
             ("subject", new Eve.Marshal.PyStr(subject)),
             ("msg", messageView));
@@ -830,7 +827,7 @@ public sealed class PersistenceMailSendHostAdapter(
     private static Eve.Marshal.PyValue CorporationOrAllianceIds(JsonNode? value) => value switch
     {
         null => Eve.Marshal.PyNone.Instance,
-        JsonArray ids => new Eve.Marshal.PyList(ids.Select(id => (Eve.Marshal.PyValue)new Eve.Marshal.PyLong(Number(id))).ToArray()),
-        _ => new Eve.Marshal.PyList([new Eve.Marshal.PyLong(Number(value))]),
+        JsonArray ids => new Eve.Marshal.PyList(ids.Select(id => Py.Number(Number(id))).ToArray()),
+        _ => new Eve.Marshal.PyList([Py.Number(Number(value))]),
     };
 }

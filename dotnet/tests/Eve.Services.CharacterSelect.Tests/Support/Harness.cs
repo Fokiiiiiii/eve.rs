@@ -46,9 +46,9 @@ public sealed class Harness : IAsyncDisposable
         [new Race(1, 601, "Ibis"), new Race(2, 588, "Reaper")],
         [new Bloodline(1, 1), new Bloodline(2, 1), new Bloodline(3, 2)],
         [
-            new StarterLocation(1000006, 500001, 60000610, 30002775, 20000406, 10000033),
-            new StarterLocation(1000007, 500001, 60000611, 30002775, 20000406, 10000033),
-            new StarterLocation(1000044, 500002, 60000001, 30000001, 20000001, 10000001),
+            new StarterLocation(1000045, 500001, 60000610, 30002775, 20000406, 10000033),
+            new StarterLocation(1000044, 500001, 60000611, 30002775, 20000406, 10000033),
+            new StarterLocation(1000171, 500002, 60000001, 30000001, 20000001, 10000001),
         ]);
 
     /// <summary>The skills of the small catalog: race 1 starts with three of them, race 2 with one.</summary>

@@ -25,10 +25,10 @@ public sealed class CreationCatalog
     /// </summary>
     public static readonly IReadOnlyList<School> Schools =
     [
-        new(31, 4, 1000166), new(32, 4, 1000167),
-        new(33, 2, 1000044), new(34, 2, 1000045),
-        new(35, 1, 1000006), new(36, 1, 1000007),
-        new(37, 8, 1000094), new(38, 8, 1000095),
+        new(31, 4, 1000165), new(32, 4, 1000077),
+        new(33, 2, 1000171), new(34, 2, 1000172),
+        new(35, 1, 1000045), new(36, 1, 1000044),
+        new(37, 8, 1000115), new(38, 8, 1000169),
     ];
 
     /// <summary>The "character" item type the client shows for each bloodline (a legacy numbering it still expects).</summary>

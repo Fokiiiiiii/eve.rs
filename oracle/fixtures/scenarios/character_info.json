@@ -1,8 +1,8 @@
 {
  "reference": "EVE.js",
- "referenceCommit": "b637d2a55469ee23d24411ed5a7646391de314d9",
- "recordedAt": "2026-09-29T04:52:05Z",
- "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py",
+ "referenceCommit": "evejs-261108.1",
+ "recordedAt": "2026-11-11T14:56:55Z",
+ "note": "GetPublicInfo and GetPublicInfo3 responses re-recorded by tools/headless-client/scripts/record_character_scenarios.py against EveJS 261108.1 on 2026-11-11; GetGuests corporation IDs follow the refreshed school mapping. Other calls remain from the 2026-09-29 recording.",
  "races": [
   {
    "bloodlineID": 1,
@@ -78,80 +78,52 @@
          10
         ],
         [
+         "schoolID",
+         35
+        ],
+        [
+         "careerID",
+         null
+        ],
+        [
+         "careerSpecialityID",
+         null
+        ],
+        [
+         "gender",
+         true
+        ],
+        [
+         "createDateTime",
+         {
+          "$long": 134388826154680000
+         }
+        ],
+        [
          "corporationID",
-         1000006
+         1000045
+        ],
+        [
+         "corporationDateTime",
+         {
+          "$long": 134388826154680000
+         }
         ],
         [
          "allianceID",
          null
         ],
         [
-         "factionID",
-         500001
+         "warFactionID",
+         null
         ],
         [
-         "empireID",
-         500004
-        ],
-        [
-         "schoolID",
-         35
-        ],
-        [
-         "gender",
-         1
-        ],
-        [
-         "createDateTime",
-         {
-          "$long": 134351311254520000
-         }
-        ],
-        [
-         "startDateTime",
-         {
-          "$long": 134351311254520000
-         }
+         "age",
+         0
         ],
         [
          "description",
-         "Character created via EveJS Elysian"
-        ],
-        [
-         "securityRating",
-         0
-        ],
-        [
-         "securityStatus",
-         0
-        ],
-        [
-         "bounty",
-         0
-        ],
-        [
-         "title",
          ""
-        ],
-        [
-         "shortName",
-         "none"
-        ],
-        [
-         "stationID",
-         60015249
-        ],
-        [
-         "solarSystemID",
-         30100032
-        ],
-        [
-         "militiaFactionID",
-         null
-        ],
-        [
-         "medal1GraphicID",
-         null
         ]
        ]
       }
@@ -165,115 +137,103 @@
        140000130
       ]
      ],
-     "ok": [
-      {
-       "$object": "util.KeyVal",
-       "args": {
-        "$dict": [
-         [
-          "characterID",
-          140000130
-         ],
-         [
-          "characterName",
-          "Informed 1 1790657525"
-         ],
-         [
-          "typeID",
-          1373
-         ],
-         [
-          "raceID",
-          1
-         ],
-         [
-          "bloodlineID",
-          1
-         ],
-         [
-          "ancestryID",
-          10
-         ],
-         [
-          "corporationID",
-          1000006
-         ],
-         [
-          "allianceID",
-          null
-         ],
-         [
-          "factionID",
-          500001
-         ],
-         [
-          "empireID",
-          500004
-         ],
-         [
-          "schoolID",
-          35
-         ],
-         [
-          "gender",
-          1
-         ],
-         [
-          "createDateTime",
+     "ok": {
+      "$objectex": {
+       "$tuple": [
+        {
+         "$tuple": [
           {
-           "$long": 134351311254520000
+           "$token": "carbon.common.script.sys.crowset.CRowset"
           }
-         ],
-         [
-          "startDateTime",
-          {
-           "$long": 134351311254520000
-          }
-         ],
-         [
-          "description",
-          "Character created via EveJS Elysian"
-         ],
-         [
-          "securityRating",
-          0
-         ],
-         [
-          "securityStatus",
-          0
-         ],
-         [
-          "bounty",
-          0
-         ],
-         [
-          "title",
-          ""
-         ],
-         [
-          "shortName",
-          "none"
-         ],
-         [
-          "stationID",
-          60015249
-         ],
-         [
-          "solarSystemID",
-          30100032
-         ],
-         [
-          "militiaFactionID",
-          null
-         ],
-         [
-          "medal1GraphicID",
-          null
          ]
-        ]
+        },
+        {
+         "$dict": [
+          [
+           "header",
+           {
+            "$objectex": {
+             "$tuple": [
+              {
+               "$token": "blue.DBRowDescriptor"
+              },
+              {
+               "$tuple": [
+                {
+                 "$tuple": [
+                  {
+                   "$tuple": [
+                    "bounty",
+                    6
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "title",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "startDateTime",
+                    64
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "description",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "corporationID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "militiaFactionID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "bloodlineID",
+                    17
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            },
+            "list": [],
+            "dict": []
+           }
+          ]
+         ]
+        }
+       ]
+      },
+      "list": [
+       {
+        "$row": {
+         "bounty": 0.0,
+         "title": "",
+         "startDateTime": {
+          "$bigunsigned": 134388826154680000
+         },
+         "description": "",
+         "corporationID": 1000045,
+         "militiaFactionID": null,
+         "bloodlineID": 1
+        }
        }
-      }
-     ]
+      ],
+      "dict": []
+     }
     },
     {
      "call": [
@@ -284,115 +244,103 @@
        0
       ]
      ],
-     "ok": [
-      {
-       "$object": "util.KeyVal",
-       "args": {
-        "$dict": [
-         [
-          "characterID",
-          140000130
-         ],
-         [
-          "characterName",
-          "Informed 1 1790657525"
-         ],
-         [
-          "typeID",
-          1373
-         ],
-         [
-          "raceID",
-          1
-         ],
-         [
-          "bloodlineID",
-          1
-         ],
-         [
-          "ancestryID",
-          10
-         ],
-         [
-          "corporationID",
-          1000006
-         ],
-         [
-          "allianceID",
-          null
-         ],
-         [
-          "factionID",
-          500001
-         ],
-         [
-          "empireID",
-          500004
-         ],
-         [
-          "schoolID",
-          35
-         ],
-         [
-          "gender",
-          1
-         ],
-         [
-          "createDateTime",
+     "ok": {
+      "$objectex": {
+       "$tuple": [
+        {
+         "$tuple": [
           {
-           "$long": 134351311254520000
+           "$token": "carbon.common.script.sys.crowset.CRowset"
           }
-         ],
-         [
-          "startDateTime",
-          {
-           "$long": 134351311254520000
-          }
-         ],
-         [
-          "description",
-          "Character created via EveJS Elysian"
-         ],
-         [
-          "securityRating",
-          0
-         ],
-         [
-          "securityStatus",
-          0
-         ],
-         [
-          "bounty",
-          0
-         ],
-         [
-          "title",
-          ""
-         ],
-         [
-          "shortName",
-          "none"
-         ],
-         [
-          "stationID",
-          60015249
-         ],
-         [
-          "solarSystemID",
-          30100032
-         ],
-         [
-          "militiaFactionID",
-          null
-         ],
-         [
-          "medal1GraphicID",
-          null
          ]
-        ]
+        },
+        {
+         "$dict": [
+          [
+           "header",
+           {
+            "$objectex": {
+             "$tuple": [
+              {
+               "$token": "blue.DBRowDescriptor"
+              },
+              {
+               "$tuple": [
+                {
+                 "$tuple": [
+                  {
+                   "$tuple": [
+                    "bounty",
+                    6
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "title",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "startDateTime",
+                    64
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "description",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "corporationID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "militiaFactionID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "bloodlineID",
+                    17
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            },
+            "list": [],
+            "dict": []
+           }
+          ]
+         ]
+        }
+       ]
+      },
+      "list": [
+       {
+        "$row": {
+         "bounty": 0.0,
+         "title": "",
+         "startDateTime": {
+          "$bigunsigned": 134388826154680000
+         },
+         "description": "",
+         "corporationID": 1000045,
+         "militiaFactionID": null,
+         "bloodlineID": 1
+        }
        }
-      }
-     ]
+      ],
+      "dict": []
+     }
     },
     {
      "call": [
@@ -894,7 +842,7 @@
       {
        "$tuple": [
         140000130,
-        1000006,
+        1000045,
         0,
         0
        ]
@@ -911,7 +859,7 @@
       {
        "$tuple": [
         140000130,
-        1000006,
+        1000045,
         0,
         0
        ]
@@ -1094,80 +1042,52 @@
          19
         ],
         [
+         "schoolID",
+         33
+        ],
+        [
+         "careerID",
+         null
+        ],
+        [
+         "careerSpecialityID",
+         null
+        ],
+        [
+         "gender",
+         true
+        ],
+        [
+         "createDateTime",
+         {
+          "$long": 134388826190190000
+         }
+        ],
+        [
          "corporationID",
-         1000044
+         1000171
+        ],
+        [
+         "corporationDateTime",
+         {
+          "$long": 134388826190190000
+         }
         ],
         [
          "allianceID",
          null
         ],
         [
-         "factionID",
-         500001
+         "warFactionID",
+         null
         ],
         [
-         "empireID",
-         500001
-        ],
-        [
-         "schoolID",
-         33
-        ],
-        [
-         "gender",
-         1
-        ],
-        [
-         "createDateTime",
-         {
-          "$long": 134351311271370000
-         }
-        ],
-        [
-         "startDateTime",
-         {
-          "$long": 134351311271370000
-         }
+         "age",
+         0
         ],
         [
          "description",
-         "Character created via EveJS Elysian"
-        ],
-        [
-         "securityRating",
-         0
-        ],
-        [
-         "securityStatus",
-         0
-        ],
-        [
-         "bounty",
-         0
-        ],
-        [
-         "title",
          ""
-        ],
-        [
-         "shortName",
-         "none"
-        ],
-        [
-         "stationID",
-         60015249
-        ],
-        [
-         "solarSystemID",
-         30100032
-        ],
-        [
-         "militiaFactionID",
-         null
-        ],
-        [
-         "medal1GraphicID",
-         null
         ]
        ]
       }
@@ -1181,115 +1101,103 @@
        140000131
       ]
      ],
-     "ok": [
-      {
-       "$object": "util.KeyVal",
-       "args": {
-        "$dict": [
-         [
-          "characterID",
-          140000131
-         ],
-         [
-          "characterName",
-          "Informed 3 1790657525"
-         ],
-         [
-          "typeID",
-          1375
-         ],
-         [
-          "raceID",
-          2
-         ],
-         [
-          "bloodlineID",
-          3
-         ],
-         [
-          "ancestryID",
-          19
-         ],
-         [
-          "corporationID",
-          1000044
-         ],
-         [
-          "allianceID",
-          null
-         ],
-         [
-          "factionID",
-          500001
-         ],
-         [
-          "empireID",
-          500001
-         ],
-         [
-          "schoolID",
-          33
-         ],
-         [
-          "gender",
-          1
-         ],
-         [
-          "createDateTime",
+     "ok": {
+      "$objectex": {
+       "$tuple": [
+        {
+         "$tuple": [
           {
-           "$long": 134351311271370000
+           "$token": "carbon.common.script.sys.crowset.CRowset"
           }
-         ],
-         [
-          "startDateTime",
-          {
-           "$long": 134351311271370000
-          }
-         ],
-         [
-          "description",
-          "Character created via EveJS Elysian"
-         ],
-         [
-          "securityRating",
-          0
-         ],
-         [
-          "securityStatus",
-          0
-         ],
-         [
-          "bounty",
-          0
-         ],
-         [
-          "title",
-          ""
-         ],
-         [
-          "shortName",
-          "none"
-         ],
-         [
-          "stationID",
-          60015249
-         ],
-         [
-          "solarSystemID",
-          30100032
-         ],
-         [
-          "militiaFactionID",
-          null
-         ],
-         [
-          "medal1GraphicID",
-          null
          ]
-        ]
+        },
+        {
+         "$dict": [
+          [
+           "header",
+           {
+            "$objectex": {
+             "$tuple": [
+              {
+               "$token": "blue.DBRowDescriptor"
+              },
+              {
+               "$tuple": [
+                {
+                 "$tuple": [
+                  {
+                   "$tuple": [
+                    "bounty",
+                    6
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "title",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "startDateTime",
+                    64
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "description",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "corporationID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "militiaFactionID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "bloodlineID",
+                    17
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            },
+            "list": [],
+            "dict": []
+           }
+          ]
+         ]
+        }
+       ]
+      },
+      "list": [
+       {
+        "$row": {
+         "bounty": 0.0,
+         "title": "",
+         "startDateTime": {
+          "$bigunsigned": 134388826190190000
+         },
+         "description": "",
+         "corporationID": 1000171,
+         "militiaFactionID": null,
+         "bloodlineID": 3
+        }
        }
-      }
-     ]
+      ],
+      "dict": []
+     }
     },
     {
      "call": [
@@ -1300,115 +1208,103 @@
        0
       ]
      ],
-     "ok": [
-      {
-       "$object": "util.KeyVal",
-       "args": {
-        "$dict": [
-         [
-          "characterID",
-          140000131
-         ],
-         [
-          "characterName",
-          "Informed 3 1790657525"
-         ],
-         [
-          "typeID",
-          1375
-         ],
-         [
-          "raceID",
-          2
-         ],
-         [
-          "bloodlineID",
-          3
-         ],
-         [
-          "ancestryID",
-          19
-         ],
-         [
-          "corporationID",
-          1000044
-         ],
-         [
-          "allianceID",
-          null
-         ],
-         [
-          "factionID",
-          500001
-         ],
-         [
-          "empireID",
-          500001
-         ],
-         [
-          "schoolID",
-          33
-         ],
-         [
-          "gender",
-          1
-         ],
-         [
-          "createDateTime",
+     "ok": {
+      "$objectex": {
+       "$tuple": [
+        {
+         "$tuple": [
           {
-           "$long": 134351311271370000
+           "$token": "carbon.common.script.sys.crowset.CRowset"
           }
-         ],
-         [
-          "startDateTime",
-          {
-           "$long": 134351311271370000
-          }
-         ],
-         [
-          "description",
-          "Character created via EveJS Elysian"
-         ],
-         [
-          "securityRating",
-          0
-         ],
-         [
-          "securityStatus",
-          0
-         ],
-         [
-          "bounty",
-          0
-         ],
-         [
-          "title",
-          ""
-         ],
-         [
-          "shortName",
-          "none"
-         ],
-         [
-          "stationID",
-          60015249
-         ],
-         [
-          "solarSystemID",
-          30100032
-         ],
-         [
-          "militiaFactionID",
-          null
-         ],
-         [
-          "medal1GraphicID",
-          null
          ]
-        ]
+        },
+        {
+         "$dict": [
+          [
+           "header",
+           {
+            "$objectex": {
+             "$tuple": [
+              {
+               "$token": "blue.DBRowDescriptor"
+              },
+              {
+               "$tuple": [
+                {
+                 "$tuple": [
+                  {
+                   "$tuple": [
+                    "bounty",
+                    6
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "title",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "startDateTime",
+                    64
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "description",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "corporationID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "militiaFactionID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "bloodlineID",
+                    17
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            },
+            "list": [],
+            "dict": []
+           }
+          ]
+         ]
+        }
+       ]
+      },
+      "list": [
+       {
+        "$row": {
+         "bounty": 0.0,
+         "title": "",
+         "startDateTime": {
+          "$bigunsigned": 134388826190190000
+         },
+         "description": "",
+         "corporationID": 1000171,
+         "militiaFactionID": null,
+         "bloodlineID": 3
+        }
        }
-      }
-     ]
+      ],
+      "dict": []
+     }
     },
     {
      "call": [
@@ -1910,7 +1806,7 @@
       {
        "$tuple": [
         140000131,
-        1000044,
+        1000171,
         0,
         0
        ]
@@ -1927,7 +1823,7 @@
       {
        "$tuple": [
         140000131,
-        1000044,
+        1000171,
         0,
         0
        ]
@@ -2110,80 +2006,52 @@
          1
         ],
         [
+         "schoolID",
+         31
+        ],
+        [
+         "careerID",
+         null
+        ],
+        [
+         "careerSpecialityID",
+         null
+        ],
+        [
+         "gender",
+         true
+        ],
+        [
+         "createDateTime",
+         {
+          "$long": 134388826212490000
+         }
+        ],
+        [
          "corporationID",
-         1000166
+         1000165
+        ],
+        [
+         "corporationDateTime",
+         {
+          "$long": 134388826212490000
+         }
         ],
         [
          "allianceID",
          null
         ],
         [
-         "factionID",
-         500003
+         "warFactionID",
+         null
         ],
         [
-         "empireID",
-         500003
-        ],
-        [
-         "schoolID",
-         31
-        ],
-        [
-         "gender",
-         1
-        ],
-        [
-         "createDateTime",
-         {
-          "$long": 134351311287660000
-         }
-        ],
-        [
-         "startDateTime",
-         {
-          "$long": 134351311287660000
-         }
+         "age",
+         0
         ],
         [
          "description",
-         "Character created via EveJS Elysian"
-        ],
-        [
-         "securityRating",
-         0
-        ],
-        [
-         "securityStatus",
-         0
-        ],
-        [
-         "bounty",
-         0
-        ],
-        [
-         "title",
          ""
-        ],
-        [
-         "shortName",
-         "none"
-        ],
-        [
-         "stationID",
-         60015249
-        ],
-        [
-         "solarSystemID",
-         30100032
-        ],
-        [
-         "militiaFactionID",
-         null
-        ],
-        [
-         "medal1GraphicID",
-         null
         ]
        ]
       }
@@ -2197,115 +2065,103 @@
        140000132
       ]
      ],
-     "ok": [
-      {
-       "$object": "util.KeyVal",
-       "args": {
-        "$dict": [
-         [
-          "characterID",
-          140000132
-         ],
-         [
-          "characterName",
-          "Informed 5 1790657525"
-         ],
-         [
-          "typeID",
-          1377
-         ],
-         [
-          "raceID",
-          4
-         ],
-         [
-          "bloodlineID",
-          5
-         ],
-         [
-          "ancestryID",
-          1
-         ],
-         [
-          "corporationID",
-          1000166
-         ],
-         [
-          "allianceID",
-          null
-         ],
-         [
-          "factionID",
-          500003
-         ],
-         [
-          "empireID",
-          500003
-         ],
-         [
-          "schoolID",
-          31
-         ],
-         [
-          "gender",
-          1
-         ],
-         [
-          "createDateTime",
+     "ok": {
+      "$objectex": {
+       "$tuple": [
+        {
+         "$tuple": [
           {
-           "$long": 134351311287660000
+           "$token": "carbon.common.script.sys.crowset.CRowset"
           }
-         ],
-         [
-          "startDateTime",
-          {
-           "$long": 134351311287660000
-          }
-         ],
-         [
-          "description",
-          "Character created via EveJS Elysian"
-         ],
-         [
-          "securityRating",
-          0
-         ],
-         [
-          "securityStatus",
-          0
-         ],
-         [
-          "bounty",
-          0
-         ],
-         [
-          "title",
-          ""
-         ],
-         [
-          "shortName",
-          "none"
-         ],
-         [
-          "stationID",
-          60015249
-         ],
-         [
-          "solarSystemID",
-          30100032
-         ],
-         [
-          "militiaFactionID",
-          null
-         ],
-         [
-          "medal1GraphicID",
-          null
          ]
-        ]
+        },
+        {
+         "$dict": [
+          [
+           "header",
+           {
+            "$objectex": {
+             "$tuple": [
+              {
+               "$token": "blue.DBRowDescriptor"
+              },
+              {
+               "$tuple": [
+                {
+                 "$tuple": [
+                  {
+                   "$tuple": [
+                    "bounty",
+                    6
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "title",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "startDateTime",
+                    64
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "description",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "corporationID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "militiaFactionID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "bloodlineID",
+                    17
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            },
+            "list": [],
+            "dict": []
+           }
+          ]
+         ]
+        }
+       ]
+      },
+      "list": [
+       {
+        "$row": {
+         "bounty": 0.0,
+         "title": "",
+         "startDateTime": {
+          "$bigunsigned": 134388826212490000
+         },
+         "description": "",
+         "corporationID": 1000165,
+         "militiaFactionID": null,
+         "bloodlineID": 5
+        }
        }
-      }
-     ]
+      ],
+      "dict": []
+     }
     },
     {
      "call": [
@@ -2316,115 +2172,103 @@
        0
       ]
      ],
-     "ok": [
-      {
-       "$object": "util.KeyVal",
-       "args": {
-        "$dict": [
-         [
-          "characterID",
-          140000132
-         ],
-         [
-          "characterName",
-          "Informed 5 1790657525"
-         ],
-         [
-          "typeID",
-          1377
-         ],
-         [
-          "raceID",
-          4
-         ],
-         [
-          "bloodlineID",
-          5
-         ],
-         [
-          "ancestryID",
-          1
-         ],
-         [
-          "corporationID",
-          1000166
-         ],
-         [
-          "allianceID",
-          null
-         ],
-         [
-          "factionID",
-          500003
-         ],
-         [
-          "empireID",
-          500003
-         ],
-         [
-          "schoolID",
-          31
-         ],
-         [
-          "gender",
-          1
-         ],
-         [
-          "createDateTime",
+     "ok": {
+      "$objectex": {
+       "$tuple": [
+        {
+         "$tuple": [
           {
-           "$long": 134351311287660000
+           "$token": "carbon.common.script.sys.crowset.CRowset"
           }
-         ],
-         [
-          "startDateTime",
-          {
-           "$long": 134351311287660000
-          }
-         ],
-         [
-          "description",
-          "Character created via EveJS Elysian"
-         ],
-         [
-          "securityRating",
-          0
-         ],
-         [
-          "securityStatus",
-          0
-         ],
-         [
-          "bounty",
-          0
-         ],
-         [
-          "title",
-          ""
-         ],
-         [
-          "shortName",
-          "none"
-         ],
-         [
-          "stationID",
-          60015249
-         ],
-         [
-          "solarSystemID",
-          30100032
-         ],
-         [
-          "militiaFactionID",
-          null
-         ],
-         [
-          "medal1GraphicID",
-          null
          ]
-        ]
+        },
+        {
+         "$dict": [
+          [
+           "header",
+           {
+            "$objectex": {
+             "$tuple": [
+              {
+               "$token": "blue.DBRowDescriptor"
+              },
+              {
+               "$tuple": [
+                {
+                 "$tuple": [
+                  {
+                   "$tuple": [
+                    "bounty",
+                    6
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "title",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "startDateTime",
+                    64
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "description",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "corporationID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "militiaFactionID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "bloodlineID",
+                    17
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            },
+            "list": [],
+            "dict": []
+           }
+          ]
+         ]
+        }
+       ]
+      },
+      "list": [
+       {
+        "$row": {
+         "bounty": 0.0,
+         "title": "",
+         "startDateTime": {
+          "$bigunsigned": 134388826212490000
+         },
+         "description": "",
+         "corporationID": 1000165,
+         "militiaFactionID": null,
+         "bloodlineID": 5
+        }
        }
-      }
-     ]
+      ],
+      "dict": []
+     }
     },
     {
      "call": [
@@ -2926,7 +2770,7 @@
       {
        "$tuple": [
         140000132,
-        1000166,
+        1000165,
         0,
         0
        ]
@@ -2943,7 +2787,7 @@
       {
        "$tuple": [
         140000132,
-        1000166,
+        1000165,
         0,
         0
        ]
@@ -3126,80 +2970,52 @@
          13
         ],
         [
+         "schoolID",
+         37
+        ],
+        [
+         "careerID",
+         null
+        ],
+        [
+         "careerSpecialityID",
+         null
+        ],
+        [
+         "gender",
+         true
+        ],
+        [
+         "createDateTime",
+         {
+          "$long": 134388826234080000
+         }
+        ],
+        [
          "corporationID",
-         1000094
+         1000115
+        ],
+        [
+         "corporationDateTime",
+         {
+          "$long": 134388826234080000
+         }
         ],
         [
          "allianceID",
          null
         ],
         [
-         "factionID",
-         500004
+         "warFactionID",
+         null
         ],
         [
-         "empireID",
-         500004
-        ],
-        [
-         "schoolID",
-         37
-        ],
-        [
-         "gender",
-         1
-        ],
-        [
-         "createDateTime",
-         {
-          "$long": 134351311304040000
-         }
-        ],
-        [
-         "startDateTime",
-         {
-          "$long": 134351311304040000
-         }
+         "age",
+         0
         ],
         [
          "description",
-         "Character created via EveJS Elysian"
-        ],
-        [
-         "securityRating",
-         0
-        ],
-        [
-         "securityStatus",
-         0
-        ],
-        [
-         "bounty",
-         0
-        ],
-        [
-         "title",
          ""
-        ],
-        [
-         "shortName",
-         "none"
-        ],
-        [
-         "stationID",
-         60015249
-        ],
-        [
-         "solarSystemID",
-         30100032
-        ],
-        [
-         "militiaFactionID",
-         null
-        ],
-        [
-         "medal1GraphicID",
-         null
         ]
        ]
       }
@@ -3213,115 +3029,103 @@
        140000133
       ]
      ],
-     "ok": [
-      {
-       "$object": "util.KeyVal",
-       "args": {
-        "$dict": [
-         [
-          "characterID",
-          140000133
-         ],
-         [
-          "characterName",
-          "Informed 7 1790657525"
-         ],
-         [
-          "typeID",
-          1379
-         ],
-         [
-          "raceID",
-          8
-         ],
-         [
-          "bloodlineID",
-          7
-         ],
-         [
-          "ancestryID",
-          13
-         ],
-         [
-          "corporationID",
-          1000094
-         ],
-         [
-          "allianceID",
-          null
-         ],
-         [
-          "factionID",
-          500004
-         ],
-         [
-          "empireID",
-          500004
-         ],
-         [
-          "schoolID",
-          37
-         ],
-         [
-          "gender",
-          1
-         ],
-         [
-          "createDateTime",
+     "ok": {
+      "$objectex": {
+       "$tuple": [
+        {
+         "$tuple": [
           {
-           "$long": 134351311304040000
+           "$token": "carbon.common.script.sys.crowset.CRowset"
           }
-         ],
-         [
-          "startDateTime",
-          {
-           "$long": 134351311304040000
-          }
-         ],
-         [
-          "description",
-          "Character created via EveJS Elysian"
-         ],
-         [
-          "securityRating",
-          0
-         ],
-         [
-          "securityStatus",
-          0
-         ],
-         [
-          "bounty",
-          0
-         ],
-         [
-          "title",
-          ""
-         ],
-         [
-          "shortName",
-          "none"
-         ],
-         [
-          "stationID",
-          60015249
-         ],
-         [
-          "solarSystemID",
-          30100032
-         ],
-         [
-          "militiaFactionID",
-          null
-         ],
-         [
-          "medal1GraphicID",
-          null
          ]
-        ]
+        },
+        {
+         "$dict": [
+          [
+           "header",
+           {
+            "$objectex": {
+             "$tuple": [
+              {
+               "$token": "blue.DBRowDescriptor"
+              },
+              {
+               "$tuple": [
+                {
+                 "$tuple": [
+                  {
+                   "$tuple": [
+                    "bounty",
+                    6
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "title",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "startDateTime",
+                    64
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "description",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "corporationID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "militiaFactionID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "bloodlineID",
+                    17
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            },
+            "list": [],
+            "dict": []
+           }
+          ]
+         ]
+        }
+       ]
+      },
+      "list": [
+       {
+        "$row": {
+         "bounty": 0.0,
+         "title": "",
+         "startDateTime": {
+          "$bigunsigned": 134388826234080000
+         },
+         "description": "",
+         "corporationID": 1000115,
+         "militiaFactionID": null,
+         "bloodlineID": 7
+        }
        }
-      }
-     ]
+      ],
+      "dict": []
+     }
     },
     {
      "call": [
@@ -3332,115 +3136,103 @@
        0
       ]
      ],
-     "ok": [
-      {
-       "$object": "util.KeyVal",
-       "args": {
-        "$dict": [
-         [
-          "characterID",
-          140000133
-         ],
-         [
-          "characterName",
-          "Informed 7 1790657525"
-         ],
-         [
-          "typeID",
-          1379
-         ],
-         [
-          "raceID",
-          8
-         ],
-         [
-          "bloodlineID",
-          7
-         ],
-         [
-          "ancestryID",
-          13
-         ],
-         [
-          "corporationID",
-          1000094
-         ],
-         [
-          "allianceID",
-          null
-         ],
-         [
-          "factionID",
-          500004
-         ],
-         [
-          "empireID",
-          500004
-         ],
-         [
-          "schoolID",
-          37
-         ],
-         [
-          "gender",
-          1
-         ],
-         [
-          "createDateTime",
+     "ok": {
+      "$objectex": {
+       "$tuple": [
+        {
+         "$tuple": [
           {
-           "$long": 134351311304040000
+           "$token": "carbon.common.script.sys.crowset.CRowset"
           }
-         ],
-         [
-          "startDateTime",
-          {
-           "$long": 134351311304040000
-          }
-         ],
-         [
-          "description",
-          "Character created via EveJS Elysian"
-         ],
-         [
-          "securityRating",
-          0
-         ],
-         [
-          "securityStatus",
-          0
-         ],
-         [
-          "bounty",
-          0
-         ],
-         [
-          "title",
-          ""
-         ],
-         [
-          "shortName",
-          "none"
-         ],
-         [
-          "stationID",
-          60015249
-         ],
-         [
-          "solarSystemID",
-          30100032
-         ],
-         [
-          "militiaFactionID",
-          null
-         ],
-         [
-          "medal1GraphicID",
-          null
          ]
-        ]
+        },
+        {
+         "$dict": [
+          [
+           "header",
+           {
+            "$objectex": {
+             "$tuple": [
+              {
+               "$token": "blue.DBRowDescriptor"
+              },
+              {
+               "$tuple": [
+                {
+                 "$tuple": [
+                  {
+                   "$tuple": [
+                    "bounty",
+                    6
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "title",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "startDateTime",
+                    64
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "description",
+                    130
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "corporationID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "militiaFactionID",
+                    3
+                   ]
+                  },
+                  {
+                   "$tuple": [
+                    "bloodlineID",
+                    17
+                   ]
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            },
+            "list": [],
+            "dict": []
+           }
+          ]
+         ]
+        }
+       ]
+      },
+      "list": [
+       {
+        "$row": {
+         "bounty": 0.0,
+         "title": "",
+         "startDateTime": {
+          "$bigunsigned": 134388826234080000
+         },
+         "description": "",
+         "corporationID": 1000115,
+         "militiaFactionID": null,
+         "bloodlineID": 7
+        }
        }
-      }
-     ]
+      ],
+      "dict": []
+     }
     },
     {
      "call": [
@@ -3942,7 +3734,7 @@
       {
        "$tuple": [
         140000133,
-        1000094,
+        1000115,
         0,
         0
        ]
@@ -3959,7 +3751,7 @@
       {
        "$tuple": [
         140000133,
-        1000094,
+        1000115,
         0,
         0
        ]

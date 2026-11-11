@@ -25,7 +25,8 @@ public sealed record CreateItemExchangeRequest(
     long EndStationId = 0,
     decimal Collateral = 0,
     int NumDays = 0,
-    IReadOnlyList<ContractRequestedItem>? RequestedItems = null);
+    IReadOnlyList<ContractRequestedItem>? RequestedItems = null,
+    int AuctionAccountingLevel = 0);
 
 /// <summary>A type the acceptor must supply (requestItemTypeList entry); stored as terms, not escrowed.</summary>
 public sealed record ContractRequestedItem(int TypeId, long Quantity);
@@ -101,6 +102,9 @@ public static class ContractCreationRules
         Require(request.BrokerFee >= 0, nameof(request.BrokerFee));
         Require(request.Deposit >= 0, nameof(request.Deposit));
         Require(request.SalesTax >= 0, nameof(request.SalesTax));
+        Require(request.AuctionAccountingLevel is >= 0 and <= 5, nameof(request.AuctionAccountingLevel));
+        Require(request.ContractType == 2 || request.AuctionAccountingLevel == 0, nameof(request.AuctionAccountingLevel));
+        Require(request.ContractType != 2 || request.SalesTax == 0, nameof(request.SalesTax));
         Require(request.WalletAccountKey is >= 1000 and <= 1006, nameof(request.WalletAccountKey));
         Require(!string.IsNullOrWhiteSpace(request.Title), nameof(request.Title));
         Require(request.Title.Length <= 50, nameof(request.Title));

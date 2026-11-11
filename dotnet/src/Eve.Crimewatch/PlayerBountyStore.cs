@@ -146,11 +146,26 @@ public sealed class PlayerBountyStore(NpgsqlDataSource source, string schema)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        if (await Sql.ScalarAsync(connection, transaction, Q("SELECT payout_id FROM {schema}.player_bounty_payouts WHERE payout_id = $1"), cancellationToken, claim.PayoutId) is not null)
-        {
-            await transaction.CommitAsync(cancellationToken);
-            return claim.PayoutId;
-        }
+        var result = await ClaimKillInTransactionAsync(connection, transaction, claim, schedule, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return result?.PayoutId;
+    }
+
+    /// <summary>Claims a kill in the caller's transaction and returns the total amount, including the amount for an idempotent retry.</summary>
+    public async Task<PlayerBountyPayoutClaim?> ClaimKillInTransactionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        PlayerBountyClaim claim,
+        Func<NpgsqlConnection, NpgsqlTransaction, string, Task> schedule,
+        CancellationToken cancellationToken = default)
+    {
+        await Sql.ScalarAsync(connection, transaction,
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", cancellationToken, claim.PayoutId);
+        var priorAmount = await Sql.ScalarAsync(connection, transaction,
+            Q("SELECT SUM(amount) FROM {schema}.player_bounty_payouts WHERE payout_id = $1 OR payout_id LIKE $1 || ':%'"),
+            cancellationToken, claim.PayoutId);
+        if (priorAmount is decimal amountAlreadyClaimed)
+            return new PlayerBountyPayoutClaim(claim.PayoutId, amountAlreadyClaimed);
 
         var pools = new Dictionary<long, (BountyOwnerKind Kind, long Corporation, long Alliance, decimal Bounty)>();
         await using (var command = Sql.Command(connection, transaction, Q(
@@ -201,8 +216,7 @@ public sealed class PlayerBountyStore(NpgsqlDataSource source, string schema)
                 cancellationToken, payoutId, sharer, share, claim.LossValue, cap, commandId, claim.NowMs);
             await schedule(connection, transaction, payoutId);
         }
-        await transaction.CommitAsync(cancellationToken);
-        return claim.PayoutId;
+        return new PlayerBountyPayoutClaim(claim.PayoutId, amount);
     }
 
     /// <summary>The payout's hunter, amount and credit command, when it is still pending (null when it is missing or paid).</summary>
@@ -234,4 +248,7 @@ public sealed class PlayerBountyStore(NpgsqlDataSource source, string schema)
 /// <summary>A kill's claim: the pools of the victim (in claim order), the loss, and the hunter with its affiliation.</summary>
 public sealed record PlayerBountyClaim(string PayoutId, string CommandId, long HunterId, long HunterCorporationId, long HunterAllianceId,
     IReadOnlyList<long> Targets, decimal LossValue, long NowMs, IReadOnlyList<long>? Sharers = null);
+
+/// <summary>A player bounty claim committed or already present for one kill.</summary>
+public sealed record PlayerBountyPayoutClaim(string PayoutId, decimal Amount);
 

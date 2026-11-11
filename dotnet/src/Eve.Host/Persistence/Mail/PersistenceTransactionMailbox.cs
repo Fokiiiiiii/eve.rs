@@ -46,7 +46,8 @@ internal sealed class PersistenceTransactionMailbox
         string idempotencyKey,
         JsonObject data,
         CancellationToken cancellationToken = default,
-        EventContext? context = null)
+        EventContext? context = null,
+        long? createdFileTime = null)
     {
 
         if (senderId < 0) throw new ArgumentOutOfRangeException(nameof(senderId));
@@ -62,8 +63,10 @@ internal sealed class PersistenceTransactionMailbox
         if (recipients.Length == 0)
             return 0;
 
-        await _mutationGate.WaitAsync(cancellationToken);
-        context?.AfterCompletion(() => _mutationGate.Release());
+        if (context is null)
+            await _mutationGate.WaitAsync(cancellationToken);
+        else
+            await context.AcquireSemaphoreUntilCompletionAsync(_mutationGate, cancellationToken);
         try
         {
             _owner.AssertHealthy();
@@ -73,7 +76,9 @@ internal sealed class PersistenceTransactionMailbox
                 throw new InvalidOperationException("The notifications table is not available in the mailbox cache.");
             var cachedBoxes = cachedRoot["boxes"] as JsonObject;
             var nextNotificationId = MaximumNotificationId(cachedBoxes);
-            var created = ToFileTime(_nowUnixMs());
+            var created = createdFileTime ?? ToFileTime(_nowUnixMs());
+            if (created <= 0)
+                throw new ArgumentOutOfRangeException(nameof(createdFileTime));
             var upserts = new List<RowUpsert>();
             var cacheWrites = new List<(string RecipientKey, string NotificationKey, JsonObject Record)>();
             var liveNotifications = new List<(long RecipientId, long NotificationId)>();

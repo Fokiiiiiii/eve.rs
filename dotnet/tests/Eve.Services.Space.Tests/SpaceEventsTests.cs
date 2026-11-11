@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Eve.Characters;
 using Eve.Macho;
 using Eve.Marshal;
@@ -108,6 +109,107 @@ public class SpaceEventsTests
         await Rig.UntilAsync(() => seen.Count == 1);
 
         Assert.Equal([1], seen);
+    }
+
+    [PgFact]
+    public async Task An_npc_killmail_event_keeps_the_pilots_damage_and_the_npc_identity()
+    {
+        var (rig, c, session) = await InSpaceAsync();
+        await using var _ = rig;
+        await rig.UseBusAsync();
+        var spawn = await SpawnAsync(rig, session);
+        var damage = new PyDict([
+            new(new PyStr("attackType"), new PyStr("me")),
+            new(new PyStr("source"), new PyLong(c.ShipId)),
+            new(new PyStr("target"), new PyLong(spawn.Ship.ShipId)),
+            new(new PyStr("weapon"), new PyInt(216)),
+            new(new PyStr("damage"), new PyReal(123.5)),
+            new(new PyStr("owner"), Py.Tuple(new PyInt(2), new PyLong(c.CharacterId))),
+        ]);
+        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnDamageMessage", "clientID",
+            MarshalCodec.Encode(Py.Tuple(damage))));
+        rig.Sim.Say(NpcDestroyed(spawn, c.ShipId));
+
+        var announced = await AnnouncedAsync(rig, 2);
+        var (_, json) = Assert.Single(announced, entry => entry.Topic == ShipKillmailEvent.Topic);
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, root.GetProperty("characterId").ValueKind);
+        Assert.Equal(spawn.Ship.ShipId, root.GetProperty("shipId").GetInt64());
+        Assert.Equal(spawn.Ship.TypeId, root.GetProperty("shipTypeId").GetInt32());
+        Assert.Equal(123.5, root.GetProperty("damageTaken").GetDouble());
+        Assert.Equal(15_000m, root.GetProperty("bountyClaimed").GetDecimal());
+        var attacker = Assert.Single(root.GetProperty("attackers").EnumerateArray());
+        Assert.Equal(c.CharacterId, attacker.GetProperty("characterId").GetInt64());
+        Assert.Equal(123.5, attacker.GetProperty("damageDone").GetDouble());
+        Assert.Equal(216, attacker.GetProperty("weaponTypeId").GetInt32());
+    }
+
+    [PgFact]
+    public async Task A_sim_resident_npc_destruction_uses_the_pilots_damage_and_the_simulated_identity()
+    {
+        var (rig, c, session) = await InSpaceAsync();
+        await using var _ = rig;
+        await rig.UseBusAsync();
+        const long npcShipId = 980_100_000_002;
+        const int npcTypeId = 52_182;
+        const int npcCorporationId = 1_000_298;
+        var damage = new PyDict([
+            new(new PyStr("attackType"), new PyStr("me")),
+            new(new PyStr("source"), new PyLong(c.ShipId)),
+            new(new PyStr("target"), new PyLong(npcShipId)),
+            new(new PyStr("weapon"), new PyInt(216)),
+            new(new PyStr("damage"), new PyReal(123.5)),
+            new(new PyStr("owner"), Py.Tuple(new PyInt(2), new PyLong(c.CharacterId))),
+        ]);
+        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnDamageMessage", "clientID",
+            MarshalCodec.Encode(Py.Tuple(damage))));
+        rig.Sim.Say(new SimDestroyed(SpaceSessions.SimNpcSessionBase + 8, npcShipId, 0,
+            Place, Facing, 34, c.ShipId, null, npcTypeId, npcCorporationId));
+
+        var announced = await AnnouncedAsync(rig, 1);
+        var (_, json) = Assert.Single(announced, entry => entry.Topic == ShipKillmailEvent.Topic);
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        Assert.Equal(System.Text.Json.JsonValueKind.Null, root.GetProperty("characterId").ValueKind);
+        Assert.Equal(npcShipId, root.GetProperty("shipId").GetInt64());
+        Assert.Equal(npcCorporationId, root.GetProperty("corporationId").GetInt64());
+        Assert.Equal(npcTypeId, root.GetProperty("shipTypeId").GetInt32());
+        Assert.Equal((int)session.GetInt("solarsystemid")!.Value, root.GetProperty("solarSystemId").GetInt32());
+        Assert.Equal(123.5, root.GetProperty("damageTaken").GetDouble());
+        var attacker = Assert.Single(root.GetProperty("attackers").EnumerateArray());
+        Assert.Equal(c.CharacterId, attacker.GetProperty("characterId").GetInt64());
+        Assert.Equal(216, attacker.GetProperty("weaponTypeId").GetInt32());
+    }
+
+    [PgFact]
+    public async Task An_untracked_npc_damage_owner_is_not_misattributed_as_a_character_in_the_killmail()
+    {
+        var (rig, _, session) = await InSpaceAsync();
+        await using var _ = rig;
+        await rig.UseBusAsync();
+        const long npcShipId = 2_700_000_009;
+        const int npcCorporationId = 1_000_125;
+        var damage = new PyDict([
+            new(new PyStr("attackType"), new PyStr("otherPlayerWeapons")),
+            new(new PyStr("source"), new PyLong(npcShipId)),
+            new(new PyStr("target"), new PyLong(session.GetInt("shipid")!.Value)),
+            new(new PyStr("weapon"), new PyInt(216)),
+            new(new PyStr("damage"), new PyReal(123.5)),
+            new(new PyStr("owner"), Py.Tuple(new PyInt(2), new PyLong(npcCorporationId))),
+        ]);
+        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnDamageMessage", "clientID",
+            MarshalCodec.Encode(Py.Tuple(damage))));
+        rig.Sim.Say(ShipDestroyed(session, session.GetInt("shipid")!.Value, npcShipId));
+
+        var announced = await AnnouncedAsync(rig, 1);
+        var (_, json) = Assert.Single(announced, entry => entry.Topic == ShipKillmailEvent.Topic);
+        using var document = JsonDocument.Parse(json);
+        var attacker = Assert.Single(document.RootElement.GetProperty("attackers").EnumerateArray());
+        Assert.Equal(JsonValueKind.Null, attacker.GetProperty("characterId").ValueKind);
+        Assert.Equal(npcCorporationId, attacker.GetProperty("corporationId").GetInt64());
+        Assert.Equal(0, attacker.GetProperty("shipTypeId").GetInt32());
+        Assert.Equal(123.5, attacker.GetProperty("damageDone").GetDouble());
     }
 
     [PgFact]
@@ -231,7 +333,7 @@ public class SpaceEventsTests
         var system = (long)session.GetInt("solarsystemid")!.Value;
 
         rig.Sim.Say(NpcDestroyed(spawn, c.ShipId));
-        var (topic, json) = (await AnnouncedAsync(rig, 1))[0];
+        var (topic, json) = Assert.Single(await AnnouncedAsync(rig, 2), entry => entry.Topic == "npc.killed");
 
         Assert.Equal("npc.killed", topic);
         using var document = System.Text.Json.JsonDocument.Parse(json);
@@ -252,7 +354,7 @@ public class SpaceEventsTests
         var type = (await rig.Items.GetAsync(c.ShipId))!.TypeId;
 
         rig.Sim.Say(ShipDestroyed(session, c.ShipId, spawn.Ship.ShipId));
-        var (topic, json) = (await AnnouncedAsync(rig, 1))[0];
+        var (topic, json) = Assert.Single(await AnnouncedAsync(rig, 2), entry => entry.Topic == "ship.lost");
 
         Assert.Equal("ship.lost", topic);
         using var document = System.Text.Json.JsonDocument.Parse(json);

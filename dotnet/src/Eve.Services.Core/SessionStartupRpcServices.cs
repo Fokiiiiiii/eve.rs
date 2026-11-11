@@ -1,6 +1,7 @@
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Ships;
 using System.Security.Cryptography;
 
 namespace Eve.Services.Core;
@@ -91,6 +92,32 @@ public sealed partial class JumpTimersService(ReadJumpTimersCallback? readTimers
     };
 
     private static PyValue Long(long? value) => value is { } ticks ? new PyLong(ticks) : PyNone.Instance;
+}
+
+/// <summary>
+/// A character's jump timers from the PostgreSQL fatigue store that the jumps write, the same values SpaceBridges sends in OnJumpTimersUpdated, so login and the
+/// notice agree. A character with no row there falls back to the legacy reader.
+/// </summary>
+public static class JumpTimerReads
+{
+    public static ReadJumpTimersCallback Create(PgJumpFatigueStore fatigue, Func<long> nowUnixMs, ReadJumpTimersCallback? legacy = null) =>
+        async (characterId, cancellationToken) =>
+        {
+            var state = await fatigue.GetAsync(characterId, cancellationToken);
+            if (state != JumpFatigueState.None)
+                return FromFatigue(state, nowUnixMs());
+            return legacy is null ? null : await legacy(characterId, cancellationToken);
+        };
+
+    /// <summary>Each timer as the FILETIME it ends at, none once it has run out; null when neither runs. The last update is the read itself, as the store keeps no time of the jump.</summary>
+    public static JumpTimerState? FromFatigue(JumpFatigueState state, long nowUnixMs)
+    {
+        var activation = state.CooldownUntilMs > nowUnixMs ? Py.FileTimeFromUnixMs(state.CooldownUntilMs) : (long?)null;
+        var fatigue = state.FatigueUntilMs > nowUnixMs ? Py.FileTimeFromUnixMs(state.FatigueUntilMs) : (long?)null;
+        return activation is null && fatigue is null
+            ? null
+            : new JumpTimerState(activation, fatigue, Py.FileTimeFromUnixMs(nowUnixMs));
+    }
 }
 
 public sealed record DynamicBountyState(double Output, bool DbsiIsActive);

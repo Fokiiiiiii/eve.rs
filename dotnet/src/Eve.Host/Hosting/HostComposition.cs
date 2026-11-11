@@ -402,7 +402,7 @@ internal static class HostComposition
         GameStoreCache? mailCache = legacy?.Cache;
         PersistenceStore? mailStore = legacy?.Store;
         Func<long> now = () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        ReadJumpTimersCallback? readJumpTimers = mailCache is { } characterCache
+        ReadJumpTimersCallback? legacyJumpTimers = mailCache is { } characterCache
             ? (characterId, cancellationToken) =>
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -411,6 +411,10 @@ internal static class HostComposition
                 return ValueTask.FromResult(PersistenceCharacterRpcReadModel.ReadJumpTimers(character));
             }
             : null;
+        // login reads the jump fatigue the jumps wrote to PostgreSQL, the same values OnJumpTimersUpdated sent; the legacy character JSON only answers for a character with no row there
+        ReadJumpTimersCallback? readJumpTimers = dataSource is null
+            ? legacyJumpTimers
+            : JumpTimerReads.Create(new PgJumpFatigueStore(dataSource, Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema)), now, legacyJumpTimers);
         ReadNonDiminishingInjectionCountCallback? readNonDiminishingInjections = mailStore is { } legacyCharacterStore
             ? async (characterId, cancellationToken) =>
             {

@@ -43,6 +43,24 @@ public sealed record ShipLossItem(int TypeId, long Quantity);
 public sealed record ShipLoss(long CharacterId, long ShipId, int ShipTypeId, ShipLossCause Cause, int SolarSystemId, long KillerCharacterId,
     IReadOnlyList<ShipLossItem>? Contents = null);
 
+/// <summary>An attacker aggregated by ship and weapon for one player's destruction.</summary>
+public sealed record ShipKillmailAttacker(
+    long? CharacterId, long CorporationId, long AllianceId, long FactionId,
+    long SourceShipId, int ShipTypeId, int WeaponTypeId, double DamageDone,
+    double? SecurityStatus, long LastHitOrder);
+
+/// <summary>The durable input captured at a ship's destruction boundary.</summary>
+public sealed record ShipKillmailEvent(
+    long? CharacterId, long CorporationId, long AllianceId, long FactionId,
+    long ShipId, int ShipTypeId, int SolarSystemId, long OccurredAtMs,
+    double DamageTaken, long KillerShipId,
+    IReadOnlyList<ShipKillmailAttacker> Attackers,
+    IReadOnlyList<Eve.Ships.ShipDeathItem> Items,
+    decimal? BountyClaimed = null)
+{
+    public const string Topic = "ship.killmail.created";
+}
+
 /// <summary>A pilot's capsule was destroyed in space: whose it was, where, who dealt the last blow and which implants were destroyed.</summary>
 /// <param name="CharacterId">The pilot.</param>
 /// <param name="CapsuleId">The capsule's item id (the item is gone).</param>

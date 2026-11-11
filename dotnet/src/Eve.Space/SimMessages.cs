@@ -1420,7 +1420,7 @@ public sealed record SimDamageableEntityUpserted(
     int SolarSystemId, long EntityId, int TypeId, long OwnerId, long CorporationId, long AllianceId, long WarFactionId) : SimMessage;
 
 public sealed record SimDamageableEntityRemoved(int SolarSystemId, long EntityId) : SimMessage;
-/// <summary>The answer to <see cref="SimCommands.Measure"/>: metres from the centre of the ship to the surface of the wreck or can, or null when there is no such wreck.</summary>
+/// <summary>The answer to <see cref="SimCommands.Measure"/>: metres between the surfaces of the ship and the wreck or can, or null when there is no such wreck.</summary>
 public sealed record SimMeasured(ulong SessionId, byte Command, double? Distance) : SimMessage;
 
 /// <summary>Who may take what a destroyed ship leaves: the pilot and the corporation, the alliance and the faction they are in (0 for none).</summary>

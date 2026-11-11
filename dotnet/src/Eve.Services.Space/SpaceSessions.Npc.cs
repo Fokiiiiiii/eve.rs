@@ -292,6 +292,7 @@ public sealed partial class SpaceSessions
     private async Task FinishNpcDeathAsync(NpcShip npc, SimDestroyed destroyed)
     {
         var killer = _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == destroyed.KillerShipId);
+        var attackers = TakeKillmailAttackers(destroyed.ShipId, destroyed.KillerShipId, out var damageTaken, out _);
         if (npc.Abyssal is { } abyssal)
         {
             if (AbyssalNpcDestroyedAsync is { } record)
@@ -312,10 +313,11 @@ public sealed partial class SpaceSessions
             return;
         }
         var profile = npc.Profile ?? throw new InvalidOperationException("A non-Abyssal NPC has no catalog profile.");
-        await LeaveNpcWreckAsync(npc, destroyed, killer);
+        var items = await LeaveNpcWreckAsync(npc, destroyed, killer);
+        decimal? bountyClaimed = null;
         try
         {
-            await PayNpcBountyAsync(npc, destroyed, killer);
+            bountyClaimed = await PayNpcBountyAsync(npc, destroyed, killer);
         }
         finally
         {
@@ -323,12 +325,17 @@ public sealed partial class SpaceSessions
             lock (_npcDestroyedGate)
             {
                 Raise(NpcDestroyed, kill, nameof(NpcDestroyed));
+                AnnounceOnce(ShipKillmailEvent.Topic,
+                    new ShipKillmailEvent(null, profile.CorporationId, profile.AllianceId, profile.FactionId,
+                        destroyed.ShipId, npc.TypeId, npc.SolarSystemId, _nowUnixMs(), damageTaken,
+                        destroyed.KillerShipId, attackers, items, bountyClaimed),
+                    $"ship:{destroyed.ShipId}");
                 Announce("npc.killed", new { characterId = kill.FinalBlowCharacterId, typeId = kill.NpcTypeId, profile = kill.Profile.Id, solarSystemId = kill.SolarSystemId, shipId = kill.ShipId, site = npc.SiteId == 0 ? (long?)null : npc.SiteId }, $"system:{kill.SolarSystemId}");
             }
         }
     }
 
-    private Task PayNpcBountyAsync(NpcShip npc, SimDestroyed destroyed, Pilot? killer) =>
+    private Task<decimal?> PayNpcBountyAsync(NpcShip npc, SimDestroyed destroyed, Pilot? killer) =>
         PayBountyAsync(npc.SolarSystemId, npc.TypeId, destroyed.ShipId, killer,
             (npc.Profile ?? throw new InvalidOperationException("A non-Abyssal NPC has no catalog profile.")).Bounty,
             npc.Profile.BountyPayoutMultiplier);
@@ -337,19 +344,44 @@ public sealed partial class SpaceSessions
     /// The bounty of an NPC the simulation keeps (a Pochven sentry or fighter, a kill the host has no record of): the <c>entityKillBounty</c> of its type in the
     /// static data (0 for a type that has none, which pays nothing). Its kill pays the pilot who dealt the last blow, as a profiled NPC's does.
     /// </summary>
-    private async Task PaySimNpcBountyAsync(SimDestroyed destroyed, Pilot? killer)
+    private async Task<decimal?> PaySimNpcBountyAsync(SimDestroyed destroyed, Pilot? killer)
     {
         if (killer is null)
         {
-            return;
+            return null;
         }
         await _statics.EnsureTypesAsync([destroyed.ShipTypeId], CancellationToken.None);
         if (_statics.Type(destroyed.ShipTypeId) is not { } type
             || _statics.AttributeId(EntityKillBountyAttributeName) is not { } attribute || !type.Attributes.TryGetValue(attribute, out var bounty))
         {
-            return;
+            return null;
         }
-        await PayBountyAsync(killer.SolarSystemId, destroyed.ShipTypeId, destroyed.ShipId, killer, (decimal)bounty);
+        return await PayBountyAsync(killer.SolarSystemId, destroyed.ShipTypeId, destroyed.ShipId, killer, (decimal)bounty);
+    }
+
+    /// <summary>Completes a simulation-owned NPC death with the same public kill report as a profiled NPC.</summary>
+    private async Task FinishSimNpcDeathAsync(SimDestroyed destroyed, Pilot? killer)
+    {
+        var attackers = TakeKillmailAttackers(
+            destroyed.ShipId, destroyed.KillerShipId, out var damageTaken, out var solarSystemId);
+        solarSystemId = solarSystemId > 0 ? solarSystemId : killer?.SolarSystemId ?? 0;
+        decimal? bountyClaimed = null;
+        try
+        {
+            bountyClaimed = await PaySimNpcBountyAsync(destroyed, killer);
+        }
+        finally
+        {
+            var droneCategoryId = _statics.CategoryId("Drone");
+            var victimType = _statics.Type(destroyed.ShipTypeId);
+            if (destroyed.ShipTypeId > 0 && solarSystemId > 0 &&
+                (droneCategoryId is null || victimType?.CategoryId != droneCategoryId))
+                AnnounceOnce(ShipKillmailEvent.Topic,
+                    new ShipKillmailEvent(null, destroyed.CorporationId, 0, 0,
+                        destroyed.ShipId, destroyed.ShipTypeId, solarSystemId, _nowUnixMs(), damageTaken,
+                        destroyed.KillerShipId, attackers, [], bountyClaimed),
+                    $"ship:{destroyed.ShipId}");
+        }
     }
 
     /// <summary>The name of the static data's attribute an NPC's kill is worth (<c>entityKillBounty</c>, ISK).</summary>
@@ -359,21 +391,21 @@ public sealed partial class SpaceSessions
     public const ulong SimNpcSessionBase = 1UL << 62;
 
     /// <summary>Records a kill's bounty for the pilot who dealt the last blow, and tells the pilot of the payout (an ESS in the system takes its share).</summary>
-    private async Task PayBountyAsync(int solarSystemId, int typeId, long shipId, Pilot? killer, decimal bounty, decimal authoredMultiplier = 1m)
+    private async Task<decimal?> PayBountyAsync(int solarSystemId, int typeId, long shipId, Pilot? killer, decimal bounty, decimal authoredMultiplier = 1m)
     {
         if (_bounties is not { } store || killer is null)
         {
-            return;
+            return null;
         }
         var now = _nowUnixMs();
         var systemOutput = DynamicBounties is { } dbs
             ? await dbs.ReadAsync(solarSystemId, now).ConfigureAwait(false)
             : new DynamicBountyValue(1, false);
         if (NpcBounty.AmountOf(bounty, authoredMultiplier, (decimal)systemOutput.Output) is not { } amount)
-            return;
+            return null;
         if (RegionOfSystem(solarSystemId) is { } regionId && !Pochven.PochvenRules.PaysNpcBounty(regionId))
         {
-            return;
+            return null;
         }
         // in a system with an ESS the Main Bank takes its share of the bounty; the share commits with the pilot's bucket or not at all
         var essOnline = Ess is not null && await Ess.IsOnlineAsync(solarSystemId);
@@ -401,7 +433,7 @@ public sealed partial class SpaceSessions
         {
             await store.RecordWithoutPilotShareAsync(shipId,
                 (connection, transaction, token) => SettleAsync(connection, transaction, token, includeEss: true));
-            return;
+            return null;
         }
         BountyAdded added;
         try
@@ -430,6 +462,7 @@ public sealed partial class SpaceSessions
                     ("enemyTypeID", new PyInt(added.EnemyTypeId)), ("amount", new PyInt((int)added.Amount)), ("payoutTime", new PyLong(added.PayoutTime)),
                     ("isModified", added.IsModified ? PyBool.True : PyBool.False)));
         }
+        return added.Amount;
     }
 
     private sealed class EssCreditRaceException(Exception inner) : Exception("the ESS left the system before its bounty share committed", inner);
@@ -438,11 +471,11 @@ public sealed partial class SpaceSessions
     /// The wreck of an NPC that asked the host to make it (<see cref="SimNpcIdentity.HostWreck"/>): an item of the pilot who dealt the last blow (of the NPC's corporation when no pilot did) with what
     /// its loot table gave, put in space where the ship was for that pilot to loot. A wreck the scene made (its id is told) already has nothing in it, and is left as it is.
     /// </summary>
-    private async Task LeaveNpcWreckAsync(NpcShip npc, SimDestroyed destroyed, Pilot? killer)
+    private async Task<IReadOnlyList<ShipDeathItem>> LeaveNpcWreckAsync(NpcShip npc, SimDestroyed destroyed, Pilot? killer)
     {
         if (NpcWrecks is not { } wrecks || destroyed.WreckId != 0 || destroyed.WreckKind is not { } kind)
         {
-            return;
+            return [];
         }
         try
         {
@@ -453,10 +486,13 @@ public sealed partial class SpaceSessions
                 warFactionId: profile.FactionId);
             var credit = character is null ? new SimCredit(0, 0, 0, 0) : new SimCredit(character.Id, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0);
             PlaceWreck(new SimPlaceWreck(SimSceneKey.SolarSystem(npc.SolarSystemId), made.Wreck.Id, WreckGroup, kind, destroyed.Position, destroyed.Direction, destroyed.Radius, destroyed.ShipId, credit, made.Contents.Count == 0));
+            return made.Contents.Select(item => new ShipDeathItem(
+                item.TypeId, ItemFlags.Hangar, item.Singleton, item.Quantity, 0, [])).ToArray();
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
             _log?.Invoke($"the wreck of NPC ship {destroyed.ShipId} could not be made: {error.Message}");
+            return [];
         }
     }
 

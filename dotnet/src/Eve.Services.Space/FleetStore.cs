@@ -11,6 +11,25 @@ public sealed class FleetJoinRequestLimitException : Exception
     public FleetJoinRequestLimitException() : base("The fleet join-request limit has been reached.") { }
 }
 
+public enum FleetUnitDeletionResult
+{
+    Deleted,
+    NotFound,
+    NotAuthorized,
+    Occupied
+}
+
+internal sealed class FleetRoleConflictException : Exception
+{
+    public FleetRoleConflictException() : base("The requested fleet command role is already assigned in that position.") { }
+}
+
+internal sealed class FleetInviteTargetAlreadyInFleetException(long inviterId)
+    : Exception("The invited character joined another fleet before accepting the invitation.")
+{
+    public long InviterId { get; } = inviterId;
+}
+
 public sealed partial class FleetStore(System.Data.Common.DbDataSource source, string schema = "fleet", int maxJoinRequests = 4096)
 {
     public const string DefaultSchema = "fleet";
@@ -103,6 +122,31 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
 
     public static bool HasBossJob(int job) => (job & CreatorJob) != 0;
 
+    internal static bool IsCommanderOrBoss(FleetMemberSnapshot member) =>
+        HasBossJob(member.Job) || member.Role is Leader or WingCommander or SquadCommander;
+
+    internal static bool CanPlaceInCommand(FleetMemberSnapshot commander, FleetMemberSnapshot? target,
+        bool isFreeMove, long commanderId, long targetId, long wingId, long squadId, int role)
+    {
+        if (HasBossJob(commander.Job) || commander.Role == Leader) return true;
+        if (role is not (Member or SquadCommander)) return false;
+        if (isFreeMove && commanderId == targetId) return true;
+
+        if (commander.Role == WingCommander)
+        {
+            var destinationWing = wingId > 0 ? wingId : target?.WingId ?? NoUnit;
+            return (target is null || target.WingId == commander.WingId) && destinationWing == commander.WingId;
+        }
+
+        if (commander.Role == SquadCommander)
+        {
+            var destinationSquad = squadId > 0 ? squadId : target?.SquadId ?? NoUnit;
+            return destinationSquad == commander.SquadId;
+        }
+
+        return false;
+    }
+
     public static bool IsValidName(string? name) => name is not null && name.Length <= MaxNameLength;
 
     public static readonly Eve.Data.Migration FleetJoinRequestProfileMigration = new(
@@ -127,9 +171,17 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
             leaderCharacterId, CurrentFileTime());
         var fleetId = Convert.ToInt64(await create.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
         await using var member = Command(connection, transaction,
-            $"INSERT INTO {_schema}.fleet_members (fleet_id, character_id, wing_id, squad_id, role, job) VALUES ($1, $2, -1, -1, $3, $4)",
+            $"INSERT INTO {_schema}.fleet_members (fleet_id, character_id, wing_id, squad_id, role, job) VALUES ($1, $2, -1, -1, $3, $4) ON CONFLICT (character_id) DO NOTHING",
             fleetId, leaderCharacterId, Leader, CreatorJob);
-        await member.ExecuteNonQueryAsync(cancellationToken);
+        if (await member.ExecuteNonQueryAsync(cancellationToken) == 0) return 0;
+        await using var wing = Command(connection, transaction,
+            $"INSERT INTO {_schema}.fleet_wings (fleet_id, name, position) VALUES ($1, '', 0) RETURNING wing_id",
+            fleetId);
+        var wingId = Convert.ToInt64(await wing.ExecuteScalarAsync(cancellationToken), System.Globalization.CultureInfo.InvariantCulture);
+        await using var squad = Command(connection, transaction,
+            $"INSERT INTO {_schema}.fleet_squads (fleet_id, wing_id, name, position) VALUES ($1, $2, '', 0)",
+            fleetId, wingId);
+        await squad.ExecuteNonQueryAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return fleetId;
     }
@@ -445,19 +497,33 @@ public sealed partial class FleetStore(System.Data.Common.DbDataSource source, s
     }
 
     public async Task<bool> InviteAsync(long fleetId, long inviterId, long characterId, long wingId, long squadId, int role,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool placementRequested = true)
     {
-        if (characterId <= 0 || characterId == inviterId || role == Leader || !IsValidAssignment(role, wingId, squadId)) return false;
+        if (characterId <= 0 || characterId == inviterId || !IsValidAssignment(role, wingId, squadId)) return false;
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var memberLimit = await MemberLimitAsync(connection, transaction, fleetId, lockFleet: true, cancellationToken);
-        if (memberLimit is null ||
-            !await CanManageAsync(connection, transaction, fleetId, inviterId, cancellationToken, lockMember: true) ||
+        var inviter = await MemberAsync(connection, transaction, fleetId, inviterId, cancellationToken, forUpdate: true);
+        if (memberLimit is null || inviter is null ||
             await MemberAsync(connection, transaction, fleetId, characterId, cancellationToken) is not null ||
             await FleetIdForCharacterAsync(connection, transaction, characterId, cancellationToken) is not null ||
-            !await PositionExistsAsync(connection, transaction, fleetId, wingId, squadId, cancellationToken) ||
             await CountAsync(connection, transaction, $"SELECT COUNT(*) FROM {_schema}.fleet_members WHERE fleet_id = $1", cancellationToken, fleetId) >= memberLimit)
             return false;
+
+        if (placementRequested)
+        {
+            if (!await CanInviteInCommandAsync(connection, transaction, fleetId, inviterId, characterId,
+                    wingId, squadId, role, cancellationToken) ||
+                !await PositionExistsAsync(connection, transaction, fleetId, wingId, squadId, cancellationToken))
+                return false;
+        }
+        else
+        {
+            if (role != Member ||
+                await FirstPositionAsync(connection, transaction, fleetId, cancellationToken) is not { } firstPosition)
+                return false;
+            (wingId, squadId) = firstPosition;
+        }
 
         await using var command = Command(connection, transaction,
             $"INSERT INTO {_schema}.fleet_invitations (fleet_id, character_id, inviter_id, wing_id, squad_id, role) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (fleet_id, character_id) DO UPDATE SET inviter_id = EXCLUDED.inviter_id, wing_id = EXCLUDED.wing_id, squad_id = EXCLUDED.squad_id, role = EXCLUDED.role, created_at = now()",
@@ -477,21 +543,48 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
     public async Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId, long? shipTypeId,
         CancellationToken cancellationToken = default)
     {
+        try
+        {
+            return await JoinForObjectServiceAsync(fleetId, characterId, shipTypeId, cancellationToken);
+        }
+        catch (FleetInviteTargetAlreadyInFleetException)
+        {
+            return null;
+        }
+        catch (FleetRoleConflictException)
+        {
+            return null;
+        }
+    }
+
+    internal async Task<FleetMemberSnapshot?> JoinForObjectServiceAsync(long fleetId, long characterId, long? shipTypeId,
+        CancellationToken cancellationToken = default)
+    {
         if (shipTypeId is <= 0) shipTypeId = null;
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var memberLimit = await MemberLimitAsync(connection, transaction, fleetId, lockFleet: true, cancellationToken);
         if (memberLimit is null) return null;
+        long inviterId, wingId, squadId;
+        int role;
+        await using (var invitation = Command(connection, transaction,
+            $"SELECT inviter_id, wing_id, squad_id, role FROM {_schema}.fleet_invitations WHERE fleet_id = $1 AND character_id = $2 FOR UPDATE",
+            fleetId, characterId))
+        await using (var reader = await invitation.ExecuteReaderAsync(cancellationToken))
+        {
+            if (!await reader.ReadAsync(cancellationToken)) return null;
+            inviterId = reader.GetInt64(0);
+            wingId = reader.GetInt64(1);
+            squadId = reader.GetInt64(2);
+            role = reader.GetInt16(3);
+        }
         if (await FleetIdForCharacterAsync(connection, transaction, characterId, cancellationToken) is not null)
         {
             await using var removeInvitation = Command(connection, transaction,
                 $"DELETE FROM {_schema}.fleet_invitations WHERE fleet_id = $1 AND character_id = $2", fleetId, characterId);
             await removeInvitation.ExecuteNonQueryAsync(cancellationToken);
-            await using var removeRequest = Command(connection, transaction,
-                $"DELETE FROM {_schema}.fleet_join_requests WHERE fleet_id = $1 AND character_id = $2", fleetId, characterId);
-            await removeRequest.ExecuteNonQueryAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return null;
+            throw new FleetInviteTargetAlreadyInFleetException(inviterId);
         }
         var memberCount = await CountAsync(connection, transaction,
             $"SELECT COUNT(*) FROM {_schema}.fleet_members WHERE fleet_id = $1", cancellationToken, fleetId);
@@ -512,20 +605,11 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
             return null;
         }
 
-        long wingId, squadId;
-        int role;
-        await using (var invitation = Command(connection, transaction,
-            $"SELECT wing_id, squad_id, role FROM {_schema}.fleet_invitations WHERE fleet_id = $1 AND character_id = $2 FOR UPDATE",
-            fleetId, characterId))
-        await using (var reader = await invitation.ExecuteReaderAsync(cancellationToken))
-        {
-            if (!await reader.ReadAsync(cancellationToken)) return null;
-            wingId = reader.GetInt64(0);
-            squadId = reader.GetInt64(1);
-            role = reader.GetInt16(2);
-        }
         if (!IsValidAssignment(role, wingId, squadId) ||
             !await PositionExistsAsync(connection, transaction, fleetId, wingId, squadId, cancellationToken)) return null;
+        if (await HasCommandRoleConflictAsync(connection, transaction, fleetId, characterId,
+                wingId, squadId, role, cancellationToken))
+            throw new FleetRoleConflictException();
 
         await using (var add = Command(connection, transaction,
             $"INSERT INTO {_schema}.fleet_members (fleet_id, character_id, wing_id, squad_id, role, job, ship_type_id) VALUES ($1, $2, $3, $4, $5, 0, $6) ON CONFLICT (character_id) DO NOTHING",
@@ -533,6 +617,14 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
         {
             if (await add.ExecuteNonQueryAsync(cancellationToken) == 0)
             {
+                if (await FleetIdForCharacterAsync(connection, transaction, characterId, cancellationToken) is not null)
+                {
+                    await using var removeConflictedInvitation = Command(connection, transaction,
+                        $"DELETE FROM {_schema}.fleet_invitations WHERE fleet_id = $1 AND character_id = $2", fleetId, characterId);
+                    await removeConflictedInvitation.ExecuteNonQueryAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                    throw new FleetInviteTargetAlreadyInFleetException(inviterId);
+                }
                 await using var removeInvitation = Command(connection, transaction,
                     $"DELETE FROM {_schema}.fleet_invitations WHERE fleet_id = $1 AND character_id = $2", fleetId, characterId);
                 await removeInvitation.ExecuteNonQueryAsync(cancellationToken);
@@ -553,12 +645,21 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
         return new FleetMemberSnapshot(characterId, wingId, squadId, role, 0, ShipTypeId: shipTypeId);
     }
 
-    public async Task<bool> RejectInviteAsync(long fleetId, long characterId, CancellationToken cancellationToken = default)
+    public async Task<long?> RejectInviteAsync(long fleetId, long characterId, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
-        await using var command = Command(connection, null,
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await using var query = Command(connection, transaction,
+            $"SELECT inviter_id FROM {_schema}.fleet_invitations WHERE fleet_id = $1 AND character_id = $2 FOR UPDATE",
+            fleetId, characterId);
+        var value = await query.ExecuteScalarAsync(cancellationToken);
+        if (value is null or DBNull) return null;
+        var inviterId = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+        await using var command = Command(connection, transaction,
             $"DELETE FROM {_schema}.fleet_invitations WHERE fleet_id = $1 AND character_id = $2", fleetId, characterId);
-        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+        if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) return null;
+        await transaction.CommitAsync(cancellationToken);
+        return inviterId;
     }
 
     public Task<bool> RequestJoinAsync(long fleetId, long characterId, CancellationToken cancellationToken = default) =>
@@ -636,28 +737,11 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
         if (HasBossJob(member.Job))
         {
             await using var successor = Command(connection, transaction,
-                $@"SELECT m.character_id
-                   FROM {_schema}.fleet_members m
-                   LEFT JOIN {_schema}.fleet_wings w
-                     ON w.fleet_id = m.fleet_id AND w.wing_id = m.wing_id
-                   LEFT JOIN {_schema}.fleet_squads s
-                     ON s.fleet_id = m.fleet_id AND s.squad_id = m.squad_id
-                   WHERE m.fleet_id = $1 AND m.character_id <> $2
-                   ORDER BY CASE m.role WHEN $3 THEN 0 WHEN $4 THEN 1 WHEN $5 THEN 2 ELSE 3 END,
-                            COALESCE(w.position, 32767), COALESCE(s.position, 32767),
-                            m.joined_at, m.character_id
-                   LIMIT 1",
-                fleetId, characterId, Leader, WingCommander, SquadCommander);
+                $"SELECT character_id FROM {_schema}.fleet_members WHERE fleet_id = $1 AND character_id <> $2 ORDER BY character_id LIMIT 1",
+                fleetId, characterId);
             var value = await successor.ExecuteScalarAsync(cancellationToken);
             if (value is null or DBNull) return null;
             successorId = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
-        }
-
-        if (member.Role == Leader)
-        {
-            await using var clearLeader = Command(connection, transaction,
-                $"UPDATE {_schema}.fleets SET leader_character_id = NULL WHERE fleet_id = $1", fleetId);
-            if (await clearLeader.ExecuteNonQueryAsync(cancellationToken) != 1) return null;
         }
 
         await using (var command = Command(connection, transaction,
@@ -667,9 +751,12 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
         if (successorId is { } nextBoss)
         {
             await using var promote = Command(connection, transaction,
-                $"UPDATE {_schema}.fleet_members SET job = job | $1::smallint WHERE fleet_id = $2 AND character_id = $3",
+                $"UPDATE {_schema}.fleet_members SET job = $1 WHERE fleet_id = $2 AND character_id = $3",
                 (short)CreatorJob, fleetId, nextBoss);
             if (await promote.ExecuteNonQueryAsync(cancellationToken) != 1) return null;
+            await using var updateLeader = Command(connection, transaction,
+                $"UPDATE {_schema}.fleets SET leader_character_id = $1 WHERE fleet_id = $2", nextBoss, fleetId);
+            if (await updateLeader.ExecuteNonQueryAsync(cancellationToken) != 1) return null;
         }
 
         await transaction.CommitAsync(cancellationToken);
@@ -704,31 +791,40 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
         return id;
     }
 
-    public async Task<bool> DeleteWingAsync(long fleetId, long issuerId, long wingId, CancellationToken cancellationToken = default)
+    public async Task<FleetUnitDeletionResult> DeleteWingAsync(long fleetId, long issuerId, long wingId, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        if (!await CanManageAsync(connection, transaction, fleetId, issuerId, cancellationToken)) return false;
+        if (await MemberLimitAsync(connection, transaction, fleetId, lockFleet: true, cancellationToken) is null)
+            return FleetUnitDeletionResult.NotFound;
+        if (!await CanManageAsync(connection, transaction, fleetId, issuerId, cancellationToken))
+            return FleetUnitDeletionResult.NotAuthorized;
+        if (!await UnitExistsAsync(connection, transaction,
+                $"SELECT EXISTS (SELECT 1 FROM {_schema}.fleet_wings WHERE fleet_id = $1 AND wing_id = $2)",
+                cancellationToken, fleetId, wingId))
+            return FleetUnitDeletionResult.NotFound;
+        if (await UnitExistsAsync(connection, transaction,
+                $"SELECT EXISTS (SELECT 1 FROM {_schema}.fleet_members WHERE fleet_id = $1 AND wing_id = $2)",
+                cancellationToken, fleetId, wingId))
+            return FleetUnitDeletionResult.Occupied;
         await using (var clearAutoJoin = Command(connection, transaction,
             $"UPDATE {_schema}.fleets SET auto_join_squad_id = NULL WHERE fleet_id = $1 AND auto_join_squad_id IN (SELECT squad_id FROM {_schema}.fleet_squads WHERE fleet_id = $1 AND wing_id = $2)",
             fleetId, wingId))
             await clearAutoJoin.ExecuteNonQueryAsync(cancellationToken);
-        await using (var move = Command(connection, transaction,
-            $"UPDATE {_schema}.fleet_members SET wing_id = -1, squad_id = -1, role = $1 WHERE fleet_id = $2 AND wing_id = $3 AND role <> $4",
-            Member, fleetId, wingId, Leader))
-            await move.ExecuteNonQueryAsync(cancellationToken);
         await using var command = Command(connection, transaction,
             $"DELETE FROM {_schema}.fleet_wings WHERE fleet_id = $1 AND wing_id = $2", fleetId, wingId);
         var deleted = await command.ExecuteNonQueryAsync(cancellationToken) > 0;
-        if (deleted) await transaction.CommitAsync(cancellationToken);
-        return deleted;
+        if (!deleted) return FleetUnitDeletionResult.NotFound;
+        await transaction.CommitAsync(cancellationToken);
+        return FleetUnitDeletionResult.Deleted;
     }
 
     public async Task<long> CreateSquadAsync(long fleetId, long issuerId, long wingId, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        if (!await CanManageAsync(connection, transaction, fleetId, issuerId, cancellationToken) ||
+        if (await MemberLimitAsync(connection, transaction, fleetId, lockFleet: true, cancellationToken) is null ||
+            !await CanCommandAsync(connection, transaction, fleetId, issuerId, cancellationToken) ||
             !await WingExistsAsync(connection, transaction, fleetId, wingId, cancellationToken) ||
             await CountAsync(connection, transaction, $"SELECT COUNT(*) FROM {_schema}.fleet_squads WHERE wing_id = $1", cancellationToken, wingId) >= MaxSquadsPerWing)
             return 0;
@@ -740,45 +836,53 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
         return id;
     }
 
-    public async Task<bool> DeleteSquadAsync(long fleetId, long issuerId, long squadId, CancellationToken cancellationToken = default)
+    public async Task<FleetUnitDeletionResult> DeleteSquadAsync(long fleetId, long issuerId, long squadId, CancellationToken cancellationToken = default)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        if (!await CanManageAsync(connection, transaction, fleetId, issuerId, cancellationToken)) return false;
+        if (await MemberLimitAsync(connection, transaction, fleetId, lockFleet: true, cancellationToken) is null)
+            return FleetUnitDeletionResult.NotFound;
+        if (!await CanCommandAsync(connection, transaction, fleetId, issuerId, cancellationToken))
+            return FleetUnitDeletionResult.NotAuthorized;
         long wingId;
         await using (var query = Command(connection, transaction,
             $"SELECT wing_id FROM {_schema}.fleet_squads WHERE fleet_id = $1 AND squad_id = $2", fleetId, squadId))
         {
             var value = await query.ExecuteScalarAsync(cancellationToken);
-            if (value is null or DBNull) return false;
+            if (value is null or DBNull) return FleetUnitDeletionResult.NotFound;
             wingId = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
         }
+        if (await UnitExistsAsync(connection, transaction,
+                $"SELECT EXISTS (SELECT 1 FROM {_schema}.fleet_members WHERE fleet_id = $1 AND squad_id = $2)",
+                cancellationToken, fleetId, squadId))
+            return FleetUnitDeletionResult.Occupied;
         await using (var clearAutoJoin = Command(connection, transaction,
             $"UPDATE {_schema}.fleets SET auto_join_squad_id = NULL WHERE fleet_id = $1 AND auto_join_squad_id = $2",
             fleetId, squadId))
             await clearAutoJoin.ExecuteNonQueryAsync(cancellationToken);
-        await using (var move = Command(connection, transaction,
-            $"UPDATE {_schema}.fleet_members SET squad_id = -1, role = $1 WHERE fleet_id = $2 AND squad_id = $3 AND role <> $4",
-            Member, fleetId, squadId, Leader))
-            await move.ExecuteNonQueryAsync(cancellationToken);
         await using var command = Command(connection, transaction,
             $"DELETE FROM {_schema}.fleet_squads WHERE fleet_id = $1 AND squad_id = $2", fleetId, squadId);
         var deleted = await command.ExecuteNonQueryAsync(cancellationToken) > 0;
-        if (deleted) await transaction.CommitAsync(cancellationToken);
-        return deleted;
+        if (!deleted) return FleetUnitDeletionResult.NotFound;
+        await transaction.CommitAsync(cancellationToken);
+        return FleetUnitDeletionResult.Deleted;
     }
 
     public async Task<bool> RenameWingAsync(long fleetId, long issuerId, long wingId, string name, CancellationToken cancellationToken = default) =>
-        await RenameUnitAsync("fleet_wings", "wing_id", fleetId, issuerId, wingId, name, cancellationToken);
+        await RenameUnitAsync("fleet_wings", "wing_id", fleetId, issuerId, wingId, name, commanderOrBoss: false, cancellationToken);
 
     public async Task<bool> RenameSquadAsync(long fleetId, long issuerId, long squadId, string name, CancellationToken cancellationToken = default) =>
-        await RenameUnitAsync("fleet_squads", "squad_id", fleetId, issuerId, squadId, name, cancellationToken);
+        await RenameUnitAsync("fleet_squads", "squad_id", fleetId, issuerId, squadId, name, commanderOrBoss: true, cancellationToken);
 
-    private async Task<bool> RenameUnitAsync(string table, string idColumn, long fleetId, long issuerId, long id, string name, CancellationToken cancellationToken)
+    private async Task<bool> RenameUnitAsync(string table, string idColumn, long fleetId, long issuerId, long id, string name,
+        bool commanderOrBoss, CancellationToken cancellationToken)
     {
         if (!IsValidName(name)) return false;
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
-        if (!await CanManageAsync(connection, null, fleetId, issuerId, cancellationToken)) return false;
+        if (commanderOrBoss
+                ? !await CanCommandAsync(connection, null, fleetId, issuerId, cancellationToken)
+                : !await CanManageAsync(connection, null, fleetId, issuerId, cancellationToken))
+            return false;
         await using var command = Command(connection, null,
             $"UPDATE {_schema}.{table} SET name = $1 WHERE fleet_id = $2 AND {idColumn} = $3", name, fleetId, id);
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
@@ -787,7 +891,7 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
     public async Task<bool> MoveMemberAsync(long fleetId, long issuerId, long characterId, long wingId, long squadId, int role,
         CancellationToken cancellationToken = default)
     {
-        if (role == Leader || !IsValidAssignment(role, wingId, squadId)) return false;
+        if (!IsValidAssignment(role, wingId, squadId)) return false;
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var moved = await MoveMemberAsync(connection, transaction, fleetId, issuerId, characterId, wingId, squadId, role, cancellationToken);
@@ -798,7 +902,7 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
     public async Task<IReadOnlyList<long>> MassMoveMembersAsync(long fleetId, long issuerId, IEnumerable<long> characterIds, long wingId, long squadId, int role,
         CancellationToken cancellationToken = default)
     {
-        if (role == Leader || !IsValidAssignment(role, wingId, squadId)) return [];
+        if (!IsValidAssignment(role, wingId, squadId)) return [];
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         var moved = new List<long>();
@@ -814,20 +918,21 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await MemberLimitAsync(connection, transaction, fleetId, lockFleet: true, cancellationToken) is null) return false;
-        var issuer = await MemberAsync(connection, transaction, fleetId, issuerId, cancellationToken);
-        var target = await MemberAsync(connection, transaction, fleetId, characterId, cancellationToken);
+        var issuer = await MemberAsync(connection, transaction, fleetId, issuerId, cancellationToken, forUpdate: true);
+        var target = await MemberAsync(connection, transaction, fleetId, characterId, cancellationToken, forUpdate: true);
         if (issuer is null || !HasBossJob(issuer.Job) || target is null) return false;
-        await using (var oldLeader = Command(connection, transaction,
-            $"UPDATE {_schema}.fleet_members SET role = $1, wing_id = -1, squad_id = -1 WHERE fleet_id = $2 AND role = $3",
-            Member, fleetId, Leader))
-            await oldLeader.ExecuteNonQueryAsync(cancellationToken);
-        await using (var newLeader = Command(connection, transaction,
-            $"UPDATE {_schema}.fleet_members SET role = $1, wing_id = -1, squad_id = -1 WHERE fleet_id = $2 AND character_id = $3",
-            Leader, fleetId, characterId))
-            await newLeader.ExecuteNonQueryAsync(cancellationToken);
+        if (issuerId == characterId) return true;
+        await using (var oldBoss = Command(connection, transaction,
+            $"UPDATE {_schema}.fleet_members SET job = 0 WHERE fleet_id = $1 AND (job & $2::smallint) <> 0",
+            fleetId, (short)CreatorJob))
+            await oldBoss.ExecuteNonQueryAsync(cancellationToken);
+        await using (var newBoss = Command(connection, transaction,
+            $"UPDATE {_schema}.fleet_members SET job = $1 WHERE fleet_id = $2 AND character_id = $3",
+            (short)CreatorJob, fleetId, characterId))
+            if (await newBoss.ExecuteNonQueryAsync(cancellationToken) != 1) return false;
         await using (var fleet = Command(connection, transaction,
             $"UPDATE {_schema}.fleets SET leader_character_id = $1 WHERE fleet_id = $2", characterId, fleetId))
-            await fleet.ExecuteNonQueryAsync(cancellationToken);
+            if (await fleet.ExecuteNonQueryAsync(cancellationToken) != 1) return false;
         await transaction.CommitAsync(cancellationToken);
         return true;
     }
@@ -836,7 +941,8 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        if (!await CanManageAsync(connection, transaction, fleetId, issuerId, cancellationToken)) return false;
+        if (await MemberLimitAsync(connection, transaction, fleetId, lockFleet: true, cancellationToken) is null ||
+            !await CanCommandAsync(connection, transaction, fleetId, issuerId, cancellationToken)) return false;
         var target = await MemberAsync(connection, transaction, fleetId, characterId, cancellationToken);
         if (target is null || target.Role == Leader) return false;
         await using var command = Command(connection, transaction,
@@ -864,24 +970,85 @@ public Task<FleetMemberSnapshot?> JoinAsync(long fleetId, long characterId,
     private async Task<bool> MoveMemberAsync(System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction transaction,
         long fleetId, long issuerId, long characterId, long wingId, long squadId, int role, CancellationToken cancellationToken)
     {
-        if (!await CanManageAsync(connection, transaction, fleetId, issuerId, cancellationToken) ||
-            !await PositionExistsAsync(connection, transaction, fleetId, wingId, squadId, cancellationToken))
+        if (!IsValidAssignment(role, wingId, squadId) ||
+            await MemberLimitAsync(connection, transaction, fleetId, lockFleet: true, cancellationToken) is null ||
+            !await PositionExistsAsync(connection, transaction, fleetId, wingId, squadId, cancellationToken) ||
+            !await CanPlaceInCommandAsync(connection, transaction, fleetId, issuerId, characterId,
+                wingId, squadId, role, cancellationToken))
             return false;
-        var member = await MemberAsync(connection, transaction, fleetId, characterId, cancellationToken);
-        if (member is not { Role: not Leader } ||
-            member.WingId == wingId && member.SquadId == squadId && member.Role == role)
-            return false;
+        var member = await MemberAsync(connection, transaction, fleetId, characterId, cancellationToken, forUpdate: true);
+        if (member is null) return false;
+        if (member.WingId == wingId && member.SquadId == squadId && member.Role == role) return true;
+        if (await HasCommandRoleConflictAsync(connection, transaction, fleetId, characterId,
+                wingId, squadId, role, cancellationToken)) return false;
         await using var command = Command(connection, transaction,
             $"UPDATE {_schema}.fleet_members SET wing_id = $1, squad_id = $2, role = $3 WHERE fleet_id = $4 AND character_id = $5",
             wingId, squadId, role, fleetId, characterId);
         return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
     }
 
+    private async Task<bool> HasCommandRoleConflictAsync(System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction transaction, long fleetId, long characterId,
+        long wingId, long squadId, int role, CancellationToken cancellationToken) => role switch
+    {
+        Leader => await UnitExistsAsync(connection, transaction,
+            $"SELECT EXISTS (SELECT 1 FROM {_schema}.fleet_members WHERE fleet_id = $1 AND role = $2 AND character_id <> $3)",
+            cancellationToken, fleetId, role, characterId),
+        WingCommander => await UnitExistsAsync(connection, transaction,
+            $"SELECT EXISTS (SELECT 1 FROM {_schema}.fleet_members WHERE fleet_id = $1 AND role = $2 AND wing_id = $3 AND character_id <> $4)",
+            cancellationToken, fleetId, role, wingId, characterId),
+        SquadCommander => await UnitExistsAsync(connection, transaction,
+            $"SELECT EXISTS (SELECT 1 FROM {_schema}.fleet_members WHERE fleet_id = $1 AND role = $2 AND squad_id = $3 AND character_id <> $4)",
+            cancellationToken, fleetId, role, squadId, characterId),
+        _ => false
+    };
+
     private async Task<bool> CanManageAsync(System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction? transaction,
         long fleetId, long characterId, CancellationToken cancellationToken, bool lockMember = false)
     {
         var member = await MemberAsync(connection, transaction, fleetId, characterId, cancellationToken, lockMember);
         return member is { } m && (m.Role == Leader || HasBossJob(m.Job));
+    }
+
+    private async Task<bool> CanCommandAsync(System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction? transaction,
+        long fleetId, long characterId, CancellationToken cancellationToken, bool lockMember = false)
+    {
+        var member = await MemberAsync(connection, transaction, fleetId, characterId, cancellationToken, lockMember);
+        return member is { } m && IsCommanderOrBoss(m);
+    }
+
+    private async Task<bool> CanPlaceInCommandAsync(System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction transaction,
+        long fleetId, long issuerId, long targetId, long wingId, long squadId, int role, CancellationToken cancellationToken)
+    {
+        var commander = await MemberAsync(connection, transaction, fleetId, issuerId, cancellationToken, forUpdate: true);
+        var target = await MemberAsync(connection, transaction, fleetId, targetId, cancellationToken);
+        if (commander is null || target is null) return false;
+        var freeMove = Convert.ToBoolean(await ScalarAsync(connection, transaction,
+            $"SELECT is_free_move FROM {_schema}.fleets WHERE fleet_id = $1", cancellationToken, fleetId),
+            System.Globalization.CultureInfo.InvariantCulture);
+        return CanPlaceInCommand(commander, target, freeMove, issuerId, targetId, wingId, squadId, role);
+    }
+
+    private async Task<bool> CanInviteInCommandAsync(System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction transaction,
+        long fleetId, long issuerId, long inviteeId, long wingId, long squadId, int role, CancellationToken cancellationToken)
+    {
+        var commander = await MemberAsync(connection, transaction, fleetId, issuerId, cancellationToken, forUpdate: true);
+        if (commander is null) return false;
+        var freeMove = Convert.ToBoolean(await ScalarAsync(connection, transaction,
+            $"SELECT is_free_move FROM {_schema}.fleets WHERE fleet_id = $1", cancellationToken, fleetId),
+            System.Globalization.CultureInfo.InvariantCulture);
+        return CanPlaceInCommand(commander, null, freeMove, issuerId, inviteeId, wingId, squadId, role);
+    }
+
+    private async Task<(long WingId, long SquadId)?> FirstPositionAsync(System.Data.Common.DbConnection connection,
+        System.Data.Common.DbTransaction transaction, long fleetId, CancellationToken cancellationToken)
+    {
+        await using var command = Command(connection, transaction,
+            $"SELECT w.wing_id, s.squad_id FROM {_schema}.fleet_wings w " +
+            $"JOIN {_schema}.fleet_squads s ON s.fleet_id = w.fleet_id AND s.wing_id = w.wing_id " +
+            $"WHERE w.fleet_id = $1 ORDER BY w.position, w.wing_id, s.position, s.squad_id LIMIT 1", fleetId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? (reader.GetInt64(0), reader.GetInt64(1)) : null;
     }
 
     private async Task<FleetMemberSnapshot?> MemberAsync(System.Data.Common.DbConnection connection, System.Data.Common.DbTransaction? transaction,

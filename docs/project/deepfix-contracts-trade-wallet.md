@@ -42,6 +42,14 @@ EveJS の `contractRuntimeState.js:1150-1152,1184-1190` は broker fee と depos
 
 EveJS は seller proceeds を単一の wallet leg にまとめ、`contractRuntimeState.js:735-744` の default ref=1 (`PLAYER_TRADING`) を使う。また `contractAuctionClaims.js:92-98` は税の cap より前に net proceeds を計算する。この journal 粒度と順序は CCP client の `appConst.py` が定義する専用 contract refs と合わず、低額 bid では cap 後の税額と payout が一致しない。そこで eve.rs は gross auction sale、税、deposit tax、refund を専用 ref IDs へ分けた。`ContractReadModelTests.cs` の低 bid ケースは sale 1000、sale tax 1000、deposit tax 50、deposit return 50 の各仕訳と、残高が作成時の既払 deposit を二重控除しないことを検証する。Host wire test は Accounting 4 の 10M bid から 60K を課税し、売却金・税・deposit 返却・no-bid forfeiture を実 DB で検証する。`Corporation_auction_uses_its_selected_wallet_division_and_contract_journal_refs` は法人 division 1002 の broker/deposit refs 80/81 と、bidder corporation division 1003 の bid ref 77 を `eve_p4` で確認する。
 
+#### Courier 作成時の売却税
+
+V24.01 は contract type 3 を courier とする (`eve/common/lib/appConst.py:1041-1043`)。共通 `CalcContractFees` は courier に 0.1 multiplier を使い売却税額も計算する (`eve/common/script/util/contractscommon.py:84-105`) が、作成画面は courier では `salesTaxText` を `NoneParen` に置き換え、sales-tax row に額を表示しない (`eve/client/script/ui/shared/neocom/contracts/createContractWnd.py:624-669`)。同じ確認画面では broker fee と deposit は計算済みの値を表示する (`:643-653`)。CreateContract が RPC に送る `ContractStruct` には fee/tax amount field がなく、契約条件だけを渡す (`createContractWnd.py:853-889`)。
+
+EveJS は courier type=3 と定義し (`server/src/services/contracts/contractRuntimeState.js:79-83`)、public 非auction契約の作成時には wallet leg を作らず、private contract の flat broker fee だけを別扱いする (`:1385-1407,1969-1979`)。そのため EveJS は V24 画面に出る public courier broker fee/deposit も精算しない。Host はその二項目と reward を従来どおり精算するが、非表示の売却税は作成時に請求しないようにした。公式 CCP courier help は collateral と失敗/成功時の処理を説明するが、courier tax amount の backend settlement は記載していないため、この判断は V24.01 の作成画面・RPC shape と EveJS runtime を合わせたもの。
+
+登録 Host + PostgreSQL 回帰 `Registered_public_courier_creation_does_not_charge_sales_tax` は type 3 の実 `contractProxy.CreateContract` call から契約行、reward/broker/deposit journal refs、wallet balance、package item, expiry job, `OnContractCreated` outbox event を確認する。修正前に row の期待 `sales_tax_isk=0` に対して 20,000 ISK の保存を再現した。修正後は RPC mapper で auction と courier の作成時税を 0 にし、item-exchange の表示・課金は維持する。
+
 ウォレット送金、corporation division、office rent 決済通知の記録は [deepfix-wallet-journal.md](service-audit/deepfix-wallet-journal.md) にある。同記録が残している journal entry type ごとの説明と市場税・注文約定の完全な追跡は、この変更では完了扱いにしない。
 
 ### PI 税と wallet journal
@@ -55,6 +63,20 @@ EveJS の `planetaryCustomsSettlementState.js:260-285` は import total を一�
 eve.rs は数値を作らず、合算した税額と owner-only 税額を既存の SDE 計算から取得する。各 ref 96/97 の個人 debit を office-owner portion と CONCORD portion に分けて記録し、法人 wallet には owner portion だけを同一 DB transaction 内で credit する。支払い各行は Unix ms、planet を `referenceID`、owner corporation または SDE 上の CONCORD (1000125) を `ownerID2` にする。EveJS の均等な export 二分割と full-total owner credit は、CCP の納税先説明と区別できないため採用せず、計算済み成分ごとの額にする。
 
 `PlanetMgrService.ChangeCoreAsync` と `ImportExportCoreAsync` は simulation の保存時刻に FILETIME を使う一方、wallet の `TimeMs` は Unix ms である。以前は同じ FILETIME を仕訳へ渡し、月指定 `account.GetTransactions` から行が消えていた。PI Host 回帰は登録済み `account.GetTransactions` 経由で 96/97 journal の件数、owner IDs、planet references、owner credit を確認する。また construction ref 98 の `referenceID` も以前は 0 だったため、同じ Host query から planet ID を確認する。
+
+### EveJS 261108.1 の現行ソース照合
+
+参照は `/home/user/evejs-261108.1` のローカル配布スナップショットで、Git commit ID はない。契約・trade・wallet の service ごとの test script は `server/package.json` に定義されていないため、以下はソース経路の照合であり EveJS process を用いた実行比較ではない。
+
+契約作成の wallet legs は `server/src/services/contracts/contractRuntimeState.js:1385-1399,1963-1984` にあり、auction は public でも broker/deposit を払う一方、item-exchange/courier は private broker fee だけを作成時に払う。V24.01 courier 作成画面は broker fee と deposit を表示し、sales-tax row は非表示にする (`/home/user/eve-logic/eve/client/script/ui/shared/neocom/contracts/createContractWnd.py:624-669`)。`ContractStruct` は契約条件のみを RPC に送る (`:853-889`)。eve.rs は画面に出る public courier broker/deposit を請求し、画面で非表示の sales tax を作成時に請求しない。EveJS の public courier fee omission と異なる判断は、Host+DB 回帰 `Registered_public_courier_creation_does_not_charge_sales_tax` が fee/deposit/reward の仕訳、残高、crate、expiry job、outbox と併せて検証する。
+
+auction は EveJS `contractAuctionRuntime.js:91-146` が最低入札・outbid refund・15分延長/buyout deadline を一つの versioned settlement に記録し、`contractAuctionClaims.js:63-108` が issuer と winner の claim を独立に処理する。V24.01 は `contracts.py:562-667,673-677` から PlaceBid と各側の FinishAuction を別 RPC として呼び、`contractsDetailsWnd.py:591-602` が claim side を選ぶ。eve.rs の expiry/buyout/税・deposit 仕訳の Host 回帰はこの状態遷移と CCP wallet reference IDs を確認する。EveJS の売却税計算順序と一行 seller proceeds は client 専用 ref 67/73/75/82 と合わないため、eve.rs は別仕訳にしている。
+
+direct trade は V24.01 `pvptradesvc.py:35`, `pvptradewnd.py:108,160-163`, `invControllers.py:558-575,1648-1691` の操作に対し、EveJS `server/src/services/trade/tradeMgrService.js:697-743,1057-1082,2249-2443` が両者の session/dock 状態を mutation 入口で再確認し、Add/MultiAdd/OfferMoney/MakeOffer/Abort を処理する。fitted charge と corporation office item の custody はこの worktree の既存 Host regressions と [取引監査所見](audit-fixes-trade.md) に記録した。今回 direct-trade production code に変更はない。
+
+wallet 側は V24.01 `walletSvc.py:124-139,142-150` が personal/corporation/alliance bill payment と wallet transfer を分け、`accountsvc.py:108-130` が月指定 transactions を呼ぶ。EveJS 261108.1 の対応経路は `server/src/services/account/billMgrService.js:284-325`, `billRuntimeState.js:644-743`, `accountService.js:777-845` にあり、corporation division kwarg、bill settlement と journal read を別々に扱う。eve.rs は個人請求支払い、transfer errors、division journal、PI 96/97/98 refs、office-rent bill notices を Host/DB tests で確認済み。全 bill producer / debtor kind と全 journal entry renderer は今回の変更対象として再検証していない。
+
+market tax は EveJS 261108.1 `server/src/services/market/marketRules.js:43,48,165-178,278-282` で base 8% と Accounting 11%/level を使う。V24.01 client preview も 8% fallback を持つが、CCP は [Broker Fee and Sales Tax](https://support.eveonline.com/hc/en-us/articles/203218962-Broker-Fee-and-Sales-Tax) で現行基礎率 7.5% を示し、2025-03-12 の 22.02 patch notes が 4% から 7.5% への更新を記録する。eve.rs は現行ルールの 7.5% を維持する。古い V24/EveJS preview と現行 settlement の差は [互換差記録](../reference/compat/DEVIATIONS.md#market-slice-m2-the-rules-as-data-and-the-decisions-2026-10-10) に根拠付きで残し、今回税率を変更しない。
 
 ## 実行して確認した結果
 
@@ -71,6 +93,14 @@ eve.rs は数値を作らず、合算した税額と owner-only 税額を既存�
 - auction deadline/buyout、blueprint 検索、seller sales tax と法人 division 仕訳を追加した後、登録 Host 経路を含む `Eve.Host.Tests` の `FullyQualifiedName~Contract` slice は Release で 43 passed、0 failed、0 skipped（`eve_p4`）。auction deadline、別々の issuer/winner claim、BPO/BPC 詳細 wire 行、作成時税 deferred、売却後税、deposit 税・返却、no-bid forfeiture、法人 division 1002/1003 の refs 77/80/81 を含む。最初の全 slice では古い gross-payout balance 期待値が2件失敗したため、V24 wallet ref と税の差引に照らして仕訳・残高 assertion を更新し、slice を再実行した。
 - 登録 Host tax wire test を法人 issuer に切り替える試行は `ConNotInStation` で失敗したため、その一時的な入力変更を戻し、personal auction の Host 経路と corporation wallet の persistence DB test を分けて検証した。この試行は pass に数えていない。
 - 新しい auction tax Host wire test は変更前に `sales_tax_isk` 10000 の赤を確認し、修正後の単体 slice は 1 passed、0 failed、0 skipped。Core service/write-model slice (`ContractProxyServiceTests`, `ContractWriteModelTests`) は Release で 37 passed、0 failed、0 skipped。
+- push後のmain CI run 1701 で `Finish_auction_claims_items_and_proceeds_independently` が失敗した。元fixtureは DB に直接 500 ISK bid を作り、作成時に必要な deposit を持たない contract を claim していた。V24.01 の `contracts.py:571-582` は minimum bid を開始価格と既存 bid 加算から決め、`contractscommon.py:22` は開始 bid minimum 1M ISK を定義する。EveJS `contractAuctionRuntime.js:117-123` も初回 bid を開始価格以上とし、`contractAuctionClaims.js:89-98` は最低10K税をbid+depositまでcapする。500 ISKの不可能な手動DB状態では売上500の全額が税になるため、旧期待値500は有効なゲーム状態の検証ではなかった。fixtureを開始価格/bid 1M、作成時 broker 10K・deposit 100K、bidder ISK debit/ref 63 を記録した既払状態にし、tax10K後の払出合計1.09Mと refs 67/73/82 を確認するよう直した。assertionは削除・緩和せず、V24/EveJS両方で成立する契約状態に修正した。
+- 新しい courier Host wire test は変更前に registered `CreateContract` が `sales_tax_isk=20000` を保存する赤を確認した。修正後は `eve_p4` 上で 1 passed、0 failed、0 skipped。0 tax の契約行、reward/broker/deposit refs、wallet balance、包み item、expiry job と `OnContractCreated` outbox row を確認した。
+- courier修正後、Host Release build と `Contract|Courier` Host DB slice は warnings-as-errors で成功し、それぞれ 0 warning/0 error、47 passed/0 failed/0 skipped (`eve_p4`)。Core Release build も 0 warning/0 error、contract proxy/write-model/fee-calculator slice は 54 passed/0 failed/0 skipped。
+- direct trade / wallet の再確認: `MarketTradeHostWireTests`, `NewEdenStoreHostTests` direct-trade wire flows, `ContractReadModelTests`, `ActivityAlphaBillRpcHostWireTests`, `AccountWalletHostRpcTests` の Host+DB slice は `eve_p4` で 30 passed、0 failed、0 skipped。`TradeAuthorityTests` は 12、`TradeMgrRpcTests` は 8、wallet `TransactionTests` は 9、`TransactionHistoryTests` は 1、いずれも 0 failed/0 skipped。Office rent、corporation bills、wallet audit/journal の Host slice は 15 passed、0 failed、0 skipped、`BillMgrServiceTests` は 1 passed。
+- main CI run 1702 (`43f571e9dd56`) は `Registered_auction_buyout_waits_for_issuer_and_winner_claims` で Expected 70,000 / Actual 60,000 により失敗した。元 fixture は issuer balance 50,000 で auction を作り、broker fee/deposit を 0 にし、20,000 buyout bid に対する sales tax を含めない payout を期待していた。V24 の auction claim と EveJS の `contractAuctionClaims.js:84-108` は売却税控除後の payout を作る。fixture を 200,000 balance、作成時 broker 10,000/deposit 100,000、seller claim journal 20,000 sale / 10,000 tax / 100,000 deposit return に直し、既存の issuer/winner の独立 claim・item custody・通知 assertions を保った。修正した7つの関連 Host wire tests はすべて `eve_p4` で通り、上記47件の contract/courier slice も再通過した。CI 1702 自体は修正前 main の実行であり、修正後 commit の CI はまだ実行していない。同runでは Abyssal tournament の3テストが skip と記録されたため、成功に数えていない。
+- main CI run 1701 と手動 run 1704 (`42951500907`, commit `cb69ebb6f317`) で `Registered_rpcs_refuse_seeded_hostile_arguments_through_dispatcher` の teardown が、イベント subscriber cursor の `UPDATE` を実行済みのまま `idle in transaction` になった PostgreSQL セッションを検出した。run 1703 は成功したが、これは間欠的な競合を否定しない。ローカルでも同じ Host テストが1回再現した。`EventBus.PumpSubscriberAsync` のイベントなし経路は cursor を更新した後、停止用 cancellation token を使って commit していたため、SQL 完了と COMMIT の間に停止が入るとトランザクションを完了できない。cancel 時 rollback を足すだけの案もローカルで再現したため採用せず、cursor UPDATE が成功した後は COMMIT に `CancellationToken.None` を使い、UPDATE 自体がキャンセルされた場合に限り rollback するよう修正した。これは通知のない outbox 範囲を cursor が飛ばす既存処理の終了処理で、配送イベントやゲーム状態は変えない。修正後は Host RPC fuzz を `eve_p4` で2回連続 pass、`EventBusTests` は19 passed / 0 failed / 0 skipped とした。Host/Event Tests の Release build は warnings-as-errors で 0 warning / 0 error。
+- 修正 commit `616d3a9b7942` の main CI run 1705 (`42954694005`) は全50 jobs 成功、失敗0。Host tests は6 shards合計1,268 passed / 23 skipped、特に RPC fuzz を含む shard 1/6 は213 passed / 3 skipped で当該 fuzz test も含め成功した。skip は合格に含めない: .NET other tests 3件 (Universe static-data 1、Market/Dogma benchmarks 2)、Python client 235件、Windows client 313件、headless fast-live 10件 (skill-training-speed 条件 3、`EVE_LIVE_SLOW=1` 条件 7)。Rust test output は ignored 0。Python/Windows の多数の skip は live Host 未設定による。
+- push 後の main CI run 1703 (`cb69ebb6f317`) は成功し、failed tests/jobs は 0 件。skip は成功に数えず別記する: .NET 26 cases (Host 23、other 3: Universe static-data test と Market/Dogma benchmarks)、Python client 235 cases、Windows client 313 cases、headless fast-live 10 cases (skill-training-speed 条件 3、slow tests 7)。Rust test summary は ignored 0。Python/Windows の skip は主に `EVE_LIVE_HOST` 未設定で graphical/live server path を起動できないためで、headless の slow tests は `EVE_LIVE_SLOW=1` 条件付き。
 - `Eve.Host.Tests` と `Eve.Services.Core.Tests` の Release build は warnings-as-errors で各 0 warning、0 error。`git diff --check` も通過した。
 - 変更前に auction deadline test は期限更新なし、buyout test は `FinishAuction` 前に status=4 となる挙動を再現した。BPO Host test は search hint 未対応の応答を再現した。blueprint 関連の最初の DB slice では fixture inventory schema がなく失敗したため fixture migration を追加し、当該 class と上記 contract slice を再実行して通過した。
 
@@ -86,3 +116,35 @@ eve.rs は数値を作らず、合算した税額と owner-only 税額を既存�
 - Host RPC を通した corporation-issued auction creation はこの変更では未確認。corporation wallet division 1002/1003 の fee/deposit/bid refs は Persistence write model の PostgreSQL 回帰で確認した。
 - PI 以外の全 journal reference / description 種別、derived tax rows、market order/fill と sales tax の caller-to-wallet 経路は未確認。市場税の互換性判断は既存 deviation 記録に残る。
 - オークション以外の corporation wallet division による contract/market/bill entry routing、全請求種別の期限・更新・失効・領収通知、wallet transaction retry/restart 横断は今回の追加差分では再検証していない。
+
+## Wallet journal type metadata completeness (2026-11-11)
+
+### 確認済み
+
+V24.01 の `eve/client/script/ui/services/accountsvc.py:98-104` は `account.GetEntryTypes()` の各 `entryTypeNameID` をローカライズする。wallet panel は `panels/transactionsPanel.py:30-40` で transaction ごとに `GetRefTypeKeyByID(entryTypeID)` の結果から `entryTypeName` を参照し、`:160-172` で表示 row を組み立てる。登録 RPC の transaction row に対する metadata が欠けると、同 panel はその仕訳を表示できない。
+
+変更前の `AccountService.EntryTypeMetadata` は一部の wallet entry type しか返さなかった。特に contract auction が実際に書く ref 63、67、73、82、および bounty corporation tax ref 92 の metadata が欠けていた。V24.01 client 全体の `GetEntryTypes` caller を検索し、wallet transaction panel と reference-type filter がこの list を消費することを確認した。
+
+V24.01 Host E2E `Registered_auction_creation_defers_sales_tax_until_seller_claims_proceeds` を先に拡張し、登録済み `contractProxy.CreateContract` → `PlaceBid` → issuer/winner `FinishAuction` → 登録済み `account.GetTransactions` → `account.GetEntryTypes` を同じ実 DB scenario で通した。修正前の実行では settlement journal の ref 67/73/82 が返る一方、metadata list に ref 67 がなく、追加 assertion が失敗した。
+
+eve.rs は `dotnet/src/Eve.Services.Wallet/accountingEntryTypes.json` に build 3396210 の全218 metadata rows を embedded resource として同梱し、`AccountService.GetEntryTypes` から返す。EveJS 261108.1 `server/src/services/account/accountingEntryTypes.json:1` は source resource `res:/staticdata/accountingentrytypes.fsdbinary`、build 3396210、resource SHA-256 `7cffa8ce3c385ad92be55fa43f8a6bb0a2c8cc5c03196c1500e8de16a9a0dc8c`、decoded SHA-256 `7a211ff0ecae907116cbe2cb4d0b87baed9255c8fcebb7490ecd8841d062302a` を記録し、`server/src/services/account/accountService.js:702-719` はこの native metadata rows を返す。eve.rs は同じ resource snapshot を使い、起動時に build number を検査する。contract refs 63–84、bounty corporation tax 92、全ての historical/unused native type、既存 rows の名前・name message ID・journal message ID を含む。
+
+`GetEntryTypes` の wire rows、cache/checksum、ref 13/26、contract refs 63/67/73/82、ref 92 は `CorporationProtocolTests.Get_entry_types_returns_the_cached_v24_metadata_rows` と `WalletAuditHostRpcTests.Lp_store_journal_entry_type_resolves_through_the_registered_account_rpc` で確認する。auction scenario の登録Host回帰は wallet journal read に出てくる全 ref に `GetEntryTypes` row が存在することと、ref 67/73/82 の localized-message IDs を確認する。
+
+### 今回実行した確認
+
+- 変更前の失敗: `Registered_auction_creation_defers_sales_tax_until_seller_claims_proceeds` は `eve_p4` 上で journal read 成功後に ref 67 metadata がないため失敗（1 failed、0 skipped）。
+- Release warnings-as-errors build: `Eve.Services.Wallet`, `Eve.Host.Tests`, `Eve.Corporations.Tests`, `Eve.Services.Wallet.Tests`, `Eve.Services.CharacterInfo.Tests` はそれぞれ0 warning、0 error。
+- `eve_p4` Host slice (`Registered_auction_creation_defers_sales_tax_until_seller_claims_proceeds`, `WalletAuditHostRpcTests`): 4 passed、0 failed、0 skipped。
+- `eve_p4` Corporation slice (`Get_entry_types_returns_the_cached_v24_metadata_rows`, `Get_transactions_returns_persisted_rows_and_enforces_division_read_access`, `AccountRpcTests`): 4 passed、0 failed、0 skipped。
+- `TransactionHistoryTests`: 1 passed、0 failed、0 skipped。
+- `eve_p4` `AccountWalletHostRpcTests`: 1 passed、0 failed、0 skipped。
+- `AccountTests`: 3 passed、0 failed、0 skipped。`Account_contact_cost_calls_use_character_state_and_keep_client_wire_values`: 1 passed、0 failed、0 skipped。
+- 追加したこの差分とAccountService利用クラスの合計は14 passed、0 failed、0 skipped。`git diff --check` も通過。
+
+### 未確認
+
+- 実V24.01 graphical clientで journal panel を開き、翻訳済みtype名・filter・journal messageの表示を操作していない。client callsiteとHost wire/DB rowの整合を確認したもので、GUI表示確認ではない。
+- EveJS server process でauctionを再実行していない。比較はbuild 3396210 metadata snapshotと `GetEntryTypes` handler sourceの照合。以前のsource auditで記録したとおり、このcheckoutのEveJS `better-sqlite3` native bindingが未準備であり、processを使うwallet/contract comparisonは未確認。
+- `/home/user/eve-logic` checkoutに `accountingentrytypes.fsdbinary` 本体はなく、resource bytesを直接再hashしてはいない。採用したEveJS JSONにはmatching client buildと元resource/decoded hashesが記録されている。
+- この追加差分では item exchange/courier/direct-trade/bill settlement の全組合せを再実行していない。関連する既存 Host/DB evidence は上記参照記録に残るが、今回の変更によるmain CI実行結果はpush後に確認する。

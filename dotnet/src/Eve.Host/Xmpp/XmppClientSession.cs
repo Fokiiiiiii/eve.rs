@@ -234,6 +234,52 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
             send($"<iq type='result' id='{XmppXml.Escape(id)}' from='{XmppXml.Escape(hub.Settings.Domain)}' to='{XmppXml.Escape(userDataLink.Jid)}'><query xmlns='urn:xmpp:eve_user_data' jid='{XmppXml.Escape(requestedJid)}'>{userDataXml}</query></iq>");
             return;
         }
+        if ((type is "set" or "get") && child?.Name == "query"
+            && child.Attribute("xmlns") is "urn:xmpp:expiring_record" or "urn:xmpp:expiring_record#search"
+            && _phase == Phase.Bound && _link is { } restrictionLink
+            && string.Equals(iq.Attribute("to"), hub.Settings.Domain, StringComparison.OrdinalIgnoreCase))
+        {
+            var roomAddress = child.Attribute("room") ?? "";
+            var room = "";
+            var hasRoom = !roomAddress.Contains('/') && hub.TryNormalizeRoomAddress(roomAddress, out room);
+            if (type == "get" && child.Attribute("xmlns") == "urn:xmpp:expiring_record#search")
+            {
+                var category = child.Attribute("category")?.ToLowerInvariant() ?? "";
+                var items = hasRoom
+                    ? await hub.PlayerRoomTemporaryRestrictionsXmlAsync(restrictionLink, room, category, cancellationToken).ConfigureAwait(false)
+                    : null;
+                if (items is not null)
+                {
+                    var canonicalRoom = $"{room}@{hub.ConferenceDomain}";
+                    send($"<iq type='result' id='{XmppXml.Escape(id)}' from='{XmppXml.Escape(hub.Settings.Domain)}' to='{XmppXml.Escape(restrictionLink.Jid)}'><query xmlns='urn:xmpp:expiring_record#search' room='{XmppXml.Escape(canonicalRoom)}' category='{XmppXml.Escape(category)}'>{items}</query></iq>");
+                    return;
+                }
+            }
+            else if (type == "set" && child.Attribute("xmlns") == "urn:xmpp:expiring_record")
+            {
+                var jid = child.Attribute("jid") ?? "";
+                var jidAt = jid.IndexOf('@');
+                var targetIdText = jidAt > 0 && jid.IndexOf('@', jidAt + 1) < 0
+                    && string.Equals(jid[(jidAt + 1)..], restrictionLink.Domain, StringComparison.OrdinalIgnoreCase)
+                    ? jid[..jidAt] : "";
+                var category = child.Attribute("category")?.ToLowerInvariant() ?? "";
+                var action = child.Attribute("action")?.ToLowerInvariant() ?? "";
+                var hasDuration = long.TryParse(child.Attribute("duration"), System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var durationSeconds);
+                if (hasRoom && long.TryParse(targetIdText, System.Globalization.NumberStyles.None,
+                        System.Globalization.CultureInfo.InvariantCulture, out var targetCharacterId)
+                    && targetCharacterId > 0 && action is "set" or "delete"
+                    && (action == "delete" || hasDuration && durationSeconds > 0)
+                    && await hub.SetPlayerRoomTemporaryRestrictionAsync(restrictionLink, room, targetCharacterId,
+                        category, action, hasDuration ? durationSeconds : 0, cancellationToken).ConfigureAwait(false))
+                {
+                    send($"<iq type='result' id='{XmppXml.Escape(id)}' from='{XmppXml.Escape(hub.Settings.Domain)}' to='{XmppXml.Escape(restrictionLink.Jid)}'/>");
+                    return;
+                }
+            }
+            send($"<iq type='error' id='{XmppXml.Escape(id)}' from='{XmppXml.Escape(hub.Settings.Domain)}' to='{XmppXml.Escape(restrictionLink.Jid)}'><error type='cancel'><not-authorized xmlns='{XmppXml.StanzasNamespace}'/></error></iq>");
+            return;
+        }
         if (type == "set" && child?.Name == "query" && child.Attribute("xmlns") == "http://jabber.org/protocol/muc#admin"
             && _phase == Phase.Bound && _link is { } adminSetLink)
         {
@@ -242,12 +288,14 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
             var item = child.Child("item");
             var targetJid = item?.Attribute("jid");
             var targetAt = targetJid?.IndexOf('@') ?? -1;
-            if (at > 0 && hub.IsConferenceDomain(to[(at + 1)..])
-                && targetAt > 0 && targetJid!.IndexOf('@', targetAt + 1) < 0
+            var targetIdText = targetAt > 0 && targetJid!.IndexOf('@', targetAt + 1) < 0
                 && string.Equals(targetJid[(targetAt + 1)..], adminSetLink.Domain, StringComparison.OrdinalIgnoreCase)
-                && long.TryParse(targetJid[..targetAt], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var targetCharacterId)
-                && targetCharacterId > 0 && item?.Attribute("affiliation") == "owner"
-                && await hub.SetPlayerRoomOwnerAsync(adminSetLink, to[..at], targetCharacterId, cancellationToken).ConfigureAwait(false))
+                ? targetJid[..targetAt]
+                : targetJid is null ? item?.Attribute("nick") : null;
+            if (at > 0 && hub.IsConferenceDomain(to[(at + 1)..]) && item is not null
+                && long.TryParse(targetIdText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var targetCharacterId)
+                && targetCharacterId > 0
+                && await hub.SetPlayerRoomAdminItemAsync(adminSetLink, to[..at], targetCharacterId, item, cancellationToken).ConfigureAwait(false))
             {
                 send($"<iq type='result' id='{XmppXml.Escape(id)}' from='{XmppXml.Escape(to)}' to='{XmppXml.Escape(adminSetLink.Jid)}'/>");
                 return;

@@ -8,10 +8,14 @@ namespace Eve.Services.Space;
 public sealed partial class FleetManagerService(
     FleetStore store,
     Func<long, ClientSession?>? sessionOf = null,
-    Func<ClientSession, ClientSession, bool>? sameBubble = null)
+    Func<ClientSession, ClientSession, bool>? sameBubble = null,
+    Func<long>? nowUnixMs = null,
+    FleetBroadcastRateLimiter? broadcastRateLimiter = null)
 {
     private const string WatchlistSessionKey = "fleetWatchlist";
     private const int MaxWatchlistInputIds = 500;
+    private readonly Func<long> _nowUnixMs = nowUnixMs ?? (static () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    private readonly FleetBroadcastRateLimiter _broadcastRateLimiter = broadcastRateLimiter ?? new();
 
     [Method("ForceLeaveFleet")]
     public async ValueTask<PyValue> ForceLeaveFleet(ServiceCall call)
@@ -97,6 +101,7 @@ public sealed partial class FleetManagerService(
         var name = Text(call.Arg(0));
         var scope = Number(call.Arg(1));
         if (!FleetBroadcasts.Names.Contains(name) || scope is not (1 or 2 or 3)) return;
+        if (!_broadcastRateLimiter.TryAccept(fleetId, sender.CharacterId, name, _nowUnixMs())) return;
         var senderSystem = SystemId(call.Session);
         if (senderSystem is null) return;
         var senderIsInSpace = call.Session.GetInt("stationid") is null;

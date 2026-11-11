@@ -59,6 +59,11 @@ public sealed partial class HostServerTests
                 await using var balances = new NpgsqlCommand(
                     $"UPDATE {walletSchema}.balances SET isk = 50000 WHERE account_key = 1000", connection, transaction);
                 await balances.ExecuteNonQueryAsync();
+                await using var issuerBalance = new NpgsqlCommand(
+                    $"UPDATE {walletSchema}.balances SET isk = 200000 WHERE owner_id = $1 AND account_key = 1000",
+                    connection, transaction);
+                issuerBalance.Parameters.AddWithValue(issuerId);
+                await issuerBalance.ExecuteNonQueryAsync();
                 await transaction.CommitAsync();
             }
 
@@ -87,8 +92,8 @@ public sealed partial class HostServerTests
                 ExpiryMinutes: 1440,
                 Price: 1000,
                 Reward: 0,
-                BrokerFee: 0,
-                Deposit: 0,
+                BrokerFee: 10_000,
+                Deposit: 100_000,
                 SalesTax: 0,
                 WalletAccountKey: 1000,
                 Title: "Auction buyout",
@@ -174,7 +179,7 @@ public sealed partial class HostServerTests
             }
             Assert.Equal(30000m, await wallets.AccountBalanceAsync(new WalletAccount(winnerId), CancellationToken.None));
             Assert.Equal(50000m, await wallets.AccountBalanceAsync(new WalletAccount(previousBidderId), CancellationToken.None));
-            Assert.Equal(50000m, await wallets.AccountBalanceAsync(new WalletAccount(issuerId), CancellationToken.None));
+            Assert.Equal(90000m, await wallets.AccountBalanceAsync(new WalletAccount(issuerId), CancellationToken.None));
             var escrowedItem = await items.GetAsync(created.EscrowItemIds.Single(), CancellationToken.None);
             Assert.NotNull(escrowedItem);
             Assert.Equal(1L, escrowedItem.OwnerId);
@@ -185,7 +190,21 @@ public sealed partial class HostServerTests
             _ = await issuerFront.ReceiveAsync();
             Assert.Same(PyBool.True, await CallAsync(issuerFront, issuerOpen, 3, "FinishAuction",
                 new PyInt(created.ContractId), PyBool.True));
-            Assert.Equal(70000m, await wallets.AccountBalanceAsync(new WalletAccount(issuerId), CancellationToken.None));
+            Assert.Equal(200000m, await wallets.AccountBalanceAsync(new WalletAccount(issuerId), CancellationToken.None));
+            await using (var sellerJournal = source.CreateCommand($"""
+                SELECT ref_type_id, amount FROM {walletSchema}.journal
+                WHERE owner_id = $1 AND reference_id = $2 AND ref_type_id IN (67, 73, 82)
+                ORDER BY id
+                """))
+            {
+                sellerJournal.Parameters.AddWithValue(issuerId);
+                sellerJournal.Parameters.AddWithValue(created.ContractId);
+                var entries = new List<(int RefType, decimal Amount)>();
+                await using var reader = await sellerJournal.ExecuteReaderAsync();
+                while (await reader.ReadAsync())
+                    entries.Add((reader.GetInt32(0), reader.GetDecimal(1)));
+                Assert.Equal(new[] { (67, 20000m), (73, -10000m), (82, 100000m) }, entries);
+            }
             await using (var sellerClaim = source.CreateCommand(
                 $"SELECT status FROM {contractsSchema}.contract_records WHERE contract_id = $1"))
             {
@@ -219,7 +238,7 @@ public sealed partial class HostServerTests
             Assert.Equal((winnerId, stationId, ItemFlags.Hangar),
                 (deliveredItem.OwnerId, deliveredItem.LocationId, deliveredItem.Flag));
             Assert.Equal(30000m, await wallets.AccountBalanceAsync(new WalletAccount(winnerId), CancellationToken.None));
-            Assert.Equal(70000m, await wallets.AccountBalanceAsync(new WalletAccount(issuerId), CancellationToken.None));
+            Assert.Equal(200000m, await wallets.AccountBalanceAsync(new WalletAccount(issuerId), CancellationToken.None));
             Assert.Equal(new[]
             {
                 ("OnContractCreated", "100"),

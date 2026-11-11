@@ -116,6 +116,27 @@ public class CommandBurstHostTests
     }
 
     [PgFact]
+    public async Task A_successful_burst_notifies_its_source_with_module_type_and_the_number_of_boosted_ships()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var source = await FlyingWithAsync(rig, ShieldCommandBurstI);
+        var ally = await DroneHostTests.FlyingWithADroneAsync(rig, characterName: "Boosted Fleet Mate", sessionId: 2);
+        rig.Space.FleetIdOfAsync = (_, _) => Task.FromResult<long?>(FleetId);
+        await LoadChargeAsync(rig, source, ShieldHarmonizing);
+        rig.Space.StartModuleForTest((ulong)source.Session.SessionId, source.Module);
+        Events.Of(source.Session);
+        Events.Of(ally.Session);
+
+        var result = await ModuleFuelHostTests.SettleAsync(rig, BurstCycle(source, 10, ShipIdOf(source), ShipIdOf(ally)));
+
+        Assert.True(result.Accepted, result.Reason);
+        var boosted = Assert.Single(Events.Of(source.Session), notification => notification.Name == "OnFleetBoosted");
+        Assert.Equal("clientID", boosted.IdType);
+        Assert.Equal(new PyValue[] { new PyInt(ShieldCommandBurstI), new PyInt(2) }, boosted.Args);
+        Assert.DoesNotContain(Events.Of(ally.Session), notification => notification.Name == "OnFleetBoosted");
+    }
+
+    [PgFact]
     public async Task A_pilot_outside_the_source_fleet_is_not_buffed_though_its_ship_is_in_reach()
     {
         await using var rig = await Rig.CreateAsync();

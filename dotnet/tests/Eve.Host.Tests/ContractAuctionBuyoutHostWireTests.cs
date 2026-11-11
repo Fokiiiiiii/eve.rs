@@ -185,7 +185,8 @@ public sealed partial class HostServerTests
             _ = await issuerFront.ReceiveAsync();
             Assert.Same(PyBool.True, await CallAsync(issuerFront, issuerOpen, 3, "FinishAuction",
                 new PyInt(created.ContractId), PyBool.True));
-            Assert.Equal(70000m, await wallets.AccountBalanceAsync(new WalletAccount(issuerId), CancellationToken.None));
+            // The 20,000 ISK buyout is reduced by the 10,000 ISK minimum sales tax at seller claim.
+            Assert.Equal(60000m, await wallets.AccountBalanceAsync(new WalletAccount(issuerId), CancellationToken.None));
             await using (var sellerClaim = source.CreateCommand(
                 $"SELECT status FROM {contractsSchema}.contract_records WHERE contract_id = $1"))
             {
@@ -219,7 +220,7 @@ public sealed partial class HostServerTests
             Assert.Equal((winnerId, stationId, ItemFlags.Hangar),
                 (deliveredItem.OwnerId, deliveredItem.LocationId, deliveredItem.Flag));
             Assert.Equal(30000m, await wallets.AccountBalanceAsync(new WalletAccount(winnerId), CancellationToken.None));
-            Assert.Equal(70000m, await wallets.AccountBalanceAsync(new WalletAccount(issuerId), CancellationToken.None));
+            Assert.Equal(60000m, await wallets.AccountBalanceAsync(new WalletAccount(issuerId), CancellationToken.None));
             Assert.Equal(new[]
             {
                 ("OnContractCreated", "100"),

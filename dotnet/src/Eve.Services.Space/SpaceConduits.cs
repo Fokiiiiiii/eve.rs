@@ -167,6 +167,8 @@ public sealed class SpaceConduits(
             throw;
         }
 
+        // the anchor pilot's client replaces its cached jump timers with the fatigue just written, once the simulation has taken the jump
+        SpaceBridges.SendJumpTimers(session, states[character], now);
         session.SendNotification("OnGroupJumpAnchorActivated", "clientID", new PyInt(destinationSystem), new PyInt(passengers.Count));
         foreach (var passenger in passengers)
         {

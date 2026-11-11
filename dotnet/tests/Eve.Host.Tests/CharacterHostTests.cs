@@ -414,7 +414,7 @@ public sealed partial class CharacterHostTests
         {
             "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
             "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
-            "OnServerImplantsChanged",
+            "OnServerImplantsChanged", "OnJumpCloneTransitionCompleted",
         }, Notifications(sink).Select(n => n.Name).ToArray());
         var state = await BoundAsync(service, session, "GetCloneState");
         var clones = Rows(Field(state, "clones"));
@@ -448,6 +448,44 @@ public sealed partial class CharacterHostTests
         Assert.Equal(new[] { replacement }, Rows(Field(await BoundAsync(restarted, session, "GetCloneState"), "clones"))
             .Select(row => ((PyLong)row.Items[0]).Value).ToArray());
         Assert.Equal(0m, await BalanceAsync(rig, character));
+    }
+
+    [PgFact]
+    public async Task Clone_jump_sends_transition_notice_once_after_success_and_not_after_refusal()
+    {
+        await using var rig = await CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var sink = new RecordingPacketSink();
+        var session = new ClientSession { CharacterId = character, Sink = sink };
+        session.Set("stationid", new PyInt(rig.Station));
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("jumpCloneSvc"));
+        var stations = await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var away = stations.All.OrderBy(station => station.Id).First(station => station.Id != rig.Station);
+
+        var capsule = await GiveItemAsync(rig, character, CharacterShips.CapsuleTypeId, rig.Station, ItemFlags.Hangar, singleton: true);
+        await SetShipAsync(rig, character, capsule);
+        await GiveItemAsync(rig, character, 9941, character, 89, singleton: true);
+        await FundAsync(rig, character, 1_000_000m);
+        var target = await rig.AddCloneAsync(character, away.Id, "station", "Away body", [9942]);
+
+        await BoundAsync(service, session, "CloneJump", new PyLong(away.Id), new PyLong(target), new PyReal(900_000.0), PyBool.False);
+
+        var successNotifications = Notifications(sink);
+        var transition = Assert.Single(successNotifications, notification => notification.Name == "OnJumpCloneTransitionCompleted");
+        Assert.Empty(transition.Args);
+        Assert.Equal(new[]
+        {
+            "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
+            "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
+            "OnServerImplantsChanged", "OnJumpCloneTransitionCompleted",
+        }, successNotifications.Select(notification => notification.Name).ToArray());
+
+        sink.Sent.Clear();
+        var replacement = Assert.Single(Rows(Field(await BoundAsync(service, session, "GetCloneState"), "clones")));
+        var replacementId = Assert.IsType<PyLong>(replacement.Items[0]).Value;
+        await Assert.ThrowsAsync<MachoWrappedException>(() => BoundAsync(service, session, "CloneJump", new PyLong(rig.Station),
+            new PyLong(replacementId), new PyReal(900_000.0), PyBool.False));
+        Assert.DoesNotContain("OnJumpCloneTransitionCompleted", Notifications(sink).Select(notification => notification.Name));
     }
 
     [PgFact]
@@ -490,7 +528,7 @@ public sealed partial class CharacterHostTests
         {
             "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
             "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
-            "OnServerImplantsChanged",
+            "OnServerImplantsChanged", "OnJumpCloneTransitionCompleted",
         }, Notifications(sink).Select(n => n.Name).ToArray());
     }
 
@@ -540,7 +578,7 @@ public sealed partial class CharacterHostTests
             "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
             "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
             "OnServerImplantsChanged", "OnModuleAttributeChanges", "OnModuleAttributeChanges",
-            "OnServerBrainUpdated", "OnNewSkillQueueSaved", "OnMultipleCharactersTrainingUpdated",
+            "OnServerBrainUpdated", "OnNewSkillQueueSaved", "OnMultipleCharactersTrainingUpdated", "OnJumpCloneTransitionCompleted",
         };
         Assert.True(expectedNotificationNames.SequenceEqual(notificationNames), string.Join(", ", notificationNames));
     }
@@ -3628,7 +3666,8 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             Assert.Equal(
                 ["OnItemsChanged", "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
                     "OnJumpCloneCacheInvalidated", "OnStationJumpCloneCacheInvalidated", "OnShipJumpCloneCacheInvalidated",
-                    "OnServerImplantsChanged", "OnModuleAttributeChanges", "OnModuleAttributeChanges", "OnServerBrainUpdated"],
+                    "OnServerImplantsChanged", "OnModuleAttributeChanges", "OnModuleAttributeChanges", "OnServerBrainUpdated",
+                    "OnJumpCloneTransitionCompleted"],
                 Notifications(sink).Select(notification => notification.Name));
 
             await rig.RestartAsync();

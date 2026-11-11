@@ -38,8 +38,11 @@ namespace Eve.Host;
 internal sealed partial class CharacterServicesComposition
 {
     /// <summary>Fleets: objects, manager and proxy.</summary>
-    private IReadOnlyList<IService> FleetRpc() =>
-    [
+    private IReadOnlyList<IService> FleetRpc()
+    {
+        var broadcastRateLimiter = new FleetBroadcastRateLimiter();
+        return
+        [
             new Eve.Services.Space.FleetObjectService(
                 fleetStore, now,
                 loadFleetSetup: async (fleetId, characterId, setupName, _, cancellationToken) =>
@@ -58,16 +61,20 @@ internal sealed partial class CharacterServicesComposition
                 sessionForCharacter: FleetSessionForCharacter,
                 compositionForMembers: FleetCompositionForMembersAsync,
                 sameBubble: SameFleetBubble,
-                memberSkillsForCharacter: FleetCommandSkillLevelsForCharacterAsync),
+                memberSkillsForCharacter: FleetCommandSkillLevelsForCharacterAsync,
+                broadcastRateLimiter: broadcastRateLimiter),
             new Eve.Services.Space.FleetManagerService(
                 fleetStore,
                 sessionOf: FleetSessionForCharacter,
-                sameBubble: SameFleetBubble),
+                sameBubble: SameFleetBubble,
+                nowUnixMs: now,
+                broadcastRateLimiter: broadcastRateLimiter),
             new Eve.Services.Space.FleetProxyService(
                 fleetStore,
                 fleetAdvertOperation: (operation, characterId, args, session, cancellationToken) =>
                     fleetStore.FleetFinderAdvertOperationAsync(operation, characterId, args, session,
                         FleetAdvertLeaderProfileForAsync, cancellationToken),
                 sessionForCharacter: FleetSessionForCharacter),
-    ];
+        ];
+    }
 }

@@ -15,9 +15,10 @@ internal static class FleetBroadcasts
 }
 
 [Service("fleetObjectHandler")]
-public sealed partial class FleetObjectService(FleetStore store, Func<long> nowUnixMs, Func<long, ClientSession?>? sessionForCharacter = null, Func<IReadOnlyList<long>, CancellationToken, Task<PyValue>>? compositionForMembers = null, Func<long, long, string, ClientSession, CancellationToken, Task<PyValue?>>? loadFleetSetup = null, Func<long, long, PyValue, ClientSession, CancellationToken, Task<PyValue?>>? createFleetAdvert = null, Func<ClientSession, ClientSession, bool>? sameBubble = null, Func<long, CancellationToken, Task<IReadOnlyList<int>>>? memberSkillsForCharacter = null) : IBoundObjectReleaseHandler
+public sealed partial class FleetObjectService(FleetStore store, Func<long> nowUnixMs, Func<long, ClientSession?>? sessionForCharacter = null, Func<IReadOnlyList<long>, CancellationToken, Task<PyValue>>? compositionForMembers = null, Func<long, long, string, ClientSession, CancellationToken, Task<PyValue?>>? loadFleetSetup = null, Func<long, long, PyValue, ClientSession, CancellationToken, Task<PyValue?>>? createFleetAdvert = null, Func<ClientSession, ClientSession, bool>? sameBubble = null, Func<long, CancellationToken, Task<IReadOnlyList<int>>>? memberSkillsForCharacter = null, FleetBroadcastRateLimiter? broadcastRateLimiter = null) : IBoundObjectReleaseHandler
 {
     private readonly Binding _binding = new(nowUnixMs);
+    private readonly FleetBroadcastRateLimiter _broadcastRateLimiter = broadcastRateLimiter ?? new();
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, long> _fleetByOid = new(StringComparer.Ordinal);
     private static PyValue None => PyNone.Instance;
 
@@ -749,6 +750,13 @@ public sealed partial class FleetObjectService
     {
         if (FleetId(call) is not { } fleetId ||
             await store.SnapshotAsync(fleetId, call.Cancellation) is not { } snapshot)
+            return None;
+        var characterId = CharacterId(call.Session);
+        var name = Text(call.Arg(0));
+        var scope = Number(call.Arg(1));
+        if (!snapshot.Members.Any(member => member.CharacterId == characterId) ||
+            !FleetBroadcasts.Names.Contains(name) || scope is not (1 or 2 or 3) ||
+            !_broadcastRateLimiter.TryAccept(fleetId, characterId, name, nowUnixMs()))
             return None;
         PublishBroadcast(call, snapshot);
         return None;

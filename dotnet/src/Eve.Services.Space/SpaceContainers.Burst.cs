@@ -52,12 +52,16 @@ public sealed partial class SpaceContainers
             _log?.Invoke($"command burst cycle {cycle.CycleId} refused: source ship {cycle.ShipId} is not in space system {cycle.SolarSystemId}");
             return WorkOutcome.Refuse("NO_SHIP");
         }
+        var module = ship.Fitted.FirstOrDefault(item => item.Id == cycle.OwnerId);
+        if (module is null)
+        {
+            return WorkOutcome.Refuse("INVALID_PROFILE");
+        }
         var buffs = CommandBurstBuffs.Of(ship.World, _statics, cycle.OwnerId, cycle.ChargeTypeId);
         var duration = CommandBurstBuffs.DurationOf(ship.World, cycle.OwnerId);
         if (buffs.Count == 0 || duration <= 0)
         {
-            var module = ship.Fitted.FirstOrDefault(item => item.Id == cycle.OwnerId);
-            var charge = module is null ? null : ship.ChargeOf(module);
+            var charge = ship.ChargeOf(module);
             var ids = new[] { 2468, 2470, 2472, 2536 }.Select(attribute => ship.World.Get(cycle.OwnerId, attribute));
             _log?.Invoke($"command burst cycle {cycle.CycleId} refused: module {cycle.OwnerId} has {buffs.Count} buffs and duration {duration}; fitted flag {module?.Flag}; charge {charge?.TypeId}/{charge?.LocationId}/{charge?.Flag}/{charge?.Quantity}; buff ids [{string.Join(",", ids)}]");
             return WorkOutcome.Refuse("INVALID_PROFILE");
@@ -99,7 +103,9 @@ public sealed partial class SpaceContainers
         {
             await TellBuffsAsync(pilots[target], target, now);
         }
-        return new WorkOutcome(true, "");
+        return new WorkOutcome(true, "", ClientNotification: (
+            "OnFleetBoosted",
+            [new Eve.Marshal.PyInt(checked((int)module.TypeId)), new Eve.Marshal.PyInt(reached.Count)]));
     }
 
     /// <summary>

@@ -113,6 +113,35 @@ public partial class HostServerTests
     }
 
     [Fact]
+    public async Task Employment_history_uses_a_long_profile_character_id_instead_of_the_selected_character()
+    {
+        const long selectedCharacterId = 90000001;
+        const long profileCharacterId = 4_000_000_001;
+        long employmentReadCharacterId = 0;
+        var corporation = new CorporationService(null!, null!,
+            readEmploymentHistory: (id, _) =>
+            {
+                employmentReadCharacterId = id;
+                return ValueTask.FromResult<IReadOnlyList<Employment>>(
+                    [new Employment(1, profileCharacterId, 500002, 1_700_000_000_000, null, false)]);
+            });
+
+        Start(configure: registry => registry.Register(corporation), sessionOpened: session =>
+            session.Set("charid", new PyInt(selectedCharacterId)));
+        var (front, open) = await OpenFrontAsync();
+
+        var reply = Assert.IsType<PyTuple>(await HostRpcAsync(
+            front, open, 1, "corporationSvc", "GetEmployementRecordAndCharacterTransfers", new PyLong(profileCharacterId)));
+
+        Assert.Equal(profileCharacterId, employmentReadCharacterId);
+        var history = Assert.IsType<PyObject>(reply.Items[0]);
+        var lines = Assert.IsType<PyList>(DictField(Assert.IsType<PyDict>(history.Args), "lines")).Items;
+        var line = Assert.IsType<PyList>(Assert.Single(lines)).Items;
+        Assert.Equal(500002, WireInteger(line[0]));
+        Assert.Empty(Assert.IsType<PyList>(reply.Items[1]).Items);
+    }
+
+    [Fact]
     public async Task Custom_agency_default_core_route_returns_empty_content_without_a_provider()
     {
         Start();

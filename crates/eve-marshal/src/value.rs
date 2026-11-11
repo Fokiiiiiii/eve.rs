@@ -37,6 +37,7 @@ pub enum Value {
     /// integer, as minimal little-endian two's-complement bytes.
     BigSigned(Vec<u8>),
 
+    /// A JavaScript string: ASCII uses a Python 2 byte string; non-ASCII uses unicode.
     Str(Cow<'static, str>),
     /// A Python `str`: PyEmptyString, PyCharString, PyShortString or
     /// PyLongString.

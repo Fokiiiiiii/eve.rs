@@ -182,7 +182,10 @@ public sealed class SpaceJumpDrive(
         }
         try
         {
-            return await space.CynoJumpAsync(session, shipId, targetId, targetSolarSystemId, (long)spool, capacitorShare, boundObjectId, cancellationToken);
+            var answer = await space.CynoJumpAsync(session, shipId, targetId, targetSolarSystemId, (long)spool, capacitorShare, boundObjectId, cancellationToken);
+            // the jumping pilot's client replaces its cached jump timers with the fatigue just written, once the simulation has taken the jump
+            SpaceBridges.SendJumpTimers(session, next, now);
+            return answer;
         }
         catch
         {

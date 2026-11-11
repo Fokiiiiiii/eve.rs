@@ -212,7 +212,7 @@ public class CharUnboundMgrTests
 
         var v = Recorded.Attributes(full).ToDictionary(a => a.Key, a => a.Value);
         Assert.Equal((new PyInt(1), new PyInt(1), new PyInt(1), new PyInt(10), new PyInt(35)), ((PyValue)v["gender"], v["raceID"], v["bloodlineID"], v["ancestryID"], v["schoolID"]));
-        Assert.Equal((new PyInt(1000006), new PyInt(60000610), new PyInt(30002775), new PyInt(20000406), new PyInt(10000033)), ((PyValue)v["corporationID"], v["stationID"], v["solarSystemID"], v["constellationID"], v["regionID"]));
+        Assert.Equal((new PyInt(1000045), new PyInt(60000610), new PyInt(30002775), new PyInt(20000406), new PyInt(10000033)), ((PyValue)v["corporationID"], v["stationID"], v["solarSystemID"], v["constellationID"], v["regionID"]));
         Assert.Equal((new PyInt(601), new PyStr("Ibis")), ((PyValue)v["shipTypeID"], v["shipName"]));
         Assert.Equal(new PyInt(Harness.Race1Points), v["skillPoints"]); // the points its skills add up to, not a constant
         Assert.Equal((new PyReal(100_000.0), new PyInt(2_222), new PyReal(0.0)), ((PyValue)v["balance"], v["plexBalance"], v["balanceChange"])); // its wallet
@@ -227,7 +227,7 @@ public class CharUnboundMgrTests
         var (session, _) = await h.LoginAsync("pilot");
         var id = await CreateAsync(h, session, "Reaper Pilot", race: 2, bloodline: 3, gender: 2, school: 33, ancestry: 19);
         var c = (await h.Characters.GetAsync(id))!;
-        Assert.Equal((2, 3, 2, 19, 33, 1375, 1000044L), (c.RaceId, c.BloodlineId, c.Gender, c.AncestryId, c.SchoolId, c.TypeId, c.CorporationId));
+        Assert.Equal((2, 3, 2, 19, 33, 1375, 1000171L), (c.RaceId, c.BloodlineId, c.Gender, c.AncestryId, c.SchoolId, c.TypeId, c.CorporationId));
         Assert.Equal(588, (await h.Items.GetAsync(c.ShipId!.Value))!.TypeId);
         // the appearance the client sent is kept as sent: the paper doll first, the portrait second
         var (doll, portrait) = await h.Characters.AppearanceAsync(id);
@@ -529,7 +529,7 @@ public class CharUnboundMgrTests
 
         var now = changes.ToDictionary(c => c.Name, c => c.New);
         Assert.Equal(new PyInt(id), now["charid"]);
-        Assert.Equal(new PyInt(1000006), now["corpid"]);
+        Assert.Equal(new PyInt(1000045), now["corpid"]);
         Assert.Equal(new PyInt(500001), now["factionid"]);
         Assert.Equal((new PyInt(60000610), new PyInt(60000610), new PyInt(60000610)), ((PyValue)now["stationid"], now["stationid2"], now["locationid"]));
         Assert.Equal((new PyInt(30002775), new PyInt(20000406), new PyInt(10000033)), ((PyValue)now["solarsystemid2"], now["constellationid"], now["regionid"]));

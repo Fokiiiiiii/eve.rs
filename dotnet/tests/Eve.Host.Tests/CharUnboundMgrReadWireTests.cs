@@ -16,8 +16,8 @@ public partial class HostServerTests
             [new Race(1, 601, "Ibis")],
             [new Bloodline(1, 1)],
             [
-                new StarterLocation(1000006, null, 60000610, 30002775, 20000406, 10000033),
-                new StarterLocation(1000007, null, 60000611, 30002775, 20000406, 10000033),
+                new StarterLocation(1000045, null, 60000610, 30002775, 20000406, 10000033),
+                new StarterLocation(1000044, null, 60000611, 30002775, 20000406, 10000033),
             ]);
         var service = new CharUnboundMgrService(
             null!, null!, null!, null!, null!, null!, catalog, null!, [],

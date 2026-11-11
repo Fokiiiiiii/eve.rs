@@ -632,7 +632,7 @@ def test_a_new_character_has_the_skills_the_reference_gives(race):
 
 INFO = load("character_info.json")
 RECORDED_INFO_RUN = re.search(r"(\d{6,})$", INFO["races"][0]["create"]["call"][2][0]).group(1)
-TIMES = {"createDateTime", "startDateTime"}
+TIMES = {"createDateTime", "startDateTime", "corporationDateTime"}
 DESCRIPTION = "Character created via EveJS Elysian"
 
 def substitute(described, ids: dict):
@@ -658,9 +658,15 @@ def with_description(described, text: str):
     copy = json.loads(json.dumps(described))
     records = copy if isinstance(copy, list) else [copy]
     for record in records:
-        for pair in record["args"]["$dict"]:
-            if pair[0] == "description":
-                pair[1] = text
+        if isinstance(record, dict) and record.get("$object") == "util.KeyVal":
+            for pair in record["args"]["$dict"]:
+                if pair[0] == "description":
+                    pair[1] = text
+        if isinstance(record, dict):
+            for row in record.get("list", []):
+                if isinstance(row, dict) and isinstance(row.get("$row"), dict):
+                    if "description" in row["$row"]:
+                        row["$row"]["description"] = text
     return copy
 
 @pytest.mark.parametrize("race", INFO["races"], ids=lambda r: f"race-{r['raceID']}")

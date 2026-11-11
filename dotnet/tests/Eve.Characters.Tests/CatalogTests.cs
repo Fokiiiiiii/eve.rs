@@ -167,6 +167,15 @@ public class CatalogTests
         Assert.Equal(new[] { 1, 2, 4, 8 }, CreationCatalog.Schools.Select(s => s.RaceId).Distinct().Order());
         Assert.All(CreationCatalog.Schools.GroupBy(s => s.RaceId), g => Assert.Equal(2, g.Count()));
         Assert.Equal(8, CreationCatalog.Schools.Select(s => s.CorporationId).Distinct().Count());
+        Assert.Equal(
+            new (int School, int Race, long Corporation)[]
+            {
+                (31, 4, 1000165), (32, 4, 1000077),
+                (33, 2, 1000171), (34, 2, 1000172),
+                (35, 1, 1000045), (36, 1, 1000044),
+                (37, 8, 1000115), (38, 8, 1000169),
+            },
+            CreationCatalog.Schools.Select(s => (s.Id, s.RaceId, s.CorporationId)));
     }
 
     [Theory]

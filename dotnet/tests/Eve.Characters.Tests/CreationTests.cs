@@ -9,9 +9,9 @@ public class CreationTests
         [new Race(1, 601, "Ibis"), new Race(2, 588, "Reaper")],
         [new Bloodline(1, 1), new Bloodline(2, 1), new Bloodline(3, 2)],
         [
-            new StarterLocation(1000006, 500001, 60000610, 30002775, 20000406, 10000033),
-            new StarterLocation(1000007, 500001, 60000611, 30002775, 20000406, 10000033),
-            new StarterLocation(1000044, 500002, 60000001, 30000001, 20000001, 10000001),
+            new StarterLocation(1000045, 500001, 60000610, 30002775, 20000406, 10000033),
+            new StarterLocation(1000044, 500001, 60000611, 30002775, 20000406, 10000033),
+            new StarterLocation(1000171, 500002, 60000001, 30000001, 20000001, 10000001),
         ]);
 
     private static readonly SkillCatalog Skills = new(
@@ -35,7 +35,7 @@ public class CreationTests
 
         var c = (await s.Characters.GetAsync(created.CharacterId))!;
         Assert.Equal(("Ann Lee", 1, 1, 1, 35, 1373), (c.Name, c.AccountId, c.RaceId, c.BloodlineId, c.SchoolId, c.TypeId));
-        Assert.Equal((1000006L, (long?)500001, 60000610L, 30002775, 20000406, 10000033), (c.CorporationId, c.FactionId, c.StationId, c.SolarSystemId, c.ConstellationId, c.RegionId));
+        Assert.Equal((1000045L, (long?)500001, 60000610L, 30002775, 20000406, 10000033), (c.CorporationId, c.FactionId, c.StationId, c.SolarSystemId, c.ConstellationId, c.RegionId));
         Assert.Equal(created.ShipId, c.ShipId);
         var (doll, portrait) = await s.Characters.AppearanceAsync(created.CharacterId);
         Assert.Equal(new byte[] { 1, 2 }, doll);
@@ -61,7 +61,7 @@ public class CreationTests
 
         var created = Assert.IsType<Created>(await creation.CreateAsync(Request("Member Pilot")));
 
-        Assert.Equal([(created.CharacterId, 1000006L)], membership);
+        Assert.Equal([(created.CharacterId, 1000045L)], membership);
     }
 
     [PgFact]
@@ -89,7 +89,7 @@ public class CreationTests
 
             var created = Assert.IsType<Created>(await creation.CreateAsync(Request("Affiliated Pilot")));
 
-            Assert.Equal(1000006L, (await relations.AffiliationOfAsync(created.CharacterId)).Corporation);
+            Assert.Equal(1000045L, (await relations.AffiliationOfAsync(created.CharacterId)).Corporation);
         }
         finally
         {

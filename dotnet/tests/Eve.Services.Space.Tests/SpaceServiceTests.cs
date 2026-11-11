@@ -4102,6 +4102,34 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task Fleet_concurrent_creation_for_one_character_persists_one_fleet_and_default_structure()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var store = rig.FleetStore;
+
+        var createdIds = await Task.WhenAll(store.CreateAsync(leaderId), store.CreateAsync(leaderId));
+
+        var fleetId = Assert.Single(createdIds, id => id > 0);
+        Assert.Single(createdIds, id => id == 0);
+        Assert.Equal(fleetId, await store.FleetIdForCharacterAsync(leaderId));
+        var snapshot = await store.SnapshotAsync(fleetId);
+        Assert.NotNull(snapshot);
+        var wing = Assert.Single(snapshot!.Wings);
+        Assert.Single(wing.Squads);
+
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var count = connection.CreateCommand();
+        count.CommandText = $"SELECT COUNT(*) FROM {rig.FleetSchema}.fleets WHERE leader_character_id = $1";
+        var leader = count.CreateParameter();
+        leader.Value = leaderId;
+        count.Parameters.Add(leader);
+        Assert.Equal(1L, Convert.ToInt64(await count.ExecuteScalarAsync(), System.Globalization.CultureInfo.InvariantCulture));
+
+        await store.DisbandAsync(fleetId, leaderId);
+    }
+
+    [PgFact]
     public async Task Fleet_invite_refuses_an_offline_target_before_persisting()
     {
         await using var rig = await Rig.CreateAsync();
@@ -4150,8 +4178,11 @@ public class SpaceServiceTests
         try
         {
             Assert.True(fleetId > 0);
-            var wingId = await store.CreateWingAsync(fleetId, leaderId);
-            var squadId = await store.CreateSquadAsync(fleetId, leaderId, wingId);
+            var initial = await store.SnapshotAsync(fleetId);
+            Assert.NotNull(initial);
+            var wing = Assert.Single(initial!.Wings);
+            var wingId = wing.WingId;
+            var squadId = Assert.Single(wing.Squads).SquadId;
             Assert.True(wingId > 0);
             Assert.True(squadId > 0);
             Assert.True(await store.InviteAsync(fleetId, leaderId, memberId, wingId, squadId, Eve.Services.Space.FleetStore.SquadCommander));
@@ -4431,13 +4462,28 @@ public class SpaceServiceTests
             Assert.NotNull(await store.JoinAsync(fleetId, commanderId));
             Assert.True(await store.MakeLeaderAsync(fleetId, bossId, commanderId));
 
+            var afterTransfer = await store.SnapshotAsync(fleetId);
+            Assert.NotNull(afterTransfer);
+            Assert.Equal(Eve.Services.Space.FleetStore.Leader,
+                afterTransfer!.Members.Single(member => member.CharacterId == bossId).Role);
+            Assert.False(Eve.Services.Space.FleetStore.HasBossJob(
+                afterTransfer.Members.Single(member => member.CharacterId == bossId).Job));
+            Assert.Equal(Eve.Services.Space.FleetStore.Member,
+                afterTransfer.Members.Single(member => member.CharacterId == commanderId).Role);
+            Assert.True(Eve.Services.Space.FleetStore.HasBossJob(
+                afterTransfer.Members.Single(member => member.CharacterId == commanderId).Job));
+            var initialWing = Assert.Single(afterTransfer.Wings);
+            var initialSquad = Assert.Single(initialWing.Squads);
+            Assert.True(await store.MoveMemberAsync(fleetId, commanderId, bossId,
+                initialWing.WingId, initialSquad.SquadId, Eve.Services.Space.FleetStore.Member));
+
             Assert.NotNull(await store.LeaveAsync(fleetId, bossId));
 
             var current = await store.SnapshotAsync(fleetId);
             Assert.NotNull(current);
             Assert.DoesNotContain(current.Members, member => member.CharacterId == bossId);
             var commander = current.Members.Single(member => member.CharacterId == commanderId);
-            Assert.Equal(Eve.Services.Space.FleetStore.Leader, commander.Role);
+            Assert.Equal(Eve.Services.Space.FleetStore.Member, commander.Role);
             Assert.True(Eve.Services.Space.FleetStore.HasBossJob(commander.Job));
         }
         finally
@@ -5037,13 +5083,16 @@ public class SpaceServiceTests
                 await using (var revoke = connection.CreateCommand())
                 {
                     revoke.Transaction = transaction;
-                    revoke.CommandText = $"UPDATE {rig.FleetSchema}.fleet_members SET job = 0 WHERE fleet_id = $1 AND character_id = $2";
+                    revoke.CommandText = $"UPDATE {rig.FleetSchema}.fleet_members SET job = 0, role = $3 WHERE fleet_id = $1 AND character_id = $2";
                     var fleetParameter = revoke.CreateParameter();
                     fleetParameter.Value = fleetId;
                     revoke.Parameters.Add(fleetParameter);
                     var bossParameter = revoke.CreateParameter();
                     bossParameter.Value = bossId;
                     revoke.Parameters.Add(bossParameter);
+                    var roleParameter = revoke.CreateParameter();
+                    roleParameter.Value = Eve.Services.Space.FleetStore.Member;
+                    revoke.Parameters.Add(roleParameter);
                     Assert.Equal(1, await revoke.ExecuteNonQueryAsync());
                 }
 
@@ -5064,7 +5113,7 @@ public class SpaceServiceTests
             {
                 await using var connection = await rig.Source.OpenConnectionAsync();
                 await using var restore = connection.CreateCommand();
-                restore.CommandText = $"UPDATE {rig.FleetSchema}.fleet_members SET job = $1 WHERE fleet_id = $2 AND character_id = $3";
+                restore.CommandText = $"UPDATE {rig.FleetSchema}.fleet_members SET job = $1, role = $4 WHERE fleet_id = $2 AND character_id = $3";
                 var job = restore.CreateParameter();
                 job.Value = Eve.Services.Space.FleetStore.CreatorJob;
                 restore.Parameters.Add(job);
@@ -5074,6 +5123,9 @@ public class SpaceServiceTests
                 var boss = restore.CreateParameter();
                 boss.Value = bossId;
                 restore.Parameters.Add(boss);
+                var role = restore.CreateParameter();
+                role.Value = Eve.Services.Space.FleetStore.Leader;
+                restore.Parameters.Add(role);
                 await restore.ExecuteNonQueryAsync();
                 await store.DisbandAsync(fleetId, bossId);
             }
@@ -5286,8 +5338,10 @@ public class SpaceServiceTests
             Assert.Equal(new PyLong(30000143), Field(leaderUpdate, "solarSystemID"));
             Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000133)]), Field(leaderUpdate, "public_allowedEntities"));
             Assert.Equal(Eve.Services.InventoryWire.Set([new PyLong(980000134)]), Field(leaderUpdate, "membergroups_allowedEntities"));
-            Assert.Equal(Eve.Services.Space.FleetStore.Leader,
-                (await store.MemberForCharacterAsync(member.CharacterId))?.Role);
+            var newBoss = await store.MemberForCharacterAsync(member.CharacterId);
+            Assert.NotNull(newBoss);
+            Assert.Equal(Eve.Services.Space.FleetStore.Member, newBoss!.Role);
+            Assert.True(Eve.Services.Space.FleetStore.HasBossJob(newBoss.Job));
 
             var removed = await Call("RemoveFleetFinderAdvert", memberSession);
             Assert.Equal(leaderUpdate, removed);

@@ -17,7 +17,7 @@ public sealed partial class SpaceContainers
     /// </summary>
     private readonly record struct WorkOutcome(
         bool Accepted, string Reason, long Remaining = 0, long Delivered = 0, bool Complete = true, (string Topic, object Payload, string Key)? Fact = null,
-        PyValue? Notice = null, (string Name, PyValue[] Args)? Scan = null)
+        PyValue? Notice = null, (string Name, PyValue[] Args)? Scan = null, (string Name, PyValue[] Args)? ClientNotification = null)
     {
         public static WorkOutcome Refuse(string reason) => new(false, reason);
     }
@@ -107,6 +107,10 @@ public sealed partial class SpaceContainers
         if (outcome.Scan is { } scan && _space.ClientSessionOf(cycle.SessionId) is { } scanner)
         {
             scanner.SendNotification(scan.Name, "clientID", scan.Args);
+        }
+        if (outcome.ClientNotification is { } notification && _space.ClientSessionOf(cycle.SessionId) is { } recipient)
+        {
+            recipient.SendNotification(notification.Name, "clientID", notification.Args);
         }
     }
 

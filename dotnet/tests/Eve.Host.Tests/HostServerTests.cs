@@ -4750,7 +4750,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
     }
 
     [Fact]
-    public async Task Mail_host_adapter_commits_mail_and_notification_before_returning_id()
+    public async Task Mail_host_adapter_commits_mail_before_returning_id_without_a_server_mail_notification()
     {
         const long senderId = 90000031;
         const long recipientId = 90000032;
@@ -4918,7 +4918,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(1, committed["mail"]["mailboxes"]![recipientId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["12"]!["labelMask"]!.GetValue<int>());
         Assert.Equal("keep", committed["notifications"]["metadata"]!.GetValue<string>());
-        Assert.Single(liveNotifications);
+        Assert.Empty(liveNotifications);
 
         var welcomeRequest = request with
         {
@@ -4947,9 +4947,11 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Empty(Assert.IsType<Eve.Marshal.PyList>(sent.Arguments[3]).Items);
         Assert.Equal(500_000_001L, Assert.IsType<Eve.Marshal.PyLong>(sent.Arguments[4]).Value);
         Assert.Equal(16L, Assert.IsType<Eve.Marshal.PyLong>(sent.Arguments[7]).Value);
-        Assert.Equal(500_000_001, committed["notifications"]["boxes"]![recipientId.ToString(
-            System.Globalization.CultureInfo.InvariantCulture)]!["byID"]!["102"]!["senderID"]!.GetValue<long>());
-        Assert.Equal(2, liveNotifications.Count);
+        var notificationRowsAfterMail = committed["notifications"]["boxes"]![recipientId.ToString(
+            System.Globalization.CultureInfo.InvariantCulture)]!["byID"]!.AsObject();
+        Assert.Single(notificationRowsAfterMail);
+        Assert.True(notificationRowsAfterMail.ContainsKey("100"));
+        Assert.Empty(liveNotifications);
 
         var usedData = new System.Text.Json.Nodes.JsonObject { ["charID"] = senderId };
         await adapter.WriteKillRightNotificationAsync(
@@ -4967,7 +4969,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.Used, usedNotification["typeID"]!.GetValue<int>());
         Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup, usedNotification["groupID"]!.GetValue<int>());
         Assert.Equal(senderId, usedNotification["data"]!["charID"]!.GetValue<long>());
-        Assert.Equal(3, liveNotifications.Count);
+        Assert.Single(liveNotifications);
 
         await adapter.WriteAllianceMaintenanceBillNotificationAsync(
             recipientId, allianceId, allianceBillId, CancellationToken.None);
@@ -4983,7 +4985,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(2, billNotification["groupID"]!.GetValue<int>());
         Assert.Equal(1_000_125, billNotification["senderID"]!.GetValue<long>());
         Assert.Equal(allianceId, billNotification["data"]!["allianceID"]!.GetValue<long>());
-        Assert.Equal(4, liveNotifications.Count);
+        Assert.Equal(2, liveNotifications.Count);
     }
 
     [Fact]

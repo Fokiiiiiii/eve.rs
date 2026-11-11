@@ -206,61 +206,6 @@ public sealed class PersistenceMailSendHostAdapter(
                     Eve.Services.Core.MailSentNotification.Build(
                         request, messageId, sentFiletime, Number(senderStatus["statusMask"])), session);
 
-            var notifications = readCacheTable("notifications");
-            var notificationBoxes = notifications["boxes"] as JsonObject ?? new JsonObject();
-            var nextNotificationId = NextNotificationId(notificationBoxes);
-            var notificationIds = new Dictionary<long, long>();
-            foreach (var recipientId in recipients.CharacterIds.Distinct().Where(id => id != mailSenderId))
-            {
-                var notificationId = nextNotificationId++;
-                notificationIds[recipientId] = notificationId;
-                var notificationMessage = (JsonObject)message.DeepClone();
-                var notification = new JsonObject
-                {
-                    ["notificationID"] = notificationId,
-                    ["typeID"] = 1004,
-                    ["senderID"] = mailSenderId,
-                    ["receiverID"] = recipientId,
-                    ["processed"] = false,
-                    ["created"] = sentFiletime,
-                    ["data"] = new JsonObject
-                    {
-                        ["senderName"] = recipients.SenderName,
-                        ["subject"] = request.Title,
-                        ["msg"] = notificationMessage,
-                    },
-                };
-                RequireWrite("notifications", $"/boxes/{Key(recipientId)}/byID/{Key(notificationId)}", notification);
-            }
-
-            if (notificationIds.Count > 0)
-            {
-                await FlushUntilVisibleAsync("notifications", persisted =>
-                {
-                    var boxes = persisted["boxes"] as JsonObject;
-                    return notificationIds.All(pair =>
-                        (boxes?[Key(pair.Key)] as JsonObject)?["byID"] is JsonObject rows &&
-                        rows[Key(pair.Value)] is JsonObject saved &&
-                        Number(saved["typeID"]) == 1004 &&
-                        Number(saved["receiverID"]) == pair.Key);
-                }, cancellationToken);
-
-                foreach (var (recipientId, notificationId) in notificationIds)
-                {
-                    var data = NotificationData(
-                        mailSenderId, recipients.SenderName,
-                        request.Title, message, sentFiletime);
-                    sendNotification(recipientId,
-                    [
-                        new Eve.Marshal.PyLong(notificationId),
-                        new Eve.Marshal.PyInt(1004),
-                        new Eve.Marshal.PyLong(mailSenderId),
-                        Py.FileTimeLong(sentFiletime),
-                        data,
-                    ]);
-                }
-            }
-
             return messageId;
         }
         finally

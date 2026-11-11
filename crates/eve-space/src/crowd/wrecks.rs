@@ -209,18 +209,21 @@ impl Scene {
         watchers.into_iter().map(|watcher| Self::update(watcher, actions.clone())).collect()
     }
 
-    /// How far the surface of a wreck or a can is from the centre of the pilot's ship (what the reference measures a container's range by), or `None`
-    /// when the pilot has no ship or the wreck is not in the scene.
+    /// The hull-to-hull distance from the pilot's ship to a wreck or a can, or `None` when the pilot has no ship or the wreck is not in the scene.
     pub fn distance_to_wreck(&mut self, session: SessionId, wreck_id: i64, now: i64) -> Option<f64> {
         let (position, radius) = {
             let wreck = self.wrecks.get(&wreck_id)?;
             (wreck.position, wreck.radius)
         };
-        let ship = self.ship(session, now)?.position;
-        let centre =
-            ((ship.x - position.x).powi(2) + (ship.y - position.y).powi(2) + (ship.z - position.z).powi(2))
-                .sqrt();
-        Some((centre - radius.max(0.0)).max(0.0))
+        let (ship_position, ship_radius) = {
+            let ship = self.ship(session, now)?;
+            (ship.position, ship.spec.radius)
+        };
+        let centre = ((ship_position.x - position.x).powi(2)
+            + (ship_position.y - position.y).powi(2)
+            + (ship_position.z - position.z).powi(2))
+        .sqrt();
+        Some((centre - ship_radius.max(0.0) - radius.max(0.0)).max(0.0))
     }
 
     /// The wrecks that were due to go by `now` go: whoever had one in view is told.

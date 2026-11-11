@@ -161,8 +161,14 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         if (inviteeId <= 0 || inviteeId == inviterId) return PyBool.False;
         var before = await store.SnapshotAsync(fleetId, call.Cancellation);
         var inviter = before?.Members.FirstOrDefault(member => member.CharacterId == inviterId);
-        if (inviter is null || inviter.Role != FleetStore.Leader && !FleetStore.HasBossJob(inviter.Job))
-            return PyBool.False;
+        if (inviter is null) return PyBool.False;
+        var wingId = Number(call.Arg(1)) ?? FleetStore.NoUnit;
+        var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
+        var role = FleetRole(call.Arg(3));
+        var placementRequested = call.Arg(1) is not PyNone || call.Arg(2) is not PyNone || call.Arg(3) is not PyNone;
+        if (placementRequested && !FleetStore.CanPlaceInCommand(inviter, null, before!.IsFreeMove,
+                inviterId, inviteeId, wingId, squadId, role))
+            throw MachoErrors.ThrowUserError("FleetNotCommanderOrBoss");
         var inviteeSession = sessionForCharacter?.Invoke(inviteeId);
         if (inviteeSession is null)
         {
@@ -173,9 +179,8 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         if (await store.FleetIdForCharacterAsync(inviteeId, call.Cancellation) is not null)
             throw MachoErrors.ThrowUserError("FleetError");
 
-        var invited = await store.InviteAsync(fleetId, inviterId, inviteeId,
-            Number(call.Arg(1)) ?? FleetStore.NoUnit, Number(call.Arg(2)) ?? FleetStore.NoUnit,
-            FleetRole(call.Arg(3)), call.Cancellation);
+        var invited = await store.InviteAsync(fleetId, inviterId, inviteeId, wingId, squadId, role,
+            call.Cancellation, placementRequested);
         if (!invited) return PyBool.False;
 
         SendInviteNotification(inviteeSession, fleetId, inviterId, autoAccept: false);
@@ -199,18 +204,22 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         var inviterId = CharacterId(call.Session);
         var before = await store.SnapshotAsync(fleetId, call.Cancellation);
         var inviter = before?.Members.FirstOrDefault(member => member.CharacterId == inviterId);
-        if (inviter is null || inviter.Role != FleetStore.Leader && !FleetStore.HasBossJob(inviter.Job))
-            return new PyList([]);
+        if (inviter is null) return new PyList([]);
         var wingId = Number(call.Arg(1)) ?? FleetStore.NoUnit;
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
         var role = FleetRole(call.Arg(3));
+        var placementRequested = call.Arg(1) is not PyNone || call.Arg(2) is not PyNone || call.Arg(3) is not PyNone;
+        if (placementRequested && !FleetStore.CanPlaceInCommand(inviter, null, before!.IsFreeMove,
+                inviterId, 0, wingId, squadId, role))
+            throw MachoErrors.ThrowUserError("FleetNotCommanderOrBoss");
         List<PyValue> invited = [];
         foreach (var inviteeId in inviteeIds.Select(id => id!.Value).Distinct())
         {
             if (inviteeId == inviterId) continue;
             if (await store.FleetIdForCharacterAsync(inviteeId, call.Cancellation) is not null)
                 throw MachoErrors.ThrowUserError("FleetError");
-            if (!await store.InviteAsync(fleetId, inviterId, inviteeId, wingId, squadId, role, call.Cancellation))
+            if (!await store.InviteAsync(fleetId, inviterId, inviteeId, wingId, squadId, role,
+                    call.Cancellation, placementRequested))
                 continue;
             SendInviteNotification(sessionForCharacter?.Invoke(inviteeId), fleetId, inviterId, autoAccept: false);
             invited.Add(new PyLong(inviteeId));
@@ -252,7 +261,20 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         if (FleetId(call) is not { } fleetId) return None;
         var before = await store.SnapshotAsync(fleetId, call.Cancellation);
         var characterId = CharacterId(call.Session);
-        var member = await store.JoinAsync(fleetId, characterId, Number(call.Arg(0)), call.Cancellation);
+        FleetMemberSnapshot? member;
+        try
+        {
+            member = await store.JoinForObjectServiceAsync(fleetId, characterId, Number(call.Arg(0)), call.Cancellation);
+        }
+        catch (FleetInviteTargetAlreadyInFleetException conflict)
+        {
+            NotifyInviteRejected(conflict.InviterId, characterId, new PyInt(2));
+            throw MachoErrors.ThrowUserError("FleetError");
+        }
+        catch (FleetRoleConflictException)
+        {
+            throw MachoErrors.ThrowUserError("FleetError");
+        }
         if (member is null)
         {
             var current = await store.SnapshotAsync(fleetId, call.Cancellation);
@@ -278,8 +300,21 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
     [Method("RejectInvite")]
     public async ValueTask<PyValue> RejectInvite(ServiceCall call)
     {
-        if (FleetId(call) is { } fleetId) await store.RejectInviteAsync(fleetId, CharacterId(call.Session), call.Cancellation);
+        if (FleetId(call) is { } fleetId)
+        {
+            var characterId = CharacterId(call.Session);
+            var inviterId = await store.RejectInviteAsync(fleetId, characterId, call.Cancellation);
+            if (inviterId is { } id)
+                NotifyInviteRejected(id, characterId,
+                    call.Arg(0) is PyBool { Value: true } ? new PyInt(2) : None);
+        }
         return None;
+    }
+
+    private void NotifyInviteRejected(long inviterId, long inviteeId, PyValue? reasonCode)
+    {
+        if (sessionForCharacter?.Invoke(inviterId) is { } inviter && CharacterId(inviter) == inviterId)
+            inviter.SendNotification("OnFleetJoinReject", "fleetid", new PyLong(inviteeId), reasonCode ?? None);
     }
 
     [Method("LeaveFleet")]
@@ -323,8 +358,14 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
             await store.SnapshotAsync(fleetId, call.Cancellation) is not { } before)
             return None;
         var wingId = Number(call.Arg(0)) ?? 0;
-        if (!await store.DeleteWingAsync(fleetId, CharacterId(call.Session), wingId, call.Cancellation) ||
-            await store.SnapshotAsync(fleetId, call.Cancellation) is not { } after)
+        var deleted = await store.DeleteWingAsync(fleetId, CharacterId(call.Session), wingId, call.Cancellation);
+        if (deleted is FleetUnitDeletionResult.NotAuthorized)
+            throw MachoErrors.ThrowUserError("FleetNotCreator");
+        if (deleted is FleetUnitDeletionResult.NotFound)
+            throw MachoErrors.ThrowUserError("FleetNotFound");
+        if (deleted is FleetUnitDeletionResult.Occupied)
+            throw MachoErrors.ThrowUserError("FleetError");
+        if (await store.SnapshotAsync(fleetId, call.Cancellation) is not { } after)
             return None;
         await PublishMemberChangesAsync(call.Session, fleetId, before, after, call.Cancellation);
         NotifyFleetMembers(after, call.Session, "OnFleetWingDeleted", new PyLong(wingId));
@@ -352,8 +393,14 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
             await store.SnapshotAsync(fleetId, call.Cancellation) is not { } before)
             return None;
         var squadId = Number(call.Arg(0)) ?? 0;
-        if (!await store.DeleteSquadAsync(fleetId, CharacterId(call.Session), squadId, call.Cancellation) ||
-            await store.SnapshotAsync(fleetId, call.Cancellation) is not { } after)
+        var deleted = await store.DeleteSquadAsync(fleetId, CharacterId(call.Session), squadId, call.Cancellation);
+        if (deleted is FleetUnitDeletionResult.NotAuthorized)
+            throw MachoErrors.ThrowUserError("FleetNotCommanderOrBoss");
+        if (deleted is FleetUnitDeletionResult.NotFound)
+            throw MachoErrors.ThrowUserError("FleetNotFound");
+        if (deleted is FleetUnitDeletionResult.Occupied)
+            throw MachoErrors.ThrowUserError("FleetError");
+        if (await store.SnapshotAsync(fleetId, call.Cancellation) is not { } after)
             return None;
         await PublishMemberChangesAsync(call.Session, fleetId, before, after, call.Cancellation);
         NotifyFleetMembers(after, call.Session, "OnFleetSquadDeleted", new PyLong(squadId));
@@ -392,12 +439,23 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         if (FleetId(call) is not { } fleetId) return MoveMemberResult(false);
         var before = await store.SnapshotAsync(fleetId, call.Cancellation);
         if (before is null) return MoveMemberResult(false);
+        var commanderId = CharacterId(call.Session);
         var characterId = Number(call.Arg(0)) ?? 0;
         var wingId = Number(call.Arg(1)) ?? FleetStore.NoUnit;
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
         var role = FleetRole(call.Arg(3));
+        var commander = before.Members.FirstOrDefault(member => member.CharacterId == commanderId);
+        var target = before.Members.FirstOrDefault(member => member.CharacterId == characterId);
+        if (commander is null || target is null)
+            throw MachoErrors.ThrowUserError("FleetNotFound");
+        if (!FleetStore.CanPlaceInCommand(commander, target, before.IsFreeMove,
+                commanderId, characterId, wingId, squadId, role))
+            throw MachoErrors.ThrowUserError("FleetNotCommanderOrBoss");
         if (!await store.MoveMemberAsync(fleetId, CharacterId(call.Session), characterId, wingId, squadId, role, call.Cancellation))
+        {
+            call.Session.SendNotification("OnFleetMoveFailed", "fleetid", new PyLong(characterId), PyBool.False);
             return MoveMemberResult(false);
+        }
         var after = await store.SnapshotAsync(fleetId, call.Cancellation);
         await PublishMemberChangesAsync(call.Session, fleetId, before, after, call.Cancellation);
         return MoveMemberResult(true);
@@ -421,7 +479,24 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         var squadId = Number(call.Arg(2)) ?? FleetStore.NoUnit;
         var role = FleetRole(call.Arg(3));
         var ids = requestedMemberIds.Select(id => id!.Value).Distinct().ToArray();
+        var commanderId = CharacterId(call.Session);
+        var commander = before.Members.FirstOrDefault(member => member.CharacterId == commanderId);
+        if (commander is null)
+            throw MachoErrors.ThrowUserError("FleetNotFound");
+        if (!FleetStore.IsCommanderOrBoss(commander))
+            throw MachoErrors.ThrowUserError("FleetNotCommanderOrBoss");
+        foreach (var characterId in ids)
+        {
+            var target = before.Members.FirstOrDefault(member => member.CharacterId == characterId);
+            if (target is not null && !FleetStore.CanPlaceInCommand(commander, target, before.IsFreeMove,
+                    commanderId, characterId, wingId, squadId, role))
+                throw MachoErrors.ThrowUserError("FleetNotCommanderOrBoss");
+        }
         var moved = await store.MassMoveMembersAsync(fleetId, CharacterId(call.Session), ids, wingId, squadId, role, call.Cancellation);
+        var movedIds = moved.ToHashSet();
+        foreach (var characterId in ids)
+            if (!movedIds.Contains(characterId) && before.Members.Any(member => member.CharacterId == characterId))
+                call.Session.SendNotification("OnFleetMoveFailed", "fleetid", new PyLong(characterId), PyBool.False);
         if (moved.Count == 0) return MassMoveMembersResult(moved);
         var after = await store.SnapshotAsync(fleetId, call.Cancellation);
         await PublishMemberChangesAsync(call.Session, fleetId, before, after, call.Cancellation);

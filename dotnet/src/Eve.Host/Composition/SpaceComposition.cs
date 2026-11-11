@@ -404,53 +404,6 @@ internal sealed partial class CharacterServicesComposition
                     Console.Error.WriteLine($"eve-host: insurance loss {loss.ShipId} could not be settled: {error}");
                 }
             };
-            spaceSessions.ShipLost += loss =>
-            {
-                if (loss.Cause != Eve.Services.Space.ShipLossCause.Player || loss.KillerCharacterId <= 0)
-                    return;
-                try
-                {
-
-                    var sharers = FleetSharersAsync(loss.KillerCharacterId).GetAwaiter().GetResult();
-                    playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.ShipId, loss.ShipTypeId,
-                        [.. (loss.Contents ?? []).Select(item => (item.TypeId, item.Quantity))], loss.KillerCharacterId, now(),
-                        async (connection, transaction, payoutId) => await foundations.Scheduler.ScheduleAsync(connection, transaction,
-                            new Eve.Scheduler.JobSpec(Eve.Services.Crimewatch.PlayerBountyKills.PayoutJobKind, now())
-                            {
-                                Key = $"player-bounty:{payoutId}",
-                                Payload = new Eve.Services.Crimewatch.PlayerBountyPayoutDue(payoutId),
-                            }),
-                        sharers, CancellationToken.None).GetAwaiter().GetResult();
-                }
-                catch (Exception error)
-                {
-                    Console.Error.WriteLine($"eve-host: player bounty of ship {loss.ShipId} could not be claimed: {error}");
-                }
-            };
-
-            spaceSessions.PodLost += loss =>
-            {
-                if (loss.Cause != Eve.Services.Space.ShipLossCause.Player || loss.KillerCharacterId <= 0)
-                    return;
-                try
-                {
-                    var sharers = FleetSharersAsync(loss.KillerCharacterId).GetAwaiter().GetResult();
-                    playerBountyKills!.ClaimShipLossAsync(loss.CharacterId, loss.CapsuleId, Eve.Ships.CharacterShips.CapsuleTypeId,
-                        [.. (loss.Contents ?? []).Select(item => (item.TypeId, item.Quantity))], loss.KillerCharacterId, now(),
-                        async (connection, transaction, payoutId) => await foundations.Scheduler.ScheduleAsync(connection, transaction,
-                            new Eve.Scheduler.JobSpec(Eve.Services.Crimewatch.PlayerBountyKills.PayoutJobKind, now())
-                            {
-                                Key = $"player-bounty:{payoutId}",
-                                Payload = new Eve.Services.Crimewatch.PlayerBountyPayoutDue(payoutId),
-                            }),
-                        sharers, CancellationToken.None).GetAwaiter().GetResult();
-                }
-                catch (Exception error)
-                {
-                    Console.Error.WriteLine($"eve-host: player bounty of pod {loss.CapsuleId} could not be claimed: {error}");
-                }
-            };
-
             var npcFactionStanding = new Eve.Services.Space.NpcFactionStanding(foundations.Relations, now);
             spaceSessions.NpcDestroyed += RecordFactionWarfareNpcKill;
             spaceSessions.NpcDestroyed += kill =>
@@ -726,11 +679,20 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>The characters that share a kill's bounty: the killer's fleet (all its members), or the killer alone when it has no fleet.</summary>
-    private async Task<IReadOnlyList<long>> FleetSharersAsync(long killerCharacterId)
+    private async Task<IReadOnlyList<long>> FleetSharersAsync(long killerCharacterId, CancellationToken cancellationToken = default)
     {
-        if (fleetStore is null || await fleetStore.FleetIdForCharacterAsync(killerCharacterId) is not { } fleet
-            || await fleetStore.SnapshotAsync(fleet) is not { } snapshot)
+        if (fleetStore is null || await fleetStore.FleetIdForCharacterAsync(killerCharacterId, cancellationToken) is not { } fleet
+            || await fleetStore.SnapshotAsync(fleet, cancellationToken) is not { } snapshot)
             return [killerCharacterId];
         return [.. snapshot.Members.Select(member => member.CharacterId).Where(id => id > 0)];
     }
+
+    private Task SchedulePlayerBountyPayoutAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string payoutId, CancellationToken cancellationToken) =>
+        foundations.Scheduler.ScheduleAsync(connection, transaction,
+            new Eve.Scheduler.JobSpec(Eve.Services.Crimewatch.PlayerBountyKills.PayoutJobKind, now())
+            {
+                Key = $"player-bounty:{payoutId}",
+                Payload = new Eve.Services.Crimewatch.PlayerBountyPayoutDue(payoutId),
+            }, cancellationToken);
 }

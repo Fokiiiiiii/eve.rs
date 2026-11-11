@@ -9,6 +9,11 @@ namespace Eve.Ships;
 /// <summary>An item of a destroyed ship: it is in the wreck now (<see cref="Moved"/>: as it is there, and where it was) or it is gone (as it was).</summary>
 public sealed record DeathChange(Item Item, long PreviousLocationId, int PreviousFlag, bool Destroyed);
 
+/// <summary>The inventory outcome of one item in a ship's kill report, with contained items in the original hierarchy.</summary>
+public sealed record ShipDeathItem(
+    int TypeId, int Flag, bool Singleton, long QuantityDropped, long QuantityDestroyed,
+    IReadOnlyList<ShipDeathItem> Contents);
+
 /// <summary>What became of a ship that was destroyed: the capsule its pilot flies now, the wreck (if the ship left one) and where its contents went.</summary>
 /// <param name="Ship">The ship as it was, in space; it is gone.</param>
 /// <param name="Character">The pilot, whose ship is the capsule now.</param>
@@ -28,6 +33,9 @@ public sealed record ShipDeath(
     IReadOnlyList<DogmaEvent> Events)
 {
     public Item PilotShip => EscapeShip ?? Capsule ?? throw new InvalidOperationException("ship death has no surviving pilot hull");
+
+    /// <summary>The exact pre-death inventory tree and outcomes used by the kill report.</summary>
+    public IReadOnlyList<ShipDeathItem> KillmailItems { get; init; } = [];
 
     /// <summary>What is in the wreck now.</summary>
     public IReadOnlyList<ItemMoved> Moved => [.. Changes.Where(c => !c.Destroyed).Select(c => new ItemMoved(c.Item, c.PreviousLocationId, c.PreviousFlag))];
@@ -144,7 +152,8 @@ public sealed partial class CharacterShips
             }
         }
 
-        var actions = DeathOutcome.Resolve(tree, seed, new DeathOptions(ForceAllDestroyed: wreck is null));
+        var outcome = DeathOutcome.ResolveWithItems(tree, seed, new DeathOptions(ForceAllDestroyed: wreck is null));
+        var actions = outcome.Actions;
         var changes = new List<DeathChange>();
         foreach (var action in actions)
         {
@@ -190,15 +199,22 @@ public sealed partial class CharacterShips
         await WriteTransitionAsync(connection, transaction,
             new ShipTransitionEvent("ship-destroyed", characterId, ship.Id, pilotShipId,
                 ship.LocationId, InSpaceFlag, ship.LocationId, InSpaceFlag), cancellationToken);
-          var death = new ShipDeath(ship, character with { ShipId = pilotShipId }, capsule, escapeShip, wreck, changes, events);
-          if (inTransaction is not null)
-              await inTransaction(connection, transaction, death, cancellationToken);
+        var death = new ShipDeath(ship, character with { ShipId = pilotShipId }, capsule, escapeShip, wreck, changes, events)
+        {
+            KillmailItems = outcome.Items.Select(ShipDeathItemOf).ToArray(),
+        };
+        if (inTransaction is not null)
+            await inTransaction(connection, transaction, death, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         await modules.SetShipConditionAsync(ship.Id, ShipCondition.Full, cancellationToken);
         await modules.SetModuleConditionsAsync(changes.Where(c => c.Destroyed).ToDictionary(c => c.Item.Id, _ => ModuleCondition.Untouched), cancellationToken);
           return death;
     }
+
+    private static ShipDeathItem ShipDeathItemOf(DeathItemOutcome item) => new(
+        item.TypeId, item.Flag, item.Singleton, item.QuantityDropped, item.QuantityDestroyed,
+        item.Contents.Select(ShipDeathItemOf).ToArray());
 
     /// <summary>What is in a place and in what is in it, as the death rules look at it (the ids of the snapshot are those of the items).</summary>
     public async Task<AbandonedShipDeath?> DestroyAbandonedShipAsync(

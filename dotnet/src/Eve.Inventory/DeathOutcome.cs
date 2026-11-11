@@ -14,6 +14,14 @@ public sealed record DeathMove(long ItemId, long Quantity) : DeathAction(ItemId)
 
 public sealed record DeathDestroy(long ItemId) : DeathAction(ItemId);
 
+/// <summary>One resolved inventory item, including its pre-death contents.</summary>
+public sealed record DeathItemOutcome(
+    int TypeId, int Flag, bool Singleton, long QuantityDropped, long QuantityDestroyed,
+    IReadOnlyList<DeathItemOutcome> Contents);
+
+/// <summary>The custody actions and the reportable item outcomes from one deterministic ship death.</summary>
+public sealed record DeathResolution(IReadOnlyList<DeathAction> Actions, IReadOnlyList<DeathItemOutcome> Items);
+
 /// <summary>Options that decide everything for everything (the reference's <c>forceAllDestroyed</c> and <c>forceAllDropped</c>; destroying wins).</summary>
 public readonly record struct DeathOptions(bool ForceAllDestroyed = false, bool ForceAllDropped = false);
 
@@ -144,11 +152,32 @@ public static class DeathOutcome
     /// </summary>
     public static IReadOnlyList<DeathAction> Resolve(IEnumerable<DeathNode> contents, string seed, DeathOptions options = default)
     {
+        var resolved = ResolveNodes(contents, seed, options);
         var actions = new List<DeathAction>();
-        foreach (var node in contents)
-        {
-            Apply(Resolve(node, seed, options), false, actions);
-        }
+        foreach (var node in resolved)
+            Apply(node, false, actions);
         return actions;
     }
+
+    /// <summary>Resolves the deterministic death once for both persistence actions and the kill report.</summary>
+    public static DeathResolution ResolveWithItems(IEnumerable<DeathNode> contents, string seed, DeathOptions options = default)
+    {
+        var resolved = ResolveNodes(contents, seed, options);
+        var actions = new List<DeathAction>();
+        foreach (var node in resolved)
+            Apply(node, false, actions);
+
+        static DeathItemOutcome Report(Resolved node) => new(
+            node.Node.TypeId,
+            node.Node.Flag,
+            node.Singleton,
+            node.Dropped,
+            node.Destroyed,
+            node.Children.Select(Report).ToArray());
+
+        return new DeathResolution(actions, resolved.Select(Report).ToArray());
+    }
+
+    private static Resolved[] ResolveNodes(IEnumerable<DeathNode> contents, string seed, DeathOptions options) =>
+        contents.Select(node => Resolve(node, seed, options)).ToArray();
 }

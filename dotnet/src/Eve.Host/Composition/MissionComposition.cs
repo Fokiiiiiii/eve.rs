@@ -651,6 +651,9 @@ internal sealed partial class CharacterServicesComposition
             }
         await using var connection = await source.OpenConnectionAsync(CancellationToken.None);
         await using var transaction = await connection.BeginTransactionAsync(CancellationToken.None);
+        await using (var refreshLock = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(hashtextextended('eve-host.client-sde.mission-messages', 0))", connection, transaction))
+            await refreshLock.ExecuteNonQueryAsync(CancellationToken.None);
         await using (var setup = new NpgsqlCommand("""
             CREATE SCHEMA IF NOT EXISTS client_sde;
             CREATE TABLE IF NOT EXISTS client_sde.mission_messages (

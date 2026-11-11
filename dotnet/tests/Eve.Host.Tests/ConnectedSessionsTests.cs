@@ -38,6 +38,21 @@ public sealed class ConnectedSessionsTests
         Assert.Equal(sessions.Length - 1, disconnected.Count);
     }
 
+    [Fact]
+    public void The_shutdown_notice_reaches_every_connected_session()
+    {
+        var connected = new ConnectedSessions();
+        string? first = null;
+        string? second = null;
+        connected.Add(Session(301, 8, reason => first = reason));
+        connected.Add(Session(302, 9, reason => second = reason));
+
+        Assert.Equal(2, connected.DisconnectAll("ACL_SHUTTINGDOWN"));
+
+        Assert.Equal("ACL_SHUTTINGDOWN", first);
+        Assert.Equal("ACL_SHUTTINGDOWN", second);
+    }
+
     private static ClientSession Session(long sessionId, long accountId, Action<string> onDisconnect)
     {
         var session = new ClientSession { SessionId = sessionId };

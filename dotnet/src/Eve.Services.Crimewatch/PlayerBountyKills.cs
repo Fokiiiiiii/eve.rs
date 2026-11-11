@@ -59,6 +59,41 @@ public sealed class PlayerBountyKills(
             schedule, cancellationToken);
     }
 
+    /// <summary>Claims a ship-loss bounty in the killmail event's transaction and returns the total amount claimed, when any.</summary>
+    public async Task<decimal?> ClaimShipLossInTransactionAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long victimCharacterId,
+        long shipId,
+        int shipTypeId,
+        IReadOnlyList<(int TypeId, long Quantity)> contents,
+        long hunterCharacterId,
+        long nowMs,
+        IReadOnlyDictionary<long, decimal> prices,
+        Func<NpgsqlConnection, NpgsqlTransaction, string, Task> schedule,
+        IReadOnlyList<long>? sharers = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (hunterCharacterId <= 0 || hunterCharacterId == victimCharacterId ||
+            await characterAffiliation(hunterCharacterId, cancellationToken) is not { } hunter)
+            return null;
+
+        var victim = await characterAffiliation(victimCharacterId, cancellationToken);
+        var targets = new List<long> { victimCharacterId };
+        if (victim is { } affiliation)
+        {
+            if (affiliation.CorporationId > 0) targets.Add(affiliation.CorporationId);
+            if (affiliation.AllianceId > 0) targets.Add(affiliation.AllianceId);
+        }
+        var loss = LossValueOf(shipTypeId, contents, prices);
+        var payoutId = PayoutIdOf(shipId);
+        var result = await store.ClaimKillInTransactionAsync(connection, transaction, new PlayerBountyClaim(
+                payoutId, $"player-bounty:{payoutId}:credit", hunterCharacterId, hunter.CorporationId, hunter.AllianceId,
+                targets, loss, nowMs, sharers),
+            schedule, cancellationToken);
+        return result?.Amount;
+    }
+
     public static decimal LossValueOf(int shipTypeId, IReadOnlyList<(int TypeId, long Quantity)> contents, IReadOnlyDictionary<long, decimal> prices) =>
         Math.Round(prices.GetValueOrDefault(shipTypeId) + contents.Sum(item => prices.GetValueOrDefault(item.TypeId) * item.Quantity),
             2, MidpointRounding.AwayFromZero);

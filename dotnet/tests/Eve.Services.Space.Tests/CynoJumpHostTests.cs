@@ -829,6 +829,14 @@ public class CynoJumpHostTests
         var passage = Assert.Single(rig.Sim.Heard.OfType<SimCommand>(), command => command.Code == SimCommands.ConduitJump);
         Assert.Equal((double)Field, passage.Args.ToArray()[0]);
         Assert.Equal(50_000 - 1_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
+        // the anchor pilot's client is told its jump timers as the GetTimers tuple, and the timers are those the debit wrote
+        var stored = await new PgJumpFatigueStore(rig.Source, rig.SpaceSchema).GetAsync(character.CharacterId);
+        var timers = Assert.Single(Events.Of(session), timer => timer.Name == "OnJumpTimersUpdated");
+        Assert.Equal("clientID", timers.IdType);
+        Assert.Equal(new PyValue[]
+        {
+            new PyLong(Py.FileTimeFromUnixMs(stored.CooldownUntilMs)), new PyLong(Py.FileTimeFromUnixMs(stored.FatigueUntilMs)), new PyLong(Py.FileTimeFromUnixMs(rig.Now)),
+        }, timers.Args);
     }
 
     [PgFact]
@@ -869,6 +877,7 @@ public class CynoJumpHostTests
 
         Assert.Equal(50_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
         Assert.Equal(prior, await fatigue.GetAsync(character.CharacterId));
+        Assert.DoesNotContain(Events.Of(session), timer => timer.Name == "OnJumpTimersUpdated");
     }
 
     [PgFact]

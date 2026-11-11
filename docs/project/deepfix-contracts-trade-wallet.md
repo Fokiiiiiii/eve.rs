@@ -116,3 +116,35 @@ market tax は EveJS 261108.1 `server/src/services/market/marketRules.js:43,48,1
 - Host RPC を通した corporation-issued auction creation はこの変更では未確認。corporation wallet division 1002/1003 の fee/deposit/bid refs は Persistence write model の PostgreSQL 回帰で確認した。
 - PI 以外の全 journal reference / description 種別、derived tax rows、market order/fill と sales tax の caller-to-wallet 経路は未確認。市場税の互換性判断は既存 deviation 記録に残る。
 - オークション以外の corporation wallet division による contract/market/bill entry routing、全請求種別の期限・更新・失効・領収通知、wallet transaction retry/restart 横断は今回の追加差分では再検証していない。
+
+## Wallet journal type metadata completeness (2026-11-11)
+
+### 確認済み
+
+V24.01 の `eve/client/script/ui/services/accountsvc.py:98-104` は `account.GetEntryTypes()` の各 `entryTypeNameID` をローカライズする。wallet panel は `panels/transactionsPanel.py:30-40` で transaction ごとに `GetRefTypeKeyByID(entryTypeID)` の結果から `entryTypeName` を参照し、`:160-172` で表示 row を組み立てる。登録 RPC の transaction row に対する metadata が欠けると、同 panel はその仕訳を表示できない。
+
+変更前の `AccountService.EntryTypeMetadata` は一部の wallet entry type しか返さなかった。特に contract auction が実際に書く ref 63、67、73、82、および bounty corporation tax ref 92 の metadata が欠けていた。V24.01 client 全体の `GetEntryTypes` caller を検索し、wallet transaction panel と reference-type filter がこの list を消費することを確認した。
+
+V24.01 Host E2E `Registered_auction_creation_defers_sales_tax_until_seller_claims_proceeds` を先に拡張し、登録済み `contractProxy.CreateContract` → `PlaceBid` → issuer/winner `FinishAuction` → 登録済み `account.GetTransactions` → `account.GetEntryTypes` を同じ実 DB scenario で通した。修正前の実行では settlement journal の ref 67/73/82 が返る一方、metadata list に ref 67 がなく、追加 assertion が失敗した。
+
+eve.rs は `dotnet/src/Eve.Services.Wallet/accountingEntryTypes.json` に build 3396210 の全218 metadata rows を embedded resource として同梱し、`AccountService.GetEntryTypes` から返す。EveJS 261108.1 `server/src/services/account/accountingEntryTypes.json:1` は source resource `res:/staticdata/accountingentrytypes.fsdbinary`、build 3396210、resource SHA-256 `7cffa8ce3c385ad92be55fa43f8a6bb0a2c8cc5c03196c1500e8de16a9a0dc8c`、decoded SHA-256 `7a211ff0ecae907116cbe2cb4d0b87baed9255c8fcebb7490ecd8841d062302a` を記録し、`server/src/services/account/accountService.js:702-719` はこの native metadata rows を返す。eve.rs は同じ resource snapshot を使い、起動時に build number を検査する。contract refs 63–84、bounty corporation tax 92、全ての historical/unused native type、既存 rows の名前・name message ID・journal message ID を含む。
+
+`GetEntryTypes` の wire rows、cache/checksum、ref 13/26、contract refs 63/67/73/82、ref 92 は `CorporationProtocolTests.Get_entry_types_returns_the_cached_v24_metadata_rows` と `WalletAuditHostRpcTests.Lp_store_journal_entry_type_resolves_through_the_registered_account_rpc` で確認する。auction scenario の登録Host回帰は wallet journal read に出てくる全 ref に `GetEntryTypes` row が存在することと、ref 67/73/82 の localized-message IDs を確認する。
+
+### 今回実行した確認
+
+- 変更前の失敗: `Registered_auction_creation_defers_sales_tax_until_seller_claims_proceeds` は `eve_p4` 上で journal read 成功後に ref 67 metadata がないため失敗（1 failed、0 skipped）。
+- Release warnings-as-errors build: `Eve.Services.Wallet`, `Eve.Host.Tests`, `Eve.Corporations.Tests`, `Eve.Services.Wallet.Tests`, `Eve.Services.CharacterInfo.Tests` はそれぞれ0 warning、0 error。
+- `eve_p4` Host slice (`Registered_auction_creation_defers_sales_tax_until_seller_claims_proceeds`, `WalletAuditHostRpcTests`): 4 passed、0 failed、0 skipped。
+- `eve_p4` Corporation slice (`Get_entry_types_returns_the_cached_v24_metadata_rows`, `Get_transactions_returns_persisted_rows_and_enforces_division_read_access`, `AccountRpcTests`): 4 passed、0 failed、0 skipped。
+- `TransactionHistoryTests`: 1 passed、0 failed、0 skipped。
+- `eve_p4` `AccountWalletHostRpcTests`: 1 passed、0 failed、0 skipped。
+- `AccountTests`: 3 passed、0 failed、0 skipped。`Account_contact_cost_calls_use_character_state_and_keep_client_wire_values`: 1 passed、0 failed、0 skipped。
+- 追加したこの差分とAccountService利用クラスの合計は14 passed、0 failed、0 skipped。`git diff --check` も通過。
+
+### 未確認
+
+- 実V24.01 graphical clientで journal panel を開き、翻訳済みtype名・filter・journal messageの表示を操作していない。client callsiteとHost wire/DB rowの整合を確認したもので、GUI表示確認ではない。
+- EveJS server process でauctionを再実行していない。比較はbuild 3396210 metadata snapshotと `GetEntryTypes` handler sourceの照合。以前のsource auditで記録したとおり、このcheckoutのEveJS `better-sqlite3` native bindingが未準備であり、processを使うwallet/contract comparisonは未確認。
+- `/home/user/eve-logic` checkoutに `accountingentrytypes.fsdbinary` 本体はなく、resource bytesを直接再hashしてはいない。採用したEveJS JSONにはmatching client buildと元resource/decoded hashesが記録されている。
+- この追加差分では item exchange/courier/direct-trade/bill settlement の全組合せを再実行していない。関連する既存 Host/DB evidence は上記参照記録に残るが、今回の変更によるmain CI実行結果はpush後に確認する。

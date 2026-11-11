@@ -11,41 +11,36 @@ public sealed partial class AccountService(PgWalletStore wallets, Eve.Corporatio
     /// <summary><c>GetCashBalance(corporation=0)</c>: the ISK the character has, as a real number.</summary>
     /// <summary>Lists wallet divisions the persisted corporation membership permits the character to read.</summary>
     /// <summary>Returns the caller's recent or month-filtered wallet journal transactions.</summary>
-    // V24's accountingEntryTypes.fsdbinary is not part of the matching 3396210 SDE export.
+    // The matching SDE omits this table; GetEntryTypes uses the embedded V24 client metadata snapshot below.
 
-    private static readonly (int Id, string Name, int? NameMessageId, int? JournalMessageId)[] EntryTypeMetadata =
-    [
-        (1, "PlayerTrading", 59793, 234499),
-        (2, "MarketTransaction", 59794, 234500),
-        (3, "GMCashTransfer", 59795, 234502),
-        (10, "PlayerDonation", 59802, 234508),
-        (13, "OfficeRentalFee", null, null),
-        (16, "Bounty", 59808, null),
-        (17, "BountyPrize", 59809, null),
-        (19, "Insurance", 59811, null),
-        // V24 defines refPaymentToLPStore as 26. The pinned SDE omits accountingEntryTypes; the available rows
-        // consistently map entryTypeNameID = entryTypeID + 59792 (for example, 19 -> 59811 and 33 -> 59825).
-        // Applying that verified mapping gives 59818 for type 26.
-        (26, "PaymentToLPStore", 59818, null),
-        (33, "AgentMissionReward", 59825, 234515),
-        (34, "AgentMissionTimeBonusReward", 59826, 234516),
-        (93, "AgentMissionRewardCorporationTax", 59885, 234555),
-        (94, "AgentMissionTimeBonusRewardCorporationTax", 59886, 234556),
-        (41, "ReleaseOfImpoundedProperty", null, null),
-        (42, "MarketEscrow", 59834, null),
-        (46, "BrokersFee", 59838, null),
-        (48, "AllianceRegistrationFee", null, null),
-        (50, "AllianceMaintainanceFee", null, null),
-        (54, "TransactionTax", 59846, 234580),
-        (55, "JumpCloneInstallationFee", 59847, 234617),
-        (85, "BountyPrizes", 59877, null),
-        (96, "PlanetaryImportTax", 59888, null),
-        (97, "PlanetaryExportTax", 59889, null),
-        (98, "PlanetaryConstruction", 59890, null),
-        (128, "JumpCloneActivationFee", 312132, 516539),
-        (141, "SkillPurchase", 543737, 543653),
-        (149, "SccSurcharge", 559228, null),
-    ];
+    // Build 3396210's native accountingEntryTypes resource, including the historical types the client can still
+    // encounter in persisted journals. The embedded snapshot records the source resource hashes.
+    private sealed record EntryTypeMetadataRow(int Id, string Name, int? NameMessageId, int? JournalMessageId);
+
+    private static readonly EntryTypeMetadataRow[] EntryTypeMetadata = LoadEntryTypeMetadata();
+
+    private static EntryTypeMetadataRow[] LoadEntryTypeMetadata()
+    {
+        using var stream = typeof(AccountService).Assembly.GetManifestResourceStream(
+            "Eve.Services.Wallet.accountingEntryTypes.json")
+            ?? throw new InvalidOperationException("The V24 accounting entry type metadata resource is missing.");
+        using var document = System.Text.Json.JsonDocument.Parse(stream);
+        if (document.RootElement.GetProperty("source").GetProperty("build").GetInt32() != 3_396_210)
+            throw new InvalidOperationException("Accounting entry type metadata must match V24 client build 3396210.");
+        return document.RootElement.GetProperty("entries").EnumerateArray().Select(row =>
+        {
+            int? ReadOptionalInt(string name) => row.GetProperty(name).ValueKind is System.Text.Json.JsonValueKind.Null
+                ? null
+                : row.GetProperty(name).GetInt32();
+
+            return new EntryTypeMetadataRow(
+                row.GetProperty("entryTypeID").GetInt32(),
+                row.GetProperty("entryTypeName").GetString()
+                    ?? throw new InvalidOperationException("Accounting entry type name is null."),
+                ReadOptionalInt("entryTypeNameID"),
+                ReadOptionalInt("entryJournalMessageID"));
+        }).ToArray();
+    }
 
     [Method("GetEntryTypes")]
     public ValueTask<PyValue> GetEntryTypes(ServiceCall call)

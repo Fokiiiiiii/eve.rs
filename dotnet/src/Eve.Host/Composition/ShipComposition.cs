@@ -39,7 +39,7 @@ internal sealed partial class CharacterServicesComposition
 {
     private async Task ShipsAndDogma()
     {
-        ships = new CharacterShips(source, dogma, characters, items, skills, modules, training, expertSystems, PgSpaceItemStore.DefaultSchema)
+        ships = new CharacterShips(source, dogma, characters, items, skills, modules, training, expertSystems, spaceSchema)
         {
             SalvageDataError = message => Console.Error.WriteLine($"eve-host: ships: {message}"),
         };

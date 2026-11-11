@@ -303,6 +303,7 @@ internal sealed partial class CharacterServicesComposition
             });
         CrimewatchKillRightEvents.Subscribe(foundations.Events, mailSendWriter, characterSessions);
         SubscribeMoonOwnerNotifications();
+        SubscribeShipKillmailNotifications();
         if (allianceMaintenanceBillWorker is { } maintenanceWorker)
         {
             maintenanceWorker.BillNotificationWriter = mailSendWriter.WriteAllianceMaintenanceBillNotificationAsync;
@@ -312,6 +313,19 @@ internal sealed partial class CharacterServicesComposition
 
 
     private Eve.Host.Persistence.Mail.PersistenceTransactionMailbox? notificationMailbox;
+
+    private void SubscribeShipKillmailNotifications()
+    {
+        var mailbox = notificationMailbox ?? throw new InvalidOperationException("The notification mailbox is not composed.");
+        new Eve.Host.Persistence.Killmails.PersistenceShipKillmailRecorder(
+            mailStore, mailStoreOwner, mailCache, mailbox, characters, crimewatchStore,
+            ReadBasePricesAsync, securityStatusOf,
+            playerBountyKills ?? throw new InvalidOperationException("Player bounty kills are not composed."),
+            FleetSharersAsync, SchedulePlayerBountyPayoutAsync,
+            (characterId, method, idType, args) =>
+                characterSessions.Of(characterId)?.SendNotification(method, idType, args))
+            .Subscribe(foundations.Events);
+    }
 
     private void SubscribeMoonOwnerNotifications()
     {

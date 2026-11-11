@@ -349,6 +349,24 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         });
     }
 
+    /// <summary>Publishes one durable occurrence for a destruction, so a retried Host completion cannot issue another kill report.</summary>
+    private void AnnounceOnce(string topic, object payload, string key)
+    {
+        if (Events is not { } bus)
+            return;
+        Background(async () =>
+        {
+            try
+            {
+                await bus.PublishOnceAsync(topic, payload, key);
+            }
+            catch (Exception error)
+            {
+                _log?.Invoke($"the event {topic} could not be published: {error.Message}");
+            }
+        });
+    }
+
     private void Raise<T>(Action<T>? handlers, T value, string what)
     {
         foreach (var handler in handlers?.GetInvocationList().Cast<Action<T>>() ?? [])
@@ -1115,6 +1133,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
                     TrackWarpArrival(notify, pilot);
                     TrackTargetingNotification(notify);
+                    RecordKillmailDamage(notify, pilot);
                     Forward(pilot.Session, notify);
                     TrackHackingReach(notify, pilot);
                     RecordNpcCombatTimer(notify, pilot);
@@ -1218,7 +1237,8 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 // an NPC the simulation keeps (a Pochven sentry or fighter): no profile here, so its type's bounty in the static data pays the last blow
                 case SimDestroyed destroyed when destroyed.SessionId >= SimNpcSessionBase:
                     ForgetLockedTarget(destroyed.ShipId);
-                    Background(() => PaySimNpcBountyAsync(destroyed, _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == destroyed.KillerShipId)));
+                    Background(() => FinishSimNpcDeathAsync(
+                        destroyed, _pilots.Values.FirstOrDefault(pilot => pilot.ShipId == destroyed.KillerShipId)));
                     break;
                 case SimChargeSpent spent when _pilots.TryGetValue(spent.SessionId, out var shooter):
                     var chargeOwnerId = shooter.ModuleChargeOwners.TryGetValue(spent.ModuleId, out var moduleOwner) ? moduleOwner : shooter.CharacterId;

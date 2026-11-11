@@ -84,6 +84,7 @@ internal static class LegacyGameStoreComposition
         await mailCache.LoadAsync("industryRuntime");
         await mailCache.LoadAsync("moonExtractions");
         await mailCache.LoadAsync("overviewSharedPresets");
+        await mailCache.LoadAsync("killmails");
           await mailCache.LoadAsync("sharedSettings");
         return new LegacyGameStore(mailStore, mailStoreOwner, mailCache);
     }

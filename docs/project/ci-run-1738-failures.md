@@ -25,5 +25,6 @@ The live test waits for this ship's warp-dropout `SetBallMassive(ship, 0)` actio
 - Rust `cargo check -p eve-space --release`, `cargo clippy -p eve-space --release -- -D warnings`, and `cargo fmt --all` passed. The focused coast-follow regression and SimLink round-trip test each passed (1 passed, no skips).
 - Release builds for `Eve.Space`, `Eve.Services.Space`, `Eve.Space.Tests`, and `Eve.Services.Space.Tests` passed with 0 warnings and 0 errors. The `SimCodecTests` class passed all 499 tests; the `SpaceServiceTests` and `ScanProbeHostTests` classes passed all 200 tests after updating the obsolete assertion that a client `Stop` clears server warp state.
 - The focused live control-tower Drop, unanchor, FollowBall, and Scoop walk passed against `eve_p3` (1 passed, no skips). It verified the exact `(shipID, towerID, 1000)` Destiny action and the durable hull-to-cargo transition.
+- Main CI run 1741 exposed a missing Rust fixture-replay arm for the new `WarpDropped` kind. Added that arm to `crates/eve-space/tests/simlink_fixtures.rs`; the failing `every_valid_frame_encodes_to_its_bytes_and_decodes_back` regression now passes locally. The follow-up main CI run is pending.
 - Graphical V24.01 client behavior was not checked.
 - The EveJS behavior was source-traced but its server flow was not independently executed in this run.

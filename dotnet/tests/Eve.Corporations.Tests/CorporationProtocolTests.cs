@@ -494,7 +494,7 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal("versionCheck", Eve.Macho.JsSemantics.StringValue(detail.Key));
         Assert.Equal("run", Eve.Macho.JsSemantics.StringValue(detail.Value));
         var rows = Assert.IsType<PyList>(Assert.IsType<PySubStream>(args[1]).Decoded);
-        Assert.Equal(27, rows.Items.Count);
+        Assert.Equal(218, rows.Items.Count);
         var version = Assert.IsType<PyList>(args[2]);
         Assert.InRange(Assert.IsType<PyLong>(version.Items[0]).Value,
             Py.FileTimeFromUnixMs(before), Py.FileTimeFromUnixMs(after));
@@ -503,20 +503,36 @@ private static PyValue RowField(PyValue value,string key)
 
         var donation = Assert.IsType<PyObject>(Assert.Single(rows.Items,
             row => row is PyObject item && HasTransactionField(item, "entryTypeID", new PyInt(10))));
-        AssertTransactionField(donation, "entryTypeName", new PyStr("PlayerDonation"));
+        AssertTransactionField(donation, "entryTypeName", new PyStr("Player Donation"));
         AssertTransactionField(donation, "entryTypeNameID", new PyInt(59802));
         AssertTransactionField(donation, "entryJournalMessageID", new PyInt(234508));
 
         var officeRent = Assert.IsType<PyObject>(Assert.Single(rows.Items,
             row => row is PyObject item && HasTransactionField(item, "entryTypeID", new PyInt(13))));
-        AssertTransactionField(officeRent, "entryTypeNameID", PyNone.Instance);
-        AssertTransactionField(officeRent, "entryJournalMessageID", PyNone.Instance);
+        AssertTransactionField(officeRent, "entryTypeNameID", new PyInt(59_805));
+        AssertTransactionField(officeRent, "entryJournalMessageID", new PyInt(234_512));
 
         var lpStorePayment = Assert.IsType<PyObject>(Assert.Single(rows.Items,
             row => row is PyObject item && HasTransactionField(item, "entryTypeID", new PyInt(26))));
-        AssertTransactionField(lpStorePayment, "entryTypeName", new PyStr("PaymentToLPStore"));
+        AssertTransactionField(lpStorePayment, "entryTypeName", new PyStr("LP Store"));
         AssertTransactionField(lpStorePayment, "entryTypeNameID", new PyInt(59818));
-        AssertTransactionField(lpStorePayment, "entryJournalMessageID", PyNone.Instance);
+        AssertTransactionField(lpStorePayment, "entryJournalMessageID", new PyInt(234_618));
+
+        foreach (var expected in new (int Id, int NameMessageId, int JournalMessageId)[]
+        {
+            (63, 59_855, 234_594),
+            (67, 59_859, 234_598),
+            (73, 59_865, 234_604),
+            (82, 59_874, 234_615),
+            (92, 59_884, 234_554),
+        })
+        {
+            var row = Assert.IsType<PyObject>(Assert.Single(rows.Items,
+                candidate => candidate is PyObject item &&
+                    HasTransactionField(item, "entryTypeID", new PyInt(expected.Id))));
+            AssertTransactionField(row, "entryTypeNameID", new PyInt(expected.NameMessageId));
+            AssertTransactionField(row, "entryJournalMessageID", new PyInt(expected.JournalMessageId));
+        }
     }
 
     [PgFact]

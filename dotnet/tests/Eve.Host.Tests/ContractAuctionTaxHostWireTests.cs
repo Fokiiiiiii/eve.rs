@@ -6,6 +6,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Services.Wallet;
 using Eve.Wallet;
 using Npgsql;
 using Xunit;
@@ -74,7 +75,8 @@ public sealed partial class HostServerTests
                 contractsSchema, expiryJobs, events);
             var readModel = new PersistenceContractReadModel(source, contractsSchema, sdeSchema, inventorySchema);
             StartContractHost(writer, readModel, characterIdForAccount: accountId => accountId,
-                contractSkillLevel: (_, skillId, _) => ValueTask.FromResult(skillId == 16622 ? 4 : 0));
+                contractSkillLevel: (_, skillId, _) => ValueTask.FromResult(skillId == 16622 ? 4 : 0),
+                additionalServices: [new AccountService(new PgWalletStore(source, walletSchema), transactions: wallets)]);
             var front = await Handshaken(await ConnectAsync());
             var open = Open();
             await front.SendAsync(open);
@@ -86,7 +88,7 @@ public sealed partial class HostServerTests
             _ = await bidderFront.ReceiveAsync();
 
             async Task<PyValue> CallAsync(TestFront rpcFront, SessionOpen rpcOpen, uint callId, string method,
-                PyValue[] arguments, bool includeConfirm = false)
+                PyValue[] arguments, bool includeConfirm = false, string serviceName = "contractProxy")
             {
                 var kwargs = new List<KeyValuePair<PyValue, PyValue>>
                 {
@@ -95,7 +97,7 @@ public sealed partial class HostServerTests
                 if (includeConfirm)
                     kwargs.Add(new(new PyStr("confirm"), PyNone.Instance));
                 await rpcFront.SendAsync(new Packet(rpcOpen.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
-                    rpcOpen, callId, "contractProxy", method, new PyTuple(arguments), new PyDict(kwargs)))));
+                    rpcOpen, callId, serviceName, method, new PyTuple(arguments), new PyDict(kwargs)))));
                 while (true)
                 {
                     var send = Assert.IsType<Send>(await rpcFront.ReceiveAsync());
@@ -178,6 +180,36 @@ public sealed partial class HostServerTests
                 Assert.Equal(60_000m, (decimal)(await settledTax.ExecuteScalarAsync())!);
             }
 
+            var claimMonth = DateTimeOffset.FromUnixTimeMilliseconds(nowMs);
+            var sellerTransactions = Assert.IsType<PyList>(await CallAsync(front, open, 7, "GetTransactions",
+                [new PyInt(1000), new PyInt(claimMonth.Year), new PyInt(claimMonth.Month), PyBool.False],
+                serviceName: "account"));
+            var entryTypeCache = Assert.IsType<PyObject>(await CallAsync(front, open, 8, "GetEntryTypes", [],
+                serviceName: "account"));
+            var cachedParts = Assert.IsType<PyTuple>(entryTypeCache.Args).Items;
+            var entryTypes = Assert.IsType<PyList>(Assert.IsType<PySubStream>(cachedParts[1]).Decoded);
+            var displayedTypes = sellerTransactions.Items
+                .Select(row => Assert.IsType<PyInt>(WireField(row, "entryTypeID")).Value)
+                .Distinct()
+                .ToHashSet();
+            foreach (var entryTypeId in displayedTypes)
+                Assert.Contains(entryTypes.Items, row => WireField(row, "entryTypeID") is PyInt { Value: var id } && id == entryTypeId);
+            Assert.Contains(67, displayedTypes);
+            Assert.Contains(73, displayedTypes);
+            Assert.Contains(82, displayedTypes);
+            Assert.Equal(new PyInt(59_859), WireField(Assert.Single(entryTypes.Items,
+                row => WireField(row, "entryTypeID") is PyInt { Value: 67 }), "entryTypeNameID"));
+            Assert.Equal(new PyInt(234_598), WireField(Assert.Single(entryTypes.Items,
+                row => WireField(row, "entryTypeID") is PyInt { Value: 67 }), "entryJournalMessageID"));
+            Assert.Equal(new PyInt(59_865), WireField(Assert.Single(entryTypes.Items,
+                row => WireField(row, "entryTypeID") is PyInt { Value: 73 }), "entryTypeNameID"));
+            Assert.Equal(new PyInt(234_604), WireField(Assert.Single(entryTypes.Items,
+                row => WireField(row, "entryTypeID") is PyInt { Value: 73 }), "entryJournalMessageID"));
+            Assert.Equal(new PyInt(59_874), WireField(Assert.Single(entryTypes.Items,
+                row => WireField(row, "entryTypeID") is PyInt { Value: 82 }), "entryTypeNameID"));
+            Assert.Equal(new PyInt(234_615), WireField(Assert.Single(entryTypes.Items,
+                row => WireField(row, "entryTypeID") is PyInt { Value: 82 }), "entryJournalMessageID"));
+
             long noBidItemId;
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
@@ -226,4 +258,5 @@ public sealed partial class HostServerTests
             }
         }
     }
+
 }

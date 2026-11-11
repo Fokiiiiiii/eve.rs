@@ -1,5 +1,9 @@
 # Wallet audit fixes
 
+## Current metadata follow-up (2026-11-11)
+
+The earlier type-26 fix was only a partial metadata list. `GetEntryTypes` now serves all 218 native build-3396210 rows from the embedded snapshot described in [deepfix-contracts-trade-wallet.md](deepfix-contracts-trade-wallet.md). The raw type-26 name is `LP Store` with `entryJournalMessageID=234618`; V24 localizes its `entryTypeNameID=59818`. The registered auction Host regression also proves its wallet refs 67, 73, and 82 each resolve through `GetEntryTypes`.
+
 This records the findings checked against `90-audit-eve-wallet-r14.md`, the V24.01 client at `/home/user/eve-logic`, and EveJS v0.12.9 at `/home/user/evejs-261028.1`.
 
 ## Confirmed findings

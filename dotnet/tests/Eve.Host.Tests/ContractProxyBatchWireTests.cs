@@ -334,7 +334,8 @@ public partial class HostServerTests
         IContractInventoryReader? inventory = null, bool staff = true,
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
         Func<uint, long>? characterIdForAccount = null,
-        Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null)
+        Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null,
+        IEnumerable<IService>? additionalServices = null)
     {
         var registry = new ServiceRegistry();
         Func<long> now = () => FixedNowMs;
@@ -344,6 +345,10 @@ public partial class HostServerTests
             readCurrentCalendarGroups: (_, _) => ValueTask.FromResult((84L, 126L)),
             isCharacterInCurrentCorporation: isCharacterInCurrentCorporation))
             registry.Register(service);
+
+        if (additionalServices is not null)
+            foreach (var service in additionalServices)
+                registry.Register(service);
 
         var config = GlobalConfig.Build(Options);
         registry.Register(new MachoNetService(new Info(registry, config), now));

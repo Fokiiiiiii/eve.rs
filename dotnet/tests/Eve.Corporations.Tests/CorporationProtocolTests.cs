@@ -1,3 +1,4 @@
+using System.Numerics;
 using Eve.Marshal;
 using Eve.Sde;
 using Eve.Services;
@@ -799,6 +800,7 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Empty(await rig.Store.ApplicationsAsync(character:applicant));
         var applicationId = Assert.IsType<PyInt>(await Rpc(applicantSession,"InsertApplication",
             new PyInt(corp.Id),new PyStr("Please consider my application."))).Value;
+        var storedApplication = Assert.Single(await rig.Store.ApplicationsAsync(corporation:corp.Id,character:applicant));
 
         var ownApplications = await Rpc(applicantSession,"GetMyApplications");
         var application = GroupedRow(ownApplications,corp.Id,applicationId);
@@ -809,7 +811,10 @@ private static PyValue RowField(PyValue value,string key)
         Assert.Equal(new PyInt(corp.Id),application.Values[1]);
         Assert.Equal(new PyInt(applicant),application.Values[2]);
         Assert.Equal(new PyWString("Please consider my application."),application.Values[3]);
-        Assert.IsType<PyLong>(application.Values[5]);
+        var applicationFileTime = Assert.IsType<PyBigUnsigned>(application.Values[5]);
+        Assert.Equal(
+            new BigInteger(Py.FileTimeFromUnixMs(storedApplication.CreatedMs)),
+            new BigInteger(applicationFileTime.Bytes, isUnsigned: true, isBigEndian: false));
         Assert.Equal(new PyInt(0),application.Values[4]);
         Assert.Equal(PyBool.False,application.Values[6]);
         Assert.Equal(PyNone.Instance,application.Values[7]);

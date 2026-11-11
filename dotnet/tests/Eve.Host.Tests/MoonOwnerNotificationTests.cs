@@ -54,9 +54,9 @@ public sealed class MoonOwnerNotificationTests
 
         var wire = fixture.LivePayloads[0].Arguments;
         Assert.Equal(5, wire.Length);
-        Assert.IsType<PyLong>(wire[0]);
+        Assert.IsType<PyInt>(wire[0]);
         Assert.IsType<PyInt>(wire[1]);
-        Assert.IsType<PyLong>(wire[2]);
+        Assert.IsType<PyInt>(wire[2]);
         Assert.IsType<PyLong>(wire[3]);
         Assert.IsType<PyDict>(wire[4]);
 

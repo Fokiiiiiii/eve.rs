@@ -95,7 +95,7 @@ public sealed partial class CrimewatchKillRightHostTests
                 Assert.Equal(owner, recipientId);
                 Assert.Equal(KillRightNotificationTypes.Earned,
                     Assert.IsType<PyInt>(arguments[1]).Value);
-                liveNotificationIds.Add(Assert.IsType<PyLong>(arguments[0]).Value);
+                liveNotificationIds.Add(Assert.IsType<PyInt>(arguments[0]).Value);
                 if (failFirstLiveNotification)
                 {
                     failFirstLiveNotification = false;
@@ -154,7 +154,7 @@ public sealed partial class CrimewatchKillRightHostTests
             Assert.Equal(liveNotificationIds[0], liveNotificationIds[1]);
             PyValue[] expectedCreatedArgs =
             [
-                new PyLong(rightId!.Value),
+                InventoryWire.Id(rightId!.Value),
                 InventoryWire.Id(owner),
                 InventoryWire.Id(target),
                 new PyLong(Py.FileTimeFromUnixMs(right.ExpiresAtUnixMs)),
@@ -166,7 +166,7 @@ public sealed partial class CrimewatchKillRightHostTests
                 Assert.All(notes, note =>
                 {
                     Assert.Equal("OnKillRightCreated", note.Name);
-                    Assert.Equal("clientID", note.IdType);
+                    Assert.Equal("charid", note.IdType);
                     Assert.Equal(expectedCreatedArgs, note.Arguments);
                 });
             }

@@ -17,7 +17,13 @@ public class ReadSideTests
         _ => throw new Xunit.Sdk.XunitException($"not text: {value}"),
     };
 
-    private static long Num(PyValue value) => value switch { PyInt i => i.Value, PyLong l => l.Value, _ => throw new Xunit.Sdk.XunitException($"not a number: {value}") };
+    private static long Num(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        PyBigUnsigned integer => checked((long)new System.Numerics.BigInteger(integer.Bytes, isUnsigned: true, isBigEndian: false)),
+        _ => throw new Xunit.Sdk.XunitException($"not a number: {value}"),
+    };
 
     private static NpgsqlDataSource Source() => NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
 
@@ -270,8 +276,10 @@ public class ReadSideTests
 
             var packed = rows.ToPackedRows();
             var first = (PyPackedRow)MarshalCodec.DecodeExact(MarshalCodec.Encode(packed[0]));
+            Assert.IsType<PyInt>(first.Values[2]);
             Assert.Equal(9000000000L, Num(first.Values[2]));
             Assert.Equal(PyBool.True, first.Values[4]);
+            Assert.IsType<PyBigUnsigned>(first.Values[5]);
             Assert.Equal(1700000000000L * 10000 + 116444736000000000, Num(first.Values[5]));
             var keyvals = (PyDict)rows.ToKeyValsByKey();
             Assert.Equal(3, keyvals.Entries.Count);

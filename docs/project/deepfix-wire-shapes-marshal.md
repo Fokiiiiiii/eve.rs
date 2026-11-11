@@ -42,13 +42,14 @@ Before selecting these paths, the complete `/home/user/eve-logic` tree was searc
 
 All database-backed tests below used `eve_p3` (`EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p3`).
 
+- After merging current `origin/main`, Release builds with `TreatWarningsAsErrors=true` succeeded with 0 warnings and 0 errors for `Eve.Marshal`, `Eve.Host`, `Eve.Services`, `Eve.Services.CharacterInfo`, `Eve.Marshal.Tests`, `Eve.Host.Tests` and `Eve.Services.CharacterInfo.Tests`.
 - `Eve.Marshal.Tests` golden suite: 1,192 passed, 0 failed, 0 skipped.
 - Rust `eve-marshal` tests: 25 passed, 0 failed, 0 ignored; `eve-oracle --test marshal_golden`: 1 passed. `cargo fmt --all -- --check`, `cargo check -p eve-marshal -p eve-oracle` and `cargo clippy -p eve-marshal -p eve-oracle --all-targets -- -D warnings` passed.
 - Python `test_marshal_golden.py`: 999 passed, no skips.
 - CharacterInfo DB-backed test project: 83 passed, 0 failed, 0 skipped (including `CharMgrTests` and `DogmaServiceTests`).
 - Host `HostServerTests`: 473 passed, 0 failed, 0 skipped. `ContactEditHostWireTests`: 1 passed. `EntosisOwnerNotificationTests`: 2 passed. The biomass persistence/restart/mail notification test is included in the full `CharacterHostTests` run.
 - Host inventory, config-error and weapon-bank scenarios: 3 passed, 0 failed, 0 skipped.
-- The full `CharacterHostTests` class on `eve_p3`: 77 passed, 0 failed, 2 skipped (79 total). Both skips are `[RealAbyssalSimPgFact]` tests requiring `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`, which are unavailable locally; they are not counted as passes.
+- After merging current `origin/main`, the full `CharacterHostTests` class on `eve_p3`: 80 passed, 0 failed, 3 skipped (83 total). All three skips are `[RealAbyssalSimPgFact]` cases (killmail persistence, ESS placement, and clone-jump space entry) requiring `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`, which are unavailable locally; they are not counted as passes.
 - The biomass notification dict mismatch was observed as a failing end-to-end assertion before the code change, then passed after the correction.
 - The nested numeric-looking JSON key mismatch was observed as a failing end-to-end assertion before the code change, then passed after both Host converters preserved JSON object keys as strings.
 

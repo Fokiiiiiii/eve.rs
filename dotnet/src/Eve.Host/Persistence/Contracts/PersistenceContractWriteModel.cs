@@ -23,6 +23,10 @@ public sealed class PersistenceContractWriteModel(
     private const int ContractBrokerFeeCorporationRef = 80;
     private const int ContractSalesTaxRef = 73;
     private const int ContractDepositRef = 74;
+    private const int ContractDepositCorporationRef = 81;
+    private const int ContractAuctionBidRef = 63;
+    private const int ContractAuctionBidRefundRef = 64;
+    private const int ContractAuctionBidCorporationRef = 77;
     private const int ContractRewardAddedRef = 83;
     private const int ContractRewardAddedCorporationRef = 84;
     private readonly string _schema = Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$")
@@ -70,9 +74,9 @@ public sealed class PersistenceContractWriteModel(
                  contract_type, status, start_station_id, end_station_id, date_accepted_filetime,
                  date_expired_filetime, num_days, reward_escrow, reward_isk, created_at_filetime,
                  availability, price_isk, collateral_isk, creation_fee_isk, deposit_isk, sales_tax_isk,
-                 title, description, issuer_wallet_account_key, issuer_item_flag)
+                 title, description, issuer_wallet_account_key, issuer_item_flag, auction_accounting_level)
             VALUES ($1, $2, $3, 0, $4, $16, 0, $5, $17, 0, $6, $18, $7, $7, $8,
-                    $9, $10, $19, $11, $12, $13, $14, $15, $20, $21)
+                    $9, $10, $19, $11, $12, $13, $14, $15, $20, $21, $22)
             RETURNING contract_id
             """, connection, transaction))
         {
@@ -97,6 +101,7 @@ public sealed class PersistenceContractWriteModel(
             command.Parameters.AddWithValue(request.Collateral);
             command.Parameters.AddWithValue(request.WalletAccountKey);
             command.Parameters.AddWithValue(request.StartStationDivision);
+            command.Parameters.AddWithValue((short)request.AuctionAccountingLevel);
             contractId = (long)(await command.ExecuteScalarAsync(cancellationToken)
                 ?? throw new InvalidOperationException("contract insert returned no id"));
         }
@@ -154,7 +159,9 @@ public sealed class PersistenceContractWriteModel(
         await DebitAsync(wallet, request.Reward, request.IsCorporationIssued ? ContractRewardAddedCorporationRef : ContractRewardAddedRef, $"{operationPrefix}:reward", contractId, nowMs, transaction, connection, cancellationToken);
         await DebitAsync(wallet, request.BrokerFee, request.IsCorporationIssued ? ContractBrokerFeeCorporationRef : ContractBrokerFeeRef, $"{operationPrefix}:broker", contractId, nowMs, transaction, connection, cancellationToken);
         await DebitAsync(wallet, request.SalesTax, ContractSalesTaxRef, $"{operationPrefix}:tax", contractId, nowMs, transaction, connection, cancellationToken);
-        await DebitAsync(wallet, request.Deposit, ContractDepositRef, $"{operationPrefix}:deposit", contractId, nowMs, transaction, connection, cancellationToken);
+        await DebitAsync(wallet, request.Deposit,
+            request.IsCorporationIssued ? ContractDepositCorporationRef : ContractDepositRef,
+            $"{operationPrefix}:deposit", contractId, nowMs, transaction, connection, cancellationToken);
         if (expiryJobs is not null)
             await expiryJobs.ScheduleAsync(connection, transaction, contractId, expiry, cancellationToken);
         await PublishNotificationAsync(connection, transaction,
@@ -668,7 +675,7 @@ public sealed class PersistenceContractWriteModel(
         {
             await wallets.AdjustAsync(connection, transaction,
                 new WalletAccount(bid.BidderId, bid.IsCorporation ? bid.WalletKey : 1000), bid.Amount,
-                issuerOwner, 85, "Contract auction bid returned on deletion", nowMs,
+                issuerOwner, ContractAuctionBidRefundRef, "Contract auction bid returned on deletion", nowMs,
                 $"contract:{contractId}:delete:bid:{bid.BidId}:refund", $"contract:{contractId}", cancellationToken,
                 referenceId: contractId);
             await using var refunded = new NpgsqlCommand($"UPDATE {_schema}.contract_bids SET is_refunded = true WHERE bid_id = $1", connection, transaction);
@@ -783,14 +790,16 @@ public sealed class PersistenceContractWriteModel(
             var previousWalletOwner = previousBidderId;
             await wallets.AdjustAsync(connection, transaction,
                 new WalletAccount(previousWalletOwner, previousForCorporation ? previousWalletKey : 1000), previousAmount,
-                bidderId, 85, "Contract auction bid refunded", nowMs,
+                bidderId, ContractAuctionBidRefundRef, "Contract auction bid refunded", nowMs,
                 $"contract:{contractId}:bid:{previousBidId}:refund", $"contract:{contractId}", cancellationToken,
                 referenceId: contractId);
             await using var refund = new NpgsqlCommand($"UPDATE {_schema}.contract_bids SET is_refunded = true WHERE bid_id = $1", connection, transaction);
             refund.Parameters.AddWithValue(previousBidId);
             await refund.ExecuteNonQueryAsync(cancellationToken);
         }
-        await wallets.AdjustAsync(connection, transaction, bidderWallet, -amount, issuerOwner, 85, "Contract auction bid escrowed", nowMs,
+        await wallets.AdjustAsync(connection, transaction, bidderWallet, -amount, issuerOwner,
+            bidForCorporation ? ContractAuctionBidCorporationRef : ContractAuctionBidRef,
+            "Contract auction bid escrowed", nowMs,
             $"contract:{contractId}:bid:{Guid.NewGuid():N}", $"contract:{contractId}", cancellationToken, referenceId: contractId);
         long bidId;
         await using (var command = new NpgsqlCommand($"""

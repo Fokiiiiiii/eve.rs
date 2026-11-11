@@ -333,13 +333,14 @@ public partial class HostServerTests
     private void StartContractHost(IContractWriteModel writer, IContractReadModel? readModel = null,
         IContractInventoryReader? inventory = null, bool staff = true,
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
-        Func<uint, long>? characterIdForAccount = null)
+        Func<uint, long>? characterIdForAccount = null,
+        Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null)
     {
         var registry = new ServiceRegistry();
         Func<long> now = () => FixedNowMs;
         foreach (var service in CoreServices.Create(
             new NoAccounts(), now, contractReadModel: readModel, contractWriteModel: writer,
-            contractSkillLevel: (_, _, _) => ValueTask.FromResult(0), contractInventoryReader: inventory,
+            contractSkillLevel: contractSkillLevel ?? ((_, _, _) => ValueTask.FromResult(0)), contractInventoryReader: inventory,
             readCurrentCalendarGroups: (_, _) => ValueTask.FromResult((84L, 126L)),
             isCharacterInCurrentCorporation: isCharacterInCurrentCorporation))
             registry.Register(service);

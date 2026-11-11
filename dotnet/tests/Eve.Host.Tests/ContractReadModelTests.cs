@@ -438,7 +438,7 @@ public sealed class ContractReadModelTests
             Assert.False(await bidReader.ReadAsync());
 
             Assert.True(await writer.FinishAuctionAsync(created.ContractId, 100, 200, true, false, CancellationToken.None));
-            Assert.Equal(70000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            Assert.Equal(60000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
             Assert.Equal(1L, (await itemStore.GetAsync(created.EscrowItemIds.Single(), CancellationToken.None))!.OwnerId);
             await using (var issuerClaim = source.CreateCommand(
                 $"SELECT status FROM {contractsSchema}.contract_records WHERE contract_id=$1"))
@@ -453,7 +453,7 @@ public sealed class ContractReadModelTests
             Assert.Equal((400L, 600L, ItemFlags.Hangar),
                 (deliveredItem.OwnerId, deliveredItem.LocationId, deliveredItem.Flag));
             Assert.Equal(30000m, await wallets.AccountBalanceAsync(new WalletAccount(400), CancellationToken.None));
-            Assert.Equal(70000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            Assert.Equal(60000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
             await using var finished = source.CreateCommand(
                 $"SELECT status, acceptor_id FROM {contractsSchema}.contract_records WHERE contract_id=$1");
             finished.Parameters.AddWithValue(created.ContractId);
@@ -465,6 +465,82 @@ public sealed class ContractReadModelTests
         finally
         {
             foreach (var schema in new[] { contractsSchema, inventorySchema, walletSchema, schedulerSchema })
+            {
+                await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
+                await cleanup.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Corporation_auction_uses_its_selected_wallet_division_and_contract_journal_refs()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")
+            ?? throw new InvalidOperationException("EVE_PG_URL must name the assigned PostgreSQL lane");
+        var suffix = Guid.NewGuid().ToString("N");
+        var contractsSchema = $"contract_corp_auction_{suffix}";
+        var inventorySchema = $"contract_corp_auction_items_{suffix}";
+        var walletSchema = $"contract_corp_auction_wallet_{suffix}";
+        await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(connectionString));
+        await PersistenceContractReadModel.MigrateAsync(source, contractsSchema);
+        await PgItemStore.MigrateAsync(source, inventorySchema);
+        await PgWalletStore.MigrateAsync(source, walletSchema);
+        try
+        {
+            var itemStore = new PgItemStore(source, inventorySchema);
+            var wallets = new WalletTransactions(source, walletSchema);
+            long itemId;
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                await wallets.EnsureAsync(connection, transaction, 200);
+                await wallets.EnsureAsync(connection, transaction, 300);
+                await using (var seed = new NpgsqlCommand($"UPDATE {walletSchema}.balances SET isk = 1000000 WHERE owner_id = 200 AND account_key = 1002", connection, transaction))
+                    await seed.ExecuteNonQueryAsync();
+                await using (var seed = new NpgsqlCommand($"UPDATE {walletSchema}.balances SET isk = 20000 WHERE owner_id = 300 AND account_key = 1003", connection, transaction))
+                    await seed.ExecuteNonQueryAsync();
+                itemId = await itemStore.CreateAsync(connection, transaction,
+                    new NewItem(34, 200, 600, 117, Quantity: 1), CancellationToken.None);
+                await transaction.CommitAsync();
+            }
+
+            var writer = new PersistenceContractWriteModel(source, itemStore, wallets,
+                () => 1_800_000_000_000, contractsSchema);
+            var created = await writer.CreateContractAsync(new CreateItemExchangeRequest(
+                IssuerCharacterId: 100,
+                IssuerCorporationId: 200,
+                IsCorporationIssued: true,
+                StartStationId: 600,
+                StartStationDivision: 117,
+                Availability: 0,
+                AssigneeId: 0,
+                ExpiryMinutes: 1440,
+                Price: 10_000,
+                Reward: 0,
+                BrokerFee: 10_000,
+                Deposit: 100_000,
+                SalesTax: 0,
+                WalletAccountKey: 1002,
+                Title: "Corporation auction division",
+                Description: "",
+                OutstandingLimit: 500,
+                Items: [new ContractOfferedItem(itemId, 1)],
+                ContractType: 2,
+                AuctionAccountingLevel: 4), CancellationToken.None);
+
+            Assert.Equal(890_000m, await wallets.AccountBalanceAsync(new WalletAccount(200, 1002), CancellationToken.None));
+            var issuerEntries = await wallets.JournalForAccountAsync(200, 1002, cancellationToken: CancellationToken.None);
+            Assert.Contains(issuerEntries, entry => entry.RefTypeId == 80 && entry.Amount == -10_000m && entry.ReferenceId == created.ContractId);
+            Assert.Contains(issuerEntries, entry => entry.RefTypeId == 81 && entry.Amount == -100_000m && entry.ReferenceId == created.ContractId);
+
+            Assert.True(await writer.PlaceBidAsync(created.ContractId, 301, 300, 0, true, 1003, 10_000, CancellationToken.None));
+            Assert.Equal(10_000m, await wallets.AccountBalanceAsync(new WalletAccount(300, 1003), CancellationToken.None));
+            var bidderEntries = await wallets.JournalForAccountAsync(300, 1003, cancellationToken: CancellationToken.None);
+            Assert.Contains(bidderEntries, entry => entry.RefTypeId == 77 && entry.Amount == -10_000m && entry.ReferenceId == created.ContractId);
+        }
+        finally
+        {
+            foreach (var schema in new[] { contractsSchema, inventorySchema, walletSchema })
             {
                 await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE");
                 await cleanup.ExecuteNonQueryAsync();
@@ -994,8 +1070,22 @@ public sealed class ContractReadModelTests
                 claimWriter.FinishAuctionAsync(created.ContractId, 100, 200, true, false, CancellationToken.None).AsTask());
             Assert.All(issuerClaims, claim => Assert.True(claim));
             Assert.True(await claimWriter.FinishAuctionAsync(created.ContractId, 300, 301, false, false, CancellationToken.None));
-            Assert.Equal(6000m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
+            Assert.Equal(4950m, await wallets.AccountBalanceAsync(new WalletAccount(100), CancellationToken.None));
             Assert.Equal(4000m, await wallets.AccountBalanceAsync(new WalletAccount(300), CancellationToken.None));
+            await using (var taxEntries = source.CreateCommand($"""
+                SELECT ref_type_id, amount FROM {walletSchema}.journal
+                WHERE owner_id = 100 AND reference_id = $1
+                """))
+            {
+                taxEntries.Parameters.AddWithValue(created.ContractId);
+                var entries = new List<(int RefType, decimal Amount)>();
+                await using var taxReader = await taxEntries.ExecuteReaderAsync();
+                while (await taxReader.ReadAsync()) entries.Add((taxReader.GetInt32(0), taxReader.GetDecimal(1)));
+                Assert.Contains((67, 1000m), entries);
+                Assert.Contains((73, -1000m), entries);
+                Assert.Contains((75, -50m), entries);
+                Assert.Contains((82, 50m), entries);
+            }
             await using var read = source.CreateCommand($"SELECT status, acceptor_id FROM {contractsSchema}.contract_records WHERE contract_id=$1");
             read.Parameters.AddWithValue(created.ContractId);
             await using var reader = await read.ExecuteReaderAsync();

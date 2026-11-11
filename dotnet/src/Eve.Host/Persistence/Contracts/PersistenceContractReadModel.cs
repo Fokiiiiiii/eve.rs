@@ -126,6 +126,11 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                 PRIMARY KEY (character_id, corporation_id, contract_id, for_corporation)
             );
             """),
+        new Eve.Data.Migration("0010_contract_auction_accounting_level", """
+            ALTER TABLE contract_records
+                ADD COLUMN auction_accounting_level smallint NOT NULL DEFAULT 0
+                    CHECK (auction_accounting_level BETWEEN 0 AND 5);
+            """),
     ];
 
     public static Task MigrateAsync(

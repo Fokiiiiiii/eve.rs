@@ -32,6 +32,16 @@ V24.01 の `eve/common/script/util/contractscommon.py:65-66` は BPO hint=1、BP
 
 変更前の Host read model は非ゼロ search hint を拒否し、contract item row は inventory blueprint 属性を返していなかった。追加した Host/DB wire test は、BPO 検索が未対応として返る赤を先に確認した。現在は SDE category 9 と authoritative `inventory.items.blueprint_copy` を結合して BPO/BPC を絞り、検索 bundle と `GetContract` 詳細行の双方に copy/run/ME/TE を載せる。DB 回帰は BPO/BPC の双方と結果行・詳細行の値を検証する。
 
+#### オークションの売却税、預託金と wallet journal
+
+V24.01 の `createContractWnd.py:627-669` は Accounting level から税率を出し、auction の表示を `PercentOfSalesPriceAtTax` に切り替える。最大額は buyout を元に表示するが、実際の売却税額は売却成立時に確定する。`contracts.py:673-677` は seller/winner の claim を別々の `FinishAuction` RPC にする。`appConst.py:701-723` は auction sale=67、sales tax=73、deposit=74、deposit sales tax=75、deposit refund=82 を定義する。
+
+EveJS の `contractRuntimeState.js:1150-1152,1184-1190` は broker fee と deposit を作成時に扱い、Accounting level を記録する。`contractAuctionClaims.js:84-108` は issuer claim 時に実際の最高入札額と保存した Accounting level から税を算出し、winner claim とは分離して売却代金を処理する。`:99-104` の no-bid 経路はアイテム返却だけを作り、EveJS の runtime policy コメントは no-bid 時の deposit forfeiture を明記する。
+
+変更前の登録 Host 経路は `CreateContract` 時に auction `SalesTax` も wallet から引いていた。新しい PostgreSQL Host wire 回帰 `ContractAuctionTaxHostWireTests.cs:18-218` は、修正前に creation row の期待値 `sales_tax_isk=0` に対して `10000` が保存される赤を再現した。現在は Host が税を作成時に請求せず、Accounting level を契約 row に保存する。seller claim 時に bid を ref 67、bid からの税を ref 73、bid で賄えない税を既払 deposit から ref 75、deposit 全額の返却を ref 82 として仕訳する。deposit 由来の税は作成時に wallet から既に引かれた deposit の消費として扱い、claim 時に二重 debit しない。税は bid と deposit の合計を上限とする。no-bid claim はアイテムを issuer に戻し、deposit を返さない。
+
+EveJS は seller proceeds を単一の wallet leg にまとめ、`contractRuntimeState.js:735-744` の default ref=1 (`PLAYER_TRADING`) を使う。また `contractAuctionClaims.js:92-98` は税の cap より前に net proceeds を計算する。この journal 粒度と順序は CCP client の `appConst.py` が定義する専用 contract refs と合わず、低額 bid では cap 後の税額と payout が一致しない。そこで eve.rs は gross auction sale、税、deposit tax、refund を専用 ref IDs へ分けた。`ContractReadModelTests.cs` の低 bid ケースは sale 1000、sale tax 1000、deposit tax 50、deposit return 50 の各仕訳と、残高が作成時の既払 deposit を二重控除しないことを検証する。Host wire test は Accounting 4 の 10M bid から 60K を課税し、売却金・税・deposit 返却・no-bid forfeiture を実 DB で検証する。`Corporation_auction_uses_its_selected_wallet_division_and_contract_journal_refs` は法人 division 1002 の broker/deposit refs 80/81 と、bidder corporation division 1003 の bid ref 77 を `eve_p4` で確認する。
+
 ウォレット送金、corporation division、office rent 決済通知の記録は [deepfix-wallet-journal.md](service-audit/deepfix-wallet-journal.md) にある。同記録が残している journal entry type ごとの説明と市場税・注文約定の完全な追跡は、この変更では完了扱いにしない。
 
 ### PI 税と wallet journal
@@ -58,8 +68,10 @@ eve.rs は数値を作らず、合算した税額と owner-only 税額を既存�
 - 変更前の PI Host journal 回帰は、月指定 `GetTransactions` が FILETIME 混入のため 0 行を返し失敗した。後続の赤テストで construction ref 98 の `referenceID=0` と高セキュリティ customs の二税内訳不足も個別に確認した後、planet reference と owner/CONCORD の各 tax component を加えた。旧 Host assertion が freeform reason や import の ref 97 を期待していたため、V24.01 の ref 96/97 に照らして更新した。
 - `eve_p4` の PI / wallet Host 参照クラス (`CustomsOfficeHostTests`, `AccountWalletHostRpcTests`, `WalletAuditHostRpcTests`, `PlanetOwnerConcurrencyHostWireTests`) は 7 passed、0 failed、0 skipped。
 - `eve_p4` の `CorporationProtocolTests` は 55 passed、0 failed、0 skipped。`Eve.Services.Wallet.Tests` の `TransactionHistoryTests` は 1 passed、0 failed、0 skipped。
-- auction deadline/buyout と blueprint 検索を追加した後、登録 Host 経路を含む `Eve.Host.Tests` の `FullyQualifiedName~Contract` slice は Release で 42 passed、0 failed、0 skipped（`eve_p4`）。内訳には通常入札の期限延長と exact-expiry 拒否、issuer/winner 別の buyout claim、BPO/BPC 検索と詳細 wire 行が含まれる。buyout Host テスト単体も 1 passed、0 failed、0 skipped。
-- 関連 Host/Core project の Release build は warnings-as-errors で 0 warning、0 error。`ContractProxyServiceTests` は Release で 23 passed、0 failed、0 skipped。`git diff --check` も通過した。
+- auction deadline/buyout、blueprint 検索、seller sales tax と法人 division 仕訳を追加した後、登録 Host 経路を含む `Eve.Host.Tests` の `FullyQualifiedName~Contract` slice は Release で 43 passed、0 failed、0 skipped（`eve_p4`）。auction deadline、別々の issuer/winner claim、BPO/BPC 詳細 wire 行、作成時税 deferred、売却後税、deposit 税・返却、no-bid forfeiture、法人 division 1002/1003 の refs 77/80/81 を含む。最初の全 slice では古い gross-payout balance 期待値が2件失敗したため、V24 wallet ref と税の差引に照らして仕訳・残高 assertion を更新し、slice を再実行した。
+- 登録 Host tax wire test を法人 issuer に切り替える試行は `ConNotInStation` で失敗したため、その一時的な入力変更を戻し、personal auction の Host 経路と corporation wallet の persistence DB test を分けて検証した。この試行は pass に数えていない。
+- 新しい auction tax Host wire test は変更前に `sales_tax_isk` 10000 の赤を確認し、修正後の単体 slice は 1 passed、0 failed、0 skipped。Core service/write-model slice (`ContractProxyServiceTests`, `ContractWriteModelTests`) は Release で 37 passed、0 failed、0 skipped。
+- `Eve.Host.Tests` と `Eve.Services.Core.Tests` の Release build は warnings-as-errors で各 0 warning、0 error。`git diff --check` も通過した。
 - 変更前に auction deadline test は期限更新なし、buyout test は `FinishAuction` 前に status=4 となる挙動を再現した。BPO Host test は search hint 未対応の応答を再現した。blueprint 関連の最初の DB slice では fixture inventory schema がなく失敗したため fixture migration を追加し、当該 class と上記 contract slice を再実行して通過した。
 
 ## 未確認の範囲
@@ -70,6 +82,7 @@ eve.rs は数値を作らず、合算した税額と owner-only 税額を既存�
 - 実 V24 graphical client、実 packet trace、EveJS server process での同一 PI 操作は動かしていない。PI Host 回帰は `ImportExportWithPlanet` の production service 実装をテスト用 space provider から bound call し、journal read は登録 Host service を通す。inventory broker の production space registration を使うライブ PI walk はこの変更後に未実行。
 - corporation/alliance debtor の支払いレシート通知、すべての請求生成元と期限・更新・失効処理はこの変更で検証・修正していない。
 - 今回は auction expiry/buyout claim と blueprint 検索の差分を Host/DB 経路で検証した。ほかの全 contract search filter 組合せ、courier expiry/claim、item exchange の全ての collateral/reward・期限・retry 組合せ、direct trade 全体を同じ作業で網羅したとは判定しない。既存 handoff の範囲を超える経路は残る。
-- auction winner claim の ISK credit と EveJS の withheld sales-tax calculation (`contractAuctionClaims.js:84-98`) の対応、CCP/V24 が要求する税率・journal 行は追跡未完了で、互換性を確認・修正した扱いにしない。
+- auction の税率・winner/seller claim・no-bid deposit と journal refs はソース照合および Host/DB 回帰済みだが、実 V24 client と live server の end-to-end 表示は未確認。売却税の CCP backend 実装は client source から直接観察できないため、V24 UI、client journal refs、EveJS policy を基にした判定である。
+- Host RPC を通した corporation-issued auction creation はこの変更では未確認。corporation wallet division 1002/1003 の fee/deposit/bid refs は Persistence write model の PostgreSQL 回帰で確認した。
 - PI 以外の全 journal reference / description 種別、derived tax rows、market order/fill と sales tax の caller-to-wallet 経路は未確認。市場税の互換性判断は既存 deviation 記録に残る。
-- corporation wallet division ごとの全 contract/market/bill entry routing、全請求種別の期限・更新・失効・領収通知、wallet transaction retry/restart 横断は今回の追加差分では再検証していない。
+- オークション以外の corporation wallet division による contract/market/bill entry routing、全請求種別の期限・更新・失効・領収通知、wallet transaction retry/restart 横断は今回の追加差分では再検証していない。

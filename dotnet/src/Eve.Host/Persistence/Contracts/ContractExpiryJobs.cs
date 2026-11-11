@@ -23,6 +23,10 @@ public sealed class ContractExpiryJobs(
     private const long FileTimeUnixEpoch = 116_444_736_000_000_000;
     private const long TicksPerMillisecond = 10_000;
     private const int ContractSettlementRef = 85;
+    private const int ContractAuctionSoldRef = 67;
+    private const int ContractSalesTaxRef = 73;
+    private const int ContractDepositSalesTaxRef = 75;
+    private const int ContractDepositRefundRef = 82;
     private readonly string _schema = Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$")
         ? schema
         : throw new ArgumentException("not a usable schema name", nameof(schema));
@@ -83,15 +87,15 @@ public sealed class ContractExpiryJobs(
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        short type, status;
+        short type, status, availability;
         long issuerId, issuerCorporationId, stationId, expired;
         bool corporationIssued;
-        int issuerWalletKey, issuerItemFlag;
+        int issuerWalletKey, issuerItemFlag, auctionAccountingLevel;
         decimal deposit;
         await using (var command = new NpgsqlCommand($"""
             SELECT contract_type, status, issuer_id, issuer_corporation_id, is_corporation_issued,
                    start_station_id, date_expired_filetime, issuer_wallet_account_key,
-                   issuer_item_flag, deposit_isk
+                   issuer_item_flag, deposit_isk, availability, auction_accounting_level
             FROM {_schema}.contract_records WHERE contract_id = $1 FOR UPDATE
             """, connection, transaction))
         {
@@ -104,6 +108,7 @@ public sealed class ContractExpiryJobs(
             corporationIssued = reader.GetBoolean(4); stationId = reader.GetInt64(5);
             expired = reader.GetInt64(6); issuerWalletKey = reader.GetInt32(7);
             issuerItemFlag = reader.GetInt32(8); deposit = reader.GetDecimal(9);
+            availability = reader.GetInt16(10); auctionAccountingLevel = reader.GetInt16(11);
         }
         if (type != 2)
             throw new ContractUserErrorException("ConIllegalType");
@@ -140,6 +145,7 @@ public sealed class ContractExpiryJobs(
         var ownsWinner = bidderId > 0 && (bidderIsCorporation
             ? corporationId == bidderId && hasCorpContractManager
             : characterId == bidderId);
+        decimal settledTax = 0m;
         if (status == 4)
         {
             if (isIssuer ? ownsIssuer : ownsWinner)
@@ -173,11 +179,7 @@ public sealed class ContractExpiryJobs(
             }
             foreach (var itemId in returnedItems)
                 await items.MoveToOwnerAsync(connection, transaction, itemId, issuerOwner, stationId, issuerItemFlag, cancellationToken);
-            if (deposit > 0)
-                await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, issuerWalletKey),
-                    deposit, 0, ContractSettlementRef, "Contract auction deposit returned", nowMs,
-                    $"contract:{contractId}:auction:deposit-return", $"contract:{contractId}", cancellationToken,
-                    referenceId: contractId);
+            // Public auction deposits are forfeited when no bidder wins the auction.
             await using var returned = new NpgsqlCommand(
                 $"UPDATE {_schema}.contract_items SET in_crate = false WHERE contract_id = $1 AND in_crate", connection, transaction);
             returned.Parameters.AddWithValue(contractId);
@@ -186,10 +188,30 @@ public sealed class ContractExpiryJobs(
         }
         else if (isIssuer)
         {
+            settledTax = ContractFeesCalculator.Calculate(type, availability, amount, 0m, 1440,
+                0, auctionAccountingLevel, 1m).SalesTax;
+            settledTax = Math.Min(settledTax, amount + deposit);
+            var salesTaxFromSale = Math.Min(amount, settledTax);
+            var salesTaxFromDeposit = Math.Max(0m, settledTax - amount);
             await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, issuerWalletKey),
-                amount + deposit, bidderId, ContractSettlementRef, "Contract auction seller proceeds", nowMs,
-                $"contract:{contractId}:auction:seller-payout", $"contract:{contractId}", cancellationToken,
+                amount, bidderId, ContractAuctionSoldRef, "Contract auction sale proceeds", nowMs,
+                $"contract:{contractId}:auction:seller-proceeds", $"contract:{contractId}", cancellationToken,
                 referenceId: contractId);
+            if (salesTaxFromSale > 0)
+                await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, issuerWalletKey),
+                    -salesTaxFromSale, 0, ContractSalesTaxRef, "Contract auction sales tax", nowMs,
+                    $"contract:{contractId}:auction:sales-tax", $"contract:{contractId}", cancellationToken,
+                    referenceId: contractId);
+            if (salesTaxFromDeposit > 0)
+                await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, issuerWalletKey),
+                    -salesTaxFromDeposit, 0, ContractDepositSalesTaxRef, "Contract auction deposit used for sales tax", nowMs,
+                    $"contract:{contractId}:auction:deposit-sales-tax", $"contract:{contractId}", cancellationToken,
+                    referenceId: contractId);
+            if (deposit > 0)
+                await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, issuerWalletKey),
+                    deposit, 0, ContractDepositRefundRef, "Contract auction deposit returned", nowMs,
+                    $"contract:{contractId}:auction:deposit-return", $"contract:{contractId}", cancellationToken,
+                    referenceId: contractId);
         }
         else
         {
@@ -214,7 +236,8 @@ public sealed class ContractExpiryJobs(
             UPDATE {_schema}.contract_records
             SET status = $2, acceptor_id = $3, acceptor_is_corporation = $4,
                 date_completed_filetime = CASE WHEN $2 = 4 THEN $5 ELSE date_completed_filetime END,
-                deposit_isk = CASE WHEN $6 THEN 0 ELSE deposit_isk END
+                deposit_isk = CASE WHEN $6 THEN 0 ELSE deposit_isk END,
+                sales_tax_isk = CASE WHEN $7 THEN $8 ELSE sales_tax_isk END
             WHERE contract_id = $1
             """, connection, transaction))
         {
@@ -224,6 +247,8 @@ public sealed class ContractExpiryJobs(
             update.Parameters.AddWithValue(bidderIsCorporation);
             update.Parameters.AddWithValue(Eve.Services.Py.FileTimeFromUnixMs(nowMs));
             update.Parameters.AddWithValue(isIssuer || bidderId == 0);
+            update.Parameters.AddWithValue(bidderId > 0 && isIssuer);
+            update.Parameters.AddWithValue(settledTax);
             await update.ExecuteNonQueryAsync(cancellationToken);
         }
         if (nextStatus == 4)

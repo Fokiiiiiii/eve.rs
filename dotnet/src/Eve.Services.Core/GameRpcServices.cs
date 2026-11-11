@@ -224,7 +224,7 @@ public sealed partial class ContractProxyService(
             Reward: info.Reward,
             BrokerFee: fees.BrokerFee,
             Deposit: fees.Deposit,
-            SalesTax: fees.SalesTax,
+            SalesTax: info.ContractType == 2 ? 0m : fees.SalesTax,
             WalletAccountKey: info.ForCorp ? CorporationWalletBase + (info.StartStationDivision - CorporationDivisionFirstFlag) : PersonalWalletKey,
             Title: info.Title,
             Description: info.Description,
@@ -234,7 +234,8 @@ public sealed partial class ContractProxyService(
             EndStationId: courier ? info.DestinationId : 0,
             Collateral: info.Collateral,
             NumDays: courier ? info.NumDays : 0,
-            RequestedItems: info.RequestedTypes);
+            RequestedItems: info.RequestedTypes,
+            AuctionAccountingLevel: info.ContractType == 2 ? accounting : 0);
 
         try
         {
@@ -247,7 +248,7 @@ public sealed partial class ContractProxyService(
         }
         catch (Eve.Wallet.InsufficientFundsException)
         {
-            var feeTotal = fees.BrokerFee + fees.SalesTax + fees.Deposit;
+            var feeTotal = fees.BrokerFee + request.SalesTax + fees.Deposit;
             var required = info.Reward + feeTotal;
             var description = isPrivate ? "Contract reward escrow and broker fee" : "Contract reward escrow and fees";
             throw MachoErrors.ThrowUserError("CustomInfo", ("info", new PyStr(

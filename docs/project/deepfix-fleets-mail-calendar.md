@@ -49,6 +49,7 @@ Updated 2026-11-11. This record separates checked behavior from remaining checks
 - The first main CI run for this branch (`826d82dc8`, run 1719) failed in the live control-tower unanchor-and-scoop flow at `tools/headless-client/tests/test_structures.py:739` with `TargetTooFar`. The failure exposed a range mismatch: the simulation's one-argument `Measure` returned distance from the ship centre to the wreck surface, while the Host compared that value to the V24 2,500 m Scoop interaction range.
 - V24 `autopilot.InInteractionRange` reads the target ball's `surfaceDist` (`eve/client/script/parklife/autopilot.py:550-554`), which subtracts both ball radii (`eve/client/script/ui/inflight/overview/overviewScrollEntry.py:386-393`); `menusvc.GetCloseAndTryCommand` uses the default interaction range for Scoop (`eve/client/script/ui/services/menusvc.py:3238-3239,3698-3699`). EveJS measures ship-to-item hull distance and uses the same 2,500 m limit (`server/src/services/ship/cargoContainerRuntime.js:1138-1158`).
 - `Scene::distance_to_wreck` now returns the hull-to-hull distance by subtracting both the ship and wreck/can radii and clamping overlapping surfaces to zero. A regression test places a 6,000 m-radius ship 2,000 m from a wreck's surface; it failed before the change with 8,000 m and now passes at 2,000 m. The prior center-to-surface expectations were recalculated from the V24/EveJS rule. The main CI run that found this remains a historical failure; the new main run must verify the live flow after this fix.
+- Rust workspace run 1721 then exposed two assertions that still encoded the old center-to-surface convention: the tractor hold test added the ship radius to an already hull-to-hull measurement, and the structure test expected 214 m after increasing the ship radius by 100 m. Local reproduction returned the intended 499.5 m hold gap and 114 m can gap. The assertions now check those exact hull-to-hull values; neither tolerance was widened.
 
 ## Verification
 
@@ -63,6 +64,7 @@ The database-backed checks used the job’s own `eve_p3` database and the pinned
 - The Core test project initially had no NuGet assets for a `--no-restore` invocation; the same selected classes were rerun with restore and passed.
 
 Release builds with `-warnaserror` succeeded with 0 warnings and 0 errors for `Eve.Host`, `Eve.Services.Space`, `Eve.Host.Tests`, `Eve.Services.Space.Tests` and `Eve.Services.Core.Tests`.
+`cargo fmt --all -- --check`, `cargo check -p eve-space --release` and `cargo clippy -p eve-space --all-targets -- -D warnings` passed. Both corrected Rust tests and the three focused hull-distance tests passed individually (5 passed, 0 failed, 0 skipped). A new main CI run is pending.
 
 ### Not checked
 

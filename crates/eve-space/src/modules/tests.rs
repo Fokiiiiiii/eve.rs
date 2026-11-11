@@ -3052,16 +3052,15 @@ fn a_tractor_pulls_its_locked_wreck_to_the_hold_distance_and_lets_go_when_stoppe
     assert!(!accepted.iter().any(|out| matches!(out, Out::Refused { .. })), "the beam is accepted");
     let source = scene.pilots[&A].ship.spec.ship_id;
     assert_eq!(scene.wrecks[&WRECK].pull.map(|pull| pull.source_ship), Some(source));
-    // over a minute the wreck comes in to the hold distance, the surface of the ship being the reference's
+    // over a minute the wreck comes in to 500 m from the ship's surface
     let mut now = t;
     for _ in 0..240 {
         now += TICKS_PER_SECOND / 4;
         scene.settle_all(now);
     }
-    let ship_radius = scene.pilots[&A].ship.spec.radius;
     let apart = scene.distance_to_wreck(A, WRECK, now).unwrap();
 
-    assert!((apart - ship_radius - 499.5).abs() < 5.0, "the wreck is held at the hold distance, {apart} m");
+    assert!((apart - 499.5).abs() < 5.0, "the wreck is held at the hold distance, {apart} m");
     // stopping the beam lets the wreck go where it is
     let stop = scene.stop_module(A, module, now);
     assert!(scene.wrecks[&WRECK].pull.is_none(), "the pull ends with the beam");

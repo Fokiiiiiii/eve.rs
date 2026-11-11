@@ -65,7 +65,7 @@ Releaseビルドは変更した `Eve.Planets`, `Eve.Services.Planets`, `Eve.Plan
 Focused test結果:
 
 - `Eve.Planets.Tests` 全slice: 64 passed, 0 failed, 0 skipped (`eve_p4`)。資源分布はnative 8 planet typesすべての期待setを検査する。
-- PI Host: `PlanetMgrService` 参照クラスを絞ったHost/DB regression 9 passed, 0 failed, 0 skipped (`eve_p4`)。negative linkのcreate/setは結果、保存値、commit後通知から見える値を確認する。
+- PI Host/DB selection: 11 passed, 0 failed, 0 skipped (`eve_p4`, post-merge rerun)。resource-info wire、negative link create/setと保存後通知、GML拒否、command-center concurrency、planet read/launch、customs-office Host pathsを含む。
 - SOV/war/FW/insurgency Host selection: 26 passed, 0 failed, 0 skipped (`eve_p4`)。SOV claim/idempotency/restart、Hub ownership、fuel/Skyhook、development indices、war eligibility owner sources、registered war negotiation、FW enlistment/donation/occupation read、insurgency snapshot/deadline notificationsを含む。
 - `Eve.Corporations.Tests`, `WarRegistryTests`: 9 passed, 0 failed, 0 skipped。
 - `Eve.FactionWarfare.Tests` 全slice (enlistment, VP, capture, complex, battlefield, database, stats/rules): 104 passed, 0 failed, 0 skipped (`eve_p4`)。

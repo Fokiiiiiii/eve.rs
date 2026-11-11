@@ -24,6 +24,7 @@ public sealed class PgFactAttribute : FactAttribute
 internal sealed class Rig : IAsyncDisposable
 {
     public static readonly string? Url = Environment.GetEnvironmentVariable("EVE_PG_URL");
+    public const long SchoolCorporation = 1000045;
 
     public static readonly StationCatalog Stations = new([
         new Station(60015249, 92885, "Manifest V - AIR Laboratories Trade Center", 1000413, "AIR Laboratories", 500028, "Association for Interdisciplinary Research", 123, 40491241,
@@ -89,7 +90,7 @@ public static HomeStationResolver CreateHomeStationResolver(
 {
     var starter = Stations.Get(60015249)!;
     var catalog = new CreationCatalog([], [], [
-        new StarterLocation(1000006, null, starter.Id, starter.SolarSystemId, starter.ConstellationId, starter.RegionId),
+        new StarterLocation(SchoolCorporation, null, starter.Id, starter.SolarSystemId, starter.ConstellationId, starter.RegionId),
     ]);
     return new HomeStationResolver(
         (id, token) => characters.GetAsync(id, token),
@@ -141,7 +142,7 @@ public static HomeStationResolver CreateHomeStationResolver(
     }
 
     /// <summary>A character of a school, with a wallet, docked at a station.</summary>
-    public async Task<long> MakeAsync(string name, int account = 1, long corporation = 1000006, long? faction = 500001, long station = 60015249, decimal isk = 100_000m)
+    public async Task<long> MakeAsync(string name, int account = 1, long corporation = SchoolCorporation, long? faction = 500001, long station = 60015249, decimal isk = 100_000m)
     {
         await using var connection = await Source.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
@@ -255,7 +256,7 @@ public class CharMgrTests
         var f = Fields(record);
         Assert.Equal((Id(id), new PyStr("Ann Lee"), Id(1373), Id(1), Id(1), Id(10)), (f["characterID"], f["characterName"], f["typeID"], f["raceID"], f["bloodlineID"], f["ancestryID"]));
         Assert.Equal((Id(35), PyNone.Instance, PyNone.Instance), (f["schoolID"], f["careerID"], f["careerSpecialityID"]));
-        Assert.Equal((Id(1000006), PyNone.Instance, PyBool.True), (f["corporationID"], f["allianceID"], f["gender"]));
+        Assert.Equal((Id(Rig.SchoolCorporation), PyNone.Instance, PyBool.True), (f["corporationID"], f["allianceID"], f["gender"]));
         Assert.Same(PyNone.Instance, f["warFactionID"]);
         Assert.Equal(Id(0), f["age"]);
         Assert.IsType<PyLong>(f["createDateTime"]);
@@ -300,7 +301,7 @@ public class CharMgrTests
         Assert.Equal(new PyStr(""), row.Values[1]);
         Assert.Equal(Fields(single)["corporationDateTime"], row.Values[2]);
         Assert.Equal(Fields(single)["description"], row.Values[3]);
-        Assert.Equal(Id(1000006), row.Values[4]);
+        Assert.Equal(Id(Rig.SchoolCorporation), row.Values[4]);
         Assert.Same(PyNone.Instance, row.Values[5]);
         Assert.Equal(Id(1), row.Values[6]);
         var rowsetWithExtraArg = Assert.IsType<PyObjectEx>(await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo3", Id(id), Id(0)));
@@ -952,7 +953,7 @@ public class CharMgrTests
 
         Assert.Equal(
             Py.KeyVal(
-                ("corporationID", Id(1000006)),
+                ("corporationID", Id(Rig.SchoolCorporation)),
                 ("corporationDateTime", new PyLong(Py.FileTimeFromUnixMs(character!.CreatedAt.ToUnixTimeMilliseconds())))),
             await Rig.CallAsync(service, session, "GetPrivateInfoOnCorpChange", Id(characterId)));
     }
@@ -1022,7 +1023,7 @@ public class CharMgrTests
 
         Assert.Equal(
             Py.KeyVal(
-                ("corporationID", Id(1000006)),
+                ("corporationID", Id(Rig.SchoolCorporation)),
                 ("corporationDateTime", new PyLong(Py.FileTimeFromUnixMs(1_700_000_000_123)))),
             await Rig.CallAsync(service, session, "GetPrivateInfoOnCorpChange", Id(characterId)));
 

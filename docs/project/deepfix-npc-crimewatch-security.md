@@ -34,7 +34,7 @@ Checked: 2026-11-11. Scope: NPC spawn/behavior, combat and crimewatch timers, cr
 - `Eve.Services.Crimewatch.Tests` `PlayerBountyKillsTests`: 2 passed, 0 failed, 0 skipped. `Eve.Ships.Tests` `DeathOutcomeTests` and `DeathTests`: 23 passed, 0 failed, 0 skipped. `Eve.Events.Tests` `EventBusTests`: 20 passed, 0 failed, 0 skipped.
 - Host selected classes (`CharacterHostTests`, `PlayerBountyHostTests`, `CrimewatchKillRightHostTests`, `WarStatisticKillmailRpcHostWireTests`) with `EVE_ABYSSAL_SIM_BINARY=/tmp/eve-sim-cx5/target/release/eve-sim` and pinned SDE `/home/user/sde-shared/eve-online-static-data-3396210-jsonl`: 89 passed, 0 failed, 0 skipped. Related transaction/event notification wire classes: 6 passed, 0 failed, 0 skipped.
 - Release builds with warnings treated as errors passed for `Eve.Host.Tests`, `Eve.Events.Tests`, `Eve.Services.Space.Tests`, and `Eve.Ships.Tests` with 0 warnings. `git diff --check` passed.
-- Baseline main CI at `origin/main` SHA `13975f88e515`, run 1722, was green before this change. CI for this change will be recorded after the push.
+- Baseline main CI at `origin/main` SHA `13975f88e515`, run 1722, was green before this change. After pushing `e33b029c73aa`, main CI run 1723 completed successfully: all jobs, including the required gate, passed; no failed tests or jobs were reported.
 
 ## Not checked
 

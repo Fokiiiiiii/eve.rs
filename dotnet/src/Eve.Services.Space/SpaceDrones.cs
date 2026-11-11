@@ -667,6 +667,7 @@ public async Task<PyValue> ReconnectAsync(ClientSession session, CancellationTok
                 case SimDroneReleased released when _launched.TryRemove(released.DroneId, out var gone):
                     _letGo.TryRemove(released.DroneId, out _);
                     _abandoned[released.DroneId] = gone;
+                    NotifyLetGo(gone);
                     break;
                 case SimDestroyed destroyed when _launched.TryRemove(destroyed.ShipId, out var lost):
                     Run(() => LoseAsync(lost), destroyed.ShipId, "destroyed");
@@ -744,6 +745,15 @@ public async Task<PyValue> ReconnectAsync(ClientSession session, CancellationTok
         ShipNotifications.SendItemChange(pilot, scooped.Change, RowOf);
         var settled = scooped.Change with { PreviousLocationId = scooped.Change.After.LocationId, PreviousFlag = scooped.Change.After.Flag };
         Later(() => ShipNotifications.SendItemChange(pilot, settled, RowOf));
+    }
+
+    /// <summary>The reference reports the lost controller through <c>OnDroneStateChange</c>; Michelle derives <c>OnDroneControlLost</c> and the drone window consumes the cleared activity.</summary>
+    private static void NotifyLetGo(Launched drone)
+    {
+        drone.Pilot.SendNotification(
+            "OnDroneStateChange", "charid", InventoryWire.Id(drone.ItemId),
+            new PyInt(0), new PyInt(0), new PyInt(0), new PyInt(drone.TypeId), new PyInt(0), None);
+        drone.Pilot.SendNotification("OnDroneActivityChange", "charid", InventoryWire.Id(drone.ItemId), None, None);
     }
 
     /// <summary>

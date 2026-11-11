@@ -1111,7 +1111,6 @@ public partial class HostServerTests : IAsyncLifetime
             (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<Eve.Marshal.PyValue>>([]),
             (_, _) => ValueTask.FromResult<string?>(null),
             (_, _, _) => ValueTask.CompletedTask,
-            (_, _) => ValueTask.FromResult<long?>(null),
             (table, path, data) =>
             {
                 writes.Add((table, path, data?.DeepClone()));
@@ -1151,7 +1150,6 @@ public partial class HostServerTests : IAsyncLifetime
             (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<Eve.Marshal.PyValue>>([]),
             (_, _) => ValueTask.FromResult<string?>(null),
             (_, _, _) => ValueTask.CompletedTask,
-            (_, _) => ValueTask.FromResult<long?>(null),
             (_, _, _) => new Eve.GameStore.WriteResult(true, null),
             (table, path) =>
             {
@@ -1207,8 +1205,7 @@ public partial class HostServerTests : IAsyncLifetime
         var model = new PersistenceCharMgrReadModel(ReadTable,
             (_, _, _, _) => ValueTask.FromResult<System.Collections.Generic.IReadOnlyList<Eve.Marshal.PyValue>>([]),
             (_, _) => ValueTask.FromResult<string?>(null),
-            (_, _, _) => ValueTask.CompletedTask,
-            (_, _) => ValueTask.FromResult<long?>(null));
+            (_, _, _) => ValueTask.CompletedTask);
 
         var first = await model.ReadAsync(1001, CancellationToken.None);
         var second = await model.ReadAsync(1002, CancellationToken.None);
@@ -1234,8 +1231,7 @@ public partial class HostServerTests : IAsyncLifetime
         var missingNotes = await new PersistenceCharMgrReadModel(ReadWithoutNotes,
             (_, _, _, _) => ValueTask.FromResult<System.Collections.Generic.IReadOnlyList<Eve.Marshal.PyValue>>([]),
             (_, _) => ValueTask.FromResult<string?>(null),
-            (_, _, _) => ValueTask.CompletedTask,
-            (_, _) => ValueTask.FromResult<long?>(null)).ReadAsync(1001, CancellationToken.None);
+            (_, _, _) => ValueTask.CompletedTask).ReadAsync(1001, CancellationToken.None);
         Assert.NotNull(missingNotes);
         Assert.Empty(missingNotes.OwnerNotes);
         Assert.Empty(missingNotes.ItemNotes);
@@ -1271,7 +1267,6 @@ public partial class HostServerTests : IAsyncLifetime
             (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<Eve.Marshal.PyValue>>([]),
             (_, _) => ValueTask.FromResult<string?>(null),
             (_, _, _) => ValueTask.CompletedTask,
-            (_, _) => ValueTask.FromResult<long?>(null),
             (table, path, data) =>
             {
                 writes.Add((table, path, data?.DeepClone()));
@@ -1359,7 +1354,6 @@ public partial class HostServerTests : IAsyncLifetime
             (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<Eve.Marshal.PyValue>>([]),
             (_, _) => ValueTask.FromResult<string?>(null),
             (_, _, _) => ValueTask.CompletedTask,
-            (_, _) => ValueTask.FromResult<long?>(null),
             (_, _, _) => new Eve.GameStore.WriteResult(true, null),
             (table, path) =>
             {
@@ -4866,7 +4860,7 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
             {
                 Assert.Equal(recipientId, characterId);
                 Assert.Contains("notifications", flushes);
-                var notificationId = Assert.IsType<Eve.Marshal.PyLong>(arguments[0]).Value;
+                var notificationId = Assert.IsType<Eve.Marshal.PyInt>(arguments[0]).Value;
                 var typeId = Assert.IsType<Eve.Marshal.PyInt>(arguments[1]).Value;
                 var saved = committed["notifications"]["boxes"]![recipientId.ToString(
                     System.Globalization.CultureInfo.InvariantCulture)]!["byID"]![notificationId.ToString(
@@ -4953,7 +4947,11 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.True(notificationRowsAfterMail.ContainsKey("100"));
         Assert.Empty(liveNotifications);
 
-        var usedData = new System.Text.Json.Nodes.JsonObject { ["charID"] = senderId };
+        var usedData = new System.Text.Json.Nodes.JsonObject
+        {
+            ["charID"] = senderId,
+            ["targetNames"] = new System.Text.Json.Nodes.JsonObject { ["42"] = "Pilot" },
+        };
         await adapter.WriteKillRightNotificationAsync(
             recipientId, senderId, Eve.Services.Crimewatch.KillRightNotificationTypes.Used,
             usedData, "kill-right-used:activation-1", CancellationToken.None);
@@ -4969,6 +4967,12 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.Used, usedNotification["typeID"]!.GetValue<int>());
         Assert.Equal(Eve.Services.Crimewatch.KillRightNotificationTypes.MiscGroup, usedNotification["groupID"]!.GetValue<int>());
         Assert.Equal(senderId, usedNotification["data"]!["charID"]!.GetValue<long>());
+        var usedWireData = Assert.IsType<Eve.Marshal.PyDict>(Assert.Single(liveNotifications).Arguments[4]);
+        var wireData = Assert.IsType<Eve.Marshal.PyDict>(MarshalCodec.Decode(MarshalCodec.Encode(usedWireData)));
+        var targetNamesValue = wireData.Entries.Single(entry =>
+            Eve.Macho.JsSemantics.StringValue(entry.Key) == "targetNames").Value;
+        var targetNames = Assert.IsType<Eve.Marshal.PyDict>(targetNamesValue);
+        Assert.Equal(new Eve.Marshal.PyBytes(System.Text.Encoding.UTF8.GetBytes("42")), Assert.Single(targetNames.Entries).Key);
         Assert.Single(liveNotifications);
 
         await adapter.WriteAllianceMaintenanceBillNotificationAsync(

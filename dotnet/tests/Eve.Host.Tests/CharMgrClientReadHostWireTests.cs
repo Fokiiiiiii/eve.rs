@@ -28,7 +28,6 @@ public partial class HostServerTests
             (_, _) => ValueTask.FromResult<string?>(null),
             (_, _, _) => ValueTask.CompletedTask,
             (_, _) => ValueTask.FromResult(2.75),
-            (_, _) => ValueTask.FromResult<long?>(null),
             readPersonalData: (_, _) => ValueTask.FromResult<CharMgrPersonalData?>(personalData),
             readRecustomizationState: (_, _) => ValueTask.FromResult<int?>(1),
             readBalance: (_, _) => ValueTask.FromResult<decimal?>(1234.5m),

@@ -3,6 +3,7 @@ using System.Text.Json.Nodes;
 using Eve.Events;
 using Eve.GameStore;
 using Eve.Marshal;
+using Eve.Services;
 using Npgsql;
 
 namespace Eve.Host.Persistence.Mail;
@@ -232,9 +233,9 @@ internal sealed class PersistenceTransactionMailbox
 
     private static PyValue[] WireArguments(long notificationId, int typeId, long senderId, long created, JsonObject data) =>
     [
-        new PyLong(notificationId),
+        Py.Number(notificationId),
         new PyInt(typeId),
-        new PyLong(senderId),
+        Py.Number(senderId),
         Eve.Services.Py.FileTimeLong(created),
         NotificationWireValue(data),
     ];
@@ -243,16 +244,14 @@ internal sealed class PersistenceTransactionMailbox
     {
         if (value is JsonObject obj)
             return new PyDict([.. obj.Select(pair => new KeyValuePair<PyValue, PyValue>(
-                long.TryParse(pair.Key, NumberStyles.Integer, CultureInfo.InvariantCulture, out var key)
-                    ? new PyLong(key)
-                    : new PyStr(pair.Key),
+                new PyStr(pair.Key),
                 NotificationWireValue(pair.Value)))]);
         if (value is JsonArray array)
             return new PyList([.. array.Select(NotificationWireValue)]);
         if (value is not JsonValue scalar)
             return PyNone.Instance;
         if (scalar.TryGetValue<long>(out var integer))
-            return new PyLong(integer);
+            return Py.Number(integer);
         if (scalar.TryGetValue<decimal>(out var amount))
             return new PyReal((double)amount);
         if (scalar.TryGetValue<double>(out var number) && double.IsFinite(number))

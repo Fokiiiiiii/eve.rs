@@ -28,7 +28,35 @@ public sealed class ContactEditHostWireTests
         });
 
         Assert.Same(PyNone.Instance, result);
-        Assert.Contains("OnNotificationReceived", Strings(Assert.Single(sink.Packets)));
+        var notification = Assert.IsType<PyObject>(Assert.Single(sink.Packets));
+        Assert.Equal(new PyStr(ClientNotification.ClassName), notification.Name);
+        var packet = Assert.IsType<PyTuple>(notification.Args).Items;
+        Assert.Equal(new PyInt(MachoMessage.Notification), packet[0]);
+        Assert.Equal(new PyInt(1), packet[3]);
+        var destination = MachoAddress.Decode(packet[2]);
+        Assert.Equal(AddressKind.Broadcast, destination.Kind);
+        Assert.Equal("OnNotificationReceived", destination.BroadcastId);
+        Assert.Equal("clientID", destination.IdType);
+        Assert.Equal(14, packet.Count);
+        var machoEnvelope = Assert.IsType<PyTuple>(packet[4]);
+        var machoPayload = Assert.IsType<PyTuple>(Assert.Single(machoEnvelope.Items));
+        Assert.Equal(new PyInt(0), machoPayload.Items[0]);
+        var encodedPayload = Assert.IsType<PyBuffer>(machoPayload.Items[1]);
+        var notificationCall = Assert.IsType<PyTuple>(MarshalCodec.Decode(encodedPayload.Value.ToArray()));
+        Assert.Equal(new PyInt(0), notificationCall.Items[0]);
+        var invocation = Assert.IsType<PyTuple>(notificationCall.Items[1]);
+        Assert.Equal(new PyInt(1), invocation.Items[0]);
+        var notificationArgs = Assert.IsType<PyTuple>(invocation.Items[1]).Items;
+        Assert.Equal(5, notificationArgs.Count);
+        Assert.IsType<PyInt>(notificationArgs[0]);
+        Assert.Equal(new PyInt(90), notificationArgs[1]);
+        Assert.Equal(new PyInt(senderId), notificationArgs[2]);
+        Assert.IsType<PyLong>(notificationArgs[3]);
+        var notificationData = Assert.IsType<PyDict>(notificationArgs[4]);
+        Assert.Equal(new PyInt(10), Field(notificationData, "level"));
+        Assert.Equal(new PyBytes(Encoding.UTF8.GetBytes("Updated relationship")), Field(notificationData, "message"));
+        var sequence = Assert.IsType<PyDict>(packet[5]);
+        Assert.Equal(new PyInt(0), Field(sequence, "sn"));
         var notificationMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));
         var rows = Assert.IsType<PyList>(await notificationMgr.CallAsync(new ServiceCall
         {

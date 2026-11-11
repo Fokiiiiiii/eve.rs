@@ -115,6 +115,10 @@ impl<'a> Encoder<'a> {
     }
 
     fn string(&mut self, text: &str) -> Result<()> {
+        if !text.is_ascii() {
+            self.sized(op::WSTRING_UTF8, text.as_bytes())?;
+            return Ok(());
+        }
         match text.len() {
             0 => self.out.push(op::EMPTY_STRING),
             1 => self.out.extend_from_slice(&[op::CHAR_STRING, text.as_bytes()[0]]),

@@ -6,11 +6,48 @@ internal sealed class MarshalEncoder
 {
     private static readonly Dictionary<string, byte> TableIndex = BuildTableIndex();
 
-    private int _depth;
+    private sealed class SharedDescriptor(int opcodePosition, int firstSeenOrder)
+    {
+        public int OpcodePosition { get; } = opcodePosition;
+        public int FirstSeenOrder { get; } = firstSeenOrder;
+        public int? ReferenceId { get; set; }
+    }
 
-    public MarshalEncoder(ByteBuffer output) => Out = output;
+    private readonly Dictionary<PyObjectEx, SharedDescriptor> _rowDescriptors = new(ReferenceEqualityComparer.Instance);
+    private readonly List<SharedDescriptor> _referencedRowDescriptors = [];
+    private readonly int _mapCountPosition;
+    private int _depth;
+    private int _descriptorOrder;
+    private bool _completed;
+
+    public MarshalEncoder(ByteBuffer output, int depth = 0)
+    {
+        Out = output;
+        _depth = depth;
+        _mapCountPosition = output.Length - sizeof(uint);
+    }
 
     public ByteBuffer Out { get; }
+
+    /// <summary>Appends the save-table indexes for descriptors referenced in this marshal stream.</summary>
+    public void Complete()
+    {
+        if (_completed)
+        {
+            throw MarshalException.Unencodable("marshal stream encoder was completed more than once");
+        }
+        _completed = true;
+        if (_referencedRowDescriptors.Count == 0)
+        {
+            return;
+        }
+
+        Out.SetUInt32(_mapCountPosition, (uint)_referencedRowDescriptors.Count);
+        foreach (var descriptor in _referencedRowDescriptors.OrderBy(descriptor => descriptor.FirstSeenOrder))
+        {
+            Out.WriteUInt32((uint)descriptor.ReferenceId!.Value);
+        }
+    }
 
     private static Dictionary<string, byte> BuildTableIndex()
     {
@@ -74,6 +111,15 @@ internal sealed class MarshalEncoder
 
     private void WriteString(string text)
     {
+        // EveJS values arriving here are JavaScript strings: it sends ASCII as a
+        // Python 2 byte string and non-ASCII as PyWStringUTF8. Keep raw Python
+        // byte strings explicit through PyBytes.
+        if (text.Any(character => character > 0x7f))
+        {
+            WriteWString(text);
+            return;
+        }
+
         var length = Encoding.UTF8.GetByteCount(text);
         switch (length)
         {
@@ -95,6 +141,18 @@ internal sealed class MarshalEncoder
                     WriteUtf8(text, length);
                 }
                 break;
+        }
+    }
+
+    private void WriteWString(string text)
+    {
+        if (text.Length == 0)
+        {
+            Out.Write(Op.EmptyWString);
+        }
+        else
+        {
+            SizedText(Op.WStringUtf8, text);
         }
     }
 
@@ -228,14 +286,7 @@ internal sealed class MarshalEncoder
                 Sized(Op.Buffer, bytes.Value.Span);
                 break;
             case PyWString text:
-                if (text.Value.Length == 0)
-                {
-                    Out.Write(Op.EmptyWString);
-                }
-                else
-                {
-                    SizedText(Op.WStringUtf8, text.Value);
-                }
+                WriteWString(text.Value);
                 break;
             case PyToken text:
                 SizedText(Op.Token, text.Value);
@@ -294,15 +345,7 @@ internal sealed class MarshalEncoder
                 Value(obj.Args);
                 break;
             case PyObjectEx ex:
-                Out.Write(ex.Kind == ObjectExKind.Ex1 ? Op.ObjectEx1 : Op.ObjectEx2);
-                Value(ex.Header);
-                for (var index = 0; index < ex.List.Count; index++)
-                {
-                    Value(ex.List[index]);
-                }
-                Out.Write(Op.PackedTerminator);
-                Pairs(ex.Dict, valueFirst: false);
-                Out.Write(Op.PackedTerminator);
+                ObjectEx(ex);
                 break;
             case PySubStruct inner:
                 Out.Write(Op.SubStruct);
@@ -314,7 +357,9 @@ internal sealed class MarshalEncoder
                 {
                     Out.Write(Wire.Header);
                     Out.WriteUInt32(0);
-                    Value(decoded);
+                    var nestedEncoder = new MarshalEncoder(Out, _depth);
+                    nestedEncoder.Value(decoded);
+                    nestedEncoder.Complete();
                 });
                 break;
             case PySubStream stream:
@@ -340,6 +385,43 @@ internal sealed class MarshalEncoder
                 throw MarshalException.Unencodable(value.GetType().Name);
         }
     }
+
+    private void ObjectEx(PyObjectEx value)
+    {
+        if (IsRowDescriptor(value) && _rowDescriptors.TryGetValue(value, out var known))
+        {
+            if (known.ReferenceId is null)
+            {
+                known.ReferenceId = _referencedRowDescriptors.Count + 1;
+                _referencedRowDescriptors.Add(known);
+                Out.Set(known.OpcodePosition, (byte)(Op.ObjectEx1 | Wire.SaveMask));
+            }
+            Out.Write(Op.SavedStreamElement);
+            Size(known.ReferenceId.Value);
+            return;
+        }
+
+        var isRowDescriptor = IsRowDescriptor(value);
+        var opcodePosition = Out.Length;
+        Out.Write(value.Kind == ObjectExKind.Ex1 ? Op.ObjectEx1 : Op.ObjectEx2);
+        if (isRowDescriptor)
+        {
+            _rowDescriptors.Add(value, new SharedDescriptor(opcodePosition, _descriptorOrder++));
+        }
+        Value(value.Header);
+        for (var index = 0; index < value.List.Count; index++)
+        {
+            Value(value.List[index]);
+        }
+        Out.Write(Op.PackedTerminator);
+        Pairs(value.Dict, valueFirst: false);
+        Out.Write(Op.PackedTerminator);
+    }
+
+    private static bool IsRowDescriptor(PyObjectEx value) =>
+        value.Kind == ObjectExKind.Ex1 &&
+        value.Header is PyTuple { Items.Count: > 0 } header &&
+        header.Items[0] is PyToken { Value: "blue.DBRowDescriptor" };
 
     private void VarInteger(ReadOnlySpan<byte> bytes, bool unsigned)
     {

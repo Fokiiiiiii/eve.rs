@@ -325,7 +325,8 @@ fn fixed_value(db_type: i64, packed: &[u8], offset: usize) -> Result<Value> {
     }
 
     Ok(match db_type {
-        dbtype::CY | dbtype::I8 | dbtype::UI8 | dbtype::FILETIME => {
+        dbtype::CY => Value::Real(i64::from_le_bytes(read(packed, offset)?) as f64 / 10_000.0),
+        dbtype::I8 => {
             let number = i64::from_le_bytes(read(packed, offset)?);
             // The JS reference hands back a number when it is a safe integer.
             if number.unsigned_abs() <= 9_007_199_254_740_991 {
@@ -334,8 +335,21 @@ fn fixed_value(db_type: i64, packed: &[u8], offset: usize) -> Result<Value> {
                 Value::Long(number)
             }
         }
-        dbtype::I4 => Value::Int(i64::from(i32::from_le_bytes(read(packed, offset)?))),
-        dbtype::UI4 => Value::Int(i64::from(u32::from_le_bytes(read(packed, offset)?))),
+        dbtype::UI8 | dbtype::FILETIME => {
+            let number = u64::from_le_bytes(read(packed, offset)?);
+            if number <= 9_007_199_254_740_991 {
+                Value::Int(number as i64)
+            } else {
+                let mut bytes = number.to_le_bytes().to_vec();
+                while bytes.last() == Some(&0) {
+                    bytes.pop();
+                }
+                Value::BigUnsigned(bytes)
+            }
+        }
+        // The V24 Windows client materializes both DBTYPE_I4 and DBTYPE_UI4
+        // with PyInt_FromLong, so a set high bit is observed as signed.
+        dbtype::I4 | dbtype::UI4 => Value::Int(i64::from(i32::from_le_bytes(read(packed, offset)?))),
         dbtype::R4 => Value::Real(f64::from(f32::from_le_bytes(read(packed, offset)?))),
         dbtype::R8 => Value::Real(f64::from_le_bytes(read(packed, offset)?)),
         dbtype::I2 => Value::Int(i64::from(i16::from_le_bytes(read(packed, offset)?))),
@@ -397,13 +411,15 @@ pub(crate) fn encode(encoder: &mut Encoder<'_>, row: &PackedRow) -> Result<()> {
 
 fn fixed_bytes(db_type: i64, value: &Value, out: &mut Vec<u8>) -> Result<()> {
     match db_type {
-        dbtype::CY | dbtype::I8 | dbtype::UI8 | dbtype::FILETIME => {
-            out.extend_from_slice(&pack_i64(value)?.to_le_bytes());
-        }
+        dbtype::CY => out.extend_from_slice(&pack_currency(value)?.to_le_bytes()),
+        dbtype::I8 => out.extend_from_slice(&pack_i64(value)?.to_le_bytes()),
+        dbtype::UI8 | dbtype::FILETIME => out.extend_from_slice(&pack_u64(value)?.to_le_bytes()),
         dbtype::I4 => out.extend_from_slice(
             &checked_int(value, i32::MIN.into(), i32::MAX.into(), "I4")?.to_le_bytes()[..4],
         ),
-        dbtype::UI4 => out.extend_from_slice(&jsnum::to_uint32(pack_number(value).trunc()).to_le_bytes()),
+        dbtype::UI4 => out.extend_from_slice(
+            &checked_int(value, i32::MIN.into(), i32::MAX.into(), "UI4")?.to_le_bytes()[..4],
+        ),
         dbtype::R4 => out.extend_from_slice(&(pack_number(value) as f32).to_le_bytes()),
         dbtype::R8 => out.extend_from_slice(&pack_number(value).to_le_bytes()),
         dbtype::I2 => out.extend_from_slice(
@@ -427,6 +443,16 @@ fn checked_int(value: &Value, min: i64, max: i64, column: &'static str) -> Resul
         return Err(MarshalError::OutOfRange(column));
     }
     Ok(number as i64)
+}
+
+/// CCP's packed CY writer rounds to cents and stores 1/10,000 units.
+fn pack_currency(value: &Value) -> Result<i64> {
+    const LIMIT: f64 = 9_223_372_036_854_775_808.0;
+    let scaled = ((pack_number(value) * 100.0) + 0.5).floor() * 100.0;
+    if !scaled.is_finite() || !(-LIMIT..LIMIT).contains(&scaled) {
+        return Err(MarshalError::OutOfRange("64-bit column"));
+    }
+    Ok(scaled as i64)
 }
 
 /// `normalizePackedNumber`: any loosely typed value as a finite number, else 0.
@@ -481,6 +507,54 @@ fn pack_i64(value: &Value) -> Result<i64> {
         Value::Bytes(bytes) | Value::Buffer(bytes) => text_to_i64(&String::from_utf8_lossy(bytes))?,
         _ => 0,
     })
+}
+
+/// `normalizePackedBigInt`, then the unsigned 64-bit buffer range check.
+fn pack_u64(value: &Value) -> Result<u64> {
+    const LIMIT: f64 = 18_446_744_073_709_551_616.0;
+    let out_of_range = MarshalError::OutOfRange("64-bit column");
+    Ok(match value {
+        Value::None => 0,
+        Value::Int(number) | Value::Long(number) => u64::try_from(*number).map_err(|_| out_of_range)?,
+        Value::Bool(flag) => u64::from(*flag),
+        Value::Real(number) if number.is_finite() => {
+            let truncated = number.trunc();
+            if !(0.0..LIMIT).contains(&truncated) {
+                return Err(out_of_range);
+            }
+            truncated as u64
+        }
+        Value::BigUnsigned(bytes) => {
+            if bytes.len() > 8 {
+                return Err(out_of_range);
+            }
+            let mut buffer = [0u8; 8];
+            buffer[..bytes.len()].copy_from_slice(bytes);
+            u64::from_le_bytes(buffer)
+        }
+        Value::BigSigned(bytes) => {
+            if bytes.len() > 8 {
+                return Err(out_of_range);
+            }
+            let fill = if bytes.last().is_some_and(|byte| byte & 0x80 != 0) { 0xff } else { 0 };
+            let mut buffer = [fill; 8];
+            buffer[..bytes.len()].copy_from_slice(bytes);
+            u64::try_from(i64::from_le_bytes(buffer)).map_err(|_| out_of_range)?
+        }
+        Value::Str(text) | Value::WString(text) | Value::Token(text) => text_to_u64(text)?,
+        Value::Bytes(bytes) | Value::Buffer(bytes) => text_to_u64(&String::from_utf8_lossy(bytes))?,
+        _ => 0,
+    })
+}
+
+fn text_to_u64(text: &str) -> Result<u64> {
+    if jsnum::trim_js(text).is_empty() {
+        return Ok(0);
+    }
+    match jsnum::bigint_from_str(text) {
+        None => Ok(0),
+        Some(number) => u64::try_from(number).map_err(|_| MarshalError::OutOfRange("64-bit column")),
+    }
 }
 
 fn text_to_i64(text: &str) -> Result<i64> {

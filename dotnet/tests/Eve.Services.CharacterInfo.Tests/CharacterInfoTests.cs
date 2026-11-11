@@ -36,7 +36,6 @@ internal sealed class Rig : IAsyncDisposable
     private readonly string _wallet = $"cw_{Guid.NewGuid():N}"[..20];
     private readonly Dictionary<long, string> _descriptions = [];
     private readonly Dictionary<long, double> _securityStatuses = [];
-    private readonly Dictionary<long, long?> _medalGraphicIds = [];
 
     private Rig(NpgsqlDataSource source)
     {
@@ -55,8 +54,6 @@ internal sealed class Rig : IAsyncDisposable
 
     public Dictionary<long, double> SecurityStatuses => _securityStatuses;
 
-    public Dictionary<long, long?> MedalGraphicIds => _medalGraphicIds;
-
     public CharMgrService CreateCharMgr(
     Func<long, CancellationToken, ValueTask<CharMgrPersonalData?>>? readPersonalData = null,
     Func<long, Func<CharMgrPersonalData, CharMgrPersonalData>, CancellationToken, ValueTask<CharMgrPersonalData?>>? updatePersonalData = null,
@@ -69,7 +66,7 @@ internal sealed class Rig : IAsyncDisposable
     Func<long, long, int, long, string, CancellationToken, ValueTask>? writeContactNotification = null,
     Func<Character, CancellationToken, ValueTask<long?>>? readMilitiaFactionId = null) =>
     new(Characters, homeStations ?? CreateHomeStationResolver(Characters), ReadRecentShipKillmailPageAsync,
-        ReadCharacterDescriptionAsync, WriteCharacterDescriptionAsync, ReadSecurityStatusAsync, ReadMedal1GraphicIdAsync,
+        ReadCharacterDescriptionAsync, WriteCharacterDescriptionAsync, ReadSecurityStatusAsync,
         readPersonalData, updatePersonalData, writeActivityStatus, writeLogSettings,
         readCorporationMemberStartedMs, readOrganizationInfo,
         readBalance: async (characterId, token) => (await Wallets.GetAsync(characterId, token))?.Isk,
@@ -122,9 +119,6 @@ public static HomeStationResolver CreateHomeStationResolver(
 
     private ValueTask<double> ReadSecurityStatusAsync(long characterId, CancellationToken _) =>
         ValueTask.FromResult(_securityStatuses.GetValueOrDefault(characterId));
-
-    private ValueTask<long?> ReadMedal1GraphicIdAsync(long characterId, CancellationToken _) =>
-        ValueTask.FromResult(_medalGraphicIds.GetValueOrDefault(characterId));
 
     public NpgsqlDataSource Source { get; }
 
@@ -208,7 +202,7 @@ public class CharMgrTests
         var character = new Character(1, 1, "Test", 0, 0, 0, 0, 0, 0, 0, null, null, 0, 0,
             0, 0, 0, null, DateTimeOffset.UnixEpoch, null, null);
         var service = new CharMgrService(
-            null!, null!, null!, null!, null!, null!, null!,
+            null!, null!, null!, null!, null!, null!,
             readPersonalData: (_, _) => ValueTask.FromResult<CharMgrPersonalData?>(data),
             updatePersonalData: (_, update, _) =>
             {
@@ -243,6 +237,9 @@ public class CharMgrTests
 
     private static string[] Order(PyValue keyVal) => [.. ((PyDict)((PyObject)keyVal).Args).Entries.Select(e => JsSemantics.StringValue(e.Key)!)];
 
+    private static PyPackedRow PublicInfo3Row(PyValue value) =>
+        Assert.IsType<PyPackedRow>(Assert.Single(Assert.IsType<PyObjectEx>(value).List));
+
     [PgFact]
     public async Task The_public_record_has_the_recorded_fields_in_the_recorded_order()
     {
@@ -252,18 +249,18 @@ public class CharMgrTests
         var record = await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo", Id(id));
 
         Assert.Equal(
-            ["characterID", "characterName", "typeID", "raceID", "bloodlineID", "ancestryID", "corporationID", "allianceID", "factionID", "empireID", "schoolID",
-             "gender", "createDateTime", "startDateTime", "description", "securityRating", "securityStatus", "bounty", "title", "shortName", "stationID",
-             "solarSystemID", "militiaFactionID", "medal1GraphicID"],
+            ["characterID", "characterName", "typeID", "raceID", "bloodlineID", "ancestryID", "schoolID", "careerID", "careerSpecialityID",
+             "gender", "createDateTime", "corporationID", "corporationDateTime", "allianceID", "warFactionID", "age", "description"],
             Order(record));
         var f = Fields(record);
         Assert.Equal((Id(id), new PyStr("Ann Lee"), Id(1373), Id(1), Id(1), Id(10)), (f["characterID"], f["characterName"], f["typeID"], f["raceID"], f["bloodlineID"], f["ancestryID"]));
-        Assert.Equal((Id(1000006), PyNone.Instance, Id(500001), Id(500004), Id(35), Id(1)), (f["corporationID"], f["allianceID"], f["factionID"], f["empireID"], f["schoolID"], f["gender"]));
-        Assert.Equal((Id(60015249), Id(30100032)), (f["stationID"], f["solarSystemID"]));
+        Assert.Equal((Id(35), PyNone.Instance, PyNone.Instance), (f["schoolID"], f["careerID"], f["careerSpecialityID"]));
+        Assert.Equal((Id(1000006), PyNone.Instance, PyBool.True), (f["corporationID"], f["allianceID"], f["gender"]));
+        Assert.Same(PyNone.Instance, f["warFactionID"]);
+        Assert.Equal(Id(0), f["age"]);
         Assert.IsType<PyLong>(f["createDateTime"]);
-        Assert.IsType<PyLong>(f["startDateTime"]);
-        Assert.Equal((new PyStr(""), Id(0), Id(0), Id(0), new PyStr(""), new PyStr("none")), (f["description"], f["securityRating"], f["securityStatus"], f["bounty"], f["title"], f["shortName"]));
-        Assert.Equal(PyNone.Instance, f["medal1GraphicID"]);
+        Assert.Equal(f["createDateTime"], f["corporationDateTime"]);
+        Assert.Equal(new PyStr(""), f["description"]);
     }
 
     [PgFact]
@@ -275,7 +272,8 @@ public class CharMgrTests
         var (session, _) = Rig.Session(mine);
 
         Assert.Equal(new PyStr("Bob Roe"), Fields(await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo", Id(theirs)))["characterName"]);
-        Assert.Equal(Id(500004), Fields(await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo", Id(theirs)))["empireID"]); // its faction
+        Assert.Equal(Id(35), Fields(await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo", Id(theirs)))["schoolID"]);
+        Assert.Same(PyNone.Instance, Fields(await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo", Id(theirs)))["warFactionID"]);
         foreach (var unknown in new PyValue[] { Id(1), Id(999_999_999), new PyStr("x"), PyNone.Instance })
         {
             Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo", unknown));
@@ -290,8 +288,23 @@ public class CharMgrTests
         var id = await rig.MakeAsync("Ann Lee");
         var (session, _) = Rig.Session(id);
         var single = await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo", Id(id));
-        Assert.Equal(new PyList([single]), await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo3", Id(id)));
-        Assert.Equal(new PyList([single]), await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo3", Id(id), Id(0)));
+        var rowset = Assert.IsType<PyObjectEx>(await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo3", Id(id)));
+        Assert.Equal(ObjectExKind.Ex2, rowset.Kind);
+        var constructor = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(rowset.Header).Items[0]);
+        Assert.Equal(new PyToken("carbon.common.script.sys.crowset.CRowset"), Assert.Single(constructor.Items));
+        var row = Assert.IsType<PyPackedRow>(Assert.Single(rowset.List));
+        Assert.Equal(
+            ["bounty", "title", "startDateTime", "description", "corporationID", "militiaFactionID", "bloodlineID"],
+            row.Columns.Select(column => column.Name));
+        Assert.Equal(new PyReal(0), row.Values[0]);
+        Assert.Equal(new PyStr(""), row.Values[1]);
+        Assert.Equal(Fields(single)["corporationDateTime"], row.Values[2]);
+        Assert.Equal(Fields(single)["description"], row.Values[3]);
+        Assert.Equal(Id(1000006), row.Values[4]);
+        Assert.Same(PyNone.Instance, row.Values[5]);
+        Assert.Equal(Id(1), row.Values[6]);
+        var rowsetWithExtraArg = Assert.IsType<PyObjectEx>(await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo3", Id(id), Id(0)));
+        Assert.Equal(row, Assert.Single(rowsetWithExtraArg.List));
         Assert.Equal(single, await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo", new PyLong(id)));
         Assert.Equal(PyNone.Instance, await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo3", Id(1)));
     }
@@ -310,16 +323,16 @@ public class CharMgrTests
         var (session, _) = Rig.Session(recent);
 
         var fields = Fields(await Rig.CallAsync(charMgr, session, "GetPublicInfo", Id(recent)));
-        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(joined)), fields["startDateTime"]);
+        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(joined)), fields["corporationDateTime"]);
         Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(created.ToUnixTimeMilliseconds())), fields["createDateTime"]);
-        Assert.NotEqual(fields["createDateTime"], fields["startDateTime"]);
-        var publicInfo3 = (PyList)await Rig.CallAsync(charMgr, session, "GetPublicInfo3", Id(recent));
-        Assert.Equal(fields["startDateTime"], Fields(Assert.Single(publicInfo3.Items))["startDateTime"]);
+        Assert.NotEqual(fields["createDateTime"], fields["corporationDateTime"]);
+        var publicInfo3 = PublicInfo3Row(await Rig.CallAsync(charMgr, session, "GetPublicInfo3", Id(recent)));
+        Assert.Equal(fields["corporationDateTime"], publicInfo3.Values[2]);
 
         var fallback = Fields(await Rig.CallAsync(charMgr, session, "GetPublicInfo", Id(plain)));
-        Assert.Equal(fallback["createDateTime"], fallback["startDateTime"]);
-        var fallback3 = (PyList)await Rig.CallAsync(charMgr, session, "GetPublicInfo3", Id(plain));
-        Assert.Equal(fallback["startDateTime"], Fields(Assert.Single(fallback3.Items))["startDateTime"]);
+        Assert.Equal(fallback["createDateTime"], fallback["corporationDateTime"]);
+        var fallback3 = PublicInfo3Row(await Rig.CallAsync(charMgr, session, "GetPublicInfo3", Id(plain)));
+        Assert.Equal(fallback["corporationDateTime"], fallback3.Values[2]);
     }
 
     [PgFact]
@@ -334,8 +347,8 @@ public class CharMgrTests
             ValueTask.FromResult<long?>(character.DirectFactionId));
         var (session, _) = Rig.Session(enlisted);
 
-        Assert.Equal(Id(500001), Fields(await Rig.CallAsync(charMgr, session, "GetPublicInfo", Id(enlisted)))["militiaFactionID"]);
-        Assert.Equal(PyNone.Instance, Fields(await Rig.CallAsync(charMgr, session, "GetPublicInfo", Id(civilian)))["militiaFactionID"]);
+        Assert.Equal(Id(500001), Fields(await Rig.CallAsync(charMgr, session, "GetPublicInfo", Id(enlisted)))["warFactionID"]);
+        Assert.Equal(PyNone.Instance, Fields(await Rig.CallAsync(charMgr, session, "GetPublicInfo", Id(civilian)))["warFactionID"]);
     }
 
     [PgFact]
@@ -654,23 +667,23 @@ public class CharMgrTests
     }
 
     [PgFact]
-    public async Task Public_info_projects_character_description_security_and_medal_sources()
+    public async Task Public_info_projects_the_public_description_and_omits_unrecorded_private_fields()
     {
         await using var rig = await Rig.CreateAsync();
         var characterId = await rig.MakeAsync("Ann Lee");
         rig.Descriptions[characterId] = "A saved bio";
         rig.SecurityStatuses[characterId] = -2.5;
-        rig.MedalGraphicIds[characterId] = 9876;
         var (session, _) = Rig.Session(characterId);
 
-        var records = (PyList)await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo3", Id(characterId));
-        Assert.Single(records.Items);
-        var fields = Fields(records.Items[0]);
+        var fields = Fields(await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo", Id(characterId)));
         Assert.Equal(new PyStr("A saved bio"), fields["description"]);
-        Assert.IsType<PyLong>(fields["startDateTime"]);
-        Assert.Equal(Py.Number(-2.5), fields["securityRating"]);
-        Assert.Equal(Py.Number(-2.5), fields["securityStatus"]);
-        Assert.Equal(Id(9876), fields["medal1GraphicID"]);
+        Assert.DoesNotContain("securityRating", fields.Keys);
+        Assert.DoesNotContain("securityStatus", fields.Keys);
+        Assert.DoesNotContain("medal1GraphicID", fields.Keys);
+        Assert.Equal(
+            ["characterID", "characterName", "typeID", "raceID", "bloodlineID", "ancestryID", "schoolID", "careerID", "careerSpecialityID",
+             "gender", "createDateTime", "corporationID", "corporationDateTime", "allianceID", "warFactionID", "age", "description"],
+            Order(await Rig.CallAsync(rig.CharMgr, session, "GetPublicInfo", Id(characterId))));
     }
 
     [PgFact]

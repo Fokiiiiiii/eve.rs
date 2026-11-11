@@ -75,7 +75,7 @@ public sealed class StructureDeliveryBackend(
         // notificationSvc.OnNotificationReceived(notificationID, typeID, senderID, created, data).
         public PyValue[] WireArguments(long notificationID) =>
         [
-            new PyLong(notificationID), new PyInt(TypeID), new PyLong(SenderCharacterID),
+            Py.Number(notificationID), new PyInt(TypeID), Py.Number(SenderCharacterID),
             Py.FileTimeLong(CreatedFileTime), WireValue(Data),
         ];
 
@@ -85,8 +85,8 @@ public sealed class StructureDeliveryBackend(
                 new KeyValuePair<PyValue, PyValue>(new PyStr(pair.Key), WireValue(pair.Value)))]),
             JsonArray array => new PyList([.. array.Select(WireValue)]),
             JsonValue value when value.TryGetValue<string>(out var text) => new PyStr(text),
-            JsonValue value when value.TryGetValue<long>(out var number) => new PyLong(number),
-            JsonValue value when value.TryGetValue<int>(out var number) => new PyInt(number),
+            JsonValue value when value.TryGetValue<long>(out var number) => Py.Number(number),
+            JsonValue value when value.TryGetValue<int>(out var number) => Py.Number(number),
             _ => throw new InvalidOperationException("Invalid StructureItemsDelivered notification data."),
         };
     }

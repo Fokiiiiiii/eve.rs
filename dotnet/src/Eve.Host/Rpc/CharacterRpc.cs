@@ -80,7 +80,6 @@ internal sealed partial class CharacterServicesComposition
                 charMgrReadModel.ReadCharacterDescriptionAsync,
                 charMgrReadModel.WriteCharacterDescriptionAsync,
                 ReadCharacterSecurityStatusAsync,
-                charMgrReadModel.ReadMedal1GraphicIdAsync,
                 charMgrReadModel.ReadAsync,
                 charMgrReadModel.UpdateAsync,
                 charMgrReadModel.WriteActivityStatusAsync,

@@ -159,6 +159,7 @@ public sealed record PyBigUnsigned(byte[] Bytes) : PyValue
 /// <summary>A signed variable-width integer whose value is outside JavaScript's safe integer range.</summary>
 public sealed record PyBigInteger(BigInteger Value) : PyValue;
 
+/// <summary>A JavaScript string: ASCII encodes as a Python 2 byte string, non-ASCII as UTF-8 unicode.</summary>
 public sealed record PyStr(string Value) : PyValue;
 
 /// <summary>A Python <c>str</c>: PyEmptyString, PyCharString, PyShortString or PyLongString.</summary>
@@ -243,8 +244,8 @@ public sealed record PySubStruct(PyValue Value) : PyValue;
 
 /// <summary>
 /// A nested marshal stream. <see cref="Decoded"/> is the value it decoded to (or is
-/// to be encoded from); when it is null the stream failed to decode and
-/// <see cref="Raw"/> keeps its bytes.
+/// to be encoded from); <see cref="Raw"/> preserves the received stream bytes when
+/// available, including when decoding succeeds.
 /// </summary>
 public sealed record PySubStream : PyValue
 {
@@ -252,14 +253,22 @@ public sealed record PySubStream : PyValue
 
     public PySubStream(ReadOnlyMemory<byte> raw) => Raw = raw;
 
+    public PySubStream(ReadOnlyMemory<byte> raw, PyValue decoded)
+    {
+        Raw = raw;
+        Decoded = decoded;
+    }
+
     public PyValue? Decoded { get; }
 
     public ReadOnlyMemory<byte> Raw { get; }
 
-    public bool Equals(PySubStream? other) =>
-        other is not null && Equals(Decoded, other.Decoded) && Raw.Span.SequenceEqual(other.Raw.Span);
+    public bool Equals(PySubStream? other) => other is not null &&
+        (Decoded is not null || other.Decoded is not null
+            ? Decoded is not null && other.Decoded is not null && Equals(Decoded, other.Decoded)
+            : Raw.Span.SequenceEqual(other.Raw.Span));
 
-    public override int GetHashCode() => HashCode.Combine(Decoded, Seq.Hash(Raw));
+    public override int GetHashCode() => Decoded is { } decoded ? decoded.GetHashCode() : Seq.Hash(Raw);
 }
 
 public sealed record PyChecksummed(uint Checksum, PyValue Value) : PyValue;

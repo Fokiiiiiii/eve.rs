@@ -40,7 +40,6 @@ public sealed class PersistenceCharMgrReadModel(
     Func<long, int, int, CancellationToken, ValueTask<IReadOnlyList<PyValue>>> readRecentShipKillmailPageAsync,
     Func<long, CancellationToken, ValueTask<string?>> readCharacterDescriptionAsync,
     Func<long, string, CancellationToken, ValueTask> writeCharacterDescriptionAsync,
-    Func<long, CancellationToken, ValueTask<long?>> readMedal1GraphicIdAsync,
     Func<string, string, JsonNode?, WriteResult>? writePath = null,
     Func<string, string, WriteResult>? removePath = null)
 {
@@ -94,10 +93,6 @@ public sealed class PersistenceCharMgrReadModel(
     public ValueTask WriteCharacterDescriptionAsync(
         long characterId, string description, CancellationToken cancellationToken) =>
         writeCharacterDescriptionAsync(characterId, description, cancellationToken);
-
-    public ValueTask<long?> ReadMedal1GraphicIdAsync(
-        long characterId, CancellationToken cancellationToken) =>
-        readMedal1GraphicIdAsync(characterId, cancellationToken);
 
     public async ValueTask<CharMgrPersonalData?> ReadAsync(long characterId, CancellationToken cancellationToken)
     {

@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Eve.Inventory;
 using Eve.Services.Core;
 using Npgsql;
 
@@ -17,13 +18,16 @@ public sealed class PersistenceContractReadModel : IContractReadModel
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
     private readonly string _sdeSchema;
+    private readonly string _inventorySchema;
 
-    public PersistenceContractReadModel(NpgsqlDataSource source, string schema = DefaultSchema, string sdeSchema = Eve.Sde.SdeReader.DefaultSchema)
+    public PersistenceContractReadModel(NpgsqlDataSource source, string schema = DefaultSchema,
+        string sdeSchema = Eve.Sde.SdeReader.DefaultSchema, string inventorySchema = PgItemStore.DefaultSchema)
     {
         ArgumentNullException.ThrowIfNull(source);
         _source = source;
         _schema = $"\"{ValidateSchema(schema)}\"";
         _sdeSchema = $"\"{ValidateSchema(sdeSchema)}\"";
+        _inventorySchema = $"\"{ValidateSchema(inventorySchema)}\"";
     }
 
     public static IReadOnlyList<Eve.Data.Migration> MigrationSet() =>
@@ -132,7 +136,7 @@ public sealed class PersistenceContractReadModel : IContractReadModel
 
     public async ValueTask<ContractDetailRead?> GetContractAsync(long contractId, CancellationToken cancellationToken)
     {
-        var contract = await ReadContractAsync("contract_id = $1", contractId, cancellationToken);
+        var contract = await ReadContractAsync("contract_id = $1", contractId, cancellationToken, includeBlueprintDetails: true);
         if (contract is null)
             return null;
 
@@ -217,9 +221,11 @@ public sealed class PersistenceContractReadModel : IContractReadModel
     }
 
     public ValueTask<ContractReadSnapshot?> GetCourierContractFromItemIdAsync(long itemId, CancellationToken cancellationToken) =>
-        ReadContractAsync("contract_type = 3 AND plastic_wrap_item_id = $1", itemId, cancellationToken);
+        ReadContractAsync("contract_type = 3 AND plastic_wrap_item_id = $1", itemId, cancellationToken,
+            includeBlueprintDetails: true);
 
-    private async ValueTask<ContractReadSnapshot?> ReadContractAsync(string predicate, long id, CancellationToken cancellationToken)
+    private async ValueTask<ContractReadSnapshot?> ReadContractAsync(string predicate, long id,
+        CancellationToken cancellationToken, bool includeBlueprintDetails = false)
     {
         if (id <= 0)
             return null;
@@ -248,7 +254,7 @@ public sealed class PersistenceContractReadModel : IContractReadModel
         }
         if (contract is null)
             return null;
-        var attached = await AttachChildrenAsync(connection, [contract], cancellationToken);
+        var attached = await AttachChildrenAsync(connection, [contract], cancellationToken, includeBlueprintDetails);
         return attached.Contracts.Single();
     }
 
@@ -512,7 +518,7 @@ public sealed class PersistenceContractReadModel : IContractReadModel
             query.Availability is < 0 or > 3 || query.ContractType is < 0 or > 11 ||
             query.LocationId < 0 || query.EndLocationId < 0 || query.IssuerId < 0 ||
             query.StartNum is < 0 or > 100_000 || query.ItemTypeIds.Any(id => id <= 0) ||
-            query.ItemCategoryId < 0 || query.ItemGroupId < 0 || query.SearchHint != 0)
+            query.ItemCategoryId < 0 || query.ItemGroupId < 0 || query.SearchHint is < 0 or > 2)
             throw new ArgumentOutOfRangeException(nameof(query));
 
         var startLocation = LocationKind(query.LocationId);
@@ -535,6 +541,18 @@ public sealed class PersistenceContractReadModel : IContractReadModel
         var descending = query.SortDirection is { } direction
             ? direction != 0
             : !query.HasExplicitSortBy;
+        var blueprintHintFilter = query.SearchHint == 0 ? string.Empty : $"""
+                  AND EXISTS (
+                      SELECT 1
+                      FROM {_schema}.contract_items AS item
+                      JOIN {_inventorySchema}.items AS inventory_item ON inventory_item.id = item.item_id
+                      JOIN {_sdeSchema}.types AS item_type ON item_type.key = item.type_id
+                      JOIN {_sdeSchema}.groups AS item_group ON item_group.key = NULLIF(item_type.doc->>'groupID', '')::bigint
+                      WHERE item.contract_id = c.contract_id AND item.in_crate
+                        AND (item_group.doc->>'categoryID')::integer = 9
+                        AND inventory_item.blueprint_copy = @wantsCopy
+                  )
+            """;
 
         var timer = System.Diagnostics.Stopwatch.StartNew();
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
@@ -642,6 +660,7 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                   ) <= 1)
                   AND (NOT @excludeNoBuyout OR c.contract_type <> 2 OR c.price_isk > 0)
                   AND (@description = '' OR strpos(lower(c.title || E'\n' || c.description), lower(@description)) > 0)
+                  {blueprintHintFilter}
             )
             SELECT count.contract_count,
                    page.contract_id, page.contract_type, page.status, page.availability, page.issuer_id,
@@ -689,6 +708,8 @@ public sealed class PersistenceContractReadModel : IContractReadModel
             command.Parameters.AddWithValue("excludeMultiple", query.ExcludeMultiple);
             command.Parameters.AddWithValue("excludeNoBuyout", query.ExcludeNoBuyout);
             command.Parameters.AddWithValue("description", query.Description?.Trim() ?? "");
+            if (query.SearchHint != 0)
+                command.Parameters.AddWithValue("wantsCopy", query.SearchHint == 2);
             command.Parameters.AddWithValue("startNum", query.StartNum);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
@@ -710,7 +731,8 @@ public sealed class PersistenceContractReadModel : IContractReadModel
             }
         }
 
-        var attached = await AttachChildrenAsync(connection, rows.Select(row => row.Contract).ToArray(), cancellationToken);
+        var attached = await AttachChildrenAsync(connection, rows.Select(row => row.Contract).ToArray(),
+            cancellationToken, includeBlueprintDetails: true);
         var metadata = await ReadSearchItemMetadataAsync(connection, attached.Contracts, cancellationToken);
         var entries = rows.Select(row => new ContractSearchEntry(
             attached.Contracts.Single(contract => contract.ContractId == row.Contract.ContractId),
@@ -871,16 +893,26 @@ public sealed class PersistenceContractReadModel : IContractReadModel
 private async ValueTask<ContractReadBundle> AttachChildrenAsync(
         NpgsqlConnection connection,
         IReadOnlyList<ContractReadSnapshot> contracts,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool includeBlueprintDetails = false)
     {
         if (contracts.Count == 0)
             return new ContractReadBundle(contracts);
 
         var contractIds = contracts.Select(contract => contract.ContractId).ToArray();
         var itemsByContract = new Dictionary<long, List<ContractReadItemSnapshot>>();
+        var blueprintDetails = includeBlueprintDetails
+            ? $"LEFT JOIN {_inventorySchema}.items AS inventory_item ON inventory_item.id = item.item_id"
+            : string.Empty;
+        var blueprintColumns = includeBlueprintDetails
+            ? "COALESCE(inventory_item.blueprint_copy, false), inventory_item.blueprint_runs, COALESCE(inventory_item.material_efficiency, 0), COALESCE(inventory_item.time_efficiency, 0)"
+            : "false, NULL::integer, 0, 0";
         await using (var command = new NpgsqlCommand($"""
-            SELECT contract_id, item_id, type_id, quantity, in_crate, is_package
-            FROM {_schema}.contract_items WHERE contract_id = ANY($1) ORDER BY contract_id, item_id
+            SELECT item.contract_id, item.item_id, item.type_id, item.quantity, item.in_crate, item.is_package,
+                   {blueprintColumns}
+            FROM {_schema}.contract_items AS item
+            {blueprintDetails}
+            WHERE item.contract_id = ANY($1) ORDER BY item.contract_id, item.item_id
             """, connection))
         {
             command.Parameters.AddWithValue(contractIds);
@@ -891,7 +923,8 @@ private async ValueTask<ContractReadBundle> AttachChildrenAsync(
                 if (!itemsByContract.TryGetValue(contractId, out var items))
                     itemsByContract[contractId] = items = [];
                 items.Add(new ContractReadItemSnapshot(reader.GetInt64(1), reader.GetInt32(2), reader.GetInt64(3),
-                    reader.GetBoolean(4), reader.GetBoolean(5)));
+                    reader.GetBoolean(4), reader.GetBoolean(5), reader.GetBoolean(6),
+                    reader.IsDBNull(7) ? null : reader.GetInt32(7), reader.GetInt32(8), reader.GetInt32(9)));
             }
         }
 

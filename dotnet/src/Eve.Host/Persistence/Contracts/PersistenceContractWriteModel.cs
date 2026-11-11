@@ -724,14 +724,12 @@ public sealed class PersistenceContractWriteModel(
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         short type, status, availability;
-        long issuerId, issuerCorporationId, assigneeId, startStationId, expired, currentAcceptor;
+        long issuerId, issuerCorporationId, assigneeId, expired, currentAcceptor;
         bool isCorporationIssued;
         decimal startingPrice, buyoutPrice;
-        int issuerWalletKey;
         await using (var command = new NpgsqlCommand($"""
             SELECT contract_type, status, availability, issuer_id, issuer_corporation_id, is_corporation_issued,
-                   assignee_id, start_station_id, date_expired_filetime, price_isk, collateral_isk, acceptor_id,
-                   issuer_wallet_account_key
+                   assignee_id, date_expired_filetime, price_isk, collateral_isk, acceptor_id
             FROM {_schema}.contract_records WHERE contract_id = $1 FOR UPDATE
             """, connection, transaction))
         {
@@ -740,13 +738,12 @@ public sealed class PersistenceContractWriteModel(
             if (!await reader.ReadAsync(cancellationToken)) throw new ContractUserErrorException("ConContractNotFound");
             type = reader.GetInt16(0); status = reader.GetInt16(1); availability = reader.GetInt16(2);
             issuerId = reader.GetInt64(3); issuerCorporationId = reader.GetInt64(4); isCorporationIssued = reader.GetBoolean(5);
-            assigneeId = reader.GetInt64(6); startStationId = reader.GetInt64(7); expired = reader.GetInt64(8);
-            startingPrice = reader.GetDecimal(9); buyoutPrice = reader.GetDecimal(10); currentAcceptor = reader.GetInt64(11);
-            issuerWalletKey = reader.GetInt32(12);
+            assigneeId = reader.GetInt64(6); expired = reader.GetInt64(7);
+            startingPrice = reader.GetDecimal(8); buyoutPrice = reader.GetDecimal(9); currentAcceptor = reader.GetInt64(10);
         }
         if (type != 2) throw new ContractUserErrorException("ConIllegalType");
         if (status == 4 && currentAcceptor == bidderId) return true;
-        if (status != 0 || expired < nowFileTime) throw new ContractUserErrorException("ConContractNotAvailable");
+        if (status != 0 || expired <= nowFileTime) throw new ContractUserErrorException("ConContractNotAvailable");
         if (availability != 0 && assigneeId != characterId && assigneeId != corporationId && (allianceId == 0 || assigneeId != allianceId))
             throw new ContractUserErrorException("ConContractNotAvailable");
         if (issuerId == characterId || (isCorporationIssued && issuerCorporationId == corporationId))
@@ -808,28 +805,34 @@ public sealed class PersistenceContractWriteModel(
         }
         if (isBuyout)
         {
-            await wallets.AdjustAsync(connection, transaction, new WalletAccount(issuerOwner, issuerWalletKey), amount, bidderId, 85,
-                "Contract auction buyout", nowMs, $"contract:{contractId}:bid:{bidId}:buyout", $"contract:{contractId}", cancellationToken,
-                referenceId: contractId);
-            var offered = new List<long>();
-            await using (var command = new NpgsqlCommand($"SELECT item_id FROM {_schema}.contract_items WHERE contract_id = $1 AND in_crate ORDER BY item_id", connection, transaction))
+            // The buyout ends bidding; each side still uses FinishAuction to
+            // claim its proceeds or items, as the native auction flow does.
+            await using (var closeAuction = new NpgsqlCommand($"UPDATE {_schema}.contract_records SET date_expired_filetime = $2 WHERE contract_id = $1 AND status = 0", connection, transaction))
             {
-                command.Parameters.AddWithValue(contractId);
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-                while (await reader.ReadAsync(cancellationToken)) offered.Add(reader.GetInt64(0));
+                closeAuction.Parameters.AddWithValue(contractId);
+                closeAuction.Parameters.AddWithValue(nowFileTime - 1);
+                if (await closeAuction.ExecuteNonQueryAsync(cancellationToken) != 1)
+                    throw new ContractUserErrorException("ConContractNotAvailable");
             }
-            foreach (var itemId in offered)
-                await items.MoveToOwnerAsync(connection, transaction, itemId, bidderId, startStationId, bidForCorporation ? 62 : 4, cancellationToken);
-            await using (var command = new NpgsqlCommand($"UPDATE {_schema}.contract_items SET in_crate = false WHERE contract_id = $1 AND in_crate", connection, transaction))
+            if (expiryJobs is not null)
+                await expiryJobs.CancelAsync(connection, transaction, contractId, cancellationToken);
+        }
+        else
+        {
+            // EveJS's V24 auction policy leaves 15 minutes after every admitted bid.
+            // Preserve a later existing deadline, and update the durable job with the row.
+            var responseDeadline = checked(nowFileTime + TimeSpan.FromMinutes(15).Ticks);
+            var auctionDeadline = Math.Max(expired, responseDeadline);
+            if (auctionDeadline != expired)
             {
-                command.Parameters.AddWithValue(contractId);
-                await command.ExecuteNonQueryAsync(cancellationToken);
+                await using var extend = new NpgsqlCommand($"UPDATE {_schema}.contract_records SET date_expired_filetime = $2 WHERE contract_id = $1 AND status = 0", connection, transaction);
+                extend.Parameters.AddWithValue(contractId);
+                extend.Parameters.AddWithValue(auctionDeadline);
+                if (await extend.ExecuteNonQueryAsync(cancellationToken) != 1)
+                    throw new ContractUserErrorException("ConContractNotAvailable");
             }
-            await using (var command = new NpgsqlCommand($"UPDATE {_schema}.contract_records SET status = 4, acceptor_id = $2, date_accepted_filetime = $3, reward_escrow = 0 WHERE contract_id = $1 AND status = 0", connection, transaction))
-            {
-                command.Parameters.AddWithValue(contractId); command.Parameters.AddWithValue(bidderId); command.Parameters.AddWithValue(nowFileTime);
-                if (await command.ExecuteNonQueryAsync(cancellationToken) != 1) throw new ContractUserErrorException("ConContractNotAvailable");
-            }
+            if (expiryJobs is not null)
+                await expiryJobs.ScheduleAsync(connection, transaction, contractId, auctionDeadline, cancellationToken);
         }
         if (previousBidId > 0)
             await PublishNotificationAsync(connection, transaction, previousForCorporation ? 0 : previousBidderId,

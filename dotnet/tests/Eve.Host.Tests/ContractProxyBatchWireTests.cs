@@ -332,7 +332,8 @@ public partial class HostServerTests
 
     private void StartContractHost(IContractWriteModel writer, IContractReadModel? readModel = null,
         IContractInventoryReader? inventory = null, bool staff = true,
-        Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null)
+        Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
+        Func<uint, long>? characterIdForAccount = null)
     {
         var registry = new ServiceRegistry();
         Func<long> now = () => FixedNowMs;
@@ -358,7 +359,8 @@ public partial class HostServerTests
                 MaxFrontConnections = 1024,
                 SessionOpened = session =>
                 {
-                    session.Set("charid", new PyInt(42));
+                    var accountId = checked((uint)(session.UserId ?? 42));
+                    session.Set("charid", new PyInt(characterIdForAccount?.Invoke(accountId) ?? 42));
                     session.Set("corpid", new PyInt(84));
                     session.Set("allianceid", new PyInt(126));
                     session.Set("stationid", new PyInt(3001));

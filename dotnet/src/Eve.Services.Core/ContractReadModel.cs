@@ -46,7 +46,16 @@ public sealed record ContractReadSnapshot(
     long? AcceptorWalletKey = null,
     double Volume = 0);
 
-public sealed record ContractReadItemSnapshot(long ItemId, int TypeId, long Quantity, bool InCrate, bool IsPackage);
+public sealed record ContractReadItemSnapshot(
+    long ItemId,
+    int TypeId,
+    long Quantity,
+    bool InCrate,
+    bool IsPackage,
+    bool BlueprintCopy = false,
+    int? BlueprintRuns = null,
+    int MaterialEfficiency = 0,
+    int TimeEfficiency = 0);
 
 public sealed record ContractReadBidSnapshot(long BidId, long BidderId, decimal Amount, long CreatedAtFileTime, bool IsCorporation);
 

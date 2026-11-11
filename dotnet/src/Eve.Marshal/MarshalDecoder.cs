@@ -384,7 +384,7 @@ internal sealed class MarshalDecoder
         // A nested stream that does not decode is kept as raw bytes.
         try
         {
-            return new PySubStream(DecodeStream(data, false, _depth, _budget));
+            return new PySubStream(data, DecodeStream(data, false, _depth, _budget));
         }
         catch (MarshalException error) when (error.Kind != MarshalErrorKind.AllocationBudgetExceeded)
         {

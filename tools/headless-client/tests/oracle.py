@@ -189,7 +189,10 @@ def _packed_value(js, db_type):
     if isinstance(js, JsNum):
         return float(js)
     if isinstance(js, JsBig):
-        return m.Long(int(js)) if -(2**63) <= int(js) < 2**63 else float(int(js))
+        number = int(js)
+        if -(2**63) <= number < 2**63:
+            return m.Long(number)
+        return m.BigUnsigned(number) if number >= 0 else m.BigSigned(number)
     if isinstance(js, str):
         return str(js)
     if isinstance(js, JsBuf):

@@ -60,6 +60,20 @@ public class CodecTests
     }
 
     [Fact]
+    public void Non_ascii_application_strings_use_unicode_while_explicit_byte_strings_stay_bytes()
+    {
+        const string text = "Åri 星";
+        var unicodeWire = Convert.FromHexString("7e000000002e08c385726920e6989f");
+        Assert.Equal(unicodeWire, MarshalCodec.Encode(new PyStr(text)));
+        Assert.Equal(new PyWString(text), MarshalCodec.DecodeExact(unicodeWire));
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        var byteStringWire = Convert.FromHexString("7e000000001008c385726920e6989f");
+        Assert.Equal(byteStringWire, MarshalCodec.Encode(new PyBytes(bytes)));
+        Assert.Equal(new PyBytes(bytes), MarshalCodec.DecodeExact(byteStringWire));
+    }
+
+    [Fact]
     public void A_char_string_of_any_byte_decodes_to_that_byte()
     {
         for (var b = 0; b < 256; b++)

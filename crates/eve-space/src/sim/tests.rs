@@ -4436,10 +4436,11 @@ fn structure_deposit_measure_uses_actual_surfaces_and_preserves_the_one_argument
     let old_measure = simulation
         .handle(Message::Command { session_id: SESSION, command: 20, args: vec![can as f64] }, NOON)
         .unwrap();
+    // The ship radius was increased by 100 m above; the one-argument path also measures hull surfaces.
     assert!(
         matches!(old_measure.as_slice(),
         [Message::Measured { session_id: SESSION, command: 20, distance: Some(distance) }]
-            if (*distance - 214.0).abs() < 1e-3),
+            if (*distance - 114.0).abs() < 1e-3),
         "{old_measure:?}"
     );
     assert_eq!(

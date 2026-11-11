@@ -32,8 +32,8 @@ internal sealed partial class CharacterServicesComposition
                  characterId == activation.ActivatorCharacterId ||
                  characterId == finalAttackerCharacterId))
                 session.SendNotification("OnKillRightUsed", "clientID",
-                    new Eve.Marshal.PyLong(activation.KillRightId),
-                    new Eve.Marshal.PyLong(activation.TargetCharacterId));
+                    Eve.Services.InventoryWire.Id(activation.KillRightId),
+                    Eve.Services.InventoryWire.Id(activation.TargetCharacterId));
         }
     }
 }

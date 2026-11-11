@@ -733,10 +733,20 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
         )
         assert item == f"{corporation}|{LEGAL_SYSTEM}|0|evejs:structure-unanchor:hull:{tower}", item
 
-        try:
-            assert client.call_bound(ship[0], "Scoop", tower, None) is None
-        except p.MachoError as failure:
-            pytest.fail(f"the control tower scoop was refused: {_refusal(failure)[0]}: {describe(failure.payload)}")
+        # A ship can drift away while the unanchor timer completes. Follow the
+        # newly placed hull to the client's 2,500 m scoop range before testing
+        # the cargo transition.
+        client.call_bound(ballpark[0], "CmdFollowBall", tower, 1_000)
+        deadline = time.time() + 90
+        while True:
+            try:
+                assert client.call_bound(ship[0], "Scoop", tower, None) is None
+                break
+            except p.MachoError as failure:
+                reason = _refusal(failure)[0]
+                if reason != "TargetTooFar" or time.time() > deadline:
+                    pytest.fail(f"the control tower scoop was refused: {reason}: {describe(failure.payload)}")
+                timed_events(client, 2.0)
         changes = timed_events(client, 15.0, until=lambda events: _named(events, "OnItemChange") != [])
         assert _named(changes, "OnItemChange"), "scooping the hull sent no item-change notification"
         scooped = dbseed.sql(

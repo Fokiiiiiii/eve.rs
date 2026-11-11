@@ -93,8 +93,8 @@ internal static class CrimewatchKillRightEvents
         {
             sessions.Of(characterId)?.SendNotification(
                 "OnKillRightCreated",
-                "clientID",
-                new PyLong(created.KillRightId),
+                "charid",
+                InventoryWire.Id(created.KillRightId),
                 InventoryWire.Id(created.OwnerCharacterId),
                 InventoryWire.Id(created.TargetCharacterId),
                 new PyLong(Py.FileTimeFromUnixMs(created.ExpiresAtUnixMs)));

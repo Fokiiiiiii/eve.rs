@@ -123,7 +123,7 @@ public sealed partial class CrimewatchKillRightHostTests
                 {
                     Assert.Equal("OnKillRightUsed", note.Name);
                     Assert.Equal("clientID", note.IdType);
-                    Assert.Equal([new PyLong(rightForFinalBlowId!.Value), new PyLong(target)], note.Arguments);
+                    Assert.Equal([InventoryWire.Id(rightForFinalBlowId!.Value), InventoryWire.Id(target)], note.Arguments);
                 });
             }
             Assert.Empty(NotificationsOf(sinks[activator]));
@@ -186,7 +186,7 @@ public sealed partial class CrimewatchKillRightHostTests
                 var note = Assert.Single(NotificationsOf(sink));
                 Assert.Equal("OnKillRightUsed", note.Name);
                 Assert.Equal("clientID", note.IdType);
-                Assert.Equal([new PyLong(rightId.Value), new PyLong(target)], note.Arguments);
+                Assert.Equal([InventoryWire.Id(rightId.Value), InventoryWire.Id(target)], note.Arguments);
             }
         }
         finally

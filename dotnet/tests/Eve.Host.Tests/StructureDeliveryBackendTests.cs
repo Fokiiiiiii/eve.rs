@@ -261,13 +261,13 @@ public sealed class StructureDeliveryBackendTests
         var published = Assert.Single(fixture.PublishedInbox);
         Assert.Equal(fixture.RecipientID, published.Recipient);
         Assert.Equal(5, published.Args.Length);
-        Assert.Equal(new PyLong(saved["notificationID"]!.GetValue<long>()), published.Args[0]);
+        Assert.Equal(new PyInt(saved["notificationID"]!.GetValue<long>()), published.Args[0]);
         Assert.Equal(new PyInt(199), published.Args[1]);
-        Assert.Equal(new PyLong(fixture.ActorID), published.Args[2]);
+        Assert.Equal(new PyInt(fixture.ActorID), published.Args[2]);
         Assert.Equal(Py.FileTimeLong(saved["created"]!.GetValue<long>()), published.Args[3]);
         var wireData = Assert.IsType<PyDict>(published.Args[4]);
         var wireSummary = Assert.IsType<PyList>(wireData.Entries.Single(pair => pair.Key == new PyStr("listOfTypesAndQty")).Value);
-        Assert.Equal(new PyLong(12), Assert.IsType<PyList>(wireSummary.Items.Single(row =>
+        Assert.Equal(new PyInt(12), Assert.IsType<PyList>(wireSummary.Items.Single(row =>
             Assert.IsType<PyList>(row).Items[1] == new PyInt(fixture.TypeID("Tritanium")))).Items[0]);
 
         var service = new NotificationMgrService(async (id, _) => new JsonObject { ["byID"] = await fixture.InboxRowsAsync(id) }, () => 1_000_000);

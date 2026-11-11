@@ -68,6 +68,27 @@ public class DeathOutcomeTests
     }
 
     [Fact]
+    public void The_report_keeps_the_pre_death_tree_and_each_resolved_drop_and_destruction_count()
+    {
+        var content = Node(21, 5);
+        var container = Node(20, 5, [content]);
+        var seed = Enumerable.Range(0, 1000).Select(n => $"probe:{n}")
+            .First(candidate => !DeathOutcome.HashToDrop(candidate, 20, 0) && DeathOutcome.HashToDrop(candidate, 21, 0));
+
+        var result = DeathOutcome.ResolveWithItems([container], seed);
+
+        Assert.Equal([new DeathMove(21, 1), new DeathDestroy(20)], result.Actions);
+        Assert.Equal(DeathOutcome.Resolve([container], seed), result.Actions);
+        var report = Assert.Single(result.Items);
+        Assert.Equal((1020, 5, true, 0L, 1L),
+            (report.TypeId, report.Flag, report.Singleton, report.QuantityDropped, report.QuantityDestroyed));
+        var childReport = Assert.Single(report.Contents);
+        Assert.Equal((1021, 5, true, 1L, 0L),
+            (childReport.TypeId, childReport.Flag, childReport.Singleton, childReport.QuantityDropped, childReport.QuantityDestroyed));
+        Assert.Empty(childReport.Contents);
+    }
+
+    [Fact]
     public void A_stack_is_split_between_the_wreck_and_the_void_and_a_stack_that_drops_whole_or_not_at_all_is_one_action()
     {
         var stack = Node(30, 5, singleton: false, quantity: 1000);

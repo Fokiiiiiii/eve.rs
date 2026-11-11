@@ -725,13 +725,13 @@ fn expiring_a_wreck_removes_it_from_pilot_structure_and_widow_views() {
 }
 
 #[test]
-fn how_far_a_can_is_is_measured_from_the_centre_of_the_ship_to_the_surface_of_the_can() {
+fn how_far_a_can_is_is_measured_between_the_ship_and_can_surfaces() {
     let mut scene = watcher();
     let id = 9_988_400_002_948;
     scene.place_container(A, can_for(A, id, 275.0), NOON);
     let distance = scene.distance_to_wreck(A, id, NOON).expect("the can is there");
-    // 275 ahead, the can's radius is 14
-    assert!((distance - 261.0).abs() < 1e-6, "{distance}");
+    // 275 ahead; the can and capsule radii are 14 and 47.
+    assert!((distance - 214.0).abs() < 1e-6, "{distance}");
     assert_eq!(scene.distance_to_wreck(A, 12, NOON), None);
     assert_eq!(scene.distance_to_wreck(99, id, NOON), None);
 }

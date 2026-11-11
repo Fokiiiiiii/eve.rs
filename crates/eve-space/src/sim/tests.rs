@@ -2498,7 +2498,7 @@ fn a_can_is_put_ahead_of_the_pilot_changed_when_something_is_in_it_measured_and_
         )
         .unwrap();
     assert!(
-        matches!(&measured[..], [Message::Measured { session_id: SESSION, command: 20, distance: Some(d) }] if (*d - 261.0).abs() < 1e-3),
+        matches!(&measured[..], [Message::Measured { session_id: SESSION, command: 20, distance: Some(d) }] if (*d - 214.0).abs() < 1e-3),
         "{measured:?}"
     );
     let nothing = sim
@@ -2514,6 +2514,42 @@ fn a_can_is_put_ahead_of_the_pilot_changed_when_something_is_in_it_measured_and_
     assert!(
         sim.handle(Message::RemoveWreck { wreck_id: can, effect: 3 }, NOON + 4 * SECOND).unwrap().is_empty(),
         "nothing is told twice"
+    );
+}
+
+#[test]
+fn measure_reports_distance_between_the_ship_and_wreck_surfaces() {
+    let mut sim = undocked();
+    sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+
+    let ship_radius = 6_000.0;
+    let ship_position = {
+        let pilot =
+            sim.scenes.get_mut(&SceneKey::solar_system(SYSTEM)).unwrap().pilots.get_mut(&SESSION).unwrap();
+        pilot.ship.spec.radius = ship_radius;
+        pilot.ship.position
+    };
+    let wreck_id = 9_988_400_002_949;
+    let wreck_radius = 47.0;
+    let hull_distance = 2_000.0;
+    let wreck_position =
+        [ship_position.x + ship_radius + wreck_radius + hull_distance, ship_position.y, ship_position.z];
+    sim.handle(wreck_placement(SYSTEM, wreck_id, wreck_position), NOON).unwrap();
+
+    let measured = sim
+        .handle(
+            Message::Command {
+                session_id: SESSION,
+                command: crate::link::COMMAND_MEASURE,
+                args: vec![wreck_id as f64],
+            },
+            NOON,
+        )
+        .unwrap();
+
+    assert_eq!(
+        measured,
+        [Message::Measured { session_id: SESSION, command: 20, distance: Some(hull_distance) }]
     );
 }
 
@@ -4403,7 +4439,7 @@ fn structure_deposit_measure_uses_actual_surfaces_and_preserves_the_one_argument
     assert!(
         matches!(old_measure.as_slice(),
         [Message::Measured { session_id: SESSION, command: 20, distance: Some(distance) }]
-            if (*distance - 261.0).abs() < 1e-3),
+            if (*distance - 214.0).abs() < 1e-3),
         "{old_measure:?}"
     );
     assert_eq!(

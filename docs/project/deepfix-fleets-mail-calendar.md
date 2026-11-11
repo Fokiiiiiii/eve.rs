@@ -44,6 +44,12 @@ Updated 2026-11-11. This record separates checked behavior from remaining checks
 - `XmppOrganizationRoomTests` drives the actual session IQ entry points and PostgreSQL store for temporary mute and ban. It checks mute enforcement, list metadata, ban refusal after the V24 `outcast → expiry set → none` sequence, store reopen, and rejoin after expiry. The existing room access tests cover persistent member/outcast and visitor roles, co-owner limits, corporation allow/deny and store reopen.
 - The temporary expiring-record route added here is scoped to player-owned rooms. Static/system-room ACL administration and automatic graphical-client roster refresh at the instant a live mute expires were not verified in this pass.
 
+### CI red gate follow-up: ship-to-wreck interaction range
+
+- The first main CI run for this branch (`826d82dc8`, run 1719) failed in the live control-tower unanchor-and-scoop flow at `tools/headless-client/tests/test_structures.py:739` with `TargetTooFar`. The failure exposed a range mismatch: the simulation's one-argument `Measure` returned distance from the ship centre to the wreck surface, while the Host compared that value to the V24 2,500 m Scoop interaction range.
+- V24 `autopilot.InInteractionRange` reads the target ball's `surfaceDist` (`eve/client/script/parklife/autopilot.py:550-554`), which subtracts both ball radii (`eve/client/script/ui/inflight/overview/overviewScrollEntry.py:386-393`); `menusvc.GetCloseAndTryCommand` uses the default interaction range for Scoop (`eve/client/script/ui/services/menusvc.py:3238-3239,3698-3699`). EveJS measures ship-to-item hull distance and uses the same 2,500 m limit (`server/src/services/ship/cargoContainerRuntime.js:1138-1158`).
+- `Scene::distance_to_wreck` now returns the hull-to-hull distance by subtracting both the ship and wreck/can radii and clamping overlapping surfaces to zero. A regression test places a 6,000 m-radius ship 2,000 m from a wreck's surface; it failed before the change with 8,000 m and now passes at 2,000 m. The prior center-to-surface expectations were recalculated from the V24/EveJS rule. The main CI run that found this remains a historical failure; the new main run must verify the live flow after this fix.
+
 ## Verification
 
 The database-backed checks used the job’s own `eve_p3` database and the pinned SDE build 3396210. The SDE and mission data were loaded into that database from `.cache/sde`; no SDE files were added to the repository.

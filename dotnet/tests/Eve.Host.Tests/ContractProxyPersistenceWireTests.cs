@@ -18,7 +18,7 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
-    public async Task Finish_auction_claims_items_and_proceeds_independently()
+    public async Task Finish_auction_claims_items_independently_and_caps_minimum_tax_to_the_small_sale()
     {
         var connectionString = Environment.GetEnvironmentVariable("EVE_PG_URL")
             ?? throw new InvalidOperationException("EVE_PG_URL must name the assigned PostgreSQL lane");

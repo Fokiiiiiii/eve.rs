@@ -1256,6 +1256,11 @@ private static void WriteStructureDamageCorrelation(
                 w.U8(Kind.EmpireSentryOffense);
                 w.U64(m.SessionId);
                 break;
+            case SimWarpDropped m:
+                if (m.SessionId == 0) throw new SimLinkException(SimLinkError.BadValue, "warp drop session");
+                w.U8(Kind.WarpDropped);
+                w.U64(m.SessionId);
+                break;
             case SimNotify m:
                 w.U8(Kind.Notify);
                 w.U64(m.SessionId);

@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 96;
+    public const ushort ProtocolVersion = 97;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -1269,6 +1269,14 @@ public static partial class SimCodec
             case Kind.Arrived:
                 message = new SimArrived(r.U64(), r.I64(), ReadVector(ref r));
                 break;
+            case Kind.WarpDropped:
+            {
+                var droppedSession = r.U64();
+                if (droppedSession == 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "warp drop session");
+                message = new SimWarpDropped(droppedSession);
+                break;
+            }
             case Kind.ContainerPlaced:
                 message = new SimContainerPlaced(r.U64(), r.I64(), ReadVector(ref r), ReadVector(ref r));
                 break;

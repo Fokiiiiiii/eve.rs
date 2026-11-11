@@ -26,7 +26,7 @@ from evecli.observe import _plain_name, timed_events
 from tests import dbseed
 from tests.runid import run_token
 from tests import test_login_to_character as base
-from tests.test_undock import STATION, UNDOCK, arrive, number
+from tests.test_undock import STATION, UNDOCK, actions_of, arrive, number
 
 LIVE = os.environ.get("EVE_LIVE_HOST", "")
 SEEDED_STRUCTURE = 1040000000777  # the Astrahus the module seeds (its item id; the structure store's key)
@@ -361,6 +361,19 @@ def keyval(described) -> dict:
 def _named(events: list, name: str) -> list:
     return [event for event in events if "name" in event and _plain_name(event["name"]) == name]
 
+def _has_ship_destiny_action(events: list, ship_id: int, name: str, *args_wanted: int) -> bool:
+    """Whether the ship was told its own Destiny action, with the exact trailing arguments."""
+    for event in events:
+        if event.get("name") != "DoDestinyUpdate":
+            continue
+        for _, action, args in actions_of(event)[0]:
+            if action != name:
+                continue
+            values = args["$tuple"]
+            if number(values[0]) == ship_id and tuple(number(value) for value in values[1:]) == args_wanted:
+                return True
+    return False
+
 def test_a_docked_pilot_takes_control_of_the_structure_and_the_structure_names_it():
     """structureControl.TakeControl by a pilot docked in the structure (V24.01 structureControlService.js Handle_TakeControl, which returns
     None): the structure's pilot is the character from then on. The reference's assumeStructureControl changes the session's shipid to the
@@ -684,19 +697,27 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
         ship = client.call("ship", "MachoBindObject", (LEGAL_SYSTEM, 15), None)
         ballpark = client.call("beyonce", "MachoBindObject", LEGAL_SYSTEM, None)
         x, y, z = LEGAL_STATION_POSITION
+        timed_events(client, 1.0)
         client.call_bound(ballpark[0], "CmdWarpToStuff", "position", (x + WARP_OFF, y, z), minRange=0)
         tower = dbseed.new_item(12235, owner=character, location=ship_id, flag=CARGO_FLAG, singleton=True)
+        dropout = []
         deadline = time.time() + 300
-        while True:
-            try:
-                client.call_bound(ship[0], "Drop", [(tower, 1)], None, False)
-                break
-            except p.MachoError as failure:
-                if _refusal(failure)[0] != "ShipInWarp" or time.time() > deadline:
-                    pytest.fail(f"the tower drop was refused: {_refusal(failure)[0]}: {describe(failure.payload)}")
-            client.call_bound(ballpark[0], "CmdStop")
+        while time.time() < deadline and not _has_ship_destiny_action(dropout, ship_id, "SetBallMassive", 0):
             client.call_bound(ballpark[0], "UpdateStateRequest")
-            timed_events(client, 3.0)
+            dropout.extend(
+                timed_events(
+                    client,
+                    3.0,
+                    until=lambda events: _has_ship_destiny_action(events, ship_id, "SetBallMassive", 0),
+                )
+            )
+        assert _has_ship_destiny_action(dropout, ship_id, "SetBallMassive", 0), (
+            "the ship did not reach the warp dropout notification before dropping the control tower"
+        )
+        # The server schedules the massless notification two seconds before dropout; wait through that transition so ship.Drop
+        # runs at the destination and the tower is placed beside the ship.
+        timed_events(client, 3.0)
+        client.call_bound(ship[0], "Drop", [(tower, 1)], None, False)
 
         assert dbseed.sql(
             f"select count(*) from {dbseed.schema('SPACE')}.deployed "
@@ -737,7 +758,16 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
         # A ship can drift away while the unanchor timer completes. Follow the
         # newly placed hull to the client's 2,500 m scoop range before testing
         # the cargo transition.
+        # The ship is already out of warp: keep its coast and follow the dropped hull as soon as unanchoring completes.
         client.call_bound(ballpark[0], "CmdFollowBall", tower, 1_000)
+        following = timed_events(
+            client,
+            10.0,
+            until=lambda events: _has_ship_destiny_action(events, ship_id, "FollowBall", tower, 1_000),
+        )
+        assert _has_ship_destiny_action(following, ship_id, "FollowBall", tower, 1_000), (
+            "the simulation did not accept following the unanchored control tower after warp dropout"
+        )
         deadline = time.time() + 90
         while True:
             try:

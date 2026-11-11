@@ -22,6 +22,28 @@ public class SimCodecTests
 
     private static byte[] Hex(string text) => Convert.FromHexString(text);
 
+    [Fact]
+    public void A_warp_dropout_message_clears_the_hosts_in_warp_state()
+    {
+        var frame = SimCodec.Encode(new SimWarpDropped(42));
+
+        var decoded = Assert.IsType<SimWarpDropped>(SimCodec.Decode(frame.AsMemory(sizeof(uint))));
+
+        Assert.Equal(42UL, decoded.SessionId);
+        Assert.Equal(Convert.ToHexString(frame), Convert.ToHexString(SimCodec.Encode(decoded)));
+    }
+
+    [Fact]
+    public void A_warp_dropout_message_rejects_a_zero_session()
+    {
+        var payload = new byte[sizeof(byte) + sizeof(ulong)];
+        payload[0] = 162;
+
+        var error = Assert.Throws<SimLinkException>(() => SimCodec.Decode(payload));
+
+        Assert.Equal(SimLinkError.BadValue, error.Error);
+    }
+
     /// <summary>A dynamic slim-item field value of a case: <c>{"tag": ..., "value": ...}</c>, or <c>{"tag": "tuple", "items": [...]}</c>.</summary>
     private static SimSlimValue SlimValueOf(JsonNode value) => (string)value["tag"]! switch
     {
@@ -582,6 +604,7 @@ public class SimCodecTests
                     "CrimewatchFlagActive" => new SimCrimewatchFlagActive(
                         Session(), (bool)c["isCriminal"]!, Wide(c, "expiresAtUnixMs")),
             "EmpireSentryOffense" => new SimEmpireSentryOffense(Session()),
+            "WarpDropped" => new SimWarpDropped(Session()),
             "UpdateState" => new SimUpdateState(Session()),
             "Command" => new SimCommand(Session(), (byte)(int)c["command"]!, [.. ((JsonArray)c["args"]!).Select(a => (double)a!)]),
             "ShipSpec" => new SimShipChanged(Session(), ShipOf(c["ship"]!)),
@@ -730,7 +753,8 @@ public class SimCodecTests
     public void The_fixtures_cover_every_message_kind()
     {
         var kinds = ((JsonArray)Fixtures["valid"]!).Select(c => (string)c!["kind"]!).Distinct().Order().ToArray();
-          Assert.Equal(new[] {"AbyssalFieldMembership", "Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "CrimewatchFlagActive", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "EmpireSentryOffense", "EnsureAbyssalEnvironmentObject", "EnsureAbyssalEnvironmentObjectReply", "EnsureAbyssalLootContainer", "EnsureAbyssalLootContainerReply", "EnsureAbyssalRewardCache", "EnsureAbyssalRewardCacheReply", "EnsureAbyssalScene", "EnsureAbyssalSceneObject", "EnsureAbyssalSceneObjectReply", "EnsureAbyssalSceneReply", "EnsureAbyssalTracePublished", "EnsureAbyssalTracePublishedReply", "EnsureTournamentBeacon", "EnsureTournamentBeaconReply", "Enter", "EnterPublicParticipant", "EnterPublicParticipantReply", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "GetAbyssalParticipantPose", "GetAbyssalParticipantPoseReply", "GetSceneBody", "GetSceneBodyReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "MoveAbyssalParticipant", "MoveAbyssalParticipantReply", "MovePublicParticipant", "MovePublicParticipantReply", "Notify", "PlaceAccelerationGate", "PlaceAnalysisBeacon", "PlaceBattlefieldScoreboard", "PlaceCapturePoint", "PlaceContainer", "PlaceControlTower", "PlaceCynoBeacon", "PlaceDeadspacePocket", "PlaceDisruptor", "PlaceInhibitor", "PlaceObservatory", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "QueryTournamentWreck", "QueryTournamentWreckReply", "ReadTournamentCutoff", "ReadTournamentCutoffReply", "ReadTournamentMetrics", "ReadTournamentMetricsReply", "RebindAbyssalSession", "RebindAbyssalSessionReply", "RefreshAbyssalNpc", "RefreshAbyssalNpcReply", "Refused", "RegisterTournamentCutoff", "RegisterTournamentCutoffReply", "RegisterTournamentMetrics", "RegisterTournamentMetricsReply", "ReleaseTournamentCutoff", "ReleaseTournamentCutoffReply", "ReleaseTournamentMetrics", "ReleaseTournamentMetricsReply", "RemoteDecloakPing", "RemoveAbyssalParticipant", "RemoveAbyssalParticipantReply", "RemoveAbyssalScene", "RemoveAbyssalSceneReply", "RemoveAbyssalTrace", "RemoveAbyssalTraceReply", "RemoveCynoBeacon", "RemoveDeployed", "RemoveMoonChunk", "RemoveProbe", "RemoveStructure", "RemoveTournamentBeacon", "RemoveTournamentBeaconReply", "RemoveTournamentWreck", "RemoveTournamentWreckReply", "RemoveUnpilotedShip", "RemoveUnpilotedShipReply", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "ServiceNotify", "SetAnalysisBeaconState", "SetDisruptorActive", "SetSlimField", "SetStructureMoonMiningState", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState", "UpsertMoonChunk" }.Order(), kinds);
+          Assert.Equal(new[] {"AbyssalFieldMembership", "Accepted", "Activate", "AdjustCharge", "Approaching", "Arrived", "Bind", "BuffState", "ChangeWreck", "ChargeAdjusted", "ChargeSpent", "Command", "Condition", "ContainerPlaced", "ControlStructure", "CrimewatchFlagActive", "DamageableEntityRemoved", "DamageableEntityUpserted", "Deployed", "Destroy", "Destroyed", "DirectionalTargets", "Docked", "DroneCommand", "DroneReleased", "DroneResults", "DroneScooped", "EcmBurst", "EmpireSentryOffense", "EnsureAbyssalEnvironmentObject", "EnsureAbyssalEnvironmentObjectReply", "EnsureAbyssalLootContainer", "EnsureAbyssalLootContainerReply", "EnsureAbyssalRewardCache", "EnsureAbyssalRewardCacheReply", "EnsureAbyssalScene", "EnsureAbyssalSceneObject", "EnsureAbyssalSceneObjectReply", "EnsureAbyssalSceneReply", "EnsureAbyssalTracePublished", "EnsureAbyssalTracePublishedReply", "EnsureTournamentBeacon", "EnsureTournamentBeaconReply", "Enter", "EnterPublicParticipant", "EnterPublicParticipantReply", "EnterReply", "FighterGotoPoint", "FighterLanded", "FighterOrder", "FighterReleased", "FighterResults", "FighterSize", "GetAbyssalParticipantPose", "GetAbyssalParticipantPoseReply", "GetSceneBody", "GetSceneBodyReply", "Hello", "HelloAck", "Jumped", "Jumping", "LaunchDrone", "LaunchFighter", "Leave", "Measured", "ModuleEnded", "ModuleWorkCycle", "ModuleWorkResult", "MoveAbyssalParticipant", "MoveAbyssalParticipantReply", "MovePublicParticipant", "MovePublicParticipantReply", "Notify", "PlaceAccelerationGate", "PlaceAnalysisBeacon", "PlaceBattlefieldScoreboard", "PlaceCapturePoint", "PlaceContainer", "PlaceControlTower", "PlaceCynoBeacon", "PlaceDeadspacePocket", "PlaceDisruptor", "PlaceInhibitor", "PlaceObservatory", "PlaceProbe", "PlaceStructure", "PlaceWormhole", "PlaceWreck", "QueryTournamentWreck", "QueryTournamentWreckReply", "ReadTournamentCutoff", "ReadTournamentCutoffReply", "ReadTournamentMetrics", "ReadTournamentMetricsReply", "RebindAbyssalSession", "RebindAbyssalSessionReply", "RefreshAbyssalNpc", "RefreshAbyssalNpcReply", "Refused", "RegisterTournamentCutoff", "RegisterTournamentCutoffReply", "RegisterTournamentMetrics", "RegisterTournamentMetricsReply", "ReleaseTournamentCutoff", "ReleaseTournamentCutoffReply", "ReleaseTournamentMetrics", "ReleaseTournamentMetricsReply", "RemoteDecloakPing", "RemoveAbyssalParticipant", "RemoveAbyssalParticipantReply", "RemoveAbyssalScene", "RemoveAbyssalSceneReply", "RemoveAbyssalTrace", "RemoveAbyssalTraceReply", "RemoveCynoBeacon", "RemoveDeployed", "RemoveMoonChunk", "RemoveProbe", "RemoveStructure", "RemoveTournamentBeacon", "RemoveTournamentBeaconReply", "RemoveTournamentWreck", "RemoveTournamentWreckReply", "RemoveUnpilotedShip", "RemoveUnpilotedShipReply", "RemoveWormhole", "RemoveWreck", "Respawn", "ScanTargets", "ServiceNotify", "SetAnalysisBeaconState", "SetDisruptorActive", "SetSlimField", "SetStructureMoonMiningState", "SetStructureState", "ShipSpec", "Spawn", "SpawnReply", "StructureDamageCandidatesRequest", "StructureDamageCandidatesResult", "StructureDamaged", "TargetRefused", "Targets", "TetherChanged", "TetherPolicy", "UpdateEffect", "UpdateState", "UpsertMoonChunk" }.Order(), kinds.Where(kind => kind != "WarpDropped").ToArray());
+        Assert.Contains("WarpDropped", kinds);
         Assert.True(((JsonArray)Fixtures["invalid"]!).Count >= 10);    }
 
     [Theory]

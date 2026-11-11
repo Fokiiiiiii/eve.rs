@@ -310,6 +310,8 @@ pub enum Out {
     /// A player's ship came to rest at a belt after a warp (the belt it warped to, or the nearest within [`BELT_LANDING_RADIUS`] of it): the host
     /// decides whether anything lives there. `position` is where the belt is (what the host places what lives there around).
     Arrived { session: SessionId, belt_id: i64, position: Vec3 },
+    /// The ship left warp mode and may take the pilot's next movement order during its coast.
+    WarpDropped { session: SessionId },
     /// The answer to a question about the ship's condition.
     Condition { session: SessionId, command: u8, condition: Condition },
     /// A cynosural field was lit by the ship of `session`: the host keeps its record (`Message::Deployed`).
@@ -469,6 +471,7 @@ impl Out {
             | Out::Jumping { session, .. }
             | Out::Docked { session, .. }
             | Out::Arrived { session, .. }
+            | Out::WarpDropped { session }
             | Out::Destroyed { session, .. }
             | Out::Condition { session, .. }
             | Out::TetherChanged { session, .. }
@@ -1178,6 +1181,7 @@ impl Scene {
                 out.extend(self.tell_all(session, massless(stamp + 2)));
                 out
             }
+            Milestone::Dropped { .. } => vec![Out::WarpDropped { session }],
             Milestone::Rest { at, position, velocity } => {
                 let stamp = self.next_stamp(at);
                 let actions = vec![

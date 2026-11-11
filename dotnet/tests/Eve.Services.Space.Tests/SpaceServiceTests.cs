@@ -70,12 +70,9 @@ public sealed class CharacterEntryInventoryBootstrapTests
 
 internal static class WarpArrivalAssertions
 {
-    public static void TellOwnShipStopped(Rig rig, ClientSession session)
+    public static void TellWarpDropped(Rig rig, ClientSession session)
     {
-        var shipId = session.GetInt("shipid")!.Value;
-        var stop = Py.Tuple(new PyInt(1), Py.Tuple(new PyStr("Stop"), Py.Tuple(new PyLong(shipId))));
-        var args = MarshalCodec.Encode(Py.Tuple(new PyList([stop]), PyBool.False));
-        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "DoDestinyUpdate", "clientID", args));
+        rig.Sim.Say(new SimWarpDropped((ulong)session.SessionId));
     }
 
     public static async Task AssertArrivalAllowsAnotherWarpAndDockAsync(
@@ -83,9 +80,9 @@ internal static class WarpArrivalAssertions
         ClientSession session,
         string beyonceObjectId)
     {
-        Assert.True(rig.Space.IsWarping(session), "the accepted warp is still tracked before its own Stop arrives");
-        TellOwnShipStopped(rig, session);
-        Assert.False(rig.Space.IsWarping(session), "the pilot's own Stop ends the warp");
+        Assert.True(rig.Space.IsWarping(session), "the accepted warp remains tracked until the simulation reports dropout");
+        TellWarpDropped(rig, session);
+        Assert.False(rig.Space.IsWarping(session), "the simulation's warp-drop event clears the in-warp state");
 
         var shipId = session.GetInt("shipid")!.Value;
         var warp = await rig.BeyonceCallAsync(
@@ -95,8 +92,8 @@ internal static class WarpArrivalAssertions
         var warpCommand = Assert.IsType<SimCommand>(rig.Sim.Heard.Last());
         Assert.Equal(((ulong)session.SessionId, SimCommands.WarpTo), (warpCommand.SessionId, warpCommand.Code));
         Assert.Equal([(double)Rig.Station, 0d], warpCommand.Args);
-        TellOwnShipStopped(rig, session);
-        Assert.False(rig.Space.IsWarping(session), "the second warp's own Stop ends the warp");
+        TellWarpDropped(rig, session);
+        Assert.False(rig.Space.IsWarping(session), "the second warp-drop event clears the in-warp state");
 
         var dock = await rig.BeyonceCallAsync(
             session, "CmdDock", beyonceObjectId, new PyLong(Rig.Station), new PyLong(shipId));
@@ -1569,6 +1566,8 @@ public class SpaceServiceTests
         Stop(shipId + 1);
         Assert.True(rig.Space.IsWarping(session));
         Stop(shipId);
+        Assert.True(rig.Space.IsWarping(session), "a client Destiny Stop is not proof that the simulation dropped from warp");
+        WarpArrivalAssertions.TellWarpDropped(rig, session);
         Assert.False(rig.Space.IsWarping(session));
 
         var oid = await rig.BindBeyonceAsync(session);
@@ -1578,7 +1577,7 @@ public class SpaceServiceTests
     }
 
     [PgFact]
-    public async Task Stop_and_align_requests_in_warp_leave_arrival_stop_to_clear_the_state_before_the_next_order()
+    public async Task Stop_and_align_requests_in_warp_leave_the_warp_drop_event_to_clear_the_state_before_the_next_order()
     {
         var (rig, _, session) = await DockedAsync();
         await using var _ = rig;

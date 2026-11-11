@@ -29,6 +29,12 @@
    "hex": "09000000a1e903000000000000"
   },
   {
+   "name": "ship left warp mode",
+   "kind": "WarpDropped",
+   "sessionId": "42",
+   "hex": "09000000a22a00000000000000"
+  },
+  {
    "name": "ensure private Abyssal room scene",
    "kind": "EnsureAbyssalScene",
    "requestId": "41",
@@ -8246,6 +8252,11 @@
    "name": "Empire sentry offense zero session",
    "reason": "bad-value",
    "hex": "09000000a10000000000000000"
+  },
+  {
+   "name": "warp dropout zero session",
+   "reason": "bad-value",
+   "hex": "09000000a20000000000000000"
   },
   {
    "name": "crystal damage without a positive charge type",

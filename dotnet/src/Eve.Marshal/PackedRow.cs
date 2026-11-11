@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Numerics;
 using System.Text;
 
 namespace Eve.Marshal;
@@ -15,15 +16,12 @@ public readonly record struct PackedColumn(string Name, long DbType);
 /// A row descriptor: the header as it appears on the wire, the columns it
 /// declares, and the row layout derived from them.
 ///
-/// Every row of a rowset repeats the same descriptor, so rows share one. The
-/// decoder recognises a repeated descriptor by its bytes and reuses it; the
-/// encoder writes the header bytes it produced the first time.
+/// Every row of a rowset refers to the same descriptor. The marshal encoder
+/// writes that descriptor once and encodes later occurrences as saved references.
 /// </summary>
 public sealed class Descriptor
 {
     private const long UnknownDbType = long.MinValue;
-
-    private byte[]? _encodedHeader;
 
     /// <summary>A descriptor with explicit columns (the header is written verbatim and need not describe them).</summary>
     public Descriptor(PyValue header, IReadOnlyList<PackedColumn> columns)
@@ -41,10 +39,6 @@ public sealed class Descriptor
 
     /// <summary>A descriptor whose columns are read from its header.</summary>
     public static Descriptor FromHeader(PyValue header) => new(header, ColumnsFromHeader(header));
-
-    internal byte[]? EncodedHeader => Volatile.Read(ref _encodedHeader);
-
-    internal void SetEncodedHeader(byte[] bytes) => Interlocked.CompareExchange(ref _encodedHeader, bytes, null);
 
     public override bool Equals(object? obj) =>
         obj is Descriptor other && Equals(Header, other.Header) && Columns.SequenceEqual(other.Columns);
@@ -352,14 +346,19 @@ internal static class PackedRowCodec
     {
         switch (dbType)
         {
-            case DbType.Cy or DbType.I8 or DbType.UI8 or DbType.FileTime:
+            case DbType.Cy:
+                return new PyReal(BinaryPrimitives.ReadInt64LittleEndian(Read(packed, offset, 8)) / 10_000.0);
+            case DbType.I8:
                 var number = BinaryPrimitives.ReadInt64LittleEndian(Read(packed, offset, 8));
                 // The JS reference hands back a number when it is a safe integer.
                 return UnsignedAbs(number) <= 9_007_199_254_740_991UL ? new PyInt(number) : new PyLong(number);
-            case DbType.I4:
+            case DbType.UI8 or DbType.FileTime:
+                var unsigned = BinaryPrimitives.ReadUInt64LittleEndian(Read(packed, offset, 8));
+                return unsigned <= 9_007_199_254_740_991UL ? new PyInt((long)unsigned) : BigUnsignedValue(unsigned);
+            case DbType.I4 or DbType.UI4:
+                // The V24 Windows client materializes both DBTYPE_I4 and DBTYPE_UI4
+                // with PyInt_FromLong, so a set high bit is observed as signed.
                 return new PyInt(BinaryPrimitives.ReadInt32LittleEndian(Read(packed, offset, 4)));
-            case DbType.UI4:
-                return new PyInt(BinaryPrimitives.ReadUInt32LittleEndian(Read(packed, offset, 4)));
             case DbType.R4:
                 return new PyReal(BinaryPrimitives.ReadSingleLittleEndian(Read(packed, offset, 4)));
             case DbType.R8:
@@ -377,6 +376,18 @@ internal static class PackedRowCodec
         }
     }
 
+    private static PyBigUnsigned BigUnsignedValue(ulong value)
+    {
+        Span<byte> buffer = stackalloc byte[sizeof(ulong)];
+        BinaryPrimitives.WriteUInt64LittleEndian(buffer, value);
+        var length = buffer.Length;
+        while (length > 0 && buffer[length - 1] == 0)
+        {
+            length--;
+        }
+        return new PyBigUnsigned(buffer[..length].ToArray());
+    }
+
     public static void Encode(MarshalEncoder encoder, PyPackedRow row)
     {
         var descriptor = row.Descriptor;
@@ -387,17 +398,7 @@ internal static class PackedRowCodec
         }
 
         encoder.Out.Write(Op.PackedRow);
-        var cached = descriptor.EncodedHeader;
-        if (cached is not null)
-        {
-            encoder.Out.Write(cached);
-        }
-        else
-        {
-            var start = encoder.Out.Length;
-            encoder.Value(descriptor.Header);
-            descriptor.SetEncodedHeader(encoder.Out.CopyFrom(start));
-        }
+        encoder.Value(descriptor.Header);
 
         var bitmap = new byte[layout.BitmapBytes];
         using var fixedBlock = new ByteBuffer(layout.DataBytes + layout.BitmapBytes);
@@ -444,14 +445,20 @@ internal static class PackedRowCodec
     {
         switch (dbType)
         {
-            case DbType.Cy or DbType.I8 or DbType.UI8 or DbType.FileTime:
+            case DbType.Cy:
+                output.WriteInt64(PackCurrency(value));
+                break;
+            case DbType.I8:
                 output.WriteInt64(PackInt64(value));
+                break;
+            case DbType.UI8 or DbType.FileTime:
+                output.WriteUInt64(PackUInt64(value));
                 break;
             case DbType.I4:
                 output.WriteInt32((int)CheckedInt(value, int.MinValue, int.MaxValue, "I4"));
                 break;
             case DbType.UI4:
-                output.WriteUInt32(JsNumber.ToUint32(Math.Truncate(PackNumber(value))));
+                output.WriteInt32((int)CheckedInt(value, int.MinValue, int.MaxValue, "UI4"));
                 break;
             case DbType.R4:
                 output.WriteSingle((float)PackNumber(value));
@@ -483,6 +490,18 @@ internal static class PackedRowCodec
             throw MarshalException.OutOfRange(column);
         }
         return (long)number;
+    }
+
+    /// <summary>CCP's packed CY writer rounds to cents and stores 1/10,000 units.</summary>
+    private static long PackCurrency(PyValue value)
+    {
+        const double limit = 9_223_372_036_854_775_808.0;
+        var scaled = Math.Floor((PackNumber(value) * 100.0) + 0.5) * 100.0;
+        if (!double.IsFinite(scaled) || !(scaled >= -limit && scaled < limit))
+        {
+            throw MarshalException.OutOfRange("64-bit column");
+        }
+        return (long)scaled;
     }
 
     /// <summary><c>normalizePackedNumber</c>: any loosely typed value as a finite number, else 0.</summary>
@@ -545,6 +564,67 @@ internal static class PackedRowCodec
             default:
                 return 0;
         }
+    }
+
+    private static ulong PackUInt64(PyValue value)
+    {
+        const double limit = 18_446_744_073_709_551_616.0;
+        switch (value)
+        {
+            case PyNone:
+                return 0;
+            case PyInt number when number.Value >= 0:
+                return (ulong)number.Value;
+            case PyLong number when number.Value >= 0:
+                return (ulong)number.Value;
+            case PyBool flag:
+                return flag.Value ? 1UL : 0UL;
+            case PyReal number when double.IsFinite(number.Value):
+                var truncated = Math.Truncate(number.Value);
+                if (!(truncated >= 0 && truncated < limit))
+                {
+                    throw MarshalException.OutOfRange("64-bit column");
+                }
+                return (ulong)truncated;
+            case PyBigUnsigned big:
+                if (big.Bytes.Length > sizeof(ulong))
+                {
+                    throw MarshalException.OutOfRange("64-bit column");
+                }
+                Span<byte> buffer = stackalloc byte[sizeof(ulong)];
+                big.Bytes.CopyTo(buffer);
+                return BinaryPrimitives.ReadUInt64LittleEndian(buffer);
+            case PyBigInteger big when big.Value >= BigInteger.Zero && big.Value <= ulong.MaxValue:
+                return (ulong)big.Value;
+            case PyStr text:
+                return TextToUInt64(text.Value);
+            case PyWString text:
+                return TextToUInt64(text.Value);
+            case PyToken text:
+                return TextToUInt64(text.Value);
+            case PyBytes bytes:
+                return TextToUInt64(Encoding.UTF8.GetString(bytes.Value.Span));
+            case PyBuffer bytes:
+                return TextToUInt64(Encoding.UTF8.GetString(bytes.Value.Span));
+            default:
+                throw MarshalException.OutOfRange("64-bit column");
+        }
+    }
+
+    private static ulong TextToUInt64(string text)
+    {
+        if (JsNumber.TrimJs(text).Length == 0)
+        {
+            return 0;
+        }
+        var number = JsNumber.BigIntFromString(text);
+        if (number is null)
+        {
+            return 0;
+        }
+        return number.Value >= 0 && number.Value <= (Int128)ulong.MaxValue
+            ? (ulong)number.Value
+            : throw MarshalException.OutOfRange("64-bit column");
     }
 
     private static long TextToInt64(string text)

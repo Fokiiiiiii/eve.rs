@@ -210,9 +210,23 @@ fn packed_value(js: &Js, db_type: i64) -> Result<Value> {
         Js::Null => Value::None,
         Js::Bool(flag) => Value::Bool(*flag),
         Js::Num(number) => Value::Real(*number),
-        Js::Big(digits) => match digits.parse::<i128>().ok().and_then(|number| i64::try_from(number).ok()) {
-            Some(number) => Value::Long(number),
-            None => Value::Real(digits.parse().unwrap_or(f64::INFINITY)),
+        Js::Big(digits) => match digits.parse::<i128>() {
+            Ok(number) if i64::try_from(number).is_ok() => Value::Long(number as i64),
+            Ok(number) if number >= 0 => {
+                let mut bytes = (number as u128).to_le_bytes().to_vec();
+                while bytes.last() == Some(&0) {
+                    bytes.pop();
+                }
+                Value::BigUnsigned(bytes)
+            }
+            Ok(number) => {
+                let mut bytes = number.to_le_bytes().to_vec();
+                while bytes.len() > 1 && bytes.last() == Some(&0xff) && bytes[bytes.len() - 2] & 0x80 != 0 {
+                    bytes.pop();
+                }
+                Value::BigSigned(bytes)
+            }
+            Err(_) => Value::Real(digits.parse().unwrap_or(f64::INFINITY)),
         },
         Js::Str(text) => Value::string(text.clone()),
         Js::Buf(bytes) => Value::Buffer(Bytes::from(bytes.clone())),

@@ -61,6 +61,10 @@ internal sealed class ByteBuffer : IDisposable
 
     public void WriteUInt32(uint value) => BinaryPrimitives.WriteUInt32LittleEndian(Reserve(4), value);
 
+    public void WriteUInt64(ulong value) => BinaryPrimitives.WriteUInt64LittleEndian(Reserve(8), value);
+
+    public void SetUInt32(int index, uint value) => BinaryPrimitives.WriteUInt32LittleEndian(_array.AsSpan(index, 4), value);
+
     public void WriteInt64(long value) => BinaryPrimitives.WriteInt64LittleEndian(Reserve(8), value);
 
     public void WriteSingle(float value) => BinaryPrimitives.WriteSingleLittleEndian(Reserve(4), value);

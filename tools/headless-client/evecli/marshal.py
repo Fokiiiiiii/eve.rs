@@ -5,6 +5,7 @@ crate `eve-marshal`. All three are checked against the same golden fixtures
 (`oracle/fixtures/marshal/cases.json`), so they agree byte for byte.
 
 Value model (mirrors `eve_marshal::Value`):
+  Python `str` values use ASCII bytes; non-ASCII application strings use WStringUTF8.
 
     None, bool, int          -> int is written with the smallest integer opcode
     Long                     -> always PyLongLong
@@ -568,6 +569,9 @@ class _Encoder:
 
     def string(self, text: str) -> None:
         data = text.encode("utf-8")
+        if not data.isascii():
+            self.sized(Op.WSTRING_UTF8, data)
+            return
         if len(data) == 0:
             self.out.append(Op.EMPTY_STRING)
         elif len(data) == 1:
@@ -819,6 +823,32 @@ def _pack_i64(value) -> int:
         raise MarshalError("64-bit column out of range", "RangeError:ERR_OUT_OF_RANGE")
     return number
 
+def _pack_u64(value) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        number = int(value)
+    elif isinstance(value, int):
+        number = int(value)
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            return 0
+        number = int(value)  # trunc
+    else:
+        text = _text(value)
+        if text is None:
+            return 0
+        text = text.strip(_JS_WS)
+        if not text:
+            return 0
+        try:
+            number = int(text, 0) if text[:2].lower() in ("0x", "0o", "0b") else int(text, 10)
+        except ValueError:
+            return 0
+    if not 0 <= number < 2**64:
+        raise MarshalError("64-bit column out of range", "RangeError:ERR_OUT_OF_RANGE")
+    return number
+
 def _pack_bool(value) -> bool:
     if isinstance(value, bool):
         return value
@@ -838,12 +868,19 @@ def _checked_int(value, low: int, high: int, column: str) -> int:
     return number
 
 def _fixed_bytes(db_type, value) -> bytes:
-    if db_type in (DbType.CY, DbType.I8, DbType.UI8, DbType.FILETIME):
+    if db_type == DbType.CY:
+        scaled = math.floor((_pack_number(value) * 100.0) + 0.5) * 100
+        if not -_INT64 <= scaled < _INT64:
+            raise MarshalError("CY out of range", "RangeError:ERR_OUT_OF_RANGE")
+        return struct.pack("<q", scaled)
+    if db_type == DbType.I8:
         return struct.pack("<q", _pack_i64(value))
+    if db_type in (DbType.UI8, DbType.FILETIME):
+        return struct.pack("<Q", _pack_u64(value))
     if db_type == DbType.I4:
         return struct.pack("<i", _checked_int(value, -(2**31), 2**31 - 1, "I4"))
     if db_type == DbType.UI4:
-        return struct.pack("<I", _to_uint32(float(int(_pack_number(value)))))
+        return struct.pack("<i", _checked_int(value, -(2**31), 2**31 - 1, "UI4"))
     if db_type == DbType.R4:
         return struct.pack("<f", _clamp_float32(_pack_number(value)))
     if db_type == DbType.R8:
@@ -1226,11 +1263,17 @@ class _Decoder:
         return PackedRow(descriptor, values, bytes(rle))
 
 def _fixed_value(db_type, packed: bytearray, offset: int):
-    if db_type in (DbType.CY, DbType.I8, DbType.UI8, DbType.FILETIME):
+    if db_type == DbType.CY:
+        (number,) = struct.unpack_from("<q", packed, offset)
+        return number / 10000.0
+    if db_type == DbType.I8:
         (number,) = struct.unpack_from("<q", packed, offset)
         return number if abs(number) <= 2**53 - 1 else Long(number)
+    if db_type in (DbType.UI8, DbType.FILETIME):
+        (number,) = struct.unpack_from("<Q", packed, offset)
+        return number if number <= 2**53 - 1 else BigUnsigned(number)
     fmt = {
-        DbType.I4: "<i", DbType.UI4: "<I", DbType.R4: "<f", DbType.R8: "<d",
+        DbType.I4: "<i", DbType.UI4: "<i", DbType.R4: "<f", DbType.R8: "<d",
         DbType.I2: "<h", DbType.UI2: "<H", DbType.I1: "<b", DbType.UI1: "<B",
     }.get(db_type)
     if fmt is None:

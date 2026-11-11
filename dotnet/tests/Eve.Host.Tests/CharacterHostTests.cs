@@ -123,7 +123,7 @@ public sealed partial class CharacterHostTests
     }
 
     [PgFact]
-    public async Task Public_record_in_a_list_reaches_the_client_with_membership_and_authoritative_militia_values()
+    public async Task Public_record_crowset_has_membership_and_authoritative_militia_values()
     {
         await using var rig = await CharacterHostRig.CreateAsync();
         var character = await rig.CreateCharacterAsync();
@@ -139,15 +139,15 @@ public sealed partial class CharacterHostTests
 
         async Task<Dictionary<string, PyValue>> ReadFieldsAsync()
         {
-            var list = Assert.IsType<PyList>(await CallAsync(service, "GetPublicInfo3", session, new PyInt(character)));
-            var record = Assert.IsType<PyObject>(Assert.Single(list.Items));
-            return ((PyDict)record.Args).Entries.ToDictionary(entry => Eve.Macho.JsSemantics.StringValue(entry.Key)!, entry => entry.Value);
+            var rowset = Assert.IsType<PyObjectEx>(await CallAsync(service, "GetPublicInfo3", session, new PyInt(character)));
+            var row = Assert.IsType<PyPackedRow>(Assert.Single(rowset.List));
+            return row.Fields().ToDictionary(field => field.Key, field => field.Value);
         }
 
         var fields = await ReadFieldsAsync();
-        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(created.ToUnixTimeMilliseconds())), fields["createDateTime"]);
+        Assert.Equal(["bounty", "title", "startDateTime", "description", "corporationID", "militiaFactionID", "bloodlineID"], fields.Keys);
         Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(joinedMs)), fields["startDateTime"]);
-        Assert.NotEqual(fields["createDateTime"], fields["startDateTime"]);
+        Assert.NotEqual(new PyLong(Py.FileTimeFromUnixMs(created.ToUnixTimeMilliseconds())), fields["startDateTime"]);
         Assert.Equal(new PyInt(500004), fields["militiaFactionID"]);
 
         await rig.SetFactionWarfareEnlistmentAsync(Eve.FactionWarfare.FwStore.CorporationKind, 900_001_001, 0);
@@ -159,6 +159,7 @@ public sealed partial class CharacterHostTests
         Assert.True(await rig.Characters.SetFactionWarfareStateAsync(character, null, 0));
         await rig.SetFactionWarfareEnlistmentAsync(Eve.FactionWarfare.FwStore.AllianceKind, allianceId, 0);
         Assert.Equal(PyNone.Instance, (await ReadFieldsAsync())["militiaFactionID"]);
+
     }
 
     [PgFact]
@@ -1287,11 +1288,13 @@ public sealed partial class CharacterHostTests
         var mailNotice = Assert.Single(notices, row => row.Name == "OnNotificationReceived");
         Assert.Equal(new PyInt(1004), mailNotice.Args[1]);
         var noticeData = mailNotice.Args[4];
+        Assert.IsType<PyDict>(noticeData);
         Assert.False(string.IsNullOrWhiteSpace(Eve.Macho.JsSemantics.StringValue(Field(noticeData, "senderName"))));
         var noticeMessage = Field(noticeData, "msg");
+        Assert.IsType<PyObject>(noticeMessage);
         Assert.Equal(long.Parse(message["messageID"]!.ToString(), System.Globalization.CultureInfo.InvariantCulture),
             Integer(Field(noticeMessage, "messageID")));
-        Assert.Contains(new PyLong(CharacterHostRigCorporation), Assert.IsType<PyList>(Field(noticeMessage, "toCorpOrAllianceID")).Items);
+        Assert.Contains(new PyInt(CharacterHostRigCorporation), Assert.IsType<PyList>(Field(noticeMessage, "toCorpOrAllianceID")).Items);
 
         // A host restart and a second DeleteCharacter call reuse the original corporation, wallet receipt, mail, and notification.
         await rig.RestartAsync();
@@ -1941,11 +1944,11 @@ public sealed partial class CharacterHostTests
         Assert.Equal("OnNotificationReceived", address.BroadcastId);
         Assert.Equal("clientID", address.IdType);
         Assert.Equal(5, args.Length);
-        Assert.True(((PyLong)args[0]).Value > 0);
+        Assert.True(((PyInt)args[0]).Value > 0);
         Assert.Equal(new PyInt(89), args[1]);
-        Assert.Equal(new PyLong(senderId), args[2]);
+        Assert.Equal(new PyInt(senderId), args[2]);
         var data = Assert.IsType<PyDict>(args[4]);
-        Assert.Equal(new PyLong(-10), NotificationValue(data, "level"));
+        Assert.Equal(new PyInt(-10), NotificationValue(data, "level"));
         Assert.Equal("Hello", Eve.Macho.JsSemantics.StringValue(NotificationValue(data, "message")));
 
         var notificationMgr = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("notificationMgr"));

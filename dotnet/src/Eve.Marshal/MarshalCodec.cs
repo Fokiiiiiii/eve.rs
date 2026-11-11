@@ -68,8 +68,8 @@ public static class MarshalCodec
     public static PyValue DecodeExact(ReadOnlyMemory<byte> input) => MarshalDecoder.DecodeStream(input, true, 0);
 
     /// <summary>
-    /// Encodes <paramref name="value"/> as a marshal stream: the 0x7E magic, a zero save count and the
-    /// value. This is the payload of a packet, without the length prefix.
+    /// Encodes <paramref name="value"/> as a marshal stream: the 0x7E magic, a save count, the value and
+    /// any descriptor references. This is the payload of a packet, without the length prefix.
     /// </summary>
     public static byte[] Encode(PyValue value)
     {
@@ -94,7 +94,9 @@ public static class MarshalCodec
     {
         buffer.Write(Wire.Header);
         buffer.WriteUInt32(0);
-        new MarshalEncoder(buffer).Value(value);
+        var encoder = new MarshalEncoder(buffer);
+        encoder.Value(value);
+        encoder.Complete();
     }
 
     /// <summary>

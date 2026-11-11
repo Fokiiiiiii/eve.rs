@@ -27,6 +27,9 @@ public static class Py
     public static PyValue Number(double value) =>
         value == Math.Floor(value) && Math.Abs(value) < 9_007_199_254_740_992d ? new PyInt((long)value) : new PyReal(value);
 
+    /// <summary>A lossless integer as JavaScript's marshal writes it, retaining the full 64-bit range.</summary>
+    public static PyValue Number(long value) => new PyInt(value);
+
     public static PyList List(params PyValue[] items) => new(items);
 
     public static PyTuple Tuple(params PyValue[] items) => new(items);

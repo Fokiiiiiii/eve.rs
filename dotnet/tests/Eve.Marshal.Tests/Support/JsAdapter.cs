@@ -205,10 +205,9 @@ internal static class JsAdapter
                 return new PyReal(number.Value);
             case JsBig big:
                 if (BigInteger.TryParse(big.Digits, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var parsed)
-                    && parsed >= Int128.MinValue && parsed <= Int128.MaxValue
-                    && parsed >= long.MinValue && parsed <= long.MaxValue)
+                    && parsed >= Int128.MinValue && parsed <= Int128.MaxValue)
                 {
-                    return new PyLong((long)parsed);
+                    return new PyBigInteger(parsed);
                 }
                 return new PyReal(double.TryParse(big.Digits, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : double.PositiveInfinity);
             case JsStr text:

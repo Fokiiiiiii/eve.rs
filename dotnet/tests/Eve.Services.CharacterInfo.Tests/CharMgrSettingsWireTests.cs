@@ -16,8 +16,7 @@ public sealed class CharMgrSettingsWireTests
             readRecentShipKillmailPage: (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<PyValue>>([]),
             readCharacterDescription: (_, _) => ValueTask.FromResult<string?>(null),
             writeCharacterDescription: (_, _, _) => ValueTask.CompletedTask,
-            readCharacterSecurityStatus: (_, _) => ValueTask.FromResult(0d),
-            readMedal1GraphicId: (_, _) => ValueTask.FromResult<long?>(null));
+            readCharacterSecurityStatus: (_, _) => ValueTask.FromResult(0d));
         var services = new ServiceRegistry();
         services.Register(charMgr);
         var dispatcher = new PacketDispatcher(services, () => 1_790_646_377_000);

@@ -44,6 +44,8 @@ pub enum Milestone {
     Entered { at: i64 },
     /// The ship is about to drop out (two seconds before it does): the client is told the ball is massless again.
     Dropout { at: i64 },
+    /// The ship has left warp mode and is coasting at subwarp speed.
+    Dropped { at: i64 },
     /// The ship has slowed to a stop.
     Rest { at: i64, position: Vec3, velocity: Vec3 },
 }
@@ -202,6 +204,7 @@ impl Flight {
                         direction.z * there.speed,
                     );
                     ship.direction = *direction;
+                    milestones.push(Milestone::Dropped { at: at_dropout });
                     self.phase = Phase::Coasting { since: at_dropout, position, velocity };
                     at = at_dropout;
                 }

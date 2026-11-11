@@ -891,6 +891,7 @@ impl Message {
                 out.extend_from_slice(&belt_id.to_le_bytes());
                 put_vector(&mut out, position);
             }
+            Self::WarpDropped { session_id } => out.extend_from_slice(&session_id.to_le_bytes()),
             Self::Condition { session_id, command, condition } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*command);

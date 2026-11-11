@@ -47,7 +47,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 96;
+pub const PROTOCOL_VERSION: u16 = 97;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -1143,6 +1143,10 @@ pub enum Message {
         belt_id: i64,
         position: [f64; 3],
     },
+    /// The ship left warp mode; the host clears its in-warp restriction before the coast ends.
+    WarpDropped {
+        session_id: u64,
+    },
     /// What the ship has taken and how full its capacitor is (the answer to command 19).
     Condition {
         session_id: u64,
@@ -1774,6 +1778,7 @@ impl Message {
             Self::ServiceNotify { .. } => kind::SERVICE_NOTIFY,
             Self::Docked { .. } => kind::DOCKED,
             Self::Arrived { .. } => kind::ARRIVED,
+            Self::WarpDropped { .. } => kind::WARP_DROPPED,
             Self::Refused { .. } => kind::REFUSED,
             Self::Accepted { .. } => kind::ACCEPTED,
             Self::Position { .. } => kind::POSITION,

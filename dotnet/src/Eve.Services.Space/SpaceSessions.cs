@@ -1010,27 +1010,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         Background(() => hacking.RecheckReachAsync(pilot.Session, pilot.CharacterId, CancellationToken.None).AsTask());
     }
 
-    private void TrackWarpArrival(SimNotify notify, Pilot pilot)
-    {
-        if (notify.Name != "DoDestinyUpdate" || !_warping.ContainsKey(notify.SessionId)
-            || MarshalCodec.Decode(notify.Args.ToArray()) is not PyTuple { Items.Count: > 0 } args
-            || args.Items[0] is not PyList actions)
-            return;
-
-        foreach (var action in actions.Items)
-        {
-            if (action is PyTuple { Items.Count: 2 } entry
-                && entry.Items[1] is PyTuple { Items.Count: 2 } call
-                && JsSemantics.StringValue(call.Items[0]) == "Stop"
-                && call.Items[1] is PyTuple { Items.Count: > 0 } values
-                && TryTargetId(values.Items[0], out var shipId) && shipId == pilot.ShipId)
-            {
-                _warping.TryRemove(notify.SessionId, out _);
-                return;
-            }
-        }
-    }
-
     private static bool TryTargetId(PyValue value, out long targetId)
     {
         targetId = value switch
@@ -1131,7 +1110,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     Forward(structureObserver, notify);
                     break;
                 case SimNotify notify when _pilots.TryGetValue(notify.SessionId, out var pilot):
-                    TrackWarpArrival(notify, pilot);
                     TrackTargetingNotification(notify);
                     RecordKillmailDamage(notify, pilot);
                     Forward(pilot.Session, notify);
@@ -1163,6 +1141,9 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                             _log?.Invoke($"the arrival of session {arrived.SessionId} at belt {arrived.BeltId} could not be dealt with: {error.Message}");
                         }
                     });
+                    break;
+                case SimWarpDropped dropped when _pilots.ContainsKey(dropped.SessionId):
+                    _warping.TryRemove(dropped.SessionId, out _);
                     break;
                 case SimAccepted ready when ready.Command == SimCommands.DockingReady:
                     if (_pilots.TryGetValue(ready.SessionId, out var dockingPilot))
@@ -1292,7 +1273,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     }
                     break;
                 case SimRefused { Command: SimCommands.Stop, Reason: "IN_WARP" } inWarp when _pilots.TryGetValue(inWarp.SessionId, out var warping):
-                    _warping[inWarp.SessionId] = 0;
                     TellShipInWarp(warping.Session);
                     break;
                 case SimRefused refused:

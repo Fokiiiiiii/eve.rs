@@ -2,7 +2,7 @@
 
 ## Scope and current status
 
-This pass traced the V24.01 structure war tooltip from its client call through the registered Host service and persisted war relations. It fixed one confirmed wire-contract defect. The sovereignty and factional-warfare handoffs already document tested Host paths; this pass did not change those services. The remaining war negotiation provider is still open in `docs/project/TODO.md`.
+This historical pass traced the V24.01 structure war tooltip from its client call through the registered Host service and persisted war relations. It fixed one confirmed wire-contract defect. The sovereignty and factional-warfare handoffs already document tested Host paths. Its negotiation-open note was superseded by the later PostgreSQL provider; current status and re-audit evidence are in `docs/project/deepfix-planets-sov-warfare.md`.
 
 ## Confirmed defect and fix: public war information
 
@@ -18,7 +18,7 @@ This is an intentional compatibility difference from EveJS: the V24.01 caller an
 
 - Sovereignty's prior cx4 handoff records the V24.01 caller/consumer trace and the Host/PostgreSQL test for claim and hub reads, fuel ACL mutation, and Skyhook persistence: `docs/project/service-audit/handoff-sovMgr-coverage-cx4.md`. No sovereignty code was changed in this pass.
 - The faction-warfare audit describes whole-client `facWarMgr` callsites and payload consumers, including character/corporation enlistment, donation tax retries, rank, stats, and LP pool reads: `docs/project/service-audit/DEEPCHECK_facWarMgr.md`. Existing FW design documents the shared `FwStore` and transaction paths. No additional FW defect was established in this pass, so no FW code was changed.
-- `warRegistry` negotiation reads and writes remain open: Host currently lacks the persisted negotiation state and client notification flow; see `docs/project/TODO.md:96` and `docs/project/service-audit/DEEPCHECK_wars.md`. This work does not claim that flow is complete.
+- At the time of this historical pass, `warRegistry` negotiation reads and writes were open. The current Host persists negotiations and covers offer/accept/surrender flows through registered Host RPC tests; see `docs/project/deepfix-planets-sov-warfare.md`.
 
 ## Checks
 

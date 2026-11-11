@@ -840,6 +840,29 @@ public class CynoJumpHostTests
     }
 
     [PgFact]
+    public async Task A_black_ops_conduit_tells_each_passenger_its_jump_timers_once_the_jump_is_taken()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, ship, oid) = await JumperAsync(rig, fuel: 50_000, hull: Redeemer, fuelType: Helium, generator: CovertGenerator);
+        await FleetOfAsync(rig, character.CharacterId);
+        await BeaconAsync(rig, Field, character.CharacterId, ship, 59_630, anchored: true);
+        var fleet = (await rig.FleetStore.FleetIdForCharacterAsync(character.CharacterId))!.Value;
+        var (passengerSession, passengerCharacter, _, _) = await JumperAsync(rig, fuel: 0, hull: Redeemer, account: 2, name: "Fleetmate", sessionId: 2);
+        await JoinFleetAsync(rig, fleet, character.CharacterId, passengerCharacter.CharacterId);
+
+        await Conduits(rig, passengerCharacter.CharacterId, passengerSession).GroupJumpAsync(session, Field, Destination, oid, CancellationToken.None);
+
+        // the passenger's client is told its own timers, as the debit wrote them for the passenger, and once only
+        var passengerState = await new PgJumpFatigueStore(rig.Source, rig.SpaceSchema).GetAsync(passengerCharacter.CharacterId);
+        var timers = Assert.Single(Events.Of(passengerSession), timer => timer.Name == "OnJumpTimersUpdated");
+        Assert.Equal("clientID", timers.IdType);
+        Assert.Equal(new PyValue[]
+        {
+            new PyLong(Py.FileTimeFromUnixMs(passengerState.CooldownUntilMs)), new PyLong(Py.FileTimeFromUnixMs(passengerState.FatigueUntilMs)), new PyLong(Py.FileTimeFromUnixMs(rig.Now)),
+        }, timers.Args);
+    }
+
+    [PgFact]
     public async Task A_conduit_jump_reserves_fuel_and_fatigue_before_the_simulation()
     {
         await using var rig = await Rig.CreateAsync();
@@ -871,13 +894,17 @@ public class CynoJumpHostTests
         var prior = new JumpFatigueState(rig.Now + 10 * Minute, rig.Now);
         var fatigue = new PgJumpFatigueStore(rig.Source, rig.SpaceSchema);
         await SetFatigueAsync(rig, character.CharacterId, prior);
+        var fleet = (await rig.FleetStore.FleetIdForCharacterAsync(character.CharacterId))!.Value;
+        var (passengerSession, passengerCharacter, _, _) = await JumperAsync(rig, fuel: 0, hull: Redeemer, account: 2, name: "Fleetmate", sessionId: 2);
+        await JoinFleetAsync(rig, fleet, character.CharacterId, passengerCharacter.CharacterId);
         rig.Sim.CynoJumpAnswer = new CommandReply(false, 0, "WARP_DISRUPTED_BY_BUBBLE");
 
-        await Assert.ThrowsAnyAsync<MachoWrappedException>(() => Conduits(rig).GroupJumpAsync(session, Field, Destination, oid, CancellationToken.None));
+        await Assert.ThrowsAnyAsync<MachoWrappedException>(() => Conduits(rig, passengerCharacter.CharacterId, passengerSession).GroupJumpAsync(session, Field, Destination, oid, CancellationToken.None));
 
         Assert.Equal(50_000, await rig.Ships.FuelHeldAsync(character.CharacterId, ship, Helium));
         Assert.Equal(prior, await fatigue.GetAsync(character.CharacterId));
         Assert.DoesNotContain(Events.Of(session), timer => timer.Name == "OnJumpTimersUpdated");
+        Assert.DoesNotContain(Events.Of(passengerSession), timer => timer.Name == "OnJumpTimersUpdated");
     }
 
     [PgFact]

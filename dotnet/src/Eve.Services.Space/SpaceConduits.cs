@@ -112,7 +112,7 @@ public sealed class SpaceConduits(
             throw Notify("Your ship does not have enough jump fuel for the conduit.");
 
         var limit = hull.Attributes.TryGetValue(JumpDriveRules.ConduitPassengerCountAttribute, out var count) ? (int)count : 0;
-        var passengers = new List<(long Character, long Ship, JumpFatigueState Prior, JumpFatigueState Next)>();
+        var passengers = new List<(long Character, long Ship, ClientSession Session, JumpFatigueState Prior, JumpFatigueState Next)>();
         var snapshot = await fleets.SnapshotAsync(fleet.Value, cancellationToken);
         foreach (var member in snapshot?.Members ?? [])
         {
@@ -135,7 +135,7 @@ public sealed class SpaceConduits(
                 continue;
             var memberMultiplier = memberHull.Attributes.TryGetValue(JumpDriveRules.FatigueMultiplierAttribute, out var own) ? own : 1.0;
             var (memberFatigue, memberCooldown) = JumpDriveRules.AfterJump(Math.Max(0, memberState.FatigueUntilMs - now), lightYears * memberMultiplier);
-            passengers.Add((member.CharacterId, memberShip, memberState, new JumpFatigueState(now + memberFatigue, now + memberCooldown)));
+            passengers.Add((member.CharacterId, memberShip, memberSession, memberState, new JumpFatigueState(now + memberFatigue, now + memberCooldown)));
         }
 
         var anchorMultiplier = hull.Attributes.TryGetValue(JumpDriveRules.FatigueMultiplierAttribute, out var anchorOwn) ? anchorOwn : 1.0;
@@ -174,6 +174,8 @@ public sealed class SpaceConduits(
         {
             sessionOf?.Invoke(passenger.Character)?.SendNotification(
                 "OnGroupJumpedPassenger", "clientID", new PyLong(character), new PyInt(destinationSystem));
+            // the passenger's client replaces its cached jump timers with the fatigue the debit wrote for it
+            SpaceBridges.SendJumpTimers(passenger.Session, passenger.Next, now);
         }
         return answer;
     }

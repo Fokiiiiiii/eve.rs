@@ -90,7 +90,7 @@ public partial class HostServerTests
                 await offered.ExecuteNonQueryAsync();
                 await transaction.CommitAsync();
             }
-            var reads = new PersistenceContractReadModel(source, contractsSchema, sdeSchema);
+            var reads = new PersistenceContractReadModel(source, contractsSchema, sdeSchema, inventorySchema);
             var writer = new PersistenceContractWriteModel(source, itemStore, wallets, () => nowMs,
                 contractsSchema, expiryJobs, events);
             Assert.False(await expiryJobs.SettleExpiredAsync(contractId, nowMs, CancellationToken.None));
@@ -114,7 +114,8 @@ public partial class HostServerTests
                 if (response is not PyObject { Args: PyTuple args } || args.Items.Count < 3 ||
                     MachoAddress.Decode(args.Items[2]).CallId != new PyInt(1))
                     continue;
-                Assert.Equal(new PyInt(7), args.Items[0]);
+                Assert.True(args.Items[0] is PyInt { Value: 7 },
+                    $"Expected CALL_RSP but got {args.Items[0]} {FormatRpcValue(args.Items[4])} {_lastContractRpcProblem}");
                 result = Result(response);
             }
             Assert.Same(PyBool.True, result);

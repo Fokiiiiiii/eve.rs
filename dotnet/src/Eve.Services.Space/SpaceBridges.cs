@@ -264,8 +264,7 @@ public sealed class SpaceBridges(
         {
             var passage = await space.BridgeJumpAsync(session, shipId, bridge.BridgerShipId, bridge.FieldId, solarSystemId, boundObjectId, cancellationToken);
             // the passenger's client replaces its cached jump timers with the fatigue just written, as a clone jump tells its pilot
-            session.SendNotification("OnJumpTimersUpdated", "clientID",
-                TimerFileTime(next.CooldownUntilMs, now), TimerFileTime(next.FatigueUntilMs, now), new PyLong(Py.FileTimeFromUnixMs(now)));
+            SendJumpTimers(session, next, now);
             return passage;
         }
         catch
@@ -280,6 +279,13 @@ public sealed class SpaceBridges(
             }
             throw;
         }
+    }
+
+    /// <summary>Tells the jumping pilot's client its jump timers (the GetTimers tuple: activation, fatigue, and when they were written) once a jump has settled.</summary>
+    internal static void SendJumpTimers(ClientSession session, JumpFatigueState state, long nowMs)
+    {
+        session.SendNotification("OnJumpTimersUpdated", "clientID",
+            TimerFileTime(state.CooldownUntilMs, nowMs), TimerFileTime(state.FatigueUntilMs, nowMs), new PyLong(Py.FileTimeFromUnixMs(nowMs)));
     }
 
     /// <summary>A jump timer as the client reads it: the FILETIME it ends at, or none once it has run out.</summary>

@@ -65,11 +65,12 @@ NPC_CORPORATIONS = range(1_000_000, 2_000_000)  # the NPC corporations' ids (Str
 DIRECTOR = 1  # the corporation role bit a Director holds (the anchor needs Station Manager, Director or CEO)
 
 RACE = UNDOCK["races"][0]  # the recorded character the undock scenario creates
+SCHOOL_CORPORATION = 1000045  # race 1's school corporation (school 35: Science and Trade Institute)
 
 @pytest.fixture(scope="module", autouse=True)
 def seeded_structure():
-    """The refinery the scenarios use: an Athanor row of the structures schema (its owner is an NPC corporation, so the owner-corporation access
-    rule admits the pilots of the other tests), with its docking and moon mining services online and a moon's resources, inserted once per run.
+    """The refinery the scenarios use: an Athanor row of the structures schema owned by the race 1 pilot's NPC school corporation, with its docking
+    and moon mining services online and a moon's resources, inserted once per run.
     The run drops its schema at the end."""
     if os.environ.get("EVE_LIVE_SERVER") == "evejs":
         return
@@ -78,12 +79,12 @@ def seeded_structure():
     schema = dbseed.schema("STRUCTURES")
     dbseed.sql(
         f"insert into {schema}.structures (structure_id, type_id, solar_system_id, x, y, z, owner_corporation_id, name, state, state_started_ms, "
-        f"upkeep, core_installed, doc) select {STRUCTURE}, {ATHANOR}, {SYSTEM}, 311989875775, -13069156275, 156646281447, 1000006, 'Live Refinery', "
+        f"upkeep, core_installed, doc) select {STRUCTURE}, {ATHANOR}, {SYSTEM}, 311989875775, -13069156275, 156646281447, {SCHOOL_CORPORATION}, 'Live Refinery', "
         f"110, 0, 1, true, '{{}}' where not exists (select 1 from {schema}.structures where structure_id = {STRUCTURE})"
     )
     dbseed.sql(
         f"insert into {schema}.structures (structure_id, type_id, solar_system_id, x, y, z, owner_corporation_id, name, state, state_started_ms, "
-        f"upkeep, core_installed, doc) select {RETURN_STRUCTURE}, {ATHANOR}, {SYSTEM}, {STRUCTURE_X}, {STRUCTURE_Y}, {STRUCTURE_Z}, 1000006, 'Live Return Refinery', "
+        f"upkeep, core_installed, doc) select {RETURN_STRUCTURE}, {ATHANOR}, {SYSTEM}, {STRUCTURE_X}, {STRUCTURE_Y}, {STRUCTURE_Z}, {SCHOOL_CORPORATION}, 'Live Return Refinery', "
         f"110, 0, 1, true, '{{}}' where not exists (select 1 from {schema}.structures where structure_id = {RETURN_STRUCTURE})"
     )
     for service in (1, 14):  # the docking service and the moon mining service (the Standup Moon Drill) online
@@ -91,7 +92,7 @@ def seeded_structure():
             f"insert into {schema}.structure_services (structure_id, service_id, state) select {STRUCTURE}, {service}, 1 "
             f"where not exists (select 1 from {schema}.structure_services where structure_id = {STRUCTURE} and service_id = {service})"
         )
-    drill = dbseed.new_item(45009, owner=1000006, location=STRUCTURE, flag=164, singleton=True)
+    drill = dbseed.new_item(45009, owner=SCHOOL_CORPORATION, location=STRUCTURE, flag=164, singleton=True)
     online_since = int(time.time() * 1000)
     dbseed.sql(
         f"insert into {schema}.structure_service_module_fuel "
@@ -100,7 +101,7 @@ def seeded_structure():
     )
     dbseed.sql(
         f"insert into {schema}.structure_moon_resources (structure_id, moon_id, solar_system_id, owner_corporation_id, yield_multiplier, resources) "
-        f"select {STRUCTURE}, {MOON}, {SYSTEM}, 1000006, 1.0, '{MOON_RESOURCES}' "
+        f"select {STRUCTURE}, {MOON}, {SYSTEM}, {SCHOOL_CORPORATION}, 1.0, '{MOON_RESOURCES}' "
         f"where not exists (select 1 from {schema}.structure_moon_resources where structure_id = {STRUCTURE})"
     )
 
@@ -448,7 +449,7 @@ def test_the_controlling_pilot_starts_a_moon_extraction_at_the_refinery_and_the_
         assert number(answer["structureID"]) == STRUCTURE
         assert number(answer["moonID"]) == MOON
         assert number(answer["solarSystemID"]) == SYSTEM
-        assert number(answer["ownerID"]) == 1000006
+        assert number(answer["ownerID"]) == SCHOOL_CORPORATION
         assert number(answer["durationSeconds"]) == MOON_DAYS
         extraction = number(answer["extractionID"])
         told = timed_events(client, 10.0, until=lambda events: _named(events, "OnMoonExtractionUpdate") != [])

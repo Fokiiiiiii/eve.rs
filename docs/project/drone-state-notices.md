@@ -38,3 +38,15 @@ The regression test goes through the registered `CmdAbandonDrone` entity method,
 - Related `DroneHostTests` and `MutatedDroneHostTests` classes on `eve_p4`: passed, 29 passed / 0 skipped.
 - The pinned SDE build `3396210` was loaded into `eve_p4` (61 tables, 668,618 records).
 - No real graphical-client session was run. EveJS was source-traced but its server flow was not executed in this audit.
+
+## Recheck (2026-11-11)
+
+The client callsites and current server sources were rechecked for the reported missing names. `OnDroneStateChange2` and `OnDroneControlLost` are client-local events: `remote/michelle.py:1496-1518` scatters one after receiving the server's seven-field `OnDroneStateChange`. In the V24.01 client, those events drive drone dogma insertion/removal and refresh the tactical panel, drone window, and target bar (`dogma/clientDogmaLocation.py:1392-1411`; `parklife/tactical.py:892-903`; `ui/inflight/drone.py:272-281,456-458`; `ui/inflight/bracketsAndTargets/targetInBar.py:738-755`). Sending the derived event names directly would skip Michelle's cache update and does not match EveJS.
+
+At EveJS commit `1dbb571`, state senders emit `OnDroneStateChange` and activity senders emit `OnDroneActivityChange` (`server/src/services/drone/droneRuntime.js:1832-1895,1948-1978`). The event is used for launch (`:5154-5175`), state/task transitions (`:3076-3080,5270-5297`), scoop (`:4801-4818`), destruction (`:2229-2250`), and control release (`:6074-6114,6148-6173,8107-8118`). An out-of-range engage is refused without changing control, an already-tasked drone may continue past control range, and a reduced active-drone cap does not trigger an automatic release (`:4185-4196,4953-4995,6198-6232`). `OnDroneStateChange2` occurs in EveJS only in a comment about the client-side event; neither derived name has a server sender.
+
+eve.rs already follows that wire contract. Rust emits the parent state event for launch, commands/return, scoop, and death; the Host now emits the same state plus activity-clear pair when `SimDroneReleased` moves a launched drone to `_abandoned` (`SpaceDrones.cs:667-670,750-756`). A direct-name search in `dotnet` and `crates` finds no sender for the two derived event names. The control-release regression was rerun through registered `CmdAbandonDrone`, including the exact wire arguments and order, then reconnect (`DroneHostTests.cs:180-219`).
+
+- Release build of `Eve.Services.Space`: passed, 0 warnings and 0 errors.
+- Focused `Letting_a_drone_go_notifies_the_client_that_control_and_its_activity_were_lost` test on `eve_p3`: passed, 1 passed / 0 failed / 0 skipped. The pinned SDE build `3396210` was loaded first (61 tables, 668,618 records).
+- EveJS was source-traced; its `server/package.json` exposes no test script, so this recheck did not execute an EveJS server flow. No graphical-client session was run.

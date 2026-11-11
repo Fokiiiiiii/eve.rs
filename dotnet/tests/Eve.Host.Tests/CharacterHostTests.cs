@@ -4064,11 +4064,15 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public Eve.Scheduler.DurableScheduler Scheduler => _runtime.Scheduler ?? throw new InvalidOperationException("the scheduler is not composed");
         public PgCharacterStore Characters => new(Source, CharactersSchema);
         public long Station { get; }
+        public Eve.Services.Space.SpaceSessions Space => Assert.IsType<Eve.Services.Space.SpaceSessions>(
+            typeof(HostRuntime).GetFields(System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)
+                .Single(candidate => candidate.FieldType == typeof(Eve.Services.Space.SpaceSessions)).GetValue(_runtime));
         public string CharactersSchema => _schemas["EVE_CHARACTERS_SCHEMA"];
         public string SkillsSchema => _schemas["EVE_SKILLS_SCHEMA"];
         public string InventorySchema => _schemas["EVE_INVENTORY_SCHEMA"];
         public string IdentitySchema => _schemas["EVE_IDENTITY_SCHEMA"];
         public string WalletSchema => _schemas["EVE_WALLET_SCHEMA"];
+        public string CrimewatchSchema => _schemas["EVE_CRIMEWATCH_SCHEMA"];
         public string CorporationsSchema => _schemas["EVE_CORPORATIONS_SCHEMA"];
         public string FactionWarfareSchema => _schemas["EVE_FACTIONWARFARE_SCHEMA"];
         public string GameStoreSchema => _schemas["EVE_GAMESTORE_SCHEMA"];

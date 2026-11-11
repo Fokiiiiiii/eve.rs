@@ -90,6 +90,34 @@ public class EventBusTests
     }
 
     [PgFact]
+    public async Task A_completion_lease_is_acquired_once_per_event_and_released_after_completion()
+    {
+        await using var rig = await Rig.Create();
+        using var gate = new SemaphoreSlim(1, 1);
+        var heldInHandler = false;
+        var heldAfterCommit = false;
+        rig.Bus.Subscribe("completion-lease", ["lease.test"], async (ctx, token) =>
+        {
+            await ctx.AcquireSemaphoreUntilCompletionAsync(gate, token);
+            await ctx.AcquireSemaphoreUntilCompletionAsync(gate, token);
+            heldInHandler = !gate.Wait(0);
+            ctx.AfterCommit(_ =>
+            {
+                heldAfterCommit = !gate.Wait(0);
+                return Task.CompletedTask;
+            });
+        });
+        await rig.Bus.PumpAsync();
+        await rig.Publish("lease.test");
+
+        Assert.Equal(1, (await rig.Bus.PumpAsync()).Delivered);
+        Assert.True(heldInHandler);
+        Assert.True(heldAfterCommit);
+        Assert.True(gate.Wait(0));
+        gate.Release();
+    }
+
+    [PgFact]
     public async Task A_failed_live_callback_preserves_committed_state_cursor_and_cleanup()
     {
         await using var rig = await Rig.Create();

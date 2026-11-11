@@ -25,8 +25,10 @@ public sealed record DomainEvent(long Id, string Topic, string? Key, string Payl
 public sealed class EventContext
 {
     private readonly EventBus _bus;
+    private readonly object _gate = new();
     private readonly List<Func<CancellationToken, Task>> _afterCommit = [];
     private readonly List<Action> _afterCompletion = [];
+    private readonly Dictionary<SemaphoreSlim, Task> _completionLeases = new(ReferenceEqualityComparer.Instance);
 
     internal EventContext(EventBus bus, DomainEvent @event, NpgsqlConnection connection, NpgsqlTransaction transaction)
     {
@@ -54,6 +56,27 @@ public sealed class EventContext
     {
         ArgumentNullException.ThrowIfNull(callback);
         _afterCompletion.Add(callback);
+    }
+
+    /// <summary>Acquires a semaphore once for this event transaction and releases it when the transaction completes.</summary>
+    public Task AcquireSemaphoreUntilCompletionAsync(SemaphoreSlim semaphore, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(semaphore);
+        lock (_gate)
+        {
+            if (_completionLeases.TryGetValue(semaphore, out var existing))
+                return existing;
+            var lease = AcquireAsync();
+            _completionLeases.Add(semaphore, lease);
+            return lease;
+        }
+
+        async Task AcquireAsync()
+        {
+            await semaphore.WaitAsync(cancellationToken).ConfigureAwait(false);
+            lock (_gate)
+                _afterCompletion.Add(() => semaphore.Release());
+        }
     }
 
     internal async Task CompleteAsync(bool committed, Action<Exception> onError)

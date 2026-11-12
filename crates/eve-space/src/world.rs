@@ -442,3 +442,44 @@ impl World {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn world_with(systems: &[(i64, &str)]) -> World {
+        World {
+            sde: crate::sde::Sde::open("/nonexistent"),
+            types: HashMap::new(),
+            field_capital_size_by_type: std::sync::Arc::new(HashMap::new()),
+            category_of_group: HashMap::new(),
+            systems: systems
+                .iter()
+                .map(|(id, name)| {
+                    (
+                        *id,
+                        SystemInfo {
+                            name: name.to_string(),
+                            position: Vec3::new(0.0, 0.0, 0.0),
+                            constellation_id: 0,
+                            region_id: 0,
+                            faction_id: None,
+                            security: 0.0,
+                        },
+                    )
+                })
+                .collect(),
+            corporations: HashMap::new(),
+            operations: HashMap::new(),
+            wrecks: std::sync::Arc::new(crate::wreck_types::WreckCatalog::default()),
+        }
+    }
+
+    #[test]
+    fn system_name_is_the_name_of_a_known_system_and_none_for_an_unknown_one() {
+        let world = world_with(&[(30_000_142, "Jita")]);
+        assert_eq!(world.system_name(30_000_142), Some("Jita"));
+        assert_eq!(world.system_name(30_000_143), None);
+        assert_eq!(world.system_name(0), None);
+    }
+}

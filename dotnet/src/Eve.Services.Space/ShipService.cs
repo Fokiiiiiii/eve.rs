@@ -20,7 +20,8 @@ public sealed partial class ShipService(
     Func<long, CancellationToken, ValueTask<ShipFittingInfo?>>? getShipFittingInfo = null,
     CharacterShips? ships = null,
     Func<Eve.Inventory.Item, ItemRow>? rowOf = null,
-    PgShipConfigurationStore? shipConfigurations = null) : IBoundObjectReleaseHandler
+    PgShipConfigurationStore? shipConfigurations = null,
+    PgShipDirtStore? shipDirts = null) : IBoundObjectReleaseHandler
 {
     private readonly Binding _binding = new(nowUnixMs);
 
@@ -28,10 +29,36 @@ public sealed partial class ShipService(
 
     public void OnBoundObjectReleased(string oid, ClientSession? session) => _binding.Release(oid);
 
-    /// <summary>Returns the current EVE FILETIME when a ship has no stored dirt record yet.</summary>
+    /// <summary>
+    /// <c>GetDirtTimestamp(itemID)</c> (the hangar's dirt level): the ship's stored dirt timestamp, or the current EVE FILETIME when the ship has no
+    /// stored record yet.
+    /// </summary>
     [Method("GetDirtTimestamp")]
-    public PyValue GetDirtTimestamp(ServiceCall call) =>
-        new PyLong(checked(116444736000000000L + nowUnixMs() * 10_000L));
+    public async ValueTask<PyValue> GetDirtTimestamp(ServiceCall call)
+    {
+        if (shipDirts is not null && IdOf(call.Arg(0)) is { } shipId && shipId > 0
+            && await shipDirts.GetAsync(shipId, call.Cancellation) is { } stored)
+            return new PyLong(stored);
+        return new PyLong(CurrentFileTime());
+    }
+
+    /// <summary>
+    /// <c>ResetDirtTimestamp(shipID)</c> on the bound ship (<c>cleanShipButton.py:29</c>): the caller's own ship is cleaned, its dirt timestamp becomes
+    /// now, and that timestamp is the answer the client gets back.
+    /// </summary>
+    [Method("ResetDirtTimestamp")]
+    public async ValueTask<PyValue> ResetDirtTimestamp(ServiceCall call)
+    {
+        if (shipDirts is null)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Ship dirt storage is unavailable.")));
+        if (!_binding.Owns(call) || IdOf(call.Arg(0)) is not { } shipId || shipId <= 0 || call.Session.GetInt("shipid") != shipId)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Ship dirt cannot be reset in this session.")));
+        var now = CurrentFileTime();
+        await shipDirts.SetAsync(shipId, now, call.Cancellation);
+        return new PyLong(now);
+    }
+
+    private long CurrentFileTime() => checked(116444736000000000L + nowUnixMs() * 10_000L);
 
     [Method("GetShipConfiguration")]
     public async ValueTask<PyValue> GetShipConfiguration(ServiceCall call)

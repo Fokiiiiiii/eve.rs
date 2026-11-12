@@ -205,12 +205,12 @@ public class SpaceServiceTests
     }
 
     [Fact]
-    public void Ship_dirt_timestamp_is_a_current_EVE_filetime()
+    public async Task Ship_dirt_timestamp_is_a_current_EVE_filetime_without_a_stored_record()
     {
         const long nowUnixMs = 1_000;
         var service = new ShipService(null!, () => nowUnixMs);
 
-        Assert.Equal(new PyLong(116444736000000000L + nowUnixMs * 10_000L), service.GetDirtTimestamp(null!));
+        Assert.Equal(new PyLong(116444736000000000L + nowUnixMs * 10_000L), await service.GetDirtTimestamp(null!));
     }
 
       [PgFact]

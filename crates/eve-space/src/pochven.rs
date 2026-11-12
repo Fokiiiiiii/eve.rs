@@ -85,4 +85,36 @@ mod tests {
     fn the_rule_constants_match_the_csharp_rules() {
         assert_eq!(POCHVEN_REGION_ID, 10_000_070);
     }
+
+    #[test]
+    fn hostile_corporations_inside_pochven_are_the_other_three_factions_corporations() {
+        assert_eq!(
+            hostile_corporations(TRIGLAVIAN_CORPORATION_ID, true),
+            vec![DRIFTER_CORPORATION_ID, ROGUE_DRONE_CORPORATION_ID, EDENCOM_CORPORATION_ID]
+        );
+        assert_eq!(
+            hostile_corporations(EDENCOM_CORPORATION_ID, true),
+            vec![DRIFTER_CORPORATION_ID, ROGUE_DRONE_CORPORATION_ID, TRIGLAVIAN_CORPORATION_ID]
+        );
+        for corporation in [
+            DRIFTER_CORPORATION_ID,
+            ROGUE_DRONE_CORPORATION_ID,
+            TRIGLAVIAN_CORPORATION_ID,
+            EDENCOM_CORPORATION_ID,
+        ] {
+            let hostile = hostile_corporations(corporation, true);
+            assert_eq!(hostile.len(), 3);
+            assert!(!hostile.contains(&corporation), "{corporation} is never its own hostile");
+        }
+    }
+
+    #[test]
+    fn hostile_corporations_outside_pochven_or_for_a_stranger_is_only_no_owner() {
+        assert_eq!(hostile_corporations(TRIGLAVIAN_CORPORATION_ID, false), vec![NO_OWNER]);
+        assert_eq!(hostile_corporations(1_000_125, true), vec![NO_OWNER]);
+        assert_ne!(
+            hostile_corporations(DRIFTER_CORPORATION_ID, true),
+            hostile_corporations(DRIFTER_CORPORATION_ID, false)
+        );
+    }
 }

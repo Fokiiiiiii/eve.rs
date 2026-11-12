@@ -132,3 +132,15 @@ pub fn i(record: &Value, field: &str) -> Option<i64> {
 pub fn f(record: &Value, field: &str) -> Option<f64> {
     record.get(field).and_then(Value::as_f64)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dir_is_the_directory_the_data_was_opened_at() {
+        let sde = Sde::open("/data/sde/build-1");
+        assert_eq!(sde.dir(), Path::new("/data/sde/build-1"));
+        assert_eq!(sde.clone().dir(), Path::new("/data/sde/build-1"));
+    }
+}

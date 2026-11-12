@@ -182,6 +182,8 @@ internal sealed partial class CharacterServicesComposition
                 rowOf: item => new Eve.Services.ItemRow(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Singleton ? -1 : item.Quantity,
                     dogma.Type(item.TypeId)?.GroupId ?? 0, dogma.Type(item.TypeId)?.CategoryId ?? 0),
                 shipConfigurations: new PgShipConfigurationStore(source,
+                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")) ? PgSpaceItemStore.DefaultSchema : Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")!),
+                shipDirts: new PgShipDirtStore(source,
                     string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")) ? PgSpaceItemStore.DefaultSchema : Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")!)), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter)
                 {
                     CynoJammerOnlineSimTimeForSystem = CynoJammerOnlineSimTimeAsync,

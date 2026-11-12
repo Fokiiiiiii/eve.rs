@@ -4,7 +4,7 @@
 
 ## 登録・authority source
 
-StructureComposition.cs:496はPersistenceStructureDirectoryReadModelを使用し、CharacterServicesCompositionでStructureSettingsServiceを合成する。StructureDirectoryService.cs:450-521は登録されたstructureSettings methodsをpersisted structure service/profile stateから読む。read-only RPCで、service自体はstate mutationやnotificationを行わない。clientは全てpositional args、machoVersion=1はtransport kwargs。IDはclientが使用するstructure/service/setting IDs。
+StructureComposition.cs:323はPersistenceStructureDirectoryReadModelを使用し、CharacterServicesComposition.Structures（StructureComposition.cs:222-523）内のStructureComposition.cs:521でStructureSettingsServiceを合成する。StructureDirectoryService.cs:450-521は登録されたstructureSettings methodsをpersisted structure service/profile stateから読む。read-only RPCで、service自体はstate mutationやnotificationを行わない。clientは全てpositional args、machoVersion=1はtransport kwargs。IDはclientが使用するstructure/service/setting IDs。
 
 ## 全caller・reply consumer
 

@@ -80,7 +80,7 @@ Hostは dotnet/src/Eve.Services.Core/StoreOffersService.cs:288–289 の [Servic
 
 17. **ActivateCharacterReSculpt**
     - クライアント: eve/client/script/ui/services/menuSvcExtras/menuFunctions.py:387–390。itemID位置引数、確認後呼び出し、reply未使用。
-    - Host: PyInt/PyLong itemID。accountキャラクター所有の有効certificateのみを消費してresculpt状態を保存、無効なら False。server notificationなし。EveJS userService.js:1097–1102 はstub trueで副作用なし。SDE-backed Host挙動は互換偏差として docs/reference/compat/DEVIATIONS.md に記録済み。
+    - Host: PyInt/PyLong itemID。accountキャラクター所有の有効certificateのみを消費してresculpt状態を保存、無効なら False。commit後、character session が存在すれば OnItemChange（消費後の数量）と OnCharacterHandler を送る（`RewardRpc.cs:78-86`）。EveJS userService.js:1097–1102 はstub trueで副作用なし。SDE-backed Host挙動は互換偏差として docs/reference/compat/DEVIATIONS.md に記録済み。
 
 18. **UserLogOffCharacter**
     - クライアント: eve/client/script/parklife/gameui.py:498–500。引数なし、boolが DoCharacterLogoff を続けるかを選択。false時は拒否を記録。

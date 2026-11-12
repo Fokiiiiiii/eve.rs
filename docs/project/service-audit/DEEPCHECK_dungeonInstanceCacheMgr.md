@@ -23,7 +23,7 @@ The anomaly tracker uses defaultdict(list, map) for site groups. The whole-tree 
 
 ## Host path, state and comparison
 
-DungeonRpc.cs:61 registers DungeonInstanceCacheMgrService with DungeonReadModel.ReadCacheSnapshotAsync. The service reads one authoritative cache snapshot and filters by active lifecycle state and SDE archetype IDs in DungeonRpcServices.cs:126-220. Entry methods return system-keyed dictionaries of lists; count methods return system-keyed integer dictionaries. GetSignatureInstances deliberately supports the client’s mixed count/list representation. Ice sites additionally require authoritative system slot data. The snapshot is the shared dungeon cache owner; the RPC adds no per-client store or mutation.
+DungeonRpc.cs:62 registers DungeonInstanceCacheMgrService with DungeonReadModel.ReadCacheSnapshotAsync. The service reads one authoritative cache snapshot and filters by active lifecycle state and SDE archetype IDs in DungeonRpcServices.cs:126-220. Entry methods return system-keyed dictionaries of lists; count methods return system-keyed integer dictionaries. GetSignatureInstances deliberately supports the client’s mixed count/list representation. Ice sites additionally require authoritative system slot data. The snapshot is the shared dungeon cache owner; the RPC adds no per-client store or mutation.
 
 EveJS v0.12.9 exposes the same 16 no-argument handlers in dungeonInstanceCacheMgrService.js:629-702 and groups its dungeon cache into the same client-facing map shapes. The eve.rs source uses the authoritative read model and pinned archetype IDs instead of copying EveJS’s process-local cache. Returned rows preserve the client’s factionID and location fields; the client performs faction ownership filtering itself.
 

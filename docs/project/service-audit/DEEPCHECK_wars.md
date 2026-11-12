@@ -12,7 +12,7 @@ V24.01 client に RPC サービス名 `wars` はない。近い Host surface は
 
 - `eve/client/script/ui/services/wars/war_cso.py:23-68` の `Wars` は local `svc.war`; `GetMoniker()` が `eveMoniker.GetWar()` を Bind する。
 - `eve/common/script/net/eveMoniker.py:185-198` は `Moniker('warRegistry', ...)` を作成。server mode は `IsAllianceOrCorpLocal` を問い合わせる。
-- 実 Host composition は `dotnet/src/Eve.Host/Rpc/CorporationRpc.cs:73,78,82-87` で両 service と negotiation store を登録する。`WarRegistryHostWireTests.Registered_war_registry_creates_and_accepts_an_ally_offer_through_macho_with_persisted_state_and_notifications` は実 Host composition と PostgreSQL を通す。下記の negotiation 欄は provider 実装前の履歴記録。
+- 実 Host composition は `dotnet/src/Eve.Host/Rpc/CorporationRpc.cs:78,83-89` で両 service と negotiation store を登録する。`WarRegistryHostWireTests.Registered_war_registry_creates_and_accepts_an_ally_offer_through_macho_with_persisted_state_and_notifications` は実 Host composition と PostgreSQL を通す。下記の negotiation 欄は provider 実装前の履歴記録。
 - local `svc.war` の利用は `corp_ui_wars.py:212,220`, `warLandingPage.py:156`, `warDeclare.py:401,635`, `state.py:1019` など。これらは Host method ではない。
 
 ## warsInfoMgr RPC 全件
@@ -54,11 +54,11 @@ Client calls は `war_cso.py`; UI actions は `warWindows.py`。成功時 client
 | `AcceptSurrender(id)` | `war_cso.py:248`; `warWindows.py:246` | `CustomNotify` exception。 | `:337-341` accept transition。 |
 | `DeclineSurrender(id)` | `war_cso.py:252`; `warWindows.py:250` | `CustomNotify` exception。 | `:343-365` decline と通知。 |
 
-既存 deviation は `docs/reference/compat/DEVIATIONS.md:3373-3390` に negotiation 未実装として記録済み。Host には persistence がなく、EveJS の後続 read と通知の流れを実現しない。
+既存 deviation は `docs/reference/compat/DEVIATIONS.md:3565-3582` に negotiation 未実装として記録済み。Host には persistence がなく、EveJS の後続 read と通知の流れを実現しない。
 
 ### war mutation と client GM calls
 
-- `SetOpenForAllies(warID,state)`: wrapper `war_cso.py:256`, UI call `warEntry.py:132-134`。Host は defender 側 relation を更新、Director を確認し、commit 後に `OnWarChanged` を送る。client subscriber は `war_cso.py:76-92`。EveJS `warRegistryService.js:367-380`。Host の追加 role gate は意図的差異として `DEVIATIONS.md:5126` に記録済み。
+- `SetOpenForAllies(warID,state)`: wrapper `war_cso.py:256`, UI call `warEntry.py:132-134`。Host は defender 側 relation を更新、Director を確認し、commit 後に `OnWarChanged` を送る。client subscriber は `war_cso.py:76-92`。EveJS `warRegistryService.js:367-380`。Host の追加 role gate は意図的差異として `DEVIATIONS.md:5368` に記録済み。
 - `RetractMutualWar(warID)`: wrapper `war_cso.py:243`, UI `warEntry.py:304`。Host は war が mutual かつ caller が side の場合だけ end fields を保存し、commit 後 `OnWarChanged`。EveJS `warRegistryService.js:318-335`。
 - client はさらに GM-only `GMJoinDefender` (`war_cso.py:262`, UI `warEntry.py:451`), `GMActivateDefender` (`:267`, `warAllyEntry.py:146`, `warEntry.py:448,494`), `GMDeactivateDefender` (`:272`, `warAllyEntry.py:149`), `GMExtendAllyContract` (`:277`, `warAllyEntry.py:148`), `GMSetDeclareTime` (`:282`, `warEntry.py:442,474`), `GMSetWarFinishTime` (`:287`, `warEntry.py:484,489`) を呼ぶ。Host に method 登録がなく、EveJS `warRegistryService.js:172-380` にも handler がないため Host は MethodNotFound。functional reference がない privileged surface として別途根拠が必要。
 

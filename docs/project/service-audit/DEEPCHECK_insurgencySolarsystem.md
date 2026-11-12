@@ -11,7 +11,7 @@ The snapshot is the V24 CampaignClientSnapshot object with campaignID, pirateFac
 
 ## Host owner, reply, and comparison
 
-CoreRpc.cs:107 registers the service. InsurgencyComposition.cs:52-65 reads visible campaigns from InsurgencyStore and builds FILETIME timestamps. GetAllVisibleCampaigns returns a PyList of Ex2 CampaignClientSnapshot objects. GetLocalCampaignClientSnapshot returns a two-element PyList: current solarsystemid2 and the matching snapshot or None. It matches either the campaign origin or a covered system. No per-session campaign map is introduced.
+CoreRpc.cs:169 registers the service (`InsurgencySolarsystemService`, defined in `dotnet/src/Eve.Services.Core/FactionActivityRpcServices.cs:343-399`). InsurgencyComposition.cs:52-65 reads visible campaigns from InsurgencyStore and builds FILETIME timestamps. GetAllVisibleCampaigns returns a PyList of Ex2 CampaignClientSnapshot objects. GetLocalCampaignClientSnapshot returns a two-element PyList: current solarsystemid2 and the matching snapshot or None. It matches either the campaign origin or a covered system. No per-session campaign map is introduced.
 
 InsurgencyComposition.cs:73-96 sends start/update/ending notifications after campaign state commits, scoped to covered systems where appropriate; the V24 client filters by its current system. EveJS v0.12.9 uses the same list and two-slot local snapshot shapes through the configured campaign provider (server/src/services/map/insurgencySolarsystemService.js:67-87). The Host uses InsurgencyStore as the authoritative provider.
 

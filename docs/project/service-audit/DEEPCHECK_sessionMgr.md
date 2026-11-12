@@ -34,9 +34,9 @@ bound/moniker callableの例は `clientDogmaLocation.py:242` の `remoteShipMgr.
 
 ## Host routeとerror
 
-`dotnet/src` 全体の検索に `sessionMgr` というroute/service名はなく、HostのRPC構成は実サービスを `CoreRpc.cs:93,105-107` などで登録している。登録名は `ServiceRegistry.Register`、名前解決は `ServiceRegistry.Lookup` が行い、bound objectも別mapから検索する (`ServiceRegistry.cs:19-33,151-165`)。sessionMgrのservice/bound objectを登録する箇所はない。
+`dotnet/src` 全体の検索に `sessionMgr` というroute/service名はなく、HostのRPC構成は実サービスを `CoreRpc.cs:82` の `CoreRpc()` で組み立てて登録している。登録名は `ServiceRegistry.Register`、名前解決は `ServiceRegistry.Lookup` が行い、bound objectも別mapから検索する (`ServiceRegistry.cs:21-35`; 名前解決の本体は `ServiceRegistry.cs:311-334`)。sessionMgrのservice/bound objectを登録する箇所はない。
 
-仮にクライアントが同名serviceを直接送ると、通常dispatcherは `ServiceNotFound` を `ErrorResponse` に包んで返す (`PacketDispatcher.cs:128,161-162`)。sessionMgrのHost routeに対するUserError、永続state、後続notificationは存在しない。clientが送る正規の4ローカルメソッドをHost wire testする根拠はなく、現行の別target serviceをsessionMgr名に束ねるのも誤ったrouteとなるため、コード・wire test追加は行わない。
+仮にクライアントが同名serviceを直接送ると、通常dispatcherは `ServiceNotFound` を `ErrorResponse` に包んで返す (`PacketDispatcher.cs:166-167`; strict modeは `161-162`)。sessionMgrのHost routeに対するUserError、永続state、後続notificationは存在しない。clientが送る正規の4ローカルメソッドをHost wire testする根拠はなく、現行の別target serviceをsessionMgr名に束ねるのも誤ったrouteとなるため、コード・wire test追加は行わない。
 
 ## EveJSとCarbon server側の同名API
 

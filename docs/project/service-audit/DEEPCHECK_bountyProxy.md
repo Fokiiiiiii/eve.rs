@@ -4,9 +4,9 @@
 
 ## Host登録と共通wire
 
-BountyProxyKillRightService.Name は bountyProxy。本番構成では CharacterServiceList.cs:52 が CrimewatchRpc() を含み、HostComposition.cs:261-265 が返されたサービスをregistryに登録する。CrimewatchRpc.cs:119-130 が BountyProxyKillRightService にPlayerBountyRpc、Crimewatch store、通知writer、組織resolverを接続する。登録メソッド一覧はサービスの HasMethod と一致する。
+BountyProxyKillRightService.Name は bountyProxy。本番構成では CharacterServiceList.cs:52 が CrimewatchRpc() を含み、HostComposition.cs:491-494 が返されたサービスをregistryに登録する。CrimewatchRpc.cs:119-130 が BountyProxyKillRightService にPlayerBountyRpc、Crimewatch store、通知writer、組織resolverを接続する。登録メソッド一覧はサービスの HasMethod と一致する。
 
-V24.01の ServiceCallGPCS.py:225-232 はアプリ引数を位置引数tupleで送信し、transport用 machoVersion=1 をkwargsに加える。Host PacketDispatcher.cs:215-225,307-317 はアプリ引数とkwargsをServiceCallへ渡す前に machoVersion を除く。クライアント側からこの19メソッドへのアプリkwargsはなく、全コールは位置引数。IDはclient marshalのPyInt/PyLong双方を受理する。ID collectionはHostでPyList/PyTupleを受理。SellKillRightの3番目の restrictedTo はUIでNoneまたはowner IDを渡す。wire回帰はPyInt/PyLong、machoVersion kwargs、Noneを含むSellKillRight呼び出しを通す。
+V24.01の ServiceCallGPCS.py:225-232 はアプリ引数を位置引数tupleで送信し、transport用 machoVersion=1 をkwargsに加える。Host PacketDispatcher.cs:215-225,326-334 はアプリ引数とkwargsをServiceCallへ渡す前に machoVersion を除く。クライアント側からこの19メソッドへのアプリkwargsはなく、全コールは位置引数。IDはclient marshalのPyInt/PyLong双方を受理する。ID collectionはHostでPyList/PyTupleを受理。SellKillRightの3番目の restrictedTo はUIでNoneまたはowner IDを渡す。wire回帰はPyInt/PyLong、machoVersion kwargs、Noneを含むSellKillRight呼び出しを通す。
 
 ## メソッド別結果
 

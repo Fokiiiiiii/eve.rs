@@ -30,7 +30,7 @@ The whole client also has bound Beyonce methods for live bookmarks, not this ser
 
 ## Registration, persistence, notifications
 
-CharacterServiceList.cs:81-93 creates AccessGroupBookmarkMgrService, wraps it with BookmarkRefusals, and registers it; PacketDispatcher.cs:519 preserves service dispatch through that wrapper. BookmarkStore owns persistent folder, bookmark, subfolder, membership and active-state writes. SharedFolderNotifier publishes access and content changes after the successful RPC response. The client consumes these at bookmarkSvc.py:231-267, 321 and 331-350.
+CharacterServiceList.cs:81-93 creates AccessGroupBookmarkMgrService, wraps it with BookmarkRefusals, and registers it; PacketDispatcher.cs:538 gives the accessGroupBookmarkMgr methods a dispatch priority. BookmarkStore owns persistent folder, bookmark, subfolder, membership and active-state writes. SharedFolderNotifier publishes access and content changes after the successful RPC response. The client consumes these at bookmarkSvc.py:231-267, 321 and 331-350.
 
 EveJS v0.12.9 handlers are in server/src/services/character/accessGroupBookmarkMgrService.js:154-659. The Host returns the same outer lists, KeyVals, tuple, bool and integer that the client unpacks. Store errors become their named UserErrors; unexpected failures remain Host errors. BookmarkStaticLocation resolves a static target through SDE and the persisted bookmark store. A live-space BookmarkLocation call belongs to Beyonce and is not an accessGroupBookmarkMgr handler.
 

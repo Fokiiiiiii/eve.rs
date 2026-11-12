@@ -523,7 +523,10 @@ mod tests {
     #[test]
     fn a_reduction_factor_of_one_makes_the_speed_term_the_raw_ratio() {
         // signature 10 against radius 20 is 0.5; the speed term is 0.5 × 170 / 680 = 0.125, raised to the exponent 1
-        assert_eq!(application_factor_of(20.0, 170.0, 1.0, DEFAULT_REDUCTION_SENSITIVITY, 10.0, 680.0), 0.125);
+        assert_eq!(
+            application_factor_of(20.0, 170.0, 1.0, DEFAULT_REDUCTION_SENSITIVITY, 10.0, 680.0),
+            0.125
+        );
     }
 
     #[test]
@@ -543,7 +546,9 @@ mod tests {
 
         let by_signature: Vec<f64> = [0.0, 5.0, 10.0, 20.0, 40.0]
             .iter()
-            .map(|signature| application_factor_of(20.0, 170.0, 0.5, DEFAULT_REDUCTION_SENSITIVITY, *signature, 0.0))
+            .map(|signature| {
+                application_factor_of(20.0, 170.0, 0.5, DEFAULT_REDUCTION_SENSITIVITY, *signature, 0.0)
+            })
             .collect();
         assert_eq!(by_signature, vec![0.0, 0.25, 0.5, 1.0, 1.0]);
     }

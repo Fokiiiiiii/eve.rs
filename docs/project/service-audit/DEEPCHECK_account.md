@@ -22,7 +22,7 @@ GiveCashのnotification orderはAccountWalletHostRpcTests.csのpacket captureで
 
 ## EveJS比較と残る差
 
-EveJS v0.12.9 server/src/services/account/accountService.js:677-687,735-770,831-860 は同じbalance, divisions, transactions fieldsとcorporation read refusalを実装し、walletState.js:430-459はjournal全体からaccountKey/dateをfilterする。Host AccountService.cs:82-103は先にjournalを100 personal / 1000 corpへ切ってから指定月でfilterする。このためjournal件数が上限を超える時、古い月を要求しても該当行が落ちる。EveJSに対する機能差で、修正はDB fixtureを使う月別履歴wire regressionが必要。今回の指定はDBなしのため変更していない。
+EveJS v0.12.9 server/src/services/account/accountService.js:677-687,735-770,831-860 は同じbalance, divisions, transactions fieldsとcorporation read refusalを実装し、walletState.js:430-459はjournal全体からaccountKey/dateをfilterする。Host AccountService.cs:86-104は指定月をfromTimeMs/untilTimeMsとしてJournalForAccountAsyncへ渡し(limit: null, :102-104)、件数上限で行を切らない。このため、古い月の行が journal件数の上限で落ちる問題は、この版のコードからは確認できなかった。
 
 さらにEveJS GetWalletDivisionsInfoのpersonal branchはcashとaurumの2行を返す(accountService.js:735-770)。Hostはcash 1行のみ。現clientのdivision panelはkey/balanceを消費するが、personal wallet panelでaurum rowを必要とする画面のwhole-tree callerは今回特定できていないため、wire mismatchの確定とはしていない。
 

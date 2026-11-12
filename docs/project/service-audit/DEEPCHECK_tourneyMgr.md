@@ -4,7 +4,7 @@
 
 ## 登録と共通wire
 
-CoreServices.cs:72 が TourneyMgrService を構成リストへ追加する。サービスは UnportedFeatureRpcServices.cs:524-550 で登録され、任意の TourneyQueryCallback がある場合だけ実データを読み、未接続またはnullの場合はスキーマに沿った空データを返す。V24の通常のservice callは positional args とtransport用 machoVersion=1 kwargs。5つの読み取りRPCにアプリkwargsはない。bound-object呼び出しはeve.devtoolsのTournament referee / camera機能に限られる。
+CoreServices.cs:79 が TourneyMgrService を構成リストへ追加する。サービスは UnportedFeatureRpcServices.cs:551-700 で登録され、任意の TourneyQueryCallback がある場合だけ実データを読み、未接続またはnullの場合はスキーマに沿った空データを返す。V24の通常のservice callは positional args とtransport用 machoVersion=1 kwargs。5つの読み取りRPCにアプリkwargsはない。bound-object呼び出しはeve.devtoolsのTournament referee / camera機能に限られる。
 
 ## 読み取りRPC
 
@@ -53,7 +53,7 @@ tournamentRefereeTools.pyのbound callsは次の通り。実データを返す�
 | UnBanShipType | :915 | なし |
 | UpdateFleetDetails | :1250 | なし |
 
-これらのbound routesはHostにもEveJS v0.12.9にも実装がない。HostでRPC呼び出しはmethod未登録エラーとなる。clientが呼ぶ操作はmatch作成、pilot/ship検査、bans、teleport、match state transition、referee membershipを変えるため、空replyや常時成功を追加すると誤った成功になる。DB状態・権限モデル・通知を持つ実装が必要で、今回の既存データでは安全に再現できない。特にCreateMatchの3要素やcamera UIのmappingに適合する永続providerもない。
+これらのbound routesはHostでは実装されている。bound objectは `UnportedFeatureRpcServices.cs:577-617` の `MachoBindObject` が作成し、各methodは `dotnet/src/Eve.Services.Core/TourneyMgrService.Actions.cs:8-28` と `TourneyMgrService.Camera.cs:11-59` に定義される（EveJS v0.12.9側の対応有無は本監査では未確認）。clientが呼ぶ操作はmatch作成、pilot/ship検査、bans、teleport、match state transition、referee membershipを変えるため、空replyや常時成功を追加すると誤った成功になる。match状態の永続化は `dotnet/src/Eve.Host/Persistence/Tournaments/PersistenceTournamentMatches.Actions.cs:123-267` と `PersistenceTournamentMatches.SpaceActions.cs:14-292` が担う。
 
 ## EveJS照合・wire検証
 

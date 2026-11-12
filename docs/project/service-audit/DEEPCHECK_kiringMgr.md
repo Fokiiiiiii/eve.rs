@@ -4,7 +4,7 @@
 
 ## 登録・共通wire
 
-CoreServices.cs:60はKiringMgrServiceを登録する。client callsは全てpositional argsで、machoVersion=1はtransport kwargs。文字列はPyStr、aid/goods IDs/counts/modeはclientの数値、headersはdictionary。結果はauth tuple / config dict / integer / bool / None / UserErrorとなる。
+CoreServices.cs:67はKiringMgrServiceを登録する (CoreServices.cs:67 `new KiringMgrService()` in the service list)。client callsは全てpositional argsで、machoVersion=1はtransport kwargs。文字列はPyStr、aid/goods IDs/counts/modeはclientの数値、headersはdictionary。結果はauth tuple / config dict / integer / bool / None / UserErrorとなる。
 
 ## 各methodとclient consumer
 

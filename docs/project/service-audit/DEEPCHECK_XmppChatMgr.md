@@ -4,7 +4,7 @@
 
 ## 登録・引数
 
-HostComposition.cs:309-315はXmppChatMgrServiceをXmppChatHubに結び付けて登録する。remote methodsはpositional args。GetHelpChannel(languageID)は言語を受け取るcallsiteとsession languageで解決するcallsiteの両方を持つ。machoVersion=1はtransport kwargs。stringsはPyStr、結果のchannel listはPyList[PyStr]、成功/拒否の状態はPyBoolまたはPyNone。
+HostComposition.cs:550-556はXmppChatMgrServiceをXmppChatHubに結び付けて登録する。remote methodsはpositional args。GetHelpChannel(languageID)は言語を受け取るcallsiteとsession languageで解決するcallsiteの両方を持つ。machoVersion=1はtransport kwargs。stringsはPyStr、結果のchannel listはPyList[PyStr]、成功/拒否の状態はPyBoolまたはPyNone。
 
 ## 全client callとreply consumer
 
@@ -27,13 +27,13 @@ HostComposition.cs:309-315はXmppChatMgrServiceをXmppChatHubに結び付けて�
 
 Hostはchannel creation/ownership/member/MOTDをXmppChatHub経由で処理し、player-owned channelとcorporation MOTDはstoreを使う。Resyncはserver stateからjoin可能channel一覧を作る。client-visible通知は後続XMPP presence/messageに属し、RPC reply自体はnotificationを送らない。player-owned channels/MOTDの永続成功経路はDBを必要とする。
 
-EveJS v0.12.9 xmppChatMgrService.js:170-216はGMMute/GMUnmuteを登録し、mute対象・role確認に対しfalse、成功時trueを返す。chatRuntime.js:1252-1278はtimed restrictionを保持し、:1010でmuteを適用する。同service :229-239はinstanceIDからresourcewars_%dを作り、static verified roomを用意する。Host XmppChatMgrService.csはこれら3 methodを登録していない。client RPCはmethod未登録で失敗し、期待されるbool false/trueやresource-wars room作成はない。既存Hubにmoderation authority/timed mute storeやresource-wars membership registryがないため、常時true routeを足して隠すのは誤り。状態ownerとrole-gated mute enforcementを接続する実装が残る。
+EveJS v0.12.9 xmppChatMgrService.js:170-216はGMMute/GMUnmuteを登録し、mute対象・role確認に対しfalse、成功時trueを返す。chatRuntime.js:1252-1278はtimed restrictionを保持し、:1010でmuteを適用する。同service :229-239はinstanceIDからresourcewars_%dを作り、static verified roomを用意する。Host XmppChatMgrService.csはGMMute/GMUnmuteを登録していない（EnsureResourceWarsChannelExistsは同ファイル:21-23で登録済み）。client RPCはmethod未登録で失敗し、期待されるbool false/trueはない。既存Hubにmoderation authority/timed mute storeやresource-wars membership registryがないため、常時true routeを足して隠すのは誤り。状態ownerとrole-gated mute enforcementを接続する実装が残る。
 
 呼び出しで明示されたUserErrorはない。missing routeはapplication UserError responseではなくdispatcherのmethod-not-found errorとなる。その他のRPCはHost wire testsでroute shapeを確認済みだが、persistent player-channel successは今回DBを使っていないため実行していない。
 
 ## 確認した範囲
 
-XmppChatMgrHostWireTests.csのclient wire testはcoverage内で実装済みのchannel methodsをHost dispatch経由で通す。今回追加変更なし。resource-wars channel ensure、mute/unmuteのroot feature・wire testは未実装。PostgreSQLとGUI clientは使っていない。
+XmppChatMgrHostWireTests.csのclient wire testはcoverage内で実装済みのchannel methodsをHost dispatch経由で通す。今回追加変更なし。resource-wars channel ensureのwire testは同ファイル:65-79にあり、mute/unmuteのroot feature・wire testは未実装。PostgreSQLとGUI clientは使っていない。
 
 
 ## 引数型
@@ -52,6 +52,6 @@ eve.rsはSetMotdのfull JIDから有効なconference domainを検証してroom I
 
 V24.01 `resourcewars/client/rwservice.py:90-112` は入場時にEnsure RPCを呼び、その後 `resourcewars_<instanceID>` に参加し、次のinstanceへ移ると前のroomから退出する。EveJS 261028.1 `server/src/services/chat/xmppChatMgrService.js:248-258` は正のinstance IDをroom名へ変換し、`server/src/_secondary/chat/chatRuntime.js:1085-1098` はroomを `destroyWhenEmpty` として作り、最後の退出で `chatRuntime.js:978-1003` がroom状態を削除する。
 
-Hostは `XmppChatMgrService.cs:20-22` でrouteとNone/room名replyを登録し、`XmppChatHub.cs:85-102` に正のIDの一時状態を置く。`XmppMuc.cs:70-90` はEnsure済みのroomだけを許可し、成功時は通常のMUC presenceを送る。最後のoccupant退出では `XmppMuc.cs:132-146` がroom状態を削除し、disconnectも `XmppClientSession.cs:162-163` から同じ退出処理を通る。RPCはHost wire regression `XmppChatMgrHostWireTests.cs:61-75` で正/無効ID、join presence、未Ensure時の拒否、最後の退出後の削除、再Ensure後の再参加を確認する。
+Hostは `XmppChatMgrService.cs:21-23` でrouteとNone/room名replyを登録し、`XmppChatHub.cs:100-107` に正のIDの一時状態を置く。`XmppMuc.cs:70-90` はEnsure済みのroomだけを許可し、成功時は通常のMUC presenceを送る。最後のoccupant退出では `XmppMuc.cs:133-149` がroom状態を削除し、disconnectも `XmppClientSession.cs:162-163` から同じ退出処理を通る。RPCはHost wire regression `XmppChatMgrHostWireTests.cs:65-79` で正/無効ID、join presence、未Ensure時の拒否、最後の退出後の削除、再Ensure後の再参加を確認する。
 
 修正前の同Host wire testはEnsure呼び出しで success frame 7の代わりにremote-error frame 15を受けて失敗した。修正後はEve.Host.TestsのXMPP対象34件がpass、skip 0。PostgreSQLを使うplayer-channel persistence regressionも同じXMPP対象実行でpassした。GUI clientでは操作していない。

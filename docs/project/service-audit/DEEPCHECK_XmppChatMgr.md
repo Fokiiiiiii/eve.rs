@@ -27,7 +27,7 @@ HostComposition.cs:550-556はXmppChatMgrServiceをXmppChatHubに結び付けて�
 
 Hostはchannel creation/ownership/member/MOTDをXmppChatHub経由で処理し、player-owned channelとcorporation MOTDはstoreを使う。Resyncはserver stateからjoin可能channel一覧を作る。client-visible通知は後続XMPP presence/messageに属し、RPC reply自体はnotificationを送らない。player-owned channels/MOTDの永続成功経路はDBを必要とする。
 
-EveJS v0.12.9 xmppChatMgrService.js:170-216はGMMute/GMUnmuteを登録し、mute対象・role確認に対しfalse、成功時trueを返す。chatRuntime.js:1252-1278はtimed restrictionを保持し、:1010でmuteを適用する。同service :229-239はinstanceIDからresourcewars_%dを作り、static verified roomを用意する。Host XmppChatMgrService.csはGMMute/GMUnmuteを登録していない（EnsureResourceWarsChannelExistsは同ファイル:21-23で登録済み）。client RPCはmethod未登録で失敗し、期待されるbool false/trueはない。既存Hubにmoderation authority/timed mute storeやresource-wars membership registryがないため、常時true routeを足して隠すのは誤り。状態ownerとrole-gated mute enforcementを接続する実装が残る。
+EveJS v0.12.9 xmppChatMgrService.js:170-216はGMMute/GMUnmuteを登録し、mute対象・role確認に対しfalse、成功時trueを返す。chatRuntime.js:1252-1278はtimed restrictionを保持し、:1010でmuteを適用する。同service :229-239はinstanceIDからresourcewars_%dを作り、static verified roomを用意する。Host XmppChatMgrService.csはGMMute/GMUnmuteを登録する（GMMuteは既存player channel restriction storeのSetTemporaryRestrictionAsyncで理由・時間・実行者つきの時限muteを書き、GMUnmuteはSetRoleAsyncで時限と恒久のmuteを解除する。呼び出し元のlive sessionとChatAdministratorまたはGmlのrole確認が必要で、未知のplayer channelは拒否する。PacketDispatcherのXMPP channel RPC予算にも入れた）。テストはXmppOrganizationRoomTests.Gm_mute_and_unmute_apply_the_client_gag_call_to_a_player_channel_for_chat_staff_only。残る点: 時限muteがメッセージ送信を実際に止めるかはこのテストでは確認しておらず、resource-wars membership registryは未実装。
 
 呼び出しで明示されたUserErrorはない。missing routeはapplication UserError responseではなくdispatcherのmethod-not-found errorとなる。その他のRPCはHost wire testsでroute shapeを確認済みだが、persistent player-channel successは今回DBを使っていないため実行していない。
 
@@ -48,7 +48,7 @@ eve.rsはSetMotdのfull JIDから有効なconference domainを検証してroom I
 比較: EveJS 261028.1 `server/src/services/chat/xmppStubServer.js:3053-3160` はowner IQ GETでconfig formを返し、SETをchannel adminに限定し、destroy時にchannelを削除してroom memberを退室させる。`server/src/services/chat/xmppChatMgrService.js:337-378` のSetMotdは `corp_` のみを正規化するが、V24.01 client callsiteはalliance roomも渡すため、Hostはclient観測形状に合わせてalliance roomも実装する。Host regressionは`XmppChatMgrHostWireTests.Xmpp_chat_mgr_calls_keep_client_wire_shapes_through_host_dispatch`, `XmppOrganizationRoomTests.Corporation_motd_is_authorized_broadcast_and_returned_on_join`, and `XmppOrganizationRoomTests.Player_room_owner_iq_configures_persists_and_destroys_with_member_presence`。前2件とXMPP非DB選択テスト30件はローカルpass。Actions run 40862223202で招待済みmemberのMUC roleをvisitorと期待して失敗したため、memberはparticipant、未招待guestはvisitorを確認するassertへ修正した。修正後のPostgreSQLテストはActions run 40864053685でpass、push起点の通常CI run 40864046138も全job成功（失敗なし）。GUI clientでの操作確認は引き続き未実施。
 ## Resource wars room の修正 (2026-11-01)
 
-以前の「3 methodが未登録」という記述のうち、`EnsureResourceWarsChannelExists` は修正済み。GMMute/GMUnmute は引き続き別途必要。
+以前の「3 methodが未登録」という記述のうち、`EnsureResourceWarsChannelExists` は修正済み。GMMute/GMUnmute はHostに登録済み（上の説明とテストを参照）。
 
 V24.01 `resourcewars/client/rwservice.py:90-112` は入場時にEnsure RPCを呼び、その後 `resourcewars_<instanceID>` に参加し、次のinstanceへ移ると前のroomから退出する。EveJS 261028.1 `server/src/services/chat/xmppChatMgrService.js:248-258` は正のinstance IDをroom名へ変換し、`server/src/_secondary/chat/chatRuntime.js:1085-1098` はroomを `destroyWhenEmpty` として作り、最後の退出で `chatRuntime.js:978-1003` がroom状態を削除する。
 

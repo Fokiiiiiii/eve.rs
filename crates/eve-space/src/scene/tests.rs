@@ -1341,45 +1341,6 @@ fn a_ship_lining_up_for_warp_or_in_it_takes_no_orders() {
 }
 
 #[test]
-fn a_ship_can_follow_a_target_after_warp_dropout_while_it_is_still_coasting() {
-    let mut scene = scene_with_a_planet();
-    let start = scene.ship(SESSION, NOON).unwrap().position;
-    let destination = Vec3::new(start.x + 1_000_000.0, start.y, start.z);
-    assert!(matches!(
-        scene.command(SESSION, Command::WarpToPoint { destination, range: 0.0 }, NOON).last(),
-        Some(Out::Accepted { command: 21, .. })
-    ));
-
-    let dropout = (1..=120)
-        .map(|elapsed| NOON + seconds(elapsed))
-        .find(|at| {
-            scene.poll(*at);
-            scene.pilots[&SESSION].flight.as_ref().is_some_and(Flight::is_coasting)
-        })
-        .expect("the short warp drops out and coasts before it comes to rest");
-    assert!(scene.pilots[&SESSION].flight.as_ref().is_some_and(Flight::is_coasting));
-
-    let refused =
-        scene.command(SESSION, Command::FollowBall { target_id: STATION + 1, range: 1_000.0 }, dropout);
-    assert_eq!(refused, [Out::Refused { session: SESSION, command: 5, reason: "UNKNOWN_TARGET" }]);
-    assert!(scene.pilots[&SESSION].flight.as_ref().is_some_and(Flight::is_coasting));
-
-    let told = scene.command(SESSION, Command::FollowBall { target_id: STATION, range: 1_000.0 }, dropout);
-
-    assert_eq!(
-        action_names(&told[0]),
-        ["FollowBall"],
-        "the client can order its next approach as soon as its Ball leaves warp mode"
-    );
-    assert!(matches!(told.last(), Some(Out::Accepted { command: 5, .. })), "{told:?}");
-    assert!(
-        scene.pilots[&SESSION].flight.is_none(),
-        "the accepted follow takes over from the old warp coast"
-    );
-    assert_eq!(scene.pilots[&SESSION].ship.course, Course::Follow { target: STATION, range: 1_000.0 });
-}
-
-#[test]
 fn a_warp_ends_with_the_ship_at_rest_by_the_planet_and_the_pilot_may_order_it_about_again() {
     let mut scene = scene_with_a_planet();
     let start = scene.ship(SESSION, NOON).unwrap().position;

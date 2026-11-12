@@ -38,11 +38,3 @@ fn a_structure_cannot_have_a_negative_owner_id() {
 
     assert_eq!(Message::decode(&frame[4..]), Err(DecodeError::BadValue("structure")));
 }
-
-#[test]
-fn a_warp_dropout_message_round_trips() {
-    let message = Message::WarpDropped { session_id: 42 };
-    let frame = message.encode();
-
-    assert_eq!(Message::decode(&frame[4..]).unwrap(), message);
-}

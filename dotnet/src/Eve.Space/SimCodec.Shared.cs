@@ -25,7 +25,6 @@ public static partial class SimCodec
         public const byte ShipChanged = 8;
         public const byte CrimewatchFlagActive = 140;
         public const byte EmpireSentryOffense = 161;
-        public const byte WarpDropped = 162;
         public const byte Notify = 9;
         public const byte ServiceNotify = 125;
         public const byte GetSceneBody = 126;

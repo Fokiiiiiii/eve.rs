@@ -13,9 +13,9 @@ The client event consumers read tale IDs, template class/name, system location, 
 
 ## Host and EveJS
 
-The registered `taleMgr` service is composed in `dotnet/src/Eve.Host/Rpc/DungeonRpc.cs:60-65`. `IncursionAnomalyService.cs:68-96,126-141` implements both methods. The global call returns an empty cached result with a 15-minute proxy cache and emits `OnTaleData`; a positive template ID also emits the notification and returns an empty list. Invalid template IDs return an empty list without a notification. The notification is built from the persisted incursion read model at :255-295. No mutation, persistence write, or post-call notification exists.
+The registered `taleMgr` service is composed in `dotnet/src/Eve.Host/Rpc/DungeonRpc.cs:63-66`. `IncursionAnomalyService.cs:68-96,126-141` implements both methods. The global call returns an empty cached result with a 15-minute proxy cache and emits `OnTaleData`; a positive template ID also emits the notification and returns an empty list. Invalid template IDs return an empty list without a notification. The notification is built from the persisted incursion read model at :255-295. No mutation, persistence write, or post-call notification exists.
 
-EveJS v0.12.9 matches the empty reply and notification order in `server/src/services/tale/taleMgrService.js:265-286`; its notification helper is at :218-239 and builds incursion KeyVals at :75-107. The four CSV rows RPC-02701–02704 were reclassified as IMPLEMENTED-UNTESTED: production registration and both method implementations exist, but the required Host dispatch test is missing.
+EveJS v0.12.9 matches the empty reply and notification order in `server/src/services/tale/taleMgrService.js:265-286`; its notification helper is at :218-239 and builds incursion KeyVals at :75-107. The four CSV rows RPC-02701–02704 were reclassified as IMPLEMENTED-UNTESTED: production registration and both method implementations exist, and the Host dispatch test now exists (TaleManagerHostWireTests.cs:13-118, see below), so that reclassification predates it.
 
 ## Host wire check
 

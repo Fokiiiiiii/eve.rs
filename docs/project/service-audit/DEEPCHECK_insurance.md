@@ -22,11 +22,11 @@
 
 ## Host経路とMoniker
 
-InsuranceService は insuranceSvc として登録され、6 RPCと2つのMoniker用メソッドに Method 属性がある（dotnet/src/Eve.Services.Core/InsuranceService.cs:262,290-293,343,357,374,400,427,478）。本番構成は CharacterComposition で永続化 read/write model と権限判定を渡し（dotnet/src/Eve.Host/Composition/CharacterComposition.cs:202-210）、CharacterServiceList から MailRpc を含め、MailRpc のサービス一覧に insuranceService を登録する（dotnet/src/Eve.Host/Rpc/CharacterServiceList.cs:48,62、dotnet/src/Eve.Host/Rpc/MailRpc.cs:143）。insuranceSvc のサービス位置は station（dotnet/src/Eve.Host/MachoNetService.cs:49）。
+InsuranceService は insuranceSvc として登録され、6 RPCと2つのMoniker用メソッドに Method 属性がある（dotnet/src/Eve.Services.Core/InsuranceService.cs:293,296,346,360,377,403,430,481）。本番構成は CharacterComposition で永続化 read/write model と権限判定を渡し（dotnet/src/Eve.Host/Composition/CharacterComposition.cs:223-233）、CharacterServiceList から MailRpc を含め、MailRpc のサービス一覧に insuranceService を登録する（dotnet/src/Eve.Host/Rpc/CharacterServiceList.cs:48,62、dotnet/src/Eve.Host/Rpc/MailRpc.cs:144）。insuranceSvc のサービス位置は station（dotnet/src/Eve.Host/MachoNetService.cs:50）。
 
-クライアントは station では (stationID, stationID, groupStation)、structure では (structureID, solarsystemid2, groupSolarSystem) で Moniker を作る（base_insurance.py:96-110、inventorycommon/const.py:909,925）。moniker.py:111-156 が resolve 後に bind と初期RPC呼び出しを行い、:208-245 が MachoResolveObject を呼ぶ。古いbound先への UnMachoDestination は1回だけ再解決する（moniker.py:181-194）。ObjectCallGPCS.py:403-407 は machoVersion を既定値1またはキャッシュ値で kwargs に追加する。PacketDispatcher はそのキーをアプリ引数から除去し、返却bound objectを登録してから応答後処理を実行する（dotnet/src/Eve.Services/PacketDispatcher.cs:219,248,254,301-307,587）。
+クライアントは station では (stationID, stationID, groupStation)、structure では (structureID, solarsystemid2, groupSolarSystem) で Moniker を作る（base_insurance.py:96-110、inventorycommon/const.py:909,925）。moniker.py:111-156 が resolve 後に bind と初期RPC呼び出しを行い、:208-245 が MachoResolveObject を呼ぶ。古いbound先への UnMachoDestination は1回だけ再解決する（moniker.py:181-194）。ObjectCallGPCS.py:403-407 は machoVersion を既定値1またはキャッシュ値で kwargs に追加する。PacketDispatcher はそのキーをアプリ引数から除去し、返却bound objectを登録してから応答後処理を実行する（dotnet/src/Eve.Services/PacketDispatcher.cs:219,224,253-259,326-336）。
 
-dotnet/tests/Eve.Host.Tests/InsuranceMonikerHostTests.cs:99 のテストは HostServer の実TCP/Macho経路を通し、直接RPC、station/structure bind、bind時の初期RPC、bound RPC、kwargs、UserError応答を検証する。
+dotnet/tests/Eve.Host.Tests/InsuranceMonikerHostTests.cs:109 のテストは HostServer の実TCP/Macho経路を通し、直接RPC、station/structure bind、bind時の初期RPC、bound RPC、kwargs、UserError応答を検証する。
 
 ## メソッド別の挙動
 
@@ -36,7 +36,7 @@ dotnet/tests/Eve.Host.Tests/InsuranceMonikerHostTests.cs:99 のテストは Host
 
 ### GetInsurancePrices
 
-引数は未取得typeIDのリスト。返却は typeID から ISK価格への辞書で、未知の正整数にも0を返す。重複と不正・非正のIDは除外される。以前のHost側500件制限は、クライアントに件数制限がなくEveJSにもないため削除した。Coreテストと実Host wireテストで501件の要求と全件応答を確認した。関連する互換記録は docs/reference/compat/DEVIATIONS.md の「Insurance price batches」。
+引数は未取得typeIDのリスト。返却は typeID から ISK価格への辞書で、未知の正整数にも0を返す。重複と不正・非正のIDは除外される。以前のHost側500件制限は、クライアントに件数制限がなくEveJSにもないため削除した。Coreテストと実Host wireテストで501件の要求と全件応答を確認した。このブランチの docs/reference/compat/DEVIATIONS.md には「Insurance price batches」の見出しはない（grepで確認）。
 
 ### GetContracts
 
@@ -56,7 +56,7 @@ EveJSに合わせたUserError:
 - 残高不足: NotEnoughMoney と amount/balance（ISK）。
 - 既存契約あり: InsureShipFailedSingleContract と ownerName（既存owner ID）。
 
-クライアントは最後のエラーの ownerName を読む。wireテストは各エラー名・置換値をUserError応答で確認した。既存契約の voidOld=True と4番目の位置引数も成功する。Applied時だけOnShipInsuredを応答送信後に引数なしで送る（InsuranceService.cs:472-475）。クライアント側ハンドラが引数を取らないこと、通知内容が空の引数タプルであることをwireで確認した。
+クライアントは最後のエラーの ownerName を読む。wireテストは各エラー名・置換値をUserError応答で確認した。既存契約の voidOld=True と4番目の位置引数も成功する。Applied時だけOnShipInsuredを応答送信後に引数なしで送る（InsuranceService.cs:473-477）。クライアント側ハンドラが引数を取らないこと、通知内容が空の引数タプルであることをwireで確認した。
 
 ### UnInsureShip
 

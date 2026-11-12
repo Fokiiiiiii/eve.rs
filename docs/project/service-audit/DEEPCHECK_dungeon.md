@@ -4,7 +4,7 @@
 
 ## 登録とHost data source
 
-Host DungeonRpc.cs:60はDungeonServiceに実editor catalog providerを渡す。providerはSDE/editor read modelからcatalogを読み、DungeonRpcServices.cs:47-120がclient mappingへ変換する。読み取り専用でmutation, persistence writer, follow-up notificationはない。clientはpositional引数なしで、filtersをkwargsで送る。machoVersion=1はtransport kwargs。
+Host DungeonRpc.cs:61はDungeonServiceに実editor catalog providerを渡す。providerはSDE/editor read modelからcatalogを読み、DungeonRpcServices.cs:47-120がclient mappingへ変換する。読み取り専用でmutation, persistence writer, follow-up notificationはない。clientはpositional引数なしで、filtersをkwargsで送る。machoVersion=1はtransport kwargs。
 
 ## 全RPCとreply consumer
 

@@ -392,4 +392,43 @@ mod tests {
         advance(&mut s, f64::NAN, None);
         assert_eq!(s.position, Vec3::ZERO);
     }
+
+    fn body(mass: f64, agility: f64, velocity: Vec3) -> Kinematics {
+        Kinematics {
+            position: Vec3::ZERO,
+            velocity,
+            direction: Vec3::new(1.0, 0.0, 0.0),
+            speed_fraction: 0.0,
+            radius: 10.0,
+            mass,
+            agility,
+            max_velocity: 100.0,
+        }
+    }
+
+    #[test]
+    fn agility_seconds_is_inertia_over_friction_and_never_below_the_floor() {
+        assert_eq!(agility_seconds(&body(2_000_000.0, 3.0, Vec3::ZERO)), 6.0);
+        assert_eq!(agility_seconds(&body(1_000_000.0, 1.0, Vec3::ZERO)), 1.0);
+        assert_eq!(agility_seconds(&body(1.0, 1.0, Vec3::ZERO)), 0.05);
+    }
+
+    #[test]
+    fn zero_thrust_from_rest_keeps_a_body_still() {
+        let mut b = body(1_000_000.0, 1.0, Vec3::ZERO);
+        integrate(&mut b, Vec3::new(1.0, 0.0, 0.0), 0.0, 5.0);
+        assert_eq!(b.velocity, Vec3::ZERO);
+        assert_eq!(b.position, Vec3::ZERO);
+    }
+
+    #[test]
+    fn zero_thrust_lets_a_moving_body_slow_by_drag_alone() {
+        // inertial mass 1e6 over friction 1e6 is lambda 1, so after one second the velocity is the start velocity times e^-1
+        let mut b = body(1_000_000.0, 1.0, Vec3::new(100.0, 0.0, 0.0));
+        integrate(&mut b, Vec3::new(1.0, 0.0, 0.0), 0.0, 1.0);
+        let expected = 100.0 * (-1.0_f64).exp();
+        assert!((b.velocity.x - expected).abs() < 1e-9, "{}", b.velocity.x);
+        assert_eq!(b.velocity.y, 0.0);
+        assert_eq!(b.velocity.z, 0.0);
+    }
 }

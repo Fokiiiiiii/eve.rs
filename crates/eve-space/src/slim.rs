@@ -390,4 +390,55 @@ mod tests {
         assert!(!names.contains(&"name"));
         assert_eq!(&names[names.len() - 2..], ["hostile_response_threshold", "friendly_response_threshold"]);
     }
+
+    #[test]
+    fn a_system_row_has_its_columns_in_order_with_the_system_values() {
+        let system = SolarSystem {
+            id: 30000142,
+            name: "Jita".to_string(),
+            constellation_id: 20000020,
+            region_id: 10000002,
+            faction_id: None,
+            security: 0.9,
+            bodies: Vec::new(),
+        };
+        let Value::PackedRow(row) = system_row(&system) else { panic!("a system is a packed row") };
+        let names: Vec<&str> = row.descriptor.columns.iter().map(|column| column.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "itemID",
+                "typeID",
+                "ownerID",
+                "locationID",
+                "flagID",
+                "contraband",
+                "singleton",
+                "quantity",
+                "groupID",
+                "categoryID",
+                "customInfo"
+            ]
+        );
+        assert_eq!(
+            row.descriptor.columns.iter().map(|column| column.db_type).collect::<Vec<_>>(),
+            [dbtype::I8, dbtype::I4, dbtype::I4, dbtype::I8, dbtype::I2, dbtype::BOOL, dbtype::I2, dbtype::I4, dbtype::I4, dbtype::I4, dbtype::STR]
+        );
+        assert_eq!(
+            row.values,
+            vec![
+                Value::Long(30000142),
+                int(5),
+                int(1),
+                Value::Long(20000020),
+                int(0),
+                Value::Bool(false),
+                int(1),
+                int(-1),
+                int(5),
+                int(2),
+                text("")
+            ]
+        );
+    }
 }

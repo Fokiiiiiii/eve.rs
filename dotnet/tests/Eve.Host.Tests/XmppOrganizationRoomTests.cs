@@ -278,6 +278,72 @@ public sealed class XmppOrganizationRoomTests
     }
 
     [Fact]
+    public async Task Gm_mute_and_unmute_apply_the_client_gag_call_to_a_player_channel_for_chat_staff_only()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")
+            ?? throw new InvalidOperationException("EVE_PG_URL is required for the player channel persistence regression");
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
+        var schema = "xmpp_gm_mute_" + Guid.NewGuid().ToString("N")[..12];
+        try
+        {
+            var store = await XmppPlayerChannelStore.OpenAsync(source, schema);
+            var ownerSession = Character(42, "owner-token", 100, 200, 300);
+            var staffSession = Character(43, "staff-token", 100, 200, 300);
+            staffSession.Set("accountRole", new PyLong(Eve.Services.GameMasterRoles.ChatAdministrator));
+            var memberSession = Character(77, "member-token", 100, 200, 301);
+            var sessions = new ConnectedSessions();
+            sessions.Add(ownerSession);
+            sessions.Add(staffSession);
+            sessions.Add(memberSession);
+            var channel = Assert.IsType<XmppPlayerChannel>(await store.CreateAsync(42, "Pilot room"));
+            Assert.True(await store.InviteAsync(channel.RoomName, 77));
+            var hub = new XmppChatHub(sessions, new XmppChatSettings("chat.example", "127.0.0.1"),
+                motdStore: null, readBlockedOwners: null, playerChannelStore: store);
+            var service = new XmppChatMgrService(hub);
+
+            // devFunctions.GagPopup sends GMMute(channelID, charID, reason, numMinutes * 60).
+            PyValue Mute(ClientSession caller, string room, long target, string reason, long seconds) =>
+                service.GMMute(new ServiceCall
+                {
+                    Method = "GMMute",
+                    Args = [new PyStr(room), new PyLong(target), new PyStr(reason), new PyLong(seconds)],
+                    Session = caller,
+                }).GetAwaiter().GetResult();
+            // devFunctions.Ungag sends GMUnmute(channelID, charID).
+            PyValue Unmute(ClientSession caller, string room, long target) =>
+                service.GMUnmute(new ServiceCall
+                {
+                    Method = "GMUnmute",
+                    Args = [new PyStr(room), new PyLong(target)],
+                    Session = caller,
+                }).GetAwaiter().GetResult();
+
+            Assert.Same(PyBool.False, Mute(memberSession, channel.RoomName, 77, "self", 600));
+            Assert.Same(PyBool.False, Mute(ownerSession, channel.RoomName, 77, "owner is not chat staff", 600));
+            Assert.Same(PyBool.False, Mute(staffSession, channel.RoomName, 77, "no duration", 0));
+            Assert.Same(PyBool.False, Mute(staffSession, "player_999999", 77, "no such room", 600));
+            Assert.Empty(await store.ListTemporaryRestrictionsAsync(channel.RoomName, "mute", default));
+
+            Assert.Same(PyBool.True, Mute(staffSession, channel.RoomName + "@conference.chat.example", 77, "Gagged for Spamming", 600));
+            var restriction = Assert.Single(await store.ListTemporaryRestrictionsAsync(channel.RoomName, "mute", default));
+            Assert.Equal(77, restriction.CharacterId);
+            Assert.Equal("Gagged for Spamming", restriction.Reason);
+            Assert.Equal(43, restriction.ByCharacterId);
+            Assert.NotNull(restriction.ExpiresAtMs);
+
+            Assert.Same(PyBool.False, Unmute(memberSession, channel.RoomName, 77));
+            Assert.Single(await store.ListTemporaryRestrictionsAsync(channel.RoomName, "mute", default));
+            Assert.Same(PyBool.True, Unmute(staffSession, channel.RoomName, 77));
+            Assert.Empty(await store.ListTemporaryRestrictionsAsync(channel.RoomName, "mute", default));
+        }
+        finally
+        {
+            await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    [Fact]
     public async Task Player_room_owner_affiliation_adds_a_coowner_and_persists()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")

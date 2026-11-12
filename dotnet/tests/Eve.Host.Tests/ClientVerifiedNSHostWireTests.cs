@@ -6,6 +6,9 @@ using Eve.Services;
 using Eve.Services.Core;
 using Eve.Services.Skills;
 using Eve.Services.Space;
+using Eve.Skills;
+using Eve.Wallet;
+using Npgsql;
 
 namespace Eve.Host.Tests;
 
@@ -252,5 +255,52 @@ public partial class HostServerTests
         Assert.Equal(MachoMessage.ErrorResponse, packet.Type);
         var body = Encoding.Latin1.GetString(send.Payload.Span);
         Assert.Contains("SkillPurchaseDisabled", body);
+    }
+
+    [PgFact]
+    public async Task Skill_handler_purchase_skills_debits_the_wallet_and_grants_the_skill_over_host_wire()
+    {
+        // characterskills/client/purchase.py:100 extends its list with the reply, so the reply is the tuple of granted type ids.
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        var catalog = await SkillCatalog.LoadAsync(new Eve.Sde.SdeReader(rig.Source));
+        var owned = (await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character)).Select(skill => skill.TypeId).ToHashSet();
+        var skill = catalog.Skills.First(candidate => candidate.Published && candidate.AvailableForPurchase && candidate.BasePrice > 0 && !owned.Contains(candidate.TypeId));
+        var price = decimal.Round(skill.BasePrice * 1.3m, 2, MidpointRounding.AwayFromZero);
+        var startingBalance = price + 1_000_000m;
+        await rig.FundAsync(character, startingBalance);
+        var handler = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("skillHandler"));
+        const string objectId = "N=ProxyNode:skill-purchase-success-test";
+        Start(sessionOpened: session =>
+        {
+            session.Set("charid", new PyInt(character));
+            _testRegistry.RegisterBoundObjectForSession(objectId, handler, session);
+        });
+        var (front, open) = await OpenFrontAsync();
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.BoundCall(open, 1, objectId, "PurchaseSkills",
+                new PyTuple([new PyList([new PyInt(skill.TypeId)])]), TransportKwargs()))));
+
+        PyValue? answer = null;
+        for (var received = 0; answer is null && received < 16; received++)
+        {
+            var send = Assert.IsType<Send>(await front.ReceiveAsync());
+            var decoded = MarshalCodec.Decode(send.Payload);
+            var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded));
+            Assert.NotEqual(MachoMessage.ErrorResponse, packet.Type);
+            if (packet.Type == MachoMessage.CallRsp)
+                answer = Result(decoded);
+        }
+
+        var granted = Assert.IsType<PyTuple>(answer);
+        Assert.Equal(new PyInt(skill.TypeId), Assert.Single(granted.Items));
+        Assert.Contains(await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character),
+            saved => saved.TypeId == skill.TypeId && saved.Level == 0 && saved.SkillPoints == 0);
+        Assert.Single(await new WalletTransactions(rig.Source, rig.WalletSchema).JournalAsync(character));
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var command = new NpgsqlCommand(
+            $"SELECT isk FROM {rig.WalletSchema}.balances WHERE owner_id = $1 AND account_key = 1000", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = character });
+        Assert.Equal(startingBalance - price, (decimal)(await command.ExecuteScalarAsync())!);
     }
 }

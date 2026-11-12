@@ -18,7 +18,7 @@ public class ShipCoverageTests
 
     private static readonly string[] Open =
     [
-        "LaunchFromContainer", "ResetDirtTimestamp",
+        "LaunchFromContainer",
     ];
 
     [Fact]

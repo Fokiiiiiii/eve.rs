@@ -18,6 +18,6 @@ EveJS v0.12.9 handlers are PlanetMgrService.Handle_GetPlanetsForChar at server/s
 
 ## Test evidence and limits
 
-PlanetManagerRpcHostTests.cs:15-52 sends empty colony/launch reads and a missing launch delete through a registered Host socket; it is database-free and verifies the CRowset shapes plus false delete. The success read/delete/re-read and owner isolation test at :57-119 is a PgFact that requires PostgreSQL; this job excludes that database-backed path. The CSV’s IMPLEMENTED-TESTED label names that persistence wire test, but it was not exercised in this pass.
+PlanetManagerRpcHostTests.cs:15-57 sends empty colony/launch reads and a missing launch delete through a registered Host socket; it is database-free and verifies the CRowset shapes plus false delete. The success read/delete/re-read and owner isolation test at :60-119 is a PgFact that requires PostgreSQL; this job excludes that database-backed path. The CSV’s IMPLEMENTED-TESTED label names that persistence wire test, but it was not exercised in this pass.
 
 No PostgreSQL database or graphical V24 client was used. No code changed.

@@ -802,6 +802,44 @@ private bool CanAccessRoom(ClientSession? session, long characterId, string room
         return true;
     }
 
+    internal async Task<bool> GmMutePlayerChannelAsync(
+        ClientSession session,
+        string room,
+        long targetCharacterId,
+        string reason,
+        long durationSeconds,
+        CancellationToken cancellationToken)
+    {
+        if (PlayerChannels is null || session.CharacterId is not { } actorId || actorId <= 0
+            || targetCharacterId <= 0 || !ReferenceEquals(SessionOf(actorId), session)
+            || !Eve.Services.GameMasterRoles.Has(session, Eve.Services.GameMasterRoles.ChatAdministrator | Eve.Services.GameMasterRoles.Gml)
+            || PlayerChannels.Get(room) is null)
+            return false;
+        if (await PlayerChannels.SetTemporaryRestrictionAsync(room, targetCharacterId, "mute", durationSeconds, reason,
+                actorId, cancellationToken).ConfigureAwait(false) is null)
+            return false;
+        RefreshRoomPresence(room);
+        return true;
+    }
+
+    internal async Task<bool> GmUnmutePlayerChannelAsync(
+        ClientSession session,
+        string room,
+        long targetCharacterId,
+        CancellationToken cancellationToken)
+    {
+        if (PlayerChannels is null || session.CharacterId is not { } actorId || actorId <= 0
+            || targetCharacterId <= 0 || !ReferenceEquals(SessionOf(actorId), session)
+            || !Eve.Services.GameMasterRoles.Has(session, Eve.Services.GameMasterRoles.ChatAdministrator | Eve.Services.GameMasterRoles.Gml)
+            || PlayerChannels.Get(room) is null)
+            return false;
+        if (await PlayerChannels.SetRoleAsync(room, targetCharacterId, "participant", "", actorId, cancellationToken)
+                .ConfigureAwait(false) is null)
+            return false;
+        RefreshRoomPresence(room);
+        return true;
+    }
+
 internal static string? PrivateChannelName(long callerCharacterId, long targetCharacterId)
     {
         if (callerCharacterId <= 0 || targetCharacterId <= 0 || callerCharacterId == targetCharacterId)

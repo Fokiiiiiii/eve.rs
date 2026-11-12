@@ -1286,13 +1286,6 @@ impl Message {
             kind::ARRIVED => {
                 Message::Arrived { session_id: r.u64()?, belt_id: r.i64()?, position: read_vector(&mut r)? }
             }
-            kind::WARP_DROPPED => {
-                let session_id = r.u64()?;
-                if session_id == 0 {
-                    return Err(DecodeError::BadValue("warp drop session"));
-                }
-                Message::WarpDropped { session_id }
-            }
             kind::CONDITION => Message::Condition {
                 session_id: r.u64()?,
                 command: r.u8()?,

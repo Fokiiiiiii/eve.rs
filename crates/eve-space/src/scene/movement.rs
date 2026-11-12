@@ -188,24 +188,9 @@ impl Scene {
         if pilot.modules.is_mjd_spooling() {
             return vec![Out::Refused { session, command: code, reason: "MJD_SPOOLING" }];
         }
-        if pilot.flight.as_ref().is_some_and(|flight| !flight.is_coasting()) {
-            // A ship still lining up for warp or in warp follows none. Once it has dropped out, the remaining coast is ordinary movement:
-            // the client has left DSTBALL_WARP and may issue its next order before the ship has lost all velocity.
+        if pilot.flight.is_some() {
+            // a ship in warp, or lining up for it, follows none either
             return vec![Out::Refused { session, command: code, reason: "IN_WARP" }];
-        }
-        let can_take_over_coast = match command {
-            Command::SetSpeedFraction(_) | Command::Stop => true,
-            Command::GotoDirection(direction) => motion::unit(direction).is_some(),
-            Command::FollowBall { range, .. } | Command::Orbit { distance: range, .. } => {
-                target.is_some() && range.is_finite()
-            }
-            Command::AlignTo { .. } => target.is_some(),
-            _ => false,
-        };
-        if pilot.flight.as_ref().is_some_and(Flight::is_coasting) && can_take_over_coast {
-            pilot.flight = None;
-            // The warp has dropped out and this accepted order takes over from the coast. The settled position and velocity are already on the ship.
-            pilot.ship.course = Course::Stop;
         }
         let ship_id = id(pilot.ship.spec.ship_id);
         match steer(&mut pilot.ship, target, command) {

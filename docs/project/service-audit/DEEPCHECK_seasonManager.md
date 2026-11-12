@@ -25,12 +25,12 @@ The event request has a positional event type and the exact keyword names extra_
 
 ## Host behavior and EveJS comparison
 
-CoreServices.cs:99 registers SeasonManagerService. With no active-season definitions it returns None for season selection/data/challenge, zero maximum active challenges, true for dormant, None expiry, empty challenge/progress maps, empty loot list, false for reward claims, and a current FILETIME season end. Progress preserves the expected KeyVal field names and no-season sentinels.
+CoreServices.cs:122 registers SeasonManagerService. With no active-season definitions it returns None for season selection/data/challenge, zero maximum active challenges, true for dormant, None expiry, empty challenge/progress maps, empty loot list, false for reward claims, and a current FILETIME season end. Progress preserves the expected KeyVal field names and no-season sentinels.
 
 process_client_event passes event type, optional extra_data, and optional amount to an injected progression callback. Without a callback it raises the exact CustomInfo UserError with “Season progression is unavailable.” and sends no notification. EveJS v0.12.9 returns empty/no-season shapes too, but its event method emits OnChallengeProgressUpdate and its challenge-claim method emits OnChallengeRewardsGranted while returning false. Those notifications are fake progress/reward signals without active season state; eve.rs deliberately does not send them. The no-season data limits are recorded in DEVIATIONS.md.
 
 ## Tests and limits
 
-ClientVerifiedNSHostWireTests.cs:66-79 covers no-season wire shapes; :84-108 checks positional eventType and keyword field transport through the Host; :110-124 asserts the CustomInfo refusal when no progression provider exists. ProjectDiscoveryHostTests.cs also exercises season defaults through the registered service. The ClientVerifiedNS test uses a callback only for the active event wire path; there is no production season progression provider yet.
+ClientVerifiedNSHostWireTests.cs:66-79 covers no-season wire shapes; :93-118 checks positional eventType and keyword field transport through the Host; :120-134 asserts the CustomInfo refusal when no progression provider exists. ProjectDiscoveryHostTests.cs also exercises season defaults through the registered service. The ClientVerifiedNS test uses a callback only for the active event wire path; there is no production season progression provider yet.
 
 No database or graphical V24 client was used for this audit. No service code or tests were changed in this documentation group.

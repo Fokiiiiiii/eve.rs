@@ -26,7 +26,7 @@ The whole-tree client callsites are:
 - `projectdiscovery/client/projects/exoplanets/ClientLogger.py:11`
 - `raffles/client/event_log.py:30`
 
-Every caller supplies the application arguments positionally: category, columns, event name, then zero or more values. In particular, `flightControls.py:393` can pass `None` as a value because it uses `self.ships.get(shipID)` (see `flightControls.py:388-406`). The shared call layer inserts `machoVersion` as a keyword when needed (`carbon/common/script/net/ServiceCallGPCS.py:222-226`); Host packet dispatch removes that transport keyword before invoking the method (`dotnet/src/Eve.Host/PacketDispatcher.cs:307-317`). Client callers ignore the reply. Callers with error handling catch `UserError` (including `autopilot.py:77` and `base_corporation.py:1054`); asynchronous/logging helpers also contain exceptions at their call boundary.
+Every caller supplies the application arguments positionally: category, columns, event name, then zero or more values. In particular, `flightControls.py:393` can pass `None` as a value because it uses `self.ships.get(shipID)` (see `flightControls.py:388-406`). The shared call layer inserts `machoVersion` as a keyword when needed (`carbon/common/script/net/ServiceCallGPCS.py:222-226`); Host packet dispatch removes that transport keyword before invoking the method (`dotnet/src/Eve.Services/PacketDispatcher.cs:331`). Client callers ignore the reply. Callers with error handling catch `UserError` (including `autopilot.py:77` and `base_corporation.py:1054`); asynchronous/logging helpers also contain exceptions at their call boundary.
 
 Host binds `LogClientEvent` on the production `eventLog` service registration. It accepts at least the first three positional arguments, list or tuple columns, and variadic values including `None`; it returns `PyNone` (`CALL_RSP`). The host intentionally logs category and event name only. Its validation UserErrors are `CLIENT_EVENT_ARGUMENTS_INVALID`, `CLIENT_EVENT_COLUMNS_INVALID`, `CLIENT_EVENT_VALUES_INVALID`, and `CLIENT_EVENT_KEYWORDS_INVALID`. Transport failures/cancellation remain transport or cancellation errors. No client consumer requires an event-log payload.
 
@@ -46,7 +46,7 @@ The only client call is `eve/client/script/sys/clientStatsSvc.py:313`, immediate
 
 ## Registration, state, and behavior comparison
 
-Production registration is `HostComposition.cs:294`; the methods are registered on the actual Macho service named `eventLog`. The real socket tests exercise that route, packet response type, return value, and representative UserError payloads.
+Production registration is `dotnet/src/Eve.Host/Hosting/HostComposition.cs:538`; the methods are registered on the actual Macho service named `eventLog`. The real socket tests exercise that route, packet response type, return value, and representative UserError payloads.
 
 EveJS 261018.1 registers `eventLog` and implements the same three RPCs in `src/server/src/services/logging/eventLogService.js:110-131`. `LogClientEvent` stores complete event data in a bounded process-local array (limit 250, lines 13, 73-87); `LogClientStats` stores full stats records in a process-local array (lines 89-103). Its getters and test reset are at lines 135-144. These arrays are neither durable persistence nor client notifications.
 

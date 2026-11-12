@@ -4,7 +4,7 @@
 
 ## Host登録と検証範囲
 
-`AgentMissionService.Name` は `agentMgr`。Hostの `AgentRpc.cs:79` がサービスを登録し、`MissionComposition.cs:310` が永続GameStore、BookmarkStore、Research、AgentDialogue、SDE、SpaceSessionsを実サービスへ接続する。バインドIDは接続中のHostサービスで保持し、解放時に削除する。
+`AgentMissionService.Name` は `agentMgr`。Hostの `AgentRpc.cs:139` がサービスを登録し、`MissionComposition.cs:322` が永続GameStore、BookmarkStore、Research、AgentDialogue、SDE、SpaceSessionsを実サービスへ接続する。バインドIDは接続中のHostサービスで保持し、解放時に削除する。
 
 `AgentMgrReadWireTests.cs` はHostServerのMachoソケット経路を通し、通常Call、bound call、nested `MachoBindObject` を検証する。テストでは外部依存境界の値をコールバックで与えるため、SDE/PostgreSQLを使う本番Compositionの起動やSpaceシミュレーションの通知はこのワイヤテストからは実行していない。
 

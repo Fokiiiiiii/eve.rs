@@ -4,7 +4,7 @@
 
 V24.01 クライアントには unbound の remote service `petitioner` が存在し、全ソース検索で31種類のメソッド呼び出しを確認した。呼び出しは `sm.RemoteSvc('petitioner')` に限られ、petitioner の bound object / moniker 呼び出しは見つからなかった。代替サービスを探す必要はない。
 
-`CoreServices.Create` は `new PetitionerService()` を登録する（`dotnet/src/Eve.Services.Core/CoreServices.cs:61`）。サービスの名前とRPC属性は `dotnet/src/Eve.Services.Core/PetitionerService.cs:15-56` にあり、Hostのサービス一覧とdispatcherから到達する。実Hostソケットテスト `Petitioner_client_calls_return_reference_shapes_through_host_registration` を31種類すべてに拡張した。各呼び出しは `machoVersion` kwargsを含み、クライアントのpositional/keyword形、2/3引数のチャット、64 bit ID、Noneを送る。登録とwire replyの形は確認済み。
+`CoreServices.Create` は `new PetitionerService()` を登録する（`dotnet/src/Eve.Services.Core/CoreServices.cs:68`）。サービスの名前とRPC属性は `dotnet/src/Eve.Services.Core/PetitionerService.cs:14-57` にあり、Hostのサービス一覧とdispatcherから到達する。実Hostソケットテスト `Petitioner_client_calls_return_reference_shapes_through_host_registration` を31種類すべてに拡張した。各呼び出しは `machoVersion` kwargsを含み、クライアントのpositional/keyword形、2/3引数のチャット、64 bit ID、Noneを送る。登録とwire replyの形は確認済み。
 
 ただし `CoreServices.Create` はproviderを渡さず、`PetitionerService` は空応答とacknowledgementを返すだけである（同サービス `:8-10,59-82`）。petitions、messages、ratingsの保存・後続read・サーバー通知は存在せず、正常に見えるmutationの一部はno-opである。EveJS 261018.1にも状態providerはない（`server/src/services/support/petitionerService.js:96-301`）。そのため wire互換と実機能の完了は区別する。データや成功を作り足す修正は行っていない。
 
@@ -49,7 +49,7 @@ V24.01 クライアントには unbound の remote service `petitioner` が存�
 ## エラー、状態遷移、通知
 
 - 有効なRPC引数で `machoVersion` は追加metadataとして扱われる。CreatePetitionの8 positionalと5 positional + chat/combat kwargs、PetitioneeChatの2/3 positional、ticket linkのticketID keywordを実Host wire testに含む。petition IDsは `PyLong`、MayPetition / PropertyPopulationInfoのNoneも含む。
-- クライアントが明示的に捕捉するpetition UserErrorはチャット時の `PetitionClosed`（`petition.py:923-934,932-943,964-968,980-984`）。通常の未知例外はdispatcherがcorrelation ID付きgeneric RuntimeErrorへ変換する（`PacketDispatcher.cs:258-299`）。現在のdefault handlerは例外を投げず、チャットも `None` を返すため、closed-ticket error pathを満たさない。providerもなく、petitionがclosedかを判断する状態もない。
+- クライアントが明示的に捕捉するpetition UserErrorはチャット時の `PetitionClosed`（`petition.py:923-934,932-943,964-968,980-984`）。通常の未知例外はdispatcherがcorrelation ID付きgeneric RuntimeErrorへ変換する（`PacketDispatcher.cs:288-313`）。現在のdefault handlerは例外を投げず、チャットも `None` を返すため、closed-ticket error pathを満たさない。providerもなく、petitionがclosedかを判断する状態もない。
 - `OnPetitionCreated` は `petitionWindow.py:310` がclient内でscatterする。client listenerは `petition.py:107-116` で一覧をreloadする。server notificationではない。
 - `OnPetitionMessage` はclient consumer（`petition.py:939-956`）で、cacheを無効化しmessage UIを更新する。現在のHostにもEveJS handlerにも、chat後にこの通知を送る実装はない。
 - cancel/close/unclaim/escalate/delete後はclientが自分で画面を再読込する。ratingもclient-local recordを更新する。これらはserver persistenceの代替にならない。

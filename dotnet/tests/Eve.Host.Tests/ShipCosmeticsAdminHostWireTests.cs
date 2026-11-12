@@ -87,4 +87,61 @@ public partial class HostServerTests
             await command.ExecuteNonQueryAsync();
         }
     }
+
+    // Client call site: devMenuFunctions.RemoveSkin sends RemoteSvc('shipCosmeticsMgr').RemoveSkin(skinID, session.charid).
+    [PgFact]
+    public async Task Ship_cosmetics_remove_skin_over_host_wire_revokes_the_owned_license()
+    {
+        var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL");
+        Assert.False(string.IsNullOrWhiteSpace(pgUrl));
+        await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(pgUrl!));
+        var sde = new SdeReader(source);
+        Assert.NotNull(await sde.BuildAsync());
+        var catalog = await ShipCosmeticsCatalog.LoadAsync(sde);
+        var skinId = catalog.Skins.Values
+            .First(skin => catalog.LicenseTypes.Values.Any(license => license.SkinId == skin.SkinId)).SkinId;
+        var now = 1_700_000_000_000L;
+        var schema = "rpc_skin_remove_" + Guid.NewGuid().ToString("N");
+        var store = new PersistenceStore(source, schema);
+        try
+        {
+            await store.EnsureSchemaAsync();
+            await using var owner = await OwnerSession.StartAsync(store, PersistenceRoles.World,
+                "rpc-skin-remove-" + Guid.NewGuid().ToString("N"));
+            await using var cache = new GameStoreCache(store, owner,
+                new GameStoreCacheOptions { ProcessRole = PersistenceRoles.World, FlushDelay = TimeSpan.FromHours(1) });
+            await cache.RecoverAsync();
+            await cache.LoadAsync("shipCosmetics");
+
+            var service = new ShipCosmeticsMgrRpcService(cache, catalog: catalog, nowUnixMs: () => now);
+            Start(
+                configure: registry => registry.Register(service),
+                sessionOpened: session =>
+                {
+                    session.Set("charid", new PyInt(20));
+                    session.Set("accountRole", new PyLong(GameMasterRoles.Gml));
+                });
+            var (front, open) = await OpenFrontAsync();
+
+            Assert.Same(PyNone.Instance, await HostRpcAsync(
+                front, open, 1, "shipCosmeticsMgr", "GiveSkin", new PyInt(skinId)));
+            Assert.Same(PyNone.Instance, await HostRpcAsync(
+                front, open, 2, "shipCosmeticsMgr", "RemoveSkin", new PyInt(skinId), new PyInt(20)));
+            Assert.Same(PyNone.Instance, await HostRpcAsync(
+                front, open, 3, "shipCosmeticsMgr", "GetFirstPartySkinData", new PyInt(20), new PyInt(skinId)));
+            Assert.True(await cache.FlushAllAsync() > 0);
+
+            var persisted = await store.LoadTableAsync("shipCosmetics");
+            var record = Assert.IsType<System.Text.Json.Nodes.JsonObject>(
+                persisted["characters"]?["20"]?["skinOverridesBySkinID"]?[skinId.ToString()]);
+            Assert.True(record["revoked"]!.GetValue<bool>());
+            Assert.Equal("RemoveSkin", record["source"]!.GetValue<string>());
+        }
+        finally
+        {
+            await using var connection = await source.OpenConnectionAsync();
+            await using var command = new NpgsqlCommand($"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", connection);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
 }

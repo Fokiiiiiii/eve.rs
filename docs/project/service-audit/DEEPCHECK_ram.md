@@ -35,7 +35,7 @@ The closest feature is manufacturing through `industryManager`, with `industryMo
 
 EveJS confirms these separate names and handlers: `IndustryManagerService` registers `industryManager` and handles the seven methods above (`server/src/services/industry/industryManagerService.js:60-149`); `IndustryMonitorService` registers `industryMonitor` and handles connect/disconnect (`industryMonitorService.js:15-34`).
 
-Host source likewise registers `IndustryJobsService` as `industryManager` (`dotnet/src/Eve.Services.Core/IndustryJobsService.cs:136-138`, `dotnet/src/Eve.Host/Rpc/IndustryRpc.cs:42-58`) and `IndustryMonitorRpcService` as `industryMonitor` (`dotnet/src/Eve.Host/IndustryMonitorRpcService.cs:39-43`, `dotnet/src/Eve.Host/Rpc/InventoryRpc.cs:42-80`). Existing packet-dispatch coverage for these nearest services is in `dotnet/tests/Eve.Host.Tests/IndustryHostRpcTests.cs:13,78`; it is not a test of a `ram` contract.
+Host source likewise registers `IndustryJobsService` as `industryManager` (`dotnet/src/Eve.Services.Core/IndustryJobsService.cs:136-138`, `dotnet/src/Eve.Host/Rpc/IndustryRpc.cs:42-58`) and `IndustryMonitorRpcService` as `industryMonitor` (`dotnet/src/Eve.Host/IndustryMonitorRpcService.cs:39-44`, `dotnet/src/Eve.Host/Rpc/InventoryRpc.cs:42-80`). Existing packet-dispatch coverage for these nearest services is in `dotnet/tests/Eve.Host.Tests/IndustryHostRpcTests.cs:13,78`; it is not a test of a `ram` contract.
 
 ## Verification and remaining checks
 

@@ -79,6 +79,18 @@ public partial class HostServerTests
     }
 
     [Fact]
+    public async Task Season_loot_table_lookup_keeps_the_client_list_shape_over_host_wire()
+    {
+        // seasons/client/seasonservice.py:167 get_next_reward_loot iterates the returned list.
+        Start(configure: registry => registry.Register(new SeasonManagerService()));
+        var (front, open) = await OpenFrontAsync();
+
+        var loot = Assert.IsType<PyList>(await HostRpcAsync(
+            front, open, 1, "seasonManager", "get_loot_table_by_typeID", new PyInt(34)));
+        Assert.Empty(loot.Items);
+    }
+
+    [Fact]
     public async Task Season_event_uses_the_client_keyword_fields_over_host_wire()
     {
         SeasonClientEvent? observed = null;

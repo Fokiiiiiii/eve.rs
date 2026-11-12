@@ -15,10 +15,10 @@
 
 ## Route と共通契約
 
-- AgentRpc.cs:108-110 は spaceSessions がある時 BeyonceService を実サービス列へ登録する。CharacterServiceList.cs:73-90 は同じ instance に bookmark/scan provider を配線する。
+- AgentRpc.cs:185 は spaceSessions がある時 BeyonceService を実サービス列へ登録する。CharacterServiceList.cs:73-90 は同じ instance に bookmark/scan provider を配線する。
 - Eve-logic の bound 呼び出しは carbon/common/script/net/moniker.py:140-144,234-235 から MachoBindObject / MachoResolveObject を送る。beyonce moniker は eve/common/script/net/eveMoniker.py:141-143。
 - Binding.PlaceOf は PyInt/PyLong と tuple/list の先頭を受け、Binding.NestedAsync は nested method、args、kwargs を展開する。Number は PyInt/PyLong/PyReal を扱う。machoVersion は transport kwargs、subfolderID などは nested kwargs。ServiceAuditP0HostWireTests.cs の BookmarkScanResult test は実 TCP route でこの分離と8要素 reply tupleを確認する。
-- C# の decorated methods は BeyonceService.cs:92-767 と BeyonceService.Components.cs:15-16 に25個ある。
+- C# の decorated methods は BeyonceService.cs:104-838 に26個、BeyonceService.Components.cs:15 に1個ある。
 
 ## クライアントが呼ぶ全 method
 
@@ -47,7 +47,7 @@
 | CmdGroupJumpToFleetModuleBeacon | eve/client/script/parklife/cynoTravelSvc.py:102 | BeyonceService.cs:738-745。beacon/systemをconduit runtimeへ渡す。 |
 | CmdGroupJumpToFleetDeployableBeacon | eve/client/script/parklife/cynoTravelSvc.py:111 | BeyonceService.cs:747-754。deployable/systemを使うがbeaconIDを検証しない。 |
 | CmdJumpThroughFleet | eve/client/script/parklife/cynoTravelSvc.py:93 | BeyonceService.cs:757-763。other ship/beacon/systemをbridge runtimeへ渡す。 |
-| CmdDock | eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:516 | BeyonceService.cs:766-775を修正。SpaceSessionsのdocking side effectsとUserErrorは維持し、accepted timestampを返さずNone。clientはsession transitionを待つ。accepted bound-wire testはない。 |
+| CmdDock | eve/client/script/ui/services/menuSvcExtras/movementFunctions.py:516 | BeyonceService.cs:838を修正。SpaceSessionsのdocking side effectsとUserErrorは維持し、accepted timestampを返さずNone。clientはsession transitionを待つ。accepted bound-wire testはない。 |
 | CallComponentFromClient | caller一覧は下記 | BeyonceService.Components.cs:15-35 はlinkWithShipのみ実行。EveJSの他componentはNoneで返り、副作用とbool/quantity replyが欠ける。現C#コメントの「他はEveJSと同じ」は誤り。 |
 
 ## CallComponentFromClient subcalls
@@ -77,7 +77,7 @@ EveJSはmovementFunctions.py:523-524のFILAMENT_SPOOLUP / JumpThroughRandomFilam
 ## 実行した確認
 
 - Host test project build: 成功、0 warning / 0 error。変更したCore / Space / Hostとtest projectを含む。
-- 新規 Beyonce_align_to_resolves_the_client_bookmark_keyword_through_bound_host_wire: 成功、1 passed。TCP Host routeで外側machoVersion、nested dstID=None / bookmarkID=longを送り、resolverへ値が届くことを確認。
+- 新規 Beyonce_align_to_resolves_and_issues_the_client_bookmark_command_through_bound_host_wire (BeyonceMovementWireTests.cs:205): 成功、1 passed。TCP Host routeで外側machoVersion、nested dstID=None / bookmarkID=longを送り、resolverへ値が届くことを確認。
 - 全 Eve.Host.Tests shardをEVE_PG_URLを除外して実行: 824件中496 passed、101 failed、227 skipped。失敗例はGameRpcPersistenceTests.cs:19とShipCosmeticsMgrRpcServiceTests.cs:105のDB URL必須assertion。PostgreSQLには接続していない。failure/skipを通過扱いしていない。
 - 実graphical client testは行っていない。CmdDock accepted/session-change wire、BookmarkStore経由のwarp/align、deployable beaconの異なるID、unsupported warp subjects、component subcallsのHost testsと実装が残っている。
 - PostgreSQL未使用のためDB-backed persistence / restart / notificationの実行確認はしていない。

@@ -1771,7 +1771,7 @@ observable behaviour of the five RPCs it implements (not its bugs). Design: `mar
   transaction per line (keys `buy-multi:<line>`). An unfilled line is not an error, as in the reference (the client's own pre-check
   already drops the lines it cannot price). Client: `marketsvc.py:270-273` (BuyMulti iterates the answer), `buyMultiFromBase.py:306`.
   Status: done (M1). Tests: `MarketRpcTests.Buy_multi_fills...`, `MarketHostTests`, live `test_market.py`.
-- **PlacePlexSellOrder.** The reference (proxy 7009) refuses a corporation sell and any type other than PLEX (44992). eve.rs does the
+- **PlacePlexSellOrder.** The reference (proxy 7009) refuses any type other than PLEX (44992). A corporation sell is not refused: it takes the corporate path (see the PLEX personal-market-only entry, removed). eve.rs refuses only the type (`MarketProxyService.cs:636-637`) and passes the corporation flag on (`:638`), so it does the
   same. The two texts are ours: "PLEX sell orders are placed on the personal market only." and "PLEX sell orders must use a PLEX
   inventory item." (the reference's own wording is not in the client snapshot; the client shows the text it receives). The answer is a
   boolean, true when the line traded or rests, as `executeSellEntry` (proxy 7034). Client: `marketsvc.py:278-279`, `sellMulti.py:464`.
@@ -3562,7 +3562,7 @@ Owner decision 2026-10-19: mutual-war invite operations retain their explicit un
 
 ## War registry, NES intro and blueprint manager (37a)
 
-Status: `warRegistry` is partly built (the wars are read and two of the owner's changes are made; negotiations are refused).
+Status: `warRegistry` is built for the wars, the owner's changes and the war negotiations (the ally and surrender offers are kept in PostgreSQL, `WarNegotiationStore.cs`).
 `nes_intro` and `blueprintManager` are built. Tests: `Eve.Corporations.Tests` (`WarRegistryTests`, 3, PostgreSQL), `Eve.Characters.Tests`
 (`NesIntroStoreTests`, 2, PostgreSQL), `Eve.Services.Core.Tests` (`NesIntroServiceTests` 2, `BlueprintManagerServiceTests` 5).
 
@@ -3575,11 +3575,7 @@ Status: `warRegistry` is partly built (the wars are read and two of the owner's 
   one of its two sides; a war that is not mutual is left as it is (`warRegistryService.js:319-335`). The ending writes `retracted`,
   `timeFinished` and `retractedBy` and sets the relation's end time, so the war is no longer active for crimewatch. Each change runs in one
   transaction under the war's row lock and is announced to the war's sides after the commit (`OnWarChanged`).
-- **Not built: war negotiations.** Ally offers and surrender offers (`CreateWarAllyOffer`, `RetractWarAllyOffer`,
-  `CreateSurrenderNegotiation`, `AcceptAllyNegotiation`, `DeclineAllyOffer`, `AcceptSurrender`, `DeclineSurrender`) have no store here: they are
-  refused with the notice "War negotiations are not available on this server." `GetNegotiations` is an empty list and
-  `GetWarNegotiation` answers None, because no negotiation can be opened on this server. The reference keeps them in the corporation
-  runtime (`warNegotiations`) with ISK in escrow; that is the open part of the war track.
+- **War negotiations.** Ally offers and surrender offers are built: `CreateWarAllyOffer`, `RetractWarAllyOffer`, `CreateSurrenderNegotiation`, `AcceptAllyNegotiation`, `DeclineAllyOffer`, `AcceptSurrender` and `DeclineSurrender` (`WarRegistryNegotiations.cs:49-152`). `GetNegotiations` lists the owner's pending offers (`WarRegistryNegotiations.cs:26-35`) and `GetWarNegotiation` returns one (`:37-47`). The offers are stored in PostgreSQL (`WarNegotiationStore.cs`) and paid on acceptance. Tests: `WarRegistryTests` (accepting an ally offer and a surrender, declines once, the listing after a restart) and `WarRegistryHostWireTests.cs:84-205` (an ally offer through Macho with persisted state and notifications).
 
 ### nes_intro
 - `get_nes_intro_state()` answers the stored state (`nes_intro_states`, migration `0005_nes_intro_state.sql`, in the characters
@@ -5769,7 +5765,7 @@ The PI and industry test harnesses advance colony and job timestamps to fit prod
 
 ## Config RPC bounds (2026-10-23)
 
-`config.GetMultiOwnersEx` accepts up to 10,000 raw owner IDs and charges `ceil(count/100)` expensive-RPC units (bounded at 100). The three other config bulk methods retain their 500-ID and 10-unit caps; `GetAverageMarketPrices` also consumes 10. The 160-unit default allows up to 16,000 owner IDs per minute across 100-item batches, while each owner request remains capped at 10,000 IDs.
+`config.GetMultiOwnersEx` accepts a well-formed owner list of any size: `RequestedIds` (`ConfigService.cs:266-289`) checks the container, the type, the sign and the zero rule only. Its cost is `ceil(count/100)` expensive-RPC units, counting at most 10,000 IDs and bounded at 100 (`PacketDispatcher.cs:342-354`). `GetMultiCorpTickerNamesEx`, `GetMultiAllianceShortNamesEx`, `GetMultiLocationsEx` and `GetAverageMarketPrices` consume 10 units each (`PacketDispatcher.cs:505-506`), and `ConfigService.cs` holds no 500-ID cap for them. The 160-unit default allows up to 16,000 owner IDs per minute in 100-ID batches.
 
 
 ## PLEX market RPC classification (2026-10-23)
@@ -5827,7 +5823,7 @@ The overview now points to the config, crimewatch, station, and map method-level
 
 - `GetMultiOwnersEx` accepts well-formed lists or tuples up to 10,000 raw IDs, while the other bulk owner, corporation, alliance, and location methods retain the 500-ID cap. It rejects malformed containers, non-integer IDs, negative IDs, and disallowed zero IDs before data access; the existing character, corporation, and alliance stores load authoritative rows in bulk, and the reply keeps the client owner tuple-set columns. Location 0 remains supported for its none row.
 
-The four `config` multi-ID lookup RPCs consume 10 weighted per-session work units because each may perform up to 500 provider reads. Valid V24.01 list-based requests retain their response shape; repeated scans receive the dispatcher's named budget refusal.
+The three `config` multi-ID name and location lookups consume 10 weighted per-session work units each (`PacketDispatcher.cs:505-506`); `GetMultiOwnersEx` is priced per batch as above. Valid V24.01 list-based requests retain their response shape; repeated scans receive the dispatcher's named budget refusal.
 
 
 ## Mail label read scope (2026-10-23)

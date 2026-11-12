@@ -422,7 +422,19 @@ mod tests {
         );
         assert_eq!(
             row.descriptor.columns.iter().map(|column| column.db_type).collect::<Vec<_>>(),
-            [dbtype::I8, dbtype::I4, dbtype::I4, dbtype::I8, dbtype::I2, dbtype::BOOL, dbtype::I2, dbtype::I4, dbtype::I4, dbtype::I4, dbtype::STR]
+            [
+                dbtype::I8,
+                dbtype::I4,
+                dbtype::I4,
+                dbtype::I8,
+                dbtype::I2,
+                dbtype::BOOL,
+                dbtype::I2,
+                dbtype::I4,
+                dbtype::I4,
+                dbtype::I4,
+                dbtype::STR
+            ]
         );
         assert_eq!(
             row.values,

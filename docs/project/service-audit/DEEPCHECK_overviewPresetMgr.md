@@ -13,7 +13,7 @@ Neither method uses keywords or a macho-version argument. These are shared-data 
 
 ## Host and EveJS
 
-Production factory registration is `dotnet/src/Eve.Services.Core/CoreServices.cs:80`; the Host callback uses the persisted `overviewSharedPresets` GameStore table (`dotnet/src/Eve.Host/Composition/CharacterComposition.cs:225-229`). `OverviewPresetMgrService` in `dotnet/src/Eve.Services.Core/StructureDataRpcServices.cs:223-301` returns the two-field KeyVal and retrieves the stored YAML; invalid/missing data or a persistence failure returns None so the client raises its own UserError.
+Production factory registration is `dotnet/src/Eve.Services.Core/CoreServices.cs:86`; the Host callback uses the persisted `overviewSharedPresets` GameStore table (`dotnet/src/Eve.Host/Composition/CharacterComposition.cs:311-312`). `OverviewPresetMgrService` in `dotnet/src/Eve.Services.Core/StructureDataRpcServices.cs:228-315` returns the two-field KeyVal and retrieves the stored YAML; invalid/missing data or a persistence failure returns None so the client raises its own UserError.
 
 EveJS v0.12.9 implements matching handlers in `server/src/services/overview/overviewPresetMgrService.js:512-524` and :526-540. The four selected CSV rows RPC-02027–02030 are marked IMPLEMENTED-TESTED.
 

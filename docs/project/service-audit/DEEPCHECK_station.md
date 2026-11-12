@@ -6,50 +6,50 @@
 
 `/home/user/eve-logic` 全体を検索し、クライアントが実際に送る station 系RPC、その戻り値の消費先、Monikerを通る officeManager 呼び出しを追跡した。station の業務RPCは7件。officeManager は通常RPC 1件、Moniker経由の業務RPC 10件、プロトコル用 `MachoResolveObject` / `MachoBindObject`。stationSvc にあるoffice用転送メソッドは、V24.01クライアントのMoniker先ではない。クライアントは `Moniker('officeManager', stationID)` を使う（`eve/client/script/ui/services/corporation/officeManager.py:49-50`）。
 
-本番の `StationRpc` は `stationSvc` を組み立て、共有OfficeManagerとSDE SolarSystemCatalogを渡す（`dotnet/src/Eve.Host/Rpc/StationRpc.cs:42`）。HostCompositionが `station` を `stationSvc` の別名として登録する（`dotnet/src/Eve.Host/Hosting/HostComposition.cs:280`）。CorporationCompositionが永続store・wallet・item store・structure providerをOfficeManagerServiceへ配線し（`dotnet/src/Eve.Host/Composition/CorporationComposition.cs:263-282`）、CorporationRpcのサービス一覧へ登録する（`dotnet/src/Eve.Host/Rpc/CorporationRpc.cs:71`）。
+本番の `StationRpc` は `stationSvc` を組み立て、共有OfficeManagerとSDE SolarSystemCatalogを渡す（`dotnet/src/Eve.Host/Rpc/StationRpc.cs:48`）。HostCompositionが `station` を `stationSvc` の別名として登録する（`dotnet/src/Eve.Host/Hosting/HostComposition.cs:508`）。CorporationCompositionが永続store・wallet・item store・structure providerをOfficeManagerServiceへ配線し（`dotnet/src/Eve.Host/Composition/CorporationComposition.cs:263-282`）、CorporationRpcのサービス一覧へ登録する（`dotnet/src/Eve.Host/Rpc/CorporationRpc.cs:76`）。
 
-クライアントのサービス呼び出しは位置引数。V24.01 transportは `machoVersion` をkwargsへ付ける（`eve/common/script/net/ServiceCallGPCS.py:221-225`、`eve/common/script/net/ObjectCallGPCS.py:399-403`）。Host PacketDispatcherはこれをアプリkwargsから除去してからServiceCallへ渡す（`dotnet/src/Eve.Services/PacketDispatcher.cs:219`）。ID読取はstation側の `IdOf`、office側の `Integral` がPyInt/PyLongを受け、station moniker IDはPyInt/PyLongとtuple/listラッパーを受ける。Host wire helperはすべて `machoVersion=1` を付けている。
+クライアントのサービス呼び出しは位置引数。V24.01 transportは `machoVersion` をkwargsへ付ける（`eve/common/script/net/ServiceCallGPCS.py:221-225`、`eve/common/script/net/ObjectCallGPCS.py:399-403`）。Host PacketDispatcherはこれをアプリkwargsから除去してからServiceCallへ渡す（`dotnet/src/Eve.Services/PacketDispatcher.cs:331`）。ID読取はstation側の `IdOf`、office側の `Integral` がPyInt/PyLongを受け、station moniker IDはPyInt/PyLongとtuple/listラッパーを受ける。Host wire helperはすべて `machoVersion=1` を付けている。
 
 ## stationSvc 業務RPC
 
 ### GetStation
 
 - クライアント呼び出し: `eve/common/script/util/notificationUtil.py:67`、`eve/client/script/ui/shared/maps/mapSvc.py:528`。結果は `notificationUtil.py:71` の `stationTypeID` と `mapSvc.py:529-531` のnull確認後の `stationName` 等に使われる。station取得のローカルservice呼び出しは別経路で、追加Host RPCではない。
-- Hostは位置引数のPyInt/PyLong stationIDを読み、既知stationならCachedMethodCallResult(KeyVal)、未知IDならNone（`StationService.cs:63-67`）。SDE StationCatalogから読み、状態変更や通知はない。
+- Hostは位置引数のPyInt/PyLong stationIDを読み、既知stationならCachedMethodCallResult(KeyVal)、未知IDならNone（`StationService.cs:59-63`）。SDE StationCatalogから読み、状態変更や通知はない。
 - Host wireは両整数型、未知IDのNone、キャッシュwrapperを確認する。
 
 ### GetStationItemBits
 
 - 呼び出しと消費: `eve/client/script/ui/station/base.py:574`、返値を `Row(['ownerID','itemID','operationID','stationTypeID'], bits)` にする同ファイル `:582-586`。
-- 引数なし。Hostはstation dock時に4個のPyIntを含むPyList、stationなしならNoneを返す（`StationService.cs:96-100`）。EveJSも配列を返す（`stationService.js:117-132`）。tuple/listどちらもクライアントのRowが反復するが、HostをEveJSの配列形に合わせた。
+- 引数なし。Hostはstation dock時に4個のPyIntを含むPyTuple、stationなしならNoneを返す（`StationService.cs:90-94`）。EveJSも配列を返す（`stationService.js:117-132`）。tuple/listどちらもクライアントのRowが反復するが、HostをEveJSの配列形に合わせた。
 - 静的station状態の読取のみ。通知なし。
 
 ### GetGuests
 
 - クライアントは `eve/client/script/ui/station/base.py:102` で引数なし呼び出しをし、同ファイル `:104-110` で4値を展開してguest辞書へ入れる。表示側は `eve/client/script/ui/shared/dockedUI/guests.py:93-95`。
-- Hostはstation内の現行guestを `[characterID, corporationID, allianceID, warFactionID]` のPyList行で返す。session snapshots / character read modelから作り、observer用guest ledgerへ基準集合を渡す（`StationService.cs:103-145`）。行をlistにしたのはEveJSのarray形との一致。クライアントは反復・展開するため消費形も一致する。
+- Hostはstation内の現行guestを `[characterID, corporationID, allianceID, warFactionID]` のPyTuple行で返す。session snapshots / character read modelから作り、observer用guest ledgerへ基準集合を渡す（`StationService.cs:97-143`）。行をtupleにしたのはEveJSのarray形との一致。クライアントは反復・展開するため消費形も一致する。
 - 読取時に永続状態変更や通知送信はない。後続guest差分通知用の基準だけ記録する。
 
 ### GetStationsForOwner
 
 - 呼び出し: `eve/client/script/ui/station/loyaltyPointStore/lpStoreSvc.py:534`。各結果の `stationID` と `solarSystemID` を同ファイル `:535-537` で使う。
-- ownerIDを位置引数で受け、PyInt/PyLongの両方を許容。Hostはstation情報を持つKeyValのPyListを返す（`StationService.cs:70-93`）。station静的カタログからの読取のみ、通知なし。
+- ownerIDを位置引数で受け、PyInt/PyLongの両方を許容。Hostはstation情報を持つKeyValのPyListを返す（`StationService.cs:65-88`）。station静的カタログからの読取のみ、通知なし。
 - 実Host wireでPyInt/PyLong owner、row fieldsを確認する。
 
 ### GetAllianceSystems
 
 - 呼び出し: `eve/client/script/ui/shared/maps/starMapSvc.py:1607` と `eve/client/script/ui/shared/mapView/mapViewData.py:99`。両方とも各rowの `solarSystemID` と `allianceID` を読む（同ファイル `:1608-1609`、`:100-101`）。
-- 引数なし。Hostは現行sovereignty read modelから `[{solarSystemID, allianceID}]` のKeyVal列を作る（`StationService.cs:150-158`）。永続変更・通知なし。
+- 引数なし。Hostは現行sovereignty read modelから `[{solarSystemID, allianceID}]` のKeyVal列を作る（`StationService.cs:188-197`）。永続変更・通知なし。
 
 ### GetSystemsForAlliance
 
 - 呼び出し: `eve/client/script/ui/shared/neocom/Alliances/all_ui_systems.py:31`。結果は同ファイル `:82,96` で表示対象systemとして使われる。
-- allianceIDを位置引数で受け、PyInt/PyLongの両方を許容。Hostは `solarSystemID` と `allianceID` を持つKeyValのPyListを返す（`StationService.cs:160-168`）。sovereignty read modelの読取のみ、通知なし。
+- allianceIDを位置引数で受け、PyInt/PyLongの両方を許容。Hostは `solarSystemID` と `allianceID` を持つKeyValのPyListを返す（`StationService.cs:199-211`）。sovereignty read modelの読取のみ、通知なし。
 
 ### GetSolarSystem
 
 - 呼び出し: `eve/devtools/script/insider.py:347` は明示systemIDを位置引数で渡し、応答の `factionID` を即座に使う。session中のsystemと同一とは限らず、dockも前提にしていない。
-- Hostは要求IDのPyInt/PyLongを pinned-SDE-backed `SolarSystemCatalog` から読み、systemID/name、constellationID、regionID、security、nullable factionIDをKeyValで返す（`StationService.cs:127-147`）。永続変更・通知なし。
+- Hostは要求IDのPyInt/PyLongを pinned-SDE-backed `SolarSystemCatalog` から読み、systemID/name、constellationID、regionID、security、nullable factionIDをKeyValで返す（`StationService.cs:147-186`）。永続変更・通知なし。
 - Host wireはdockなし、要求したsystem、PyLong、未知IDのNoneを確認する。EveJS `stationService.js:218` は引数を無視してsession stationの記録を返す（データ取得 `stationStaticData.js:223`）。要求systemを読むV24.01 callsiteを優先した差分を `docs/reference/compat/DEVIATIONS.md` に記録した。
 
 ## officeManager Moniker / 業務RPC
@@ -71,7 +71,7 @@ OfficeManagerクライアントは `officeManager.py:49-50` でstation/structure
 ### GetCorporationsWithOffices
 
 - Moniker call `officeManager.py:33`; docked UI delegates via `baseController.py:32`.
-- No explicit args; bound station ID or session station/structure resolves location. Host returns a Python set of active corporation IDs (OfficeManagerService.cs:252-261), matching EveJS `buildPythonSet` and the client's owner priming/iteration. Store read only; no notification.
+- No explicit args; bound station ID or session station/structure resolves location. Host returns a Python set of active corporation IDs (OfficeManagerService.cs:255-265), matching EveJS `buildPythonSet` and the client's owner priming/iteration. Store read only; no notification.
 
 ### PrimeOfficeItem
 
@@ -81,7 +81,7 @@ OfficeManagerクライアントは `officeManager.py:49-50` でstation/structure
 ### GetPriceQuote
 
 - Client calls `officeManager.py:113` with `session.corpid` as one positional arg. UI consumes the numeric quote via `baseController.py:59` and `dockedUI/offices.py:140-142`.
-- Host accepts PyInt/PyLong corpID, verifies it matches the session, then reads station/structure rent. A safe integral price returns PyLong, fractional price PyReal (OfficeManagerService.cs:100-112,557-560), matching EveJS Number.isSafeInteger behavior. A quote initializes/updates the persisted office_station_prices row as needed; no notification.
+- Host accepts PyInt/PyLong corpID, verifies it matches the session, then reads station/structure rent. A safe integral price returns PyLong, fractional price PyReal (OfficeManagerService.cs:100-112,555-570), matching EveJS Number.isSafeInteger behavior. A quote initializes/updates the persisted office_station_prices row as needed; no notification.
 - A corporation mismatch returns the exact `CrpAccessDenied` UserError; an ordinary valid quote has no error. The Host wire test covers both integer widths and PyLong reply type.
 
 ### RentOffice
@@ -93,34 +93,34 @@ OfficeManagerクライアントは `officeManager.py:49-50` でstation/structure
 ### UnrentOffice
 
 - Client calls station-bound `officeManager.py:119-121`; remote-office entrypoint binds the requested station and calls the same method at `:126-128`. Return is ignored.
-- Host requires CEO/Director, locks station and transactionally ends active rental, cancels open rent bill, deletes office folder, and moves corporation hangar assets to Impounded when present (OfficeManagerService.cs:175-203; StationOfficeImpound.cs:14-31). Returns None.
+- Host requires CEO/Director, locks station and transactionally ends active rental, cancels open rent bill, deletes office folder, and moves corporation hangar assets to Impounded when present (OfficeManagerService.cs:177-207; StationOfficeImpound.cs:14-31). Returns None.
 - Denied role is exact `CrpAccessDenied`. On success Host sends office folder OnItemsChanged when there were no assets, then OnOfficeRentalChange; when assets were impounded, it follows EveJS by omitting the folder item event and sends rental change. UI refreshes office list and office-folder cache (`dockedUI/offices.py:187-190`).
 
 ### GetEmptyOfficeCount
 
 - Client wrapper calls only while in a station; structure mode returns None locally (`officeManager.py:133-135`). Station lobby displays the numeric slot count through `baseController.py:32-38`.
-- Host counts active persisted rentals and returns PyInt `max(0, capacity - occupied)`; structure returns None (OfficeManagerService.cs:264-271). Read only, no notification.
+- Host counts active persisted rentals and returns PyInt `max(0, capacity - occupied)`; structure returns None (OfficeManagerService.cs:267-275). Read only, no notification.
 
 ### HasCorpImpoundedItems
 
 - Client wrapper rejects NPC corps and offices before the Moniker call (`officeManager.py:137-142`); UI uses the bool to decide whether to show release button (`dockedUI/offices.py:122-125`).
-- Host checks corp existence/type, active rental, and item store; returns PyBool. Structure/no eligible impound returns False (OfficeManagerService.cs:274-291). Read only, no notification.
+- Host checks corp existence/type, active rental, and item store; returns PyBool. Structure/no eligible impound returns False (OfficeManagerService.cs:277-295). Read only, no notification.
 
 ### GetImpoundReleasePrice
 
 - Client first checks HasCorpImpoundedItems; if false it returns None without RPC, else calls bound method (`officeManager.py:144-148`). Base controller and lobby UI display/confirm numeric price (`baseController.py:78-82`, `dockedUI/offices.py:165-170`).
-- Host returns PyReal half of the current station rent; returns zero for structure, non-player corporation, active office, or no impounded assets (OfficeManagerService.cs:294-313). Quote read may initialize/update persisted office price as above. No notification.
+- Host returns PyReal half of the current station rent; returns zero for structure, non-player corporation, active office, or no impounded assets (OfficeManagerService.cs:297-317). Quote read may initialize/update persisted office price as above. No notification.
 
 ### GetItemsFromImpound
 
 - Client sends the displayed quote as one positional arg through `baseController.py:81-82` and `officeManager.py:150-151`; after RPC, lobby invokes `_load()` itself (`dockedUI/offices.py:169-170`).
-- HostはCEO/Directorを確認し、クライアントの表示quote値ではなくtransaction中に再計算した現在のrelease feeを請求する。wallet debit/creditとimpounded itemsのCorpSAG1移動を同一transactionで行い、Noneを返す（OfficeManagerService.cs:205-249）。不足残高はEveJSと同じ `NotEnoughMoney(amount,balance)` UserError。
+- HostはCEO/Directorを確認し、クライアントの表示quote値ではなくtransaction中に再計算した現在のrelease feeを請求する。wallet debit/creditとimpounded itemsのCorpSAG1移動を同一transactionで行い、Noneを返す（OfficeManagerService.cs:209-253）。不足残高はEveJSと同じ `NotEnoughMoney(amount,balance)` UserError。
 - EveJS does not send OnItemsChanged for release; client explicitly reloads the lobby after the call. Host sends no additional notification.
 
 ### TrashImpoundedOffice
 
 - Client asset action invalidates GetAssetInventoryForLocation, calls the Moniker, then scatters OnReloadCorpAssets (`eve/client/script/ui/shared/neocom/corporation/corp_ui_accounts.py:410-413`; Moniker call in `officeManager.py:155-156`).
-- Host requires CEO/Director, deletes matching impounded item rows transactionally, and returns None (OfficeManagerService.cs:316-340). It emits no server notification because the client performs cache invalidation and asset reload itself.
+- Host requires CEO/Director, deletes matching impounded item rows transactionally, and returns None (OfficeManagerService.cs:319-343). It emits no server notification because the client performs cache invalidation and asset reload itself.
 - EveJS additionally emits OnOfficeRentalChange when it removes the impounded runtime office (`officeManagerService.js:631-654`). In eve.rs, active office row/caches were already removed on UnrentOffice and this endpoint removes items only; client evidence shows it performs its asset reload. Difference recorded as no further station/office notification needed after the client reload.
 
 ## EveJS比較、テスト、制約

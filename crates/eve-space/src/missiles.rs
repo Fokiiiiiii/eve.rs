@@ -491,4 +491,60 @@ mod tests {
         assert!(!hit.destroyed);
         assert!(!hit.target_spared());
     }
+
+    #[test]
+    fn the_stored_exponent_is_taken_as_it_is_between_the_floor_and_one() {
+        let sensitivity = DEFAULT_REDUCTION_SENSITIVITY;
+        assert_eq!(reduction_exponent_of(0.0, sensitivity), 0.000_001, "zero is held at the floor");
+        assert_eq!(reduction_exponent_of(-3.0, sensitivity), 0.000_001);
+        assert_eq!(reduction_exponent_of(0.5, sensitivity), 0.5);
+        assert_eq!(reduction_exponent_of(1.0, sensitivity), 1.0);
+        assert_eq!(reduction_exponent_of(f64::NAN, sensitivity), 1.0);
+        assert_eq!(reduction_exponent_of(f64::INFINITY, sensitivity), 1.0);
+    }
+
+    #[test]
+    fn a_raw_factor_above_one_is_worked_into_ln_over_ln_of_the_sensitivity() {
+        assert_eq!(reduction_exponent_of(5.5, 5.5), 1.0);
+        let expected = 25.0_f64.ln() / 5.5_f64.ln();
+        assert!((reduction_exponent_of(25.0, 5.5) - expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_reduction_exponent_is_nondecreasing_within_each_of_its_two_ranges() {
+        let stored = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
+            .map(|factor| reduction_exponent_of(factor, DEFAULT_REDUCTION_SENSITIVITY));
+        assert!(stored.windows(2).all(|w| w[0] <= w[1]), "{stored:?}");
+        let raw = [1.5, 2.0, 5.5, 10.0, 50.0]
+            .map(|factor| reduction_exponent_of(factor, DEFAULT_REDUCTION_SENSITIVITY));
+        assert!(raw.windows(2).all(|w| w[0] <= w[1]), "{raw:?}");
+    }
+
+    #[test]
+    fn a_reduction_factor_of_one_makes_the_speed_term_the_raw_ratio() {
+        // signature 10 against radius 20 is 0.5; the speed term is 0.5 × 170 / 680 = 0.125, raised to the exponent 1
+        assert_eq!(application_factor_of(20.0, 170.0, 1.0, DEFAULT_REDUCTION_SENSITIVITY, 10.0, 680.0), 0.125);
+    }
+
+    #[test]
+    fn a_reduction_factor_of_zero_leaves_the_signature_share_for_a_target_that_is_slow_enough() {
+        // the exponent is held at 0.000001, so the speed term is 0.125 ^ 0.000001 = 0.999998, above the signature share 0.5
+        assert_eq!(application_factor_of(20.0, 170.0, 0.0, DEFAULT_REDUCTION_SENSITIVITY, 10.0, 680.0), 0.5);
+    }
+
+    #[test]
+    fn the_application_factor_falls_as_the_target_speeds_up_and_rises_with_its_signature() {
+        let by_speed: Vec<f64> = [0.0, 100.0, 340.0, 680.0, 1_360.0]
+            .iter()
+            .map(|speed| application_factor_of(20.0, 170.0, 0.5, DEFAULT_REDUCTION_SENSITIVITY, 10.0, *speed))
+            .collect();
+        assert_eq!(by_speed, vec![0.5, 0.5, 0.5, 0.353_553, 0.25]);
+        assert!(by_speed.windows(2).all(|w| w[0] >= w[1]), "{by_speed:?}");
+
+        let by_signature: Vec<f64> = [0.0, 5.0, 10.0, 20.0, 40.0]
+            .iter()
+            .map(|signature| application_factor_of(20.0, 170.0, 0.5, DEFAULT_REDUCTION_SENSITIVITY, *signature, 0.0))
+            .collect();
+        assert_eq!(by_signature, vec![0.0, 0.25, 0.5, 1.0, 1.0]);
+    }
 }

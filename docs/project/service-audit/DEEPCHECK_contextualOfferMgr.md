@@ -12,6 +12,6 @@ EveJS v0.12.9 implements the same six methods in server/src/services/newEdenStor
 
 ## Wire evidence
 
-ContextualOfferMgrRpcHostWireTests.cs:12-55 uses the registered Host socket route, includes machoVersion, checks None replies, and verifies the five methods listed in that test plus recorded character/account fields. TrackOfferBuyPress is covered by ClientVerifiedBatch28CdHostWireTests.cs:83-84 on the same Host packet path. The CSV contains two equivalent source rows per method; both rows map to these tests.
+ContextualOfferMgrRpcHostWireTests.cs:11-62 uses the registered Host socket route, includes machoVersion, checks None replies, and verifies the five methods listed in that test plus recorded character/account fields. TrackOfferBuyPress is covered by ClientVerifiedBatch28CdHostWireTests.cs:83-84 on the same Host packet path. The CSV contains two equivalent source rows per method; both rows map to these tests.
 
 No database or graphical V24 client was used in this pass. No code change was needed.

@@ -147,7 +147,13 @@ public partial class HostServerTests
         var missingAlliance = Packets.Call(open, 11, "allianceRegistry", "GetAlliance",
             Py.Tuple(new PyLong(allianceId + 1000)));
         await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(missingAlliance)));
-        var missingAllianceReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        // A late queued notification may still arrive ahead of the error reply, so skip packets until the ERRORRESPONSE (command 15).
+        Send missingAllianceReply;
+        do
+        {
+            missingAllianceReply = Assert.IsType<Send>(await front.ReceiveAsync());
+        }
+        while (((PyInt)((PyTuple)((PyObject)MarshalCodec.Decode(missingAllianceReply.Payload)).Args).Items[0]).Value != 15);
         AssertWrappedError(missingAllianceReply, "exceptions.RuntimeError", "allianceRegistry.GetAlliance");
     }
 

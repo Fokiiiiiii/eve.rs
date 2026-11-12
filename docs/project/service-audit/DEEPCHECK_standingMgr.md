@@ -16,10 +16,10 @@ The client uses no keyword arguments for these methods. All are read calls; ther
 
 ## Host and EveJS
 
-Production registration is `dotnet/src/Eve.Host/Rpc/CorporationRpc.cs:72`; the `standing2` alias resolves to the same service in `dotnet/src/Eve.Host/Hosting/HostComposition.cs:283`. `StandingMgrService.cs:158-231` reads NPC relations, character/corporation standings and standing history. Transaction IDs accept Python int/long; invalid or non-character-targeted requests return an empty list. Nonmembers or invalid composition IDs receive an empty cached rowset with the client’s five-minute/corporation cache metadata rather than an exception. Results use rowset, list, or cached CRowset shapes according to the caller.
+Production registration is `dotnet/src/Eve.Host/Rpc/CorporationRpc.cs:77`; the `standing2` alias resolves to the same service in `dotnet/src/Eve.Host/Hosting/HostComposition.cs:511`. `StandingMgrService.cs:158-231` reads NPC relations, character/corporation standings and standing history. Transaction IDs accept Python int/long; invalid or non-character-targeted requests return an empty list. Nonmembers or invalid composition IDs receive an empty cached rowset with the client’s five-minute/corporation cache metadata rather than an exception. Results use rowset, list, or cached CRowset shapes according to the caller.
 
 EveJS v0.12.9 implements the same methods in `server/src/services/character/standingMgrService.js:194-241`; composition uses the same five-minute cache and `corpid` session information. The selected CSV rows RPC-02561–02566 are already marked IMPLEMENTED-TESTED.
 
 ## Evidence and limits
 
-Registered Host wire checks are in `dotnet/tests/Eve.Host.Tests/StandingMgrHostWireTests.cs:13-151`; they cover rowset headers, int/long transaction IDs, invalid inputs, composition cache metadata and the alias. These tests were not executed for this documentation-only batch. No PostgreSQL database or graphical client was used.
+Registered Host wire checks are in `dotnet/tests/Eve.Host.Tests/StandingMgrHostWireTests.cs:11-161`; they cover rowset headers, int/long transaction IDs, invalid inputs and composition cache metadata. The alias is asserted by `dotnet/tests/Eve.Host.Tests/NewEdenStoreHostTests.cs:448-461`. These tests were not executed for this documentation-only batch. No PostgreSQL database or graphical client was used.

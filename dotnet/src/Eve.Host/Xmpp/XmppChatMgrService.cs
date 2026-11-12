@@ -79,6 +79,30 @@ public sealed partial class XmppChatMgrService(XmppChatHub hub)
             : PyBool.False;
     }
 
+    [Method("GMMute")]
+    public async Task<PyValue> GMMute(ServiceCall call)
+    {
+        var room = (JsSemantics.StringValue(call.Arg(0)) ?? "").Split('@')[0].Trim();
+        var characterId = PositiveId(call.Arg(1));
+        var reason = JsSemantics.StringValue(call.Arg(2)) ?? "";
+        var durationSeconds = PositiveId(call.Arg(3));
+        return await hub.GmMutePlayerChannelAsync(call.Session, room, characterId, reason, durationSeconds, call.Cancellation)
+            .ConfigureAwait(false)
+            ? PyBool.True
+            : PyBool.False;
+    }
+
+    [Method("GMUnmute")]
+    public async Task<PyValue> GMUnmute(ServiceCall call)
+    {
+        var room = (JsSemantics.StringValue(call.Arg(0)) ?? "").Split('@')[0].Trim();
+        var characterId = PositiveId(call.Arg(1));
+        return await hub.GmUnmutePlayerChannelAsync(call.Session, room, characterId, call.Cancellation)
+            .ConfigureAwait(false)
+            ? PyBool.True
+            : PyBool.False;
+    }
+
     [Method("CreatePrivateChannel")]
     public PyValue CreatePrivateChannel(ServiceCall call)
     {

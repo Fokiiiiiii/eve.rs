@@ -17,7 +17,7 @@ The corporation allowed-faction list is also read by corp_ui_direct_enlistment_m
 
 ## Host owner and transitions
 
-CoreRpc.cs:126-143 registers callbacks into the shared character and corporation stores. FactionActivityRpcServices.cs:90-183 reads character direct faction/cooldown and corporation faction/policy; create and remove save the character owner’s state before changing session warfactionid. Removal sets a one-day cooldown using FILETIME ticks. Policy updates persist through CorporationStore and echo the saved IDs.
+CoreRpc.cs:127-143 registers callbacks into the shared character and corporation stores. FactionActivityRpcServices.cs:90-183 reads character direct faction/cooldown and corporation faction/policy; create and remove save the character owner’s state before changing session warfactionid. Removal sets a one-day cooldown using FILETIME ticks. Policy updates persist through CorporationStore and echo the saved IDs.
 
 Create/Remove produce session-change notifications only after a successful persistent write. CharacterFactionRpcHostTests.cs:62-156 exercises all six calls over a real Host socket, checks persisted callback state across follow-up reads, and observes two session-change notifications. The host test injects in-memory callbacks; production composition points those callbacks at PostgreSQL stores.
 

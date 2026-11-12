@@ -489,4 +489,29 @@ mod tests {
         let hits = SpatialQuery::radius([0.0; 3], 10.0, filter).execute([valid, wrong_group, warping]);
         assert_eq!(hits.iter().map(|hit| hit.id).collect::<Vec<_>>(), [1]);
     }
+
+    #[test]
+    fn subtract_is_componentwise_and_exact_on_whole_numbers() {
+        assert_eq!(subtract(Vec3::new(5.0, 3.0, 1.0), Vec3::new(2.0, 1.0, 4.0)), Vec3::new(3.0, 2.0, -3.0));
+    }
+
+    #[test]
+    fn cross_follows_the_right_hand_rule_and_matches_the_expanded_product() {
+        assert_eq!(cross(Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)), Vec3::new(0.0, 0.0, 1.0));
+        assert_eq!(cross(Vec3::new(1.0, 2.0, 3.0), Vec3::new(4.0, 5.0, 6.0)), Vec3::new(-3.0, 6.0, -3.0));
+    }
+
+    #[test]
+    fn normalize_scales_to_unit_length_and_a_zero_vector_stays_zero() {
+        let unit = normalize(Vec3::new(3.0, 0.0, 4.0));
+        assert!((unit.x - 0.6).abs() < 1e-6 && unit.y == 0.0 && (unit.z - 0.8).abs() < 1e-6, "{unit:?}");
+        assert_eq!(normalize(Vec3::ZERO), Vec3::ZERO);
+    }
+
+    #[test]
+    fn a_zero_direction_falls_back_to_zero_angles_rather_than_none() {
+        // the arc from a zero vector to forward has a zero-length axis, so the quaternion is (0, 0, 0, w) and yaw and pitch read back as 0
+        assert_eq!(dun_rotation_of_unit(Vec3::ZERO), Some([0.0, 0.0, 0.0]));
+        assert_eq!(dun_rotation(Vec3::ZERO), Some([0.0, 0.0, 0.0]));
+    }
 }

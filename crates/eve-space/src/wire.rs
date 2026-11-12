@@ -65,3 +65,16 @@ pub fn filetime(ticks: i64) -> Value {
 pub fn vector(x: f64, y: f64, z: f64) -> [Value; 3] {
     [real(x), real(y), real(z)]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optional_id_is_none_for_zero_and_the_id_otherwise() {
+        assert_eq!(optional_id(0), Value::None);
+        assert_eq!(optional_id(7), id(7));
+        assert_eq!(optional_id(7), Value::Int(7));
+        assert_eq!(optional_id(5_000_000_000), Value::Long(5_000_000_000));
+    }
+}

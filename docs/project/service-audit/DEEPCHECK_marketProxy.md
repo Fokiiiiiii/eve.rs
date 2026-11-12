@@ -51,7 +51,7 @@ marketsvc.py は eve/client/script/ui/services/marketsvc.py、marketSvc.py は e
 
 - EveJS throwMarketUnavailable は接続・daemon 失敗を同じ CustomInfo と固定 info にする（marketProxyService.js:1988-1995）。StartupCheck は daemon startupCheck を呼び、失敗を同じ helper に渡す（同:6283-6291）。今回の Host mapper と StartupCheck はこの client-visible error に合わせた。
 - EveJS の各 Handle_* は同じ positional args を読み、read/write failure を同じ helper に送る。キャンセルは先頭 orderID を使い、buy / sell fee は末尾 optional 引数として読む（同:6967-6968, 7090-7091, 7129-7154）。
-- PlacePlexSellOrder については EveJS が useCorp=true を拒否する。一方 client は sell UI の corporate checkbox 値を SellPlex まで渡す（sellMulti.py:430-464）。owner policy は根拠のない personal-only 拒否を取り除くと記録している（docs/reference/compat/DEVIATIONS.md:3979）。EVE University の [PLEX](https://wiki.eveuniversity.org/PLEX) は redeemed PLEX を通常の移動・取引可能な item と説明するが、corporate wallet の扱いまでは明記しない。現行 eve.rs は client の corp flag を処理する。これは EveJS との差として明示し、独立した corporation PLEX 約定シナリオは DB test では走らせていない。
+- PlacePlexSellOrder については EveJS が useCorp=true を拒否する。一方 client は sell UI の corporate checkbox 値を SellPlex まで渡す（sellMulti.py:430-464）。owner policy は根拠のない personal-only 拒否を取り除くと記録している（docs/reference/compat/DEVIATIONS.md:4161）。EVE University の [PLEX](https://wiki.eveuniversity.org/PLEX) は redeemed PLEX を通常の移動・取引可能な item と説明するが、corporate wallet の扱いまでは明記しない。現行 eve.rs は client の corp flag を処理する。これは EveJS との差として明示し、独立した corporation PLEX 約定シナリオは DB test では走らせていない。
 - V24.01 client による直接 marketProxy method の探索結果には MachoBindObject、moniker bind、marketProxy 名義の bound method 呼び出しはなかった。GetMarketGroups は server export だが client caller はなかった。
 
 ## 実行した確認

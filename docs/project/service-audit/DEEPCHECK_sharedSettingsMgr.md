@@ -13,10 +13,10 @@ The setting type is sent as the client integer constant; payload is the clientâ€
 
 ## Host and EveJS
 
-Production construction is `dotnet/src/Eve.Services.Core/CoreServices.cs:79`; callbacks in `dotnet/src/Eve.Host/Composition/CharacterComposition.cs:225-237` read and durably flush the `sharedSettings` GameStore table. `SharedSettingsMgrService` in `dotnet/src/Eve.Services.Core/GameRpcServices.cs:1056-1140` returns a KeyVal for a valid stored payload, deduplicates matching payloads, and returns None for invalid keys or failed persistence. Reads return the stored payload as a Python string.
+Production construction is `dotnet/src/Eve.Services.Core/CoreServices.cs:86`; callbacks in `dotnet/src/Eve.Host/Composition/CharacterComposition.cs:311-321` read and durably flush the `sharedSettings` GameStore table. `SharedSettingsMgrService` in `dotnet/src/Eve.Services.Core/GameRpcServices.cs:1108-1192` returns a KeyVal for a valid stored payload, deduplicates matching payloads, and returns None for invalid keys or failed persistence. Reads return the stored payload as a Python string.
 
 EveJS v0.12.9 uses the same two methods in `server/src/services/settings/sharedSettingsMgrService.js:263-276` and :278-290. The five selected CSV rows RPC-02257â€“02261 are marked IMPLEMENTED-TESTED.
 
 ## Evidence and limits
 
-Registered Host wire coverage is in `dotnet/tests/Eve.Host.Tests/SharedSettingsHostWireTests.cs:13-27`; the broader registered-service persistence, duplicate, concurrency and invalid-input coverage is in `FilterServiceDeepCheckHostWireTests.cs:41-115`. The Host test files were not executed for this documentation-only batch. No PostgreSQL database or graphical client was used.
+Registered Host wire coverage is in `dotnet/tests/Eve.Host.Tests/SharedSettingsHostWireTests.cs:8-30`; the broader registered-service persistence, duplicate, concurrency and invalid-input coverage is in `FilterServiceDeepCheckHostWireTests.cs:41-115`. The Host test files were not executed for this documentation-only batch. No PostgreSQL database or graphical client was used.

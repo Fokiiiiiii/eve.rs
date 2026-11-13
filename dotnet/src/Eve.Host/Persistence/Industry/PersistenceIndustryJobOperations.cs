@@ -80,6 +80,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     private readonly Eve.Events.EventBus _events;
     private readonly Eve.Universe.StationCatalog _stations;
     private readonly Func<long, long, long, long, CancellationToken, ValueTask<IndustryFacility?>> _resolveFacility;
+    private readonly Func<long, long, long, CancellationToken, ValueTask<IReadOnlyList<Eve.Services.Core.IndustryJobLocation>>>? _resolveIndustryLocations;
     private readonly Func<long> _nowUnixMs;
     private readonly IIndustryCostIndexSource _costIndexes;
     private readonly Func<long, CancellationToken, ValueTask<long?>> _installerSystem;
@@ -101,7 +102,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         IIndustryCostIndexSource costIndexes,
         Func<long, CancellationToken, ValueTask<long?>> installerSystem,
         IndustryReadyJobs readyJobs,
-        Func<long> nowUnixMs)
+        Func<long> nowUnixMs,
+        Func<long, long, long, CancellationToken, ValueTask<IReadOnlyList<Eve.Services.Core.IndustryJobLocation>>>? resolveIndustryLocations = null)
     {
         if (!System.Text.RegularExpressions.Regex.IsMatch(schema, "^[a-z_][a-z0-9_]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
             throw new ArgumentException("Not a valid industry schema.", nameof(schema));
@@ -120,6 +122,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         _installerSystem = installerSystem ?? throw new ArgumentNullException(nameof(installerSystem));
         _readyJobs = readyJobs ?? throw new ArgumentNullException(nameof(readyJobs));
         _nowUnixMs = nowUnixMs ?? throw new ArgumentNullException(nameof(nowUnixMs));
+        _resolveIndustryLocations = resolveIndustryLocations;
     }
 
     private async Task<long> CreateOutputsAsync(
@@ -173,7 +176,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
                 {
                     var id = await _items.CreateAsync(connection, transaction,
                         new Eve.Inventory.NewItem(
-                            typeId, ownerId, Long(job["outputLocationID"]), Int(job["outputFlagID"]),
+                            typeId, ownerId, OutputInventoryLocationId(job, snapshot), OutputInventoryFlagId(job, snapshot),
                             1, true, BlueprintCopy: true, BlueprintRuns: blueprintRuns,
                             MaterialEfficiency: materialEfficiency, TimeEfficiency: timeEfficiency),
                         cancellationToken);
@@ -186,7 +189,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
                 if (quantity <= 0)
                     continue;
                 var id = await _items.CreateAsync(connection, transaction,
-                    new Eve.Inventory.NewItem(typeId, ownerId, Long(job["outputLocationID"]), Int(job["outputFlagID"]), quantity),
+                    new Eve.Inventory.NewItem(typeId, ownerId, OutputInventoryLocationId(job, snapshot), OutputInventoryFlagId(job, snapshot), quantity),
                     cancellationToken);
                 outputIds.Add(id);
             }
@@ -202,6 +205,16 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var bytes = Convert.FromBase64String(seedText);
         return bytes.Length >= sizeof(int) ? BitConverter.ToInt32(bytes, 0) : 0;
     }
+
+    private static long OutputInventoryLocationId(
+        System.Text.Json.Nodes.JsonObject job,
+        System.Text.Json.Nodes.JsonObject? snapshot) =>
+        Long(snapshot?["outputInventoryLocationID"], Long(job["outputLocationID"]));
+
+    private static int OutputInventoryFlagId(
+        System.Text.Json.Nodes.JsonObject job,
+        System.Text.Json.Nodes.JsonObject? snapshot) =>
+        Int(snapshot?["outputInventoryFlagID"], Int(job["outputFlagID"]));
 
     private async Task<ActivityRecipe> ReadRecipeAsync(
         int blueprintTypeId,
@@ -491,8 +504,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         CancellationToken cancellationToken)
     {
         var items = await _items.LockInLocationAsync(
-            connection, transaction, job.InputLocation.LocationId, job.OwnerId,
-            job.InputLocation.FlagId, requirements.Keys.ToArray(), cancellationToken);
+            connection, transaction, job.InputLocation.EffectiveInventoryLocationId, job.OwnerId,
+            job.InputLocation.EffectiveInventoryFlagId, requirements.Keys.ToArray(), cancellationToken);
         foreach (var requirement in requirements)
         {
             var remaining = requirement.Value;
@@ -603,6 +616,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             ["blueprintMaterialEfficiency"] = blueprint.MaterialEfficiency,
             ["blueprintTimeEfficiency"] = blueprint.TimeEfficiency,
             ["blueprintCopy"] = blueprint.BlueprintCopy,
+            ["outputInventoryLocationID"] = job.OutputLocation.EffectiveInventoryLocationId,
+            ["outputInventoryFlagID"] = job.OutputLocation.EffectiveInventoryFlagId,
             ["facilityTaxRate"] = facility.TaxRate,
             ["timeMultiplier"] = facility.TimeMultiplier,
             ["costIsk"] = cost,
@@ -626,7 +641,10 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             job.ActivityId, job.BlueprintId, job.BlueprintTypeId, job.BlueprintCopy,
             job.BlueprintLocationId, job.BlueprintLocationFlagId, job.FacilityId, job.OwnerId,
             job.SolarSystemId, job.StationId, job.InputLocation.LocationId, job.InputLocation.FlagId,
-            job.OutputLocation.LocationId, job.OutputLocation.FlagId, job.Runs, job.LicensedRuns,
+            job.InputLocation.EffectiveInventoryLocationId, job.InputLocation.EffectiveInventoryFlagId,
+            job.InputLocation.OwnerId, job.OutputLocation.LocationId, job.OutputLocation.FlagId,
+            job.OutputLocation.EffectiveInventoryLocationId, job.OutputLocation.EffectiveInventoryFlagId,
+            job.OutputLocation.OwnerId, job.Runs, job.LicensedRuns,
             job.ProductTypeId, job.OptionalTypeId, job.OptionalTypeId2,
             job.Wallet.OwnerId, job.Wallet.AccountKey);
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(

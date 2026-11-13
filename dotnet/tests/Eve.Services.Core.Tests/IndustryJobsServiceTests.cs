@@ -278,7 +278,7 @@ public sealed class IndustryJobsServiceTests
 
         Assert.Equal(new PyInt(52001), result);
         var request = Assert.IsType<IndustryJobInstallRequest>(operations.InstallRequest);
-        Assert.Equal("industry:1001:InstallJob:41", request.Context.OperationId);
+        Assert.Equal(OperationId(0, "InstallJob", 41, job), request.Context.OperationId);
         Assert.Equal(new IndustryJobActor(1001, 2002, 1024, 1004), request.Context.Actor);
         Assert.Equal(1, request.Job.ActivityId);
         Assert.Equal(50001, request.Job.BlueprintId);
@@ -304,13 +304,34 @@ public sealed class IndustryJobsServiceTests
         Assert.Same(PyNone.Instance, completed);
         Assert.Same(PyNone.Instance, cancelled);
         Assert.Equal(new IndustryJobAction(
-            new IndustryJobOperationContext(new IndustryJobActor(1001, 0, 0, 1000), "industry:1001:CompleteJob:42"),
+            new IndustryJobOperationContext(new IndustryJobActor(1001, 0, 0, 1000),
+                OperationId(0, "CompleteJob", 42, new PyInt(52001), new PyInt(30000142))),
             52001,
             30000142), operations.Completed);
         Assert.Equal(new IndustryJobAction(
-            new IndustryJobOperationContext(new IndustryJobActor(1001, 0, 0, 1000), "industry:1001:CancelJob:43"),
+            new IndustryJobOperationContext(new IndustryJobActor(1001, 0, 0, 1000),
+                OperationId(0, "CancelJob", 43, new PyInt(52002), new PyInt(30000142))),
             52002,
             30000142), operations.Cancelled);
+    }
+
+    [Fact]
+    public async Task Industry_operation_keys_are_stable_for_retries_and_vary_by_session_or_request_content()
+    {
+        var operations = new RecordingIndustryJobOperations();
+        var service = Service(null, operations: operations);
+
+        async Task<string> Complete(long sessionId, long jobId)
+        {
+            await service.CallAsync(Call("CompleteJob", [new PyInt(jobId), new PyInt(30000142)],
+                callId: 42, sessionId: sessionId));
+            return operations.Completed!.Context.OperationId;
+        }
+
+        var first = await Complete(7001, 52001);
+        Assert.Equal(first, await Complete(7001, 52001));
+        Assert.NotEqual(first, await Complete(7001, 52002));
+        Assert.NotEqual(first, await Complete(7002, 52001));
     }
 
     [Fact]
@@ -464,9 +485,10 @@ public sealed class IndustryJobsServiceTests
         int corporationAccountKey = 1000,
         long callId = 77,
         CancellationToken cancellation = default,
-        long accountId = 0)
+        long accountId = 0,
+        long sessionId = 0)
     {
-        var session = new ClientSession();
+        var session = new ClientSession { SessionId = sessionId };
         session.Set("charid", new PyInt(characterId));
         if (accountId > 0) session.Set("userid", new PyInt(accountId));
         session.Set("corpid", new PyInt(corporationId));
@@ -480,6 +502,13 @@ public sealed class IndustryJobsServiceTests
             Session = session,
             Cancellation = cancellation,
         };
+    }
+
+    private static string OperationId(long sessionId, string method, long callId, params PyValue[] args)
+    {
+        var fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            MarshalCodec.Encode(Py.Tuple(new PyStr(method), new PyTuple(args)))));
+        return $"industry:{sessionId}:1001:{method}:{callId}:{fingerprint}";
     }
 
     private static IReadOnlyList<long> JobIds(PyValue value) =>

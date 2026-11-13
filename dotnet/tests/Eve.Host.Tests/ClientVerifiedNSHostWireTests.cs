@@ -136,6 +136,59 @@ public partial class HostServerTests
     }
 
     [Fact]
+    public async Task Inventory_asset_holding_qa_toggles_keep_defaults_and_session_scope_over_host_wire()
+    {
+        Start(sessionOpened: session => session.Set("role", new PyLong(4_503_599_627_370_496L)));
+        var (firstFront, firstOpen) = await OpenFrontAsync();
+        var (secondFront, secondOpen) = await OpenFrontAsync();
+
+        Assert.Equal(PyBool.False, await HostRpcAsync(firstFront, firstOpen, 1,
+            "inventoryAssetHoldingMgr", "is_item_failure_enabled"));
+        Assert.Equal(PyBool.True, await HostRpcAsync(firstFront, firstOpen, 2,
+            "inventoryAssetHoldingMgr", "is_item_validation_enabled"));
+        Assert.Same(PyNone.Instance, await HostRpcAsync(firstFront, firstOpen, 3,
+            "inventoryAssetHoldingMgr", "set_item_failure_enabled", PyBool.True));
+        Assert.Equal(PyBool.True, await HostRpcAsync(firstFront, firstOpen, 4,
+            "inventoryAssetHoldingMgr", "is_item_failure_enabled"));
+        Assert.Equal(PyBool.False, await HostRpcAsync(secondFront, secondOpen, 1,
+            "inventoryAssetHoldingMgr", "is_item_failure_enabled"));
+        Assert.Same(PyNone.Instance, await HostRpcAsync(firstFront, firstOpen, 5,
+            "inventoryAssetHoldingMgr", "set_item_validation_enabled", PyBool.False));
+        Assert.Equal(PyBool.False, await HostRpcAsync(firstFront, firstOpen, 6,
+            "inventoryAssetHoldingMgr", "is_item_validation_enabled"));
+        Assert.Equal(PyBool.True, await HostRpcAsync(secondFront, secondOpen, 2,
+            "inventoryAssetHoldingMgr", "is_item_validation_enabled"));
+    }
+
+    [Fact]
+    public async Task Season_reload_fsd_data_returns_the_reference_false_over_host_wire()
+    {
+        IReadOnlyList<PyValue>? auditedArguments = null;
+        Start(configure: registry => registry.Register(new SeasonManagerService(
+            auditReloadFsdData: (_, arguments) => auditedArguments = arguments.ToArray())));
+        var (front, open) = await OpenFrontAsync();
+
+        Assert.Equal(PyBool.False, await HostRpcAsync(front, open, 1,
+            "seasonManager", "reload_fsd_data"));
+        Assert.Empty(Assert.IsAssignableFrom<IReadOnlyList<PyValue>>(auditedArguments));
+    }
+
+    [Fact]
+    public async Task Abyssal_content_tool_calls_keep_the_evejs_rejected_method_none_reply_over_host_wire()
+    {
+        Start();
+        var (front, open) = await OpenFrontAsync();
+
+        Assert.Same(PyNone.Instance, await HostRpcAsync(front, open, 1,
+            "abyssal_content_manager", "GetContentDetailsForShipLocation"));
+        Assert.Same(PyNone.Instance, await HostRpcAsync(front, open, 2,
+            "abyssal_content_manager", "GenerateContentFromExistingPlan", new PyStr("{}")));
+        Assert.Same(PyNone.Instance, await HostRpcAsync(front, open, 3,
+            "abyssal_content_manager", "GenerateAbyssEncounterContent",
+            new PyInt(172), new PyInt(1), new PyInt(0), new PyInt(0), new PyInt(0), new PyInt(1)));
+    }
+
+    [Fact]
     public async Task Ship_cosmetics_reads_keep_empty_and_none_shapes_and_mutations_fail_closed_without_providers()
     {
         var service = new ShipCosmeticsMgrRpcService();

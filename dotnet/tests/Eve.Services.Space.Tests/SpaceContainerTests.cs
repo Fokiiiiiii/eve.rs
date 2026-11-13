@@ -680,6 +680,286 @@ public class SpaceContainerTests
     }
 
     [PgFact]
+    public async Task Ship_launch_from_maintenance_bay_moves_persists_notifies_and_can_be_boarded()
+    {
+        const int orcaTypeId = 28_606;
+        const int rifterTypeId = 587;
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync(shipTypeId: Eve.Ships.CharacterShips.CapsuleTypeId);
+        var carrier = (await rig.Ships.GrantAsync(character.CharacterId, orcaTypeId, 1, singleton: true))!
+            .Single().After;
+        var launched = (await rig.Ships.GrantAsync(character.CharacterId, rifterTypeId, 1, singleton: true))!
+            .Single().After;
+        await rig.Statics.EnsureTypesAsync([orcaTypeId]);
+        var session = await rig.SessionAsync(character, id: 1);
+        var bound = await rig.BindShipAsync(session);
+        Assert.Same(PyNone.Instance, await rig.ShipCallAsync(session, "Undock", bound,
+            new PyLong(session.GetInt("shipid")!.Value), PyBool.False));
+        var systemId = checked((int)session.GetInt("solarsystemid")!.Value);
+        bound = await rig.BindShipInSpaceAsync(session);
+
+        var carrierType = rig.Statics.Type(orcaTypeId)!;
+        var carrierPosition = new double[] { 0, 0, 0 };
+        var carrierDirection = new double[] { 1, 0, 0 };
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, carrier.Id, systemId, Eve.Ships.CharacterShips.InSpaceFlag);
+            await rig.Items.MoveAsync(connection, transaction, launched.Id, carrier.Id,
+                Eve.Ships.CharacterShips.ShipMaintenanceBayFlag);
+            await rig.SpaceItems.SaveAsync(connection, transaction, new Eve.Ships.SpaceItem(
+                carrier.Id, systemId, carrierPosition, carrierDirection,
+                Math.Max(1, carrierType.Attributes.GetValueOrDefault(162, 0)), carrierType.GroupId,
+                session.GetInt("shipid")!.Value, character.CharacterId, 0, 0, 0, long.MaxValue,
+                Kind: Eve.Ships.SpaceItemKind.LaunchedShip));
+            await transaction.CommitAsync();
+        }
+        Assert.True(await rig.Space.PlaceLaunchedShipAsync(carrier.Id, character.CharacterId, systemId,
+            carrierType, carrierPosition, carrierDirection, CancellationToken.None));
+        Events.Of(session);
+
+        var ship = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("ship"));
+        Assert.True(ship.HasMethod("LaunchFromContainer"));
+        rig.Sim.SpawnUnavailable = true;
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.ShipCallAsync(session, "LaunchFromContainer", bound,
+                new PyLong(carrier.Id), new PyLong(launched.Id)));
+        Assert.Equal("CustomNotify", UserError(refused).Name);
+        Assert.Equal(((long)systemId, Eve.Ships.CharacterShips.InSpaceFlag),
+            ((await rig.Items.GetAsync(launched.Id))!.LocationId, (await rig.Items.GetAsync(launched.Id))!.Flag));
+        Assert.Equal(Eve.Ships.SpaceItemKind.MaintenanceBayLaunchedShip,
+            (await rig.SpaceItems.GetAsync(launched.Id))!.Kind);
+        Assert.DoesNotContain(Events.Of(session), e => e.Name == "OnItemChange");
+
+        rig.Sim.SpawnUnavailable = false;
+        Assert.Same(PyNone.Instance, await rig.ShipCallAsync(session, "LaunchFromContainer", bound,
+            new PyLong(carrier.Id), new PyLong(launched.Id)));
+
+        var moved = (await rig.Items.GetAsync(launched.Id))!;
+        Assert.Equal(((long)systemId, Eve.Ships.CharacterShips.InSpaceFlag), (moved.LocationId, moved.Flag));
+        var spaceItem = (await rig.SpaceItems.GetAsync(launched.Id))!;
+        Assert.Equal(Eve.Ships.SpaceItemKind.MaintenanceBayLaunchedShip, spaceItem.Kind);
+        Assert.Equal(carrier.Id, spaceItem.SourceContainerId);
+        Assert.Contains(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == launched.Id);
+        Assert.Contains(Events.Of(session), e => e.Name == "OnItemChange");
+
+        await Task.WhenAll(
+            rig.ShipCallAsync(session, "LaunchFromContainer", bound, new PyLong(carrier.Id), new PyLong(launched.Id)),
+            rig.ShipCallAsync(session, "LaunchFromContainer", bound, new PyLong(carrier.Id), new PyLong(launched.Id)));
+        Assert.Single(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == launched.Id);
+
+        var spawnCount = rig.Sim.Heard.OfType<SimSpawn>().Count(spawn => spawn.Ship.ShipId == launched.Id);
+        using var restarted = new SpaceContainers(
+            rig.Sim, rig.Ships, rig.Items, rig.SpaceItems,
+            new Eve.Ships.PgWorkCycleLedger(rig.Source, rig.SpaceSchema),
+            new Eve.Services.Space.EventBusFacts(rig.Events), rig.Statics, rig.Space, () => rig.Now,
+            source: rig.Source);
+        await restarted.RestoreAsync(systemId);
+        Assert.Equal(spawnCount + 1, rig.Sim.Heard.OfType<SimSpawn>().Count(spawn => spawn.Ship.ShipId == launched.Id));
+
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        var inSpaceBound = await rig.BindShipInSpaceAsync(session);
+        Assert.IsType<PyTuple>(await rig.ShipCallAsync(session, "Board", inSpaceBound,
+            new PyLong(launched.Id), new PyLong(character.ShipId)));
+        Assert.Equal(launched.Id, session.GetInt("shipid"));
+        Assert.Equal(systemId, (await rig.Items.GetAsync(launched.Id))!.LocationId);
+    }
+
+    [PgTheory]
+    [InlineData(12_237)]
+    [InlineData(24_574)]
+    public async Task Ship_launch_from_POS_maintenance_array_checks_tower_permissions_and_persists_the_boardable_ship(
+        int maintenanceArrayTypeId)
+    {
+        const int towerTypeId = 12_235;
+        const int rifterTypeId = 587;
+        const long corporationId = 98_000_651;
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync(shipTypeId: Eve.Ships.CharacterShips.CapsuleTypeId);
+        var session = await rig.SessionAsync(character, id: 9);
+        var bound = await rig.BindShipAsync(session);
+        Assert.Same(PyNone.Instance, await rig.ShipCallAsync(session, "Undock", bound,
+            new PyLong(session.GetInt("shipid")!.Value), PyBool.False));
+        await rig.BindBeyonceAsync(session);
+        var systemId = checked((int)session.GetInt("solarsystemid")!.Value);
+        bound = await rig.BindShipInSpaceAsync(session);
+        session.Set("corpid", new PyLong(corporationId));
+        session.Set("corprole", new PyLong(0));
+        session.Set("allianceid", new PyLong(0));
+        await rig.Statics.EnsureTypesAsync([towerTypeId, maintenanceArrayTypeId, rifterTypeId]);
+        var towerType = rig.Statics.Type(towerTypeId)!;
+        var arrayType = rig.Statics.Type(maintenanceArrayTypeId)!;
+        var towerPosition = new double[] { 0, 0, 0 };
+        var arrayPosition = new double[] { 100, 0, 0 };
+
+        long towerId;
+        long arrayId;
+        long shipId;
+        Item ship;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            towerId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(towerTypeId, corporationId, systemId, Eve.Ships.CharacterShips.InSpaceFlag, 1, true));
+            arrayId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(maintenanceArrayTypeId, corporationId, systemId, Eve.Ships.CharacterShips.InSpaceFlag, 1, true));
+            shipId = await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(rifterTypeId, character.CharacterId, arrayId, 0, 1, true));
+            await rig.Deployed.SaveAsync(connection, transaction, new DeployedRecord(
+                towerId, "control_tower", systemId, "Test control tower", towerTypeId, towerType.GroupId,
+                towerPosition, towerType.Attributes.GetValueOrDefault(162), corporationId, checked((int)corporationId),
+                0, character.ShipId, long.MaxValue, rig.Now - 1));
+            await rig.Deployed.SaveAsync(connection, transaction, new DeployedRecord(
+                arrayId, "starbase_module", systemId, "Test maintenance array", maintenanceArrayTypeId, arrayType.GroupId,
+                arrayPosition, arrayType.Attributes.GetValueOrDefault(162), corporationId, checked((int)corporationId),
+                0, character.ShipId, long.MaxValue, rig.Now - 1, ControlTowerId: towerId));
+            await rig.Deployed.SetTowerStateAsync(connection, transaction, towerId, "online");
+            await rig.Deployed.SetTowerStateAsync(connection, transaction, arrayId, "online");
+            var configuration = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                usageFlags = new[]
+                {
+                    new { structureID = arrayId, viewput = 1, viewputtake = 1, use = 1 },
+                },
+            });
+            Assert.True(await rig.Deployed.SetTowerConfigurationAsync(connection, transaction, towerId, configuration));
+            await transaction.CommitAsync();
+        }
+        ship = (await rig.Items.GetAsync(shipId))!;
+
+        rig.Sim.PositionAnswers[towerId] = towerPosition;
+        rig.Sim.PositionAnswers[arrayId] = arrayPosition;
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = towerPosition;
+        rig.Sim.PlaceControlTower(new SimPlaceControlTower(towerId, systemId, "Test control tower", towerTypeId,
+            towerType.GroupId, towerPosition, towerType.Attributes.GetValueOrDefault(162), true,
+            corporationId, checked((int)corporationId), 0, character.ShipId));
+        rig.Sim.PlaceControlTower(new SimPlaceControlTower(arrayId, systemId, "Test maintenance array", maintenanceArrayTypeId,
+            arrayType.GroupId, arrayPosition, arrayType.Attributes.GetValueOrDefault(162), true,
+            corporationId, checked((int)corporationId), 0, character.ShipId));
+        Events.Of(session);
+
+        var shipService = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("ship"));
+        Assert.True(shipService.HasMethod("LaunchFromContainer"));
+
+        async Task SetArrayPermissionsAsync(int viewPutTake, int use)
+        {
+            await using var connection = await rig.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            var configuration = System.Text.Json.JsonSerializer.Serialize(new
+            {
+                usageFlags = new[]
+                {
+                    new { structureID = arrayId, viewput = 1, viewputtake = viewPutTake, use },
+                },
+            });
+            Assert.True(await rig.Deployed.SetTowerConfigurationAsync(connection, transaction, towerId, configuration));
+            await transaction.CommitAsync();
+        }
+
+        async Task AssertPermissionDeniedAsync()
+        {
+            var denied = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+                await rig.ShipCallAsync(session, "LaunchFromContainer", bound, new PyLong(arrayId), new PyLong(ship.Id)));
+            Assert.Equal("CustomNotify", UserError(denied).Name);
+            var refusedShip = (await rig.Items.GetAsync(ship.Id))!;
+            Assert.Equal(((long)arrayId, 0), (refusedShip.LocationId, refusedShip.Flag));
+            Assert.Null(await rig.SpaceItems.GetAsync(ship.Id));
+            Assert.DoesNotContain(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == ship.Id);
+            Assert.DoesNotContain(Events.Of(session), notification => notification.Name == "OnItemChange");
+        }
+
+        await SetArrayPermissionsAsync(viewPutTake: 1, use: 0);
+        await AssertPermissionDeniedAsync();
+        await SetArrayPermissionsAsync(viewPutTake: 0, use: 1);
+        await AssertPermissionDeniedAsync();
+
+        await SetArrayPermissionsAsync(viewPutTake: 1, use: 1);
+        rig.Sim.MeasureAnswer = 5_000; // The ship is inside the live tower shield, so the POS range alternative permits this distance.
+        var spawnCountBeforeLaunch = rig.Sim.Heard.OfType<SimSpawn>().Count();
+        var noticesBeforeLaunch = Events.Of(session).Count(notification => notification.Name == "OnItemChange");
+        Assert.Same(PyNone.Instance, await rig.ShipCallAsync(session, "LaunchFromContainer", bound,
+            new PyLong(arrayId), new PyLong(ship.Id)));
+
+        var moved = (await rig.Items.GetAsync(ship.Id))!;
+        Assert.Equal(((long)systemId, Eve.Ships.CharacterShips.InSpaceFlag), (moved.LocationId, moved.Flag));
+        var spaceItem = (await rig.SpaceItems.GetAsync(ship.Id))!;
+        Assert.Equal(Eve.Ships.SpaceItemKind.MaintenanceBayLaunchedShip, spaceItem.Kind);
+        Assert.Equal(arrayId, spaceItem.SourceContainerId);
+        Assert.Equal(spawnCountBeforeLaunch + 1,
+            rig.Sim.Heard.OfType<SimSpawn>().Count(spawn => spawn.Ship.ShipId == ship.Id));
+        Assert.Equal(noticesBeforeLaunch + 1,
+            Events.Of(session).Count(notification => notification.Name == "OnItemChange"));
+
+        var spawnCountBeforeRestore = rig.Sim.Heard.OfType<SimSpawn>().Count(spawn => spawn.Ship.ShipId == ship.Id);
+        using var restarted = new SpaceContainers(
+            rig.Sim, rig.Ships, rig.Items, rig.SpaceItems,
+            new Eve.Ships.PgWorkCycleLedger(rig.Source, rig.SpaceSchema),
+            new Eve.Services.Space.EventBusFacts(rig.Events), rig.Statics, rig.Space, () => rig.Now,
+            deployed: rig.Deployed, source: rig.Source);
+        await restarted.RestoreAsync(systemId);
+        Assert.Equal(spawnCountBeforeRestore + 1,
+            rig.Sim.Heard.OfType<SimSpawn>().Count(spawn => spawn.Ship.ShipId == ship.Id));
+        Assert.Equal(arrayId, (await rig.SpaceItems.GetAsync(ship.Id))!.SourceContainerId);
+
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        var inSpaceBound = await rig.BindShipInSpaceAsync(session);
+        Assert.IsType<PyTuple>(await rig.ShipCallAsync(session, "Board", inSpaceBound,
+            new PyLong(ship.Id), new PyLong(character.ShipId)));
+        Assert.Equal(ship.Id, session.GetInt("shipid"));
+    }
+
+    [PgFact]
+    public async Task Ship_launch_from_maintenance_bay_is_refused_while_the_pilot_is_warping()
+    {
+        const int orcaTypeId = 28_606;
+        const int rifterTypeId = 587;
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync(shipTypeId: Eve.Ships.CharacterShips.CapsuleTypeId);
+        var carrier = (await rig.Ships.GrantAsync(character.CharacterId, orcaTypeId, 1, singleton: true))!
+            .Single().After;
+        var launched = (await rig.Ships.GrantAsync(character.CharacterId, rifterTypeId, 1, singleton: true))!
+            .Single().After;
+        await rig.Statics.EnsureTypesAsync([orcaTypeId]);
+        var session = await rig.SessionAsync(character, id: 2);
+        var bound = await rig.BindShipAsync(session);
+        Assert.Same(PyNone.Instance, await rig.ShipCallAsync(session, "Undock", bound,
+            new PyLong(session.GetInt("shipid")!.Value), PyBool.False));
+        var systemId = checked((int)session.GetInt("solarsystemid")!.Value);
+        bound = await rig.BindShipInSpaceAsync(session);
+
+        var carrierType = rig.Statics.Type(orcaTypeId)!;
+        var carrierPosition = new double[] { 0, 0, 0 };
+        var carrierDirection = new double[] { 1, 0, 0 };
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.MoveAsync(connection, transaction, carrier.Id, systemId, Eve.Ships.CharacterShips.InSpaceFlag);
+            await rig.Items.MoveAsync(connection, transaction, launched.Id, carrier.Id,
+                Eve.Ships.CharacterShips.ShipMaintenanceBayFlag);
+            await rig.SpaceItems.SaveAsync(connection, transaction, new Eve.Ships.SpaceItem(
+                carrier.Id, systemId, carrierPosition, carrierDirection,
+                Math.Max(1, carrierType.Attributes.GetValueOrDefault(162, 0)), carrierType.GroupId,
+                session.GetInt("shipid")!.Value, character.CharacterId, 0, 0, 0, long.MaxValue,
+                Kind: Eve.Ships.SpaceItemKind.LaunchedShip));
+            await transaction.CommitAsync();
+        }
+        Assert.True(await rig.Space.PlaceLaunchedShipAsync(carrier.Id, character.CharacterId, systemId,
+            carrierType, carrierPosition, carrierDirection, CancellationToken.None));
+
+        await rig.Space.WarpAsync(session, 40_491_233, 0, CancellationToken.None);
+        Assert.True(rig.Space.IsWarping(session));
+        var before = await rig.Items.GetAsync(launched.Id);
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(async () =>
+            await rig.ShipCallAsync(session, "LaunchFromContainer", bound,
+                new PyLong(carrier.Id), new PyLong(launched.Id)));
+
+        Assert.Equal("ShipInWarp", UserError(error).Name);
+        Assert.Equal(before, await rig.Items.GetAsync(launched.Id));
+        Assert.Null(await rig.SpaceItems.GetAsync(launched.Id));
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimSpawn>(), spawn => spawn.Ship.ShipId == launched.Id);
+    }
+
+    [PgFact]
     public async Task Launching_from_a_space_container_is_refused_while_the_pilot_is_warping()
     {
         await using var rig = await Rig.CreateAsync();

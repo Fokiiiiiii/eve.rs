@@ -211,6 +211,8 @@ internal sealed partial class CharacterServicesComposition
             maxJoinRequests is < 1 or > Eve.Services.Space.FleetStore.MaximumConfiguredJoinRequests)
             throw new InvalidOperationException("EVE_MAX_FLEET_JOIN_REQUESTS must be between 1 and 65536.");
         fleetStore = new Eve.Services.Space.FleetStore(source, fleetSchema, maxJoinRequests);
+        if (spaceContainers is not null)
+            spaceContainers.FleetIdForCharacterAsync = fleetStore.FleetIdForCharacterAsync;
         // the jump drive to a fleet's cynosural field reads the fleets, so it is made after them (the space simulation is set up before the fleets)
         if (spaceSessions is not null)
         {

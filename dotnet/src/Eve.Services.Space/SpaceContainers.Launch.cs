@@ -53,7 +53,7 @@ public sealed partial class SpaceContainers
                 currentLocation == systemId &&
                 await _spaceItems.GetAsync(itemId, cancellationToken) is { LauncherId: var launchedBy, Kind: var kind } existing &&
                 launchedBy == shipId && existing.SourceContainerId == sourceId &&
-                kind is SpaceItemKind.LaunchedShip or SpaceItemKind.ContainerOrWreck)
+                kind is SpaceItemKind.LaunchedShip or SpaceItemKind.MaintenanceBayLaunchedShip or SpaceItemKind.ContainerOrWreck)
             {
                 await _statics.EnsureTypesAsync([current.TypeId], cancellationToken);
                 if (_statics.Type(current.TypeId) is not { } retryType ||
@@ -208,10 +208,11 @@ public sealed partial class SpaceContainers
         }
         try
         {
-            if (spaceItem.Kind == SpaceItemKind.LaunchedShip)
+            if (spaceItem.Kind is SpaceItemKind.LaunchedShip or SpaceItemKind.MaintenanceBayLaunchedShip)
             {
                 if (!await _space.PlaceLaunchedShipAsync(item.Id, item.OwnerId, spaceItem.SolarSystemId, type,
-                        spaceItem.Position, spaceItem.Direction, cancellationToken))
+                        spaceItem.Position, spaceItem.Direction, cancellationToken,
+                        boardable: spaceItem.Kind == SpaceItemKind.MaintenanceBayLaunchedShip))
                 {
                     _placed.TryRemove(item.Id, out _);
                     return false;

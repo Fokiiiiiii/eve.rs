@@ -76,8 +76,8 @@ public interface ISpaceContainers
     /// </summary>
     Task<long?> LaunchFromShipAsync(ClientSession session, long itemId, CancellationToken cancellationToken) => Task.FromResult<long?>(null);
 
-    /// <summary><c>ship.LaunchFromContainer(sourceID, itemID)</c>: launches an assembled ship from an accessible in-space ship maintenance bay.</summary>
-    Task LaunchFromMaintenanceBayAsync(ClientSession session, long sourceId, long itemId, CancellationToken cancellationToken) =>
+    /// <summary><c>ship.LaunchFromContainer(sourceID, itemID)</c>: launches an assembled ship from an accessible in-space ship maintenance bay or POS array.</summary>
+    Task LaunchFromContainerAsync(ClientSession session, long sourceId, long itemId, CancellationToken cancellationToken) =>
         throw new NotSupportedException("This space container provider cannot launch ships from maintenance bays.");
 }
 

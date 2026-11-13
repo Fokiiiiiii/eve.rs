@@ -33,7 +33,8 @@ public sealed class RafflePriceRuntimeTests
     {
         var databaseUrl = Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL required");
         string configSchema = "rf_price_" + Guid.NewGuid().ToString("N")[..12]; string marketSchema = configSchema + "_market";
-        string[] names = ["EVE_PG_URL","EVE_SIM","EVE_MARKET_SEED","EVE_WORMHOLES","EVE_GLOBAL_CONFIG_SCHEMA","EVE_MARKET_SCHEMA"];
+        string crimewatchSchema = configSchema + "_crimewatch";
+        string[] names = ["EVE_PG_URL","EVE_SIM","EVE_MARKET_SEED","EVE_WORMHOLES","EVE_GLOBAL_CONFIG_SCHEMA","EVE_MARKET_SCHEMA","EVE_CRIMEWATCH_SCHEMA"];
         var saved = names.ToDictionary(name => name, Environment.GetEnvironmentVariable);
         HostRuntime? host = null;
         try
@@ -41,6 +42,7 @@ public sealed class RafflePriceRuntimeTests
             Environment.SetEnvironmentVariable("EVE_PG_URL", databaseUrl); Environment.SetEnvironmentVariable("EVE_SIM","off");
             Environment.SetEnvironmentVariable("EVE_MARKET_SEED","skip"); Environment.SetEnvironmentVariable("EVE_WORMHOLES","off");
             Environment.SetEnvironmentVariable("EVE_GLOBAL_CONFIG_SCHEMA", configSchema); Environment.SetEnvironmentVariable("EVE_MARKET_SCHEMA", marketSchema);
+            Environment.SetEnvironmentVariable("EVE_CRIMEWATCH_SCHEMA", crimewatchSchema);
             host = await HostComposition.BuildAsync(new HostSettings("", "disabled", new ClusterOptions { NewCharacterExperienceEnabled = false, NewCharacterExperienceMode = "disabled" }, new AccountOptions { AutoCreate = true }, StrictRpc: true));
             await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(databaseUrl));
             var directory = new PgAccountDirectory(source,new AccountOptions { AutoCreate = true });
@@ -105,7 +107,7 @@ public sealed class RafflePriceRuntimeTests
             if (host is not null) await host.ShutdownAsync();
             foreach (var (name,value) in saved) Environment.SetEnvironmentVariable(name,value);
             await using var cleanupSource = NpgsqlDataSource.Create(PgConnection.ForTest(databaseUrl));
-            await using var clean = cleanupSource.CreateCommand($"DROP SCHEMA IF EXISTS {configSchema} CASCADE; DROP SCHEMA IF EXISTS {marketSchema} CASCADE"); await clean.ExecuteNonQueryAsync();
+            await using var clean = cleanupSource.CreateCommand($"DROP SCHEMA IF EXISTS {configSchema} CASCADE; DROP SCHEMA IF EXISTS {marketSchema} CASCADE; DROP SCHEMA IF EXISTS {crimewatchSchema} CASCADE"); await clean.ExecuteNonQueryAsync();
         }
     }
 }

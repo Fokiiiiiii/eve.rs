@@ -24,8 +24,15 @@ public interface ISpaceContainers
     /// </summary>
     Task<Item?> OpenAsync(ClientSession session, long containerId, CancellationToken cancellationToken);
 
+    /// <summary>Whether the pilot may view this space inventory (taking is not required for POS view-and-deposit access).</summary>
+    Task<bool> MayViewFromAsync(ClientSession session, Item container, CancellationToken cancellationToken) =>
+        MayTakeFromAsync(session, container, cancellationToken);
+
     /// <summary>Whether the pilot may take the contents under the space container's loot rights.</summary>
     Task<bool> MayTakeFromAsync(ClientSession session, Item container, CancellationToken cancellationToken) => Task.FromResult(false);
+
+    /// <summary>Whether the pilot may deposit into this space inventory.</summary>
+    Task<bool> MayDepositIntoAsync(ClientSession session, Item container, Item item, CancellationToken cancellationToken) => Task.FromResult(true);
 
     /// <summary>
     /// Moves goods between the ship in space and a can or wreck (taken out of it into the hold, or put from the hold into it), and tells the pilot's client what changed, in the

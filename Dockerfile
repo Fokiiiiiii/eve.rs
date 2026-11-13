@@ -3,7 +3,7 @@
 # The eve.rs server in one image: the Rust front (eve-net), the Rust space simulation (eve-sim), the static-data
 # tool (eve-sde) and the C# service host (eve-host). docker-compose.yml runs them as separate services.
 
-FROM rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6 AS rust
+FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS rust
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates

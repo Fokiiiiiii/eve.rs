@@ -170,6 +170,74 @@ public sealed class PlayerBountyHostTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task Reused_call_id_in_a_new_session_places_the_new_bounty_and_keeps_same_session_retry_idempotent()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+        var host = await HostComposition.BuildAsync(Settings());
+        try
+        {
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var firstTarget = await InsertPilotAsync(source, characters, "Bounty First Session Target");
+            var secondTarget = await InsertPilotAsync(source, characters, "Bounty Reconnected Target");
+            var thirdTarget = await InsertPilotAsync(source, characters, "Bounty Changed Request Target");
+            var placer = await InsertPilotAsync(source, characters, "Bounty Reconnected Placer");
+            await OpenWalletAsync(source, placer, 5_000_000m);
+            var bounty = host.Registry.Lookup("bountyProxy")!;
+            var firstRequest = new ServiceCall
+            {
+                Args = [new PyInt(firstTarget), new PyReal(1_000_000)],
+                Method = "AddToBounty",
+                Session = new ClientSession { SessionId = 101, CharacterId = placer },
+                CallId = new PyInt(7),
+            };
+
+            var concurrentFirstPlacements = await Task.WhenAll(
+                bounty.CallAsync(firstRequest).AsTask(),
+                bounty.CallAsync(firstRequest).AsTask());
+            var firstPlacement = concurrentFirstPlacements[0];
+            Assert.Equal(new PyReal(1_000_000), Field(firstPlacement, "bounty"));
+            Assert.Equal(firstPlacement, concurrentFirstPlacements[1]);
+            Assert.Equal(firstPlacement, await bounty.CallAsync(firstRequest));
+            Assert.Equal(4_000_000m, await WalletIskAsync(source, placer));
+
+            var changedRequest = new ServiceCall
+            {
+                Args = [new PyInt(thirdTarget), new PyReal(1_500_000)],
+                Method = "AddToBounty",
+                Session = new ClientSession { SessionId = 101, CharacterId = placer },
+                CallId = new PyInt(7),
+            };
+            var changedPlacement = await bounty.CallAsync(changedRequest);
+            Assert.Equal(new PyReal(1_500_000), Field(changedPlacement, "bounty"));
+            Assert.Equal(2_500_000m, await WalletIskAsync(source, placer));
+
+            var reconnectedRequest = new ServiceCall
+            {
+                Args = [new PyInt(secondTarget), new PyReal(2_000_000)],
+                Method = "AddToBounty",
+                Session = new ClientSession { SessionId = 102, CharacterId = placer },
+                CallId = new PyInt(7),
+            };
+            var secondPlacement = await bounty.CallAsync(reconnectedRequest);
+
+            Assert.Equal(new PyReal(2_000_000), Field(secondPlacement, "bounty"));
+            Assert.Equal(500_000m, await WalletIskAsync(source, placer));
+            Assert.Equal(3L, await ScalarAsync<long>(source,
+                $"SELECT count(*) FROM {Schema("EVE_CRIMEWATCH_SCHEMA")}.player_bounty_contributions WHERE contributor_id = {placer}"));
+            Assert.Equal(1_000_000m, await ScalarAsync<decimal>(source,
+                $"SELECT bounty FROM {Schema("EVE_CRIMEWATCH_SCHEMA")}.player_bounty_pools WHERE target_id = {firstTarget}"));
+            Assert.Equal(2_000_000m, await ScalarAsync<decimal>(source,
+                $"SELECT bounty FROM {Schema("EVE_CRIMEWATCH_SCHEMA")}.player_bounty_pools WHERE target_id = {secondTarget}"));
+            Assert.Equal(1_500_000m, await ScalarAsync<decimal>(source,
+                $"SELECT bounty FROM {Schema("EVE_CRIMEWATCH_SCHEMA")}.player_bounty_pools WHERE target_id = {thirdTarget}"));
+        }
+        finally
+        {
+            await host.ShutdownAsync();
+        }
+    }
+
+    [PgFact]
     public async Task A_placer_without_the_money_is_refused_and_nothing_is_stored()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));

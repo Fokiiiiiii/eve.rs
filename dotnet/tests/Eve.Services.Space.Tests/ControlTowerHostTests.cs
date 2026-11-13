@@ -1,6 +1,7 @@
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Services.Core;
 using Eve.Ships;
 using Eve.Space;
 using Eve.Structures;
@@ -150,6 +151,220 @@ public class ControlTowerHostTests
             Assert.Equal(Py.FileTimeFromUnixMs(started), Assert.IsType<SimSlimInt>(timestampField.Value).Value);
         else
             Assert.IsType<SimSlimNone>(timestampField.Value);
+    }
+
+    [PgFact]
+    public async Task PosMgr_control_tower_calls_roundtrip_client_shapes_persist_configuration_and_notify_after_commit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.Containers.CharacterSessions = rig.CharacterSessions;
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower], LowSecSystem);
+        var tower = items[0];
+        await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None);
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+
+        ValueTask<IReadOnlyList<ControlTowerRow>> ReadTowers(ClientSession pilot, CancellationToken token)
+        {
+            token.ThrowIfCancellationRequested();
+            return ValueTask.FromResult<IReadOnlyList<ControlTowerRow>>(
+                pilot.GetInt("corpid") == TestCorporation
+                    ? [new ControlTowerRow(ControlTower, tower, (int)LowSecSystem)]
+                    : []);
+        }
+
+        rig.Registry.Register(new PosMgrService(readControlTowers: ReadTowers,
+            unanchorControlTower: (pilot, itemId, token) => new ValueTask(rig.Containers.UnanchorControlTowerAsync(pilot, itemId, token)),
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync));
+
+        async Task<PyValue> Call(string method, params PyValue[] args) =>
+            MarshalCodec.Decode(MarshalCodec.Encode(await rig.RegisteredCallAsync(session, "posMgr", method, args)));
+
+        var towerRows = Assert.IsType<PyList>(await Call("GetControlTowers"));
+        var towerRow = Assert.IsType<PyList>(Assert.Single(towerRows.Items));
+        Assert.Equal(new long[] { ControlTower, tower, LowSecSystem }, towerRow.Items.Select(Events.Number));
+
+        Assert.Equal(1.0, Assert.IsType<PyReal>(await Call("GetConsumptionFactor", new PyLong(tower))).Value);
+        var moon = Assert.IsType<PyTuple>(await Call("GetMoonForTower", new PyLong(tower)));
+        Assert.True(Events.Number(moon.Items[0]) > 0);
+        Assert.IsType<PyNone>(moon.Items[1]);
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            "SELECT key FROM sde.\"types\" WHERE (doc->>'groupID')::int = 404 AND doc->>'published' = 'true' ORDER BY key LIMIT 1", connection))
+        {
+            var typeId = int.Parse((string)(await command.ExecuteScalarAsync())!);
+            var silo = (await rig.Ships.GrantAsync(session.CharacterId!.Value, typeId, 1, singleton: true))!.Single().After;
+            await rig.Statics.EnsureTypesAsync([typeId]);
+            var capacityAttribute = Assert.IsType<int>(rig.Statics.AttributeId("capacity"));
+            var expectedCapacity = rig.Statics.Type(typeId)!.Attributes[capacityAttribute];
+            var capacity = Assert.IsType<PyReal>(await Call("GetSiloCapacityByItemID", new PyLong(silo.Id))).Value;
+            Assert.Equal(expectedCapacity, capacity, 8);
+        }
+
+        await Call("SetTowerSentrySettings", new PyLong(tower), new PyReal(5.5), new PyReal(-2.5),
+            PyBool.True, PyBool.False, PyBool.False);
+        var sentry = Assert.IsType<PyObject>(await Call("GetTowerSentrySettings", new PyLong(tower)));
+        var sentryFields = Assert.IsType<PyDict>(sentry.Args);
+        var sentryHeader = Assert.IsType<PyList>(Field(sentryFields, "header"));
+        Assert.Equal(new[] { "standing", "status", "statusDrop", "war", "standingOwnerID" },
+            sentryHeader.Items.Select(JsSemantics.StringValue));
+        var sentryLine = Assert.IsType<PyList>(Field(sentryFields, "line"));
+        Assert.Equal(5.5, Assert.IsType<PyReal>(sentryLine.Items[0]).Value);
+        Assert.Equal(-2.5, Assert.IsType<PyReal>(sentryLine.Items[1]).Value);
+        Assert.Equal(PyBool.True, sentryLine.Items[2]);
+        Assert.Equal(PyBool.False, sentryLine.Items[3]);
+        Assert.Equal(TestCorporation, Events.Number(sentryLine.Items[4]));
+
+        await Call("SetTowerNotifications", new PyLong(tower), PyBool.True, PyBool.False);
+        var notifications = Assert.IsType<PyObject>(await Call("GetTowerNotificationSettings", new PyLong(tower)));
+        var notificationFields = Assert.IsType<PyDict>(notifications.Args);
+        Assert.Equal(PyBool.True, Field(notificationFields, "showInCalendar"));
+        Assert.Equal(PyBool.False, Field(notificationFields, "sendFuelNotifications"));
+
+        // playerOwned.EnterTowerPassword uses the two-argument form; omitted
+        // access flags must retain the tower's saved policy (V24.01 playerOwned.py:173-180).
+        await Call("SetTowerPassword", new PyLong(tower), new PyStr("entry-password"));
+        using (var entryConfig = System.Text.Json.JsonDocument.Parse(await ReadConfigurationAsync(rig, tower)))
+        {
+            Assert.True(entryConfig.RootElement.GetProperty("allowCorp").GetBoolean());
+            Assert.True(entryConfig.RootElement.GetProperty("allowAlliance").GetBoolean());
+            Assert.NotNull(entryConfig.RootElement.GetProperty("passwordHash").GetString());
+        }
+
+        await Call("SetTowerPassword", new PyLong(tower), new PyStr("tower-secret"), PyBool.True, PyBool.False);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        using (var json = System.Text.Json.JsonDocument.Parse(
+            (await rig.Deployed.TowerConfigurationAsync(connection, null, tower))!))
+        {
+            var saved = json.RootElement.GetProperty("passwordHash").GetString();
+            Assert.NotNull(saved);
+            Assert.NotEqual("tower-secret", saved);
+            Assert.Equal(64, saved.Length);
+            Assert.Equal(32, json.RootElement.GetProperty("passwordSalt").GetString()!.Length);
+        }
+        var passwordConfigBeforeDisable = await ReadConfigurationAsync(rig, tower);
+        using (var passwordConfigJson = System.Text.Json.JsonDocument.Parse(passwordConfigBeforeDisable))
+        {
+            var existingHash = passwordConfigJson.RootElement.GetProperty("passwordHash").GetString();
+            await Call("SetTowerPassword", new PyLong(tower), PyBool.False, PyBool.False, PyBool.False);
+            using var passwordConfigAfterDisable = System.Text.Json.JsonDocument.Parse(await ReadConfigurationAsync(rig, tower));
+            Assert.Equal(existingHash, passwordConfigAfterDisable.RootElement.GetProperty("passwordHash").GetString());
+            Assert.False(passwordConfigAfterDisable.RootElement.GetProperty("allowCorp").GetBoolean());
+            Assert.False(passwordConfigAfterDisable.RootElement.GetProperty("allowAlliance").GetBoolean());
+        }
+
+        var deployFlags = Py.Dict(("anchor", new PyInt(1)), ("unanchor", new PyInt(1)),
+            ("online", new PyInt(1)), ("offline", new PyInt(0)));
+        var usageFlags = Py.Rowset(["structureID", "viewput", "viewputtake", "use"],
+            [Py.List(new PyLong(tower), new PyInt(1), new PyInt(2), new PyInt(3))]);
+        await Call("SetStarbasePermissions", new PyLong(tower), deployFlags, usageFlags);
+        var permissions = Assert.IsType<PyTuple>(await Call("GetStarbasePermissions", new PyLong(tower)));
+        var savedDeployFlags = Assert.IsType<PyDict>(permissions.Items[0]);
+        Assert.Equal(new PyInt(1), savedDeployFlags.Entries.Single(entry => JsSemantics.StringValue(entry.Key) == "unanchor").Value);
+        var permissionRowset = Assert.IsType<PyObject>(permissions.Items[1]);
+        var rowsetFields = Assert.IsType<PyDict>(permissionRowset.Args);
+        Assert.Equal(new[] { "structureID", "viewput", "viewputtake", "use" },
+            Assert.IsType<PyList>(Field(rowsetFields, "header")).Items.Select(JsSemantics.StringValue));
+        var permissionRows = Assert.IsType<PyList>(Field(rowsetFields, "lines"));
+        var permissionRow = Assert.IsType<PyList>(Assert.Single(permissionRows.Items));
+        Assert.Equal(new long[] { tower, 1, 2, 3 }, permissionRow.Items.Select(Events.Number));
+
+        var priorConfig = await ReadConfigurationAsync(rig, tower);
+        var invalidProvisionError = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(
+            "ChangeStructureProvisionType", new PyLong(tower), new PyLong(tower + 100), new PyInt(34)));
+        Assert.Equal("CustomNotify", invalidProvisionError.Error.UserErrorMessage);
+        Assert.Equal(priorConfig, await ReadConfigurationAsync(rig, tower));
+
+        _ = Events.Of(session);
+        var malformedConfig = await ReadConfigurationAsync(rig, tower);
+        var malformedLinks = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(
+            "LinkResourceForTower", new PyLong(tower), new PyStr("invalid-links")));
+        Assert.Equal("CustomNotify", malformedLinks.Error.UserErrorMessage);
+        Assert.Equal(malformedConfig, await ReadConfigurationAsync(rig, tower));
+        Assert.Empty(Events.Of(session));
+
+        var seededLinks = System.Text.Json.Nodes.JsonNode.Parse(malformedConfig)!;
+        seededLinks["links"] = new System.Text.Json.Nodes.JsonArray
+        {
+            new System.Text.Json.Nodes.JsonObject
+            {
+                ["fromItemId"] = 980_000_101,
+                ["toItemId"] = 980_000_102,
+                ["typeId"] = 34,
+            },
+        };
+        await using (var linkConnection = await rig.Source.OpenConnectionAsync())
+        await using (var linkTransaction = await linkConnection.BeginTransactionAsync())
+        {
+            Assert.True(await rig.Deployed.SetTowerConfigurationAsync(linkConnection, linkTransaction, tower,
+                seededLinks.ToJsonString()));
+            await linkTransaction.CommitAsync();
+        }
+
+        var observer = new ClientSession(new Sink()) { SessionId = 42, ClientId = 42, UserId = 43, NodeId = 1 };
+        observer.CharacterId = 980_000_042;
+        observer.Set("corpid", new PyLong(TestCorporation));
+        observer.Set("solarsystemid2", new PyInt((int)LowSecSystem));
+        rig.CharacterSessions.Enter(observer.CharacterId.Value, observer);
+        var linkResult = Assert.IsType<PyBool>(await Call("LinkResourceForTower", new PyLong(tower), new PyList([])));
+        Assert.True(linkResult.Value);
+        var linkEvent = Assert.Single(Events.Of(session));
+        Assert.Equal("OnMoonProcessChange", linkEvent.Name);
+        Assert.Equal("clientID", linkEvent.IdType);
+        Assert.Equal(2, linkEvent.Args.Length);
+        Assert.Equal(tower, Events.Number(linkEvent.Args[0]));
+        Assert.Empty(Assert.IsType<PyList>(linkEvent.Args[1]).Items);
+        using (var clearedLinks = System.Text.Json.JsonDocument.Parse(await ReadConfigurationAsync(rig, tower)))
+            Assert.Empty(clearedLinks.RootElement.GetProperty("links").EnumerateArray());
+        var observerEvent = Assert.Single(Events.Of(observer));
+        Assert.Equal("OnMoonProcessChange", observerEvent.Name);
+        Assert.Equal(tower, Events.Number(observerEvent.Args[0]));
+
+        foreach (var method in new[] { "RunMoonProcessCycleforTower", "GetMoonProcessInfoForTower" })
+        {
+            var error = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(method, new PyLong(tower)));
+            Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        }
+        session.Set("role", new PyLong(1L << 54));
+        var gmCycleError = await Assert.ThrowsAsync<MachoWrappedException>(() => Call("RunMoonProcessCycleforTower", new PyLong(tower)));
+        Assert.Equal("CustomNotify", gmCycleError.Error.UserErrorMessage);
+        Assert.Contains("historical recipes", Texts(gmCycleError.Error.Payload));
+        session.Set("role", new PyInt(0));
+
+        var rebuilt = new PosMgrService(readControlTowers: ReadTowers,
+            unanchorControlTower: (pilot, itemId, token) => new ValueTask(rig.Containers.UnanchorControlTowerAsync(pilot, itemId, token)),
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        rig.Registry.Register(rebuilt);
+        var persistedNotifications = Assert.IsType<PyObject>(await Call("GetTowerNotificationSettings", new PyLong(tower)));
+        Assert.Equal(PyBool.True, Field(Assert.IsType<PyDict>(persistedNotifications.Args), "showInCalendar"));
+
+        await Call("SetStarbasePermissions", new PyLong(tower),
+            Py.Dict(("anchor", new PyInt(1)), ("unanchor", new PyInt(0)), ("online", new PyInt(1)), ("offline", new PyInt(0))),
+            usageFlags);
+        session.Set("isCEO", PyBool.False);
+        session.Set("corprole", new PyLong(0));
+        var deniedUnanchor = await Assert.ThrowsAsync<MachoWrappedException>(() => Call("UnanchorStructure", new PyLong(tower)));
+        Assert.Equal("CrpAccessDenied", deniedUnanchor.Error.UserErrorMessage);
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(tower));
+
+        session.Set("isCEO", PyBool.True);
+        await Call("SetStarbasePermissions", new PyLong(tower), deployFlags, usageFlags);
+        session.Set("isCEO", PyBool.False);
+        Assert.IsType<PyNone>(await Call("UnanchorStructure", new PyLong(tower)));
+        Assert.Equal("unanchoring", await rig.Deployed.TowerStateAsync(tower));
+    }
+
+    private static PyValue? Field(PyDict fields, string name) => fields.Entries
+        .Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
+
+    private static async Task<string> ReadConfigurationAsync(Rig rig, long tower)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        return (await rig.Deployed.TowerConfigurationAsync(connection, null, tower))!;
     }
 
     /// <summary>Every text inside a wrapped error's payload, joined (the refusal's words).</summary>

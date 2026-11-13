@@ -44,6 +44,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         if (Interlocked.CompareExchange(ref _scheduler, scheduler, null) is not null)
             throw new InvalidOperationException("The planet launch placement handler is already registered.");
         scheduler.Register(LaunchPlacementJobKind, PlaceLaunchCanJobAsync);
+        RegisterOrbitalJobs(scheduler);
     }
 
     /// <summary><c>MachoBindObject(planetID, (method, args, kwargs))</c>: binds the planet, then makes the nested call.</summary>

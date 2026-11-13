@@ -8,18 +8,43 @@ using Eve.Services;
 namespace Eve.Host.ProjectDiscovery;
 
 // Thin adapter for the pinned COVID protocol; it does not invent live MMOS results.
-public sealed class ScientificReplayRpc(ScientificReplayProvider provider, ProjectDiscoveryTaskPinStore pins)
+public sealed class ScientificReplayRpc
 {
-    public ValueTask<Eve.Services.Core.ProjectDiscoveryPlayerStatistics?> ReadStatisticsAsync(long characterId, CancellationToken ct) => provider.ReadStatisticsAsync(characterId, ct);
+    private readonly ScientificReplayProvider provider;
+    private readonly ProjectDiscoveryTaskPinStore pins;
+    private readonly CovidTutorialProvider? tutorials;
+
+    public ScientificReplayRpc(ScientificReplayProvider provider, ProjectDiscoveryTaskPinStore pins)
+        : this(provider, pins, null) { }
+
+    internal ScientificReplayRpc(ScientificReplayProvider provider, ProjectDiscoveryTaskPinStore pins, CovidTutorialProvider? tutorials)
+    { this.provider = provider; this.pins = pins; this.tutorials = tutorials; }
+
+    public async ValueTask<Eve.Services.Core.ProjectDiscoveryPlayerStatistics?> ReadStatisticsAsync(long characterId, CancellationToken ct) =>
+        tutorials is null ? await provider.ReadStatisticsAsync(characterId, ct) : await tutorials.ReadStatisticsAsync(characterId, ct) ?? await provider.ReadStatisticsAsync(characterId, ct);
+
+    public ValueTask<Eve.Services.Core.ProjectDiscoveryPlayerState?> ReadPlayerStateAsync(long characterId, CancellationToken ct) =>
+        provider.ReadPlayerStateAsync(characterId, ct);
+
+    public ValueTask<int> ReadBonusSamplesAsync(long characterId, string method, CancellationToken ct) =>
+        provider.ReadBonusSamplesAsync(characterId, method, ct);
+
     public async ValueTask<PyValue> GetTaskAsync(ServiceCall call)
     {
         try
         {
             await RequireNoUnknownPinAsync(call);
+            if (TutorialCode(call) is { } tutorialCode)
+            {
+                if (tutorials is null) throw new DiscoveryAssignmentException("COVID tutorial task provider is unavailable.");
+                return ToPy(await tutorials.GetTaskAsync(call.Session, tutorialCode, call.Cancellation));
+            }
+            if (tutorials is not null) await tutorials.ClearActiveAsync(call.Session, call.Cancellation);
             return ToPy(await provider.GetTaskAsync(call.Session, call.Cancellation));
         }
         catch (ScientificReplayExhaustedException) { throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_EXHAUSTED"); }
         catch (DiscoveryAssignmentException) { throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_UNAVAILABLE"); }
+        catch (ArgumentException) { throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_ARGUMENTS_INVALID"); }
     }
     public async ValueTask<PyValue> SubmitAsync(ServiceCall call)
     {
@@ -31,10 +56,12 @@ public sealed class ScientificReplayRpc(ScientificReplayProvider provider, Proje
             if (id <= 0 || call.Session.SessionId <= 0) throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_ARGUMENTS_INVALID");
             JsonElement result = JsonSerializer.SerializeToElement(ToObject(call.Arg(0), 0));
             JsonElement timing = JsonSerializer.SerializeToElement(ToObject(call.Arg(1), 0));
+            if (tutorials is not null && await tutorials.SubmitIfActiveAsync(call.Session, $"{call.Session.SessionId}:{id}", result, call.Cancellation) is { } tutorialResponse)
+                return ToClient(tutorialResponse);
             // The current COVID result UI requires player.score; its UI does not emit skip=true.
             if (result.ValueKind != JsonValueKind.Object || !result.TryGetProperty("skip", out var skip) || skip.ValueKind != JsonValueKind.False)
                 throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_ARGUMENTS_INVALID");
-            return ToPy(await provider.SubmitAsync(call.Session, $"{call.Session.SessionId}:{id}", result, timing, call.Cancellation));
+            return ToClient(await provider.SubmitAsync(call.Session, $"{call.Session.SessionId}:{id}", result, timing, call.Cancellation));
         }
         catch (ScientificReplayExhaustedException) { throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_EXHAUSTED"); }
         catch (DiscoveryAssignmentException) { throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TASK_UNAVAILABLE"); }
@@ -47,6 +74,32 @@ public sealed class ScientificReplayRpc(ScientificReplayProvider provider, Proje
         if (actor <= 0 || call.Session.UserId.GetValueOrDefault() <= 0) throw new DiscoveryAssignmentException("Character and account required.");
         // A numeric live-task pin is not a scientific dataset identifier.
         if (await pins.ReadAsync(actor, call.Cancellation) is not null) throw new DiscoveryAssignmentException("Pinned task is not a scientific assignment.");
+    }
+
+    private static string? TutorialCode(ServiceCall call)
+    {
+        if (call.Args.Count != 0) throw new ArgumentException("Project Discovery task arguments must be keyword arguments.");
+        if (call.Kwargs is PyNone or PyDict { Entries.Count: 0 }) return null;
+        if (call.Kwargs is not PyDict { Entries.Count: 2 } kwargs) throw new ArgumentException("Invalid tutorial task arguments.");
+        string? code = null;
+        bool isTutorial = false;
+        foreach (var (key, value) in kwargs.Entries)
+        {
+            switch (JsSemantics.StringValue(key))
+            {
+                case "original_code" when value is PyStr or PyWString or PyBytes:
+                    code = JsSemantics.StringValue(value);
+                    break;
+                case "is_tutorial_task" when value is PyBool flag:
+                    isTutorial = flag.Value;
+                    break;
+                default:
+                    throw new ArgumentException("Invalid tutorial task arguments.");
+            }
+        }
+        if (!isTutorial || string.IsNullOrWhiteSpace(code) || !CovidTutorialCorpus.Contains(code))
+            throw new ArgumentException("Unknown tutorial task.");
+        return code;
     }
     internal static object? ToObject(PyValue value, int depth)
     {
@@ -81,4 +134,19 @@ public sealed class ScientificReplayRpc(ScientificReplayProvider provider, Proje
         JsonValueKind.Null => PyNone.Instance,
         _ => throw new ArgumentException("Invalid scientific output."),
     };
+
+    private static PyValue ToClient(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object) return ToPy(value);
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var property in value.EnumerateObject())
+        {
+            PyValue child = property.NameEquals("playerState") && property.Value.ValueKind == JsonValueKind.Object
+                ? Py.KeyVal(property.Value.EnumerateObject().Select(field =>
+                    new KeyValuePair<PyValue, PyValue>(new PyStr(field.Name), ToPy(field.Value))))
+                : ToPy(property.Value);
+            entries.Add(new(new PyStr(property.Name), child));
+        }
+        return new PyDict(entries);
+    }
 }

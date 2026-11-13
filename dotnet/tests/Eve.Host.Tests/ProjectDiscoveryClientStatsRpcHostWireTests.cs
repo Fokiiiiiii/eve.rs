@@ -9,6 +9,36 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
+    public async Task Project_discovery_statistics_include_the_project_list_consumed_by_the_subcellular_header()
+    {
+        var statistics = new ProjectDiscoveryPlayerStatistics(
+            "", 0, "mcgill-polyseg", 0.73, "Public research replay", 12, 8, 0.73);
+        Start(
+            sessionOpened: session => session.CharacterId = 42,
+            strictRpc: true,
+            gameRpcCallbacks: new GameRpcCallbacks(ReadProjectDiscoveryStatistics: (_, _) =>
+                ValueTask.FromResult<ProjectDiscoveryPlayerStatistics?>(statistics)));
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+
+        var request = Packets.CallWithKwargs(
+            open, 1, "ProjectDiscovery", "get_player_statistics", new PyTuple([PyBool.True]), ClientKwargs());
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(request)));
+        var response = Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload));
+        var fields = Assert.IsType<PyDict>(response);
+        static PyValue Field(PyValue value, string key) => Assert.Single(
+            Assert.IsType<PyDict>(value).Entries,
+            pair => JsSemantics.StringValue(pair.Key) == key).Value;
+
+        Assert.Equal(new PyReal(0.73), Field(Field(fields, "project"), "score"));
+        var projectList = Assert.IsType<PyList>(Field(fields, "projects"));
+        var project = Assert.Single(projectList.Items);
+        Assert.Equal(new PyReal(0.73), Field(project, "score"));
+    }
+
+    [Fact]
     public async Task Project_discovery_statistics_accepts_client_argument_forms_through_default_core_host_wire()
     {
         static PyBytes Bytes(string value) => new(Encoding.UTF8.GetBytes(value));

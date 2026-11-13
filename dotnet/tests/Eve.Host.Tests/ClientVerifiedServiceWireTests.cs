@@ -224,6 +224,80 @@ public partial class HostServerTests
     }
 
     [Fact]
+    public async Task Hacking_reveals_a_defense_then_accepts_repeated_attacks_until_it_is_destroyed_over_host_wire()
+    {
+        const long characterId = 90_005;
+        const long targetId = 501;
+        var attempts = new HackingAttempts();
+        var service = new HackingMgrService(attempts, new ClientVerifiedHackingSite());
+        var target = new HackableTarget(targetId, 30_000_142, 1, Relic: false);
+        var board = HackingBoard.Blank();
+        var defenseCoord = new Coord(0, 3);
+        var defense = board.Tiles[defenseCoord];
+        defense.Type = HackingWire.TypeDefenseSoftware;
+        defense.Subtype = HackingWire.SubtypeDsFirewall;
+        defense.Coherence = 40;
+        defense.Strength = 10;
+        var game = new HackingGame(
+            new HackingAttempt(targetId, 22_329, HackingWire.GameTypeHacking, 1, 40, 20, 3, 3),
+            board);
+        attempts.Set(characterId, new HackingWindow(game, target, 0));
+
+        Start(configure: registry => registry.Register(service), sessionOpened: session =>
+            session.Set("charid", new PyInt(characterId)));
+        var (front, open) = await OpenFrontAsync();
+        long callId = 1;
+
+        async Task<(string Name, PyValue[] Args)> ClickDefenseAsync()
+        {
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(
+                    open,
+                    callId++,
+                    "hackingMgr",
+                    "ClickedOnTile",
+                    new PyTuple([Py.Tuple(new PyInt(defenseCoord.X), new PyInt(defenseCoord.Y))]),
+                    TransportKwargs()))));
+            var first = Assert.IsType<Send>(await front.ReceiveAsync());
+            var second = Assert.IsType<Send>(await front.ReceiveAsync());
+            var firstDecoded = MarshalCodec.Decode(first.Payload);
+            var secondDecoded = MarshalCodec.Decode(second.Payload);
+            var firstType = Assert.IsType<MachoPacket>(MachoPacket.Decode(firstDecoded)).Type;
+            var secondType = Assert.IsType<MachoPacket>(MachoPacket.Decode(secondDecoded)).Type;
+            var notification = firstType == MachoMessage.Notification ? first : second;
+            var response = firstType == MachoMessage.CallRsp ? firstDecoded : secondDecoded;
+            Assert.Contains(MachoMessage.CallRsp, new[] { firstType, secondType });
+            Assert.Contains(MachoMessage.Notification, new[] { firstType, secondType });
+            Assert.Same(PyNone.Instance, Result(response));
+            return ReadMailNotification(notification);
+        }
+
+        var reveal = await ClickDefenseAsync();
+        Assert.Equal("OnHackingTurnComplete", reveal.Name);
+        Assert.Equal(
+            new long[] { HackingWire.EventTileFlipped },
+            TurnEvents(reveal.Args).Select(item => WireInteger(WireField(item, "eventID"))).ToArray());
+        Assert.True(defense.Hidden is false);
+        Assert.Equal(40, defense.Coherence);
+        Assert.Equal(40, game.VirusCoherence);
+
+        var firstAttack = await ClickDefenseAsync();
+        Assert.Equal(
+            new long[] { HackingWire.EventAttack, HackingWire.EventAttack },
+            TurnEvents(firstAttack.Args).Select(item => WireInteger(WireField(item, "eventID"))).ToArray());
+        Assert.Equal(20, defense.Coherence);
+        Assert.Equal(30, game.VirusCoherence);
+
+        var secondAttack = await ClickDefenseAsync();
+        Assert.Equal(
+            new long[] { HackingWire.EventAttack, HackingWire.EventObjectKilled },
+            TurnEvents(secondAttack.Args).Select(item => WireInteger(WireField(item, "eventID"))).ToArray());
+        Assert.Equal(HackingWire.TypeSegment, defense.Type);
+        Assert.Equal(0, defense.Coherence);
+        Assert.Equal(HackingOutcome.Active, game.Outcome);
+    }
+
+    [Fact]
     public async Task Hacking_practice_rpc_uses_the_client_null_target_and_starts_a_mapping_shaped_board_over_host_wire()
     {
         const long characterId = 90_004;

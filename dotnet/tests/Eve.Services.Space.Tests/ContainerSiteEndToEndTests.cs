@@ -60,7 +60,7 @@ public sealed class ContainerSiteEndToEndTests
     private const int Relic = 1207, Data = 306;
     private const long Station = 60_000_001;
 
-    /// <summary>A board where the core is next to the start: the first click is the win (the board of an attempt is generated otherwise).</summary>
+    /// <summary>A board where the core is next to the start: the first click reveals it and the second attacks (the board of an attempt is generated otherwise).</summary>
     private static HackingGame WinningGame(HackingAttempt attempt)
     {
         var board = HackingBoard.Blank();
@@ -123,7 +123,7 @@ public sealed class ContainerSiteEndToEndTests
         Assert.NotEmpty(containers);
         Assert.Equal(templates.All.Single(template => template.Id == site.TemplateId).ContainerCount, containers.Count);
 
-        // each container is hacked through the service: the analyzer opens the attempt, the window is won
+        // each container is hacked through the service: the analyzer opens the attempt, the core is revealed, then destroyed
         var service = new HackingMgrService(new HackingAttempts(), new ContainerSite(hacks), WinningGame);
         var session = new ClientSession(new Sink()) { CharacterId = Character };
         var analyzer = new AnalyzerValues(22329, CanHackData: true, CanHackRelic: true, MaxRange: 54_000, VirusCoherence: 40, VirusStrength: 20, VirusSlots: 3, AccessDifficultyBonus: 0);
@@ -131,13 +131,8 @@ public sealed class ContainerSiteEndToEndTests
         {
             Assert.Null(await service.AnalyzerRefusalAsync(session, Character, container.ContainerId, analyzer, CancellationToken.None));
             await service.OpenAnalyzerAttemptAsync(session, Character, container.ContainerId, analyzer, CancellationToken.None);
-            await service.CallAsync(new ServiceCall
-            {
-                Session = session,
-                Method = "ClickedOnTile",
-                Args = [Py.Tuple(new PyInt(0), new PyInt(3))],
-                CallId = new PyInt(1),
-            });
+            await ClickTileAsync(service, session, new Coord(0, 3), 1);
+            await ClickTileAsync(service, session, new Coord(0, 3), 2);
         }
         await DrainAsync(bus);
         foreach (var container in containers)
@@ -223,13 +218,11 @@ public sealed class ContainerSiteEndToEndTests
         Events.Of(session);
         observeNotification = true;
 
-        await service.CallAsync(new ServiceCall
-        {
-            Session = session,
-            Method = "ClickedOnTile",
-            Args = [Py.Tuple(new PyInt(0), new PyInt(3))],
-            CallId = new PyInt(1),
-        });
+        await ClickTileAsync(service, session, new Coord(0, 3), 1);
+        var reveal = Assert.IsType<PyTuple>(Assert.Single(Events.Of(session)).Args[0]);
+        Assert.Equal(HackingWire.EventTileFlipped, Number(Field(Assert.Single(reveal.Items), "eventID")));
+        Assert.False(committedWhenNotified);
+        await ClickTileAsync(service, session, new Coord(0, 3), 2);
 
         Assert.True(committedWhenNotified);
         Assert.Equal("looted", (await rig.Store.GetAsync(containerId))!.State);
@@ -252,13 +245,9 @@ public sealed class ContainerSiteEndToEndTests
         Assert.Null(await service.AnalyzerRefusalAsync(session, Character, containerId, analyzer, CancellationToken.None));
         await service.OpenAnalyzerAttemptAsync(session, Character, containerId, analyzer, CancellationToken.None);
         Events.Of(session);
-        await service.CallAsync(new ServiceCall
-        {
-            Session = session,
-            Method = "ClickedOnTile",
-            Args = [Py.Tuple(new PyInt(0), new PyInt(3))],
-            CallId = new PyInt(1),
-        });
+        await ClickTileAsync(service, session, new Coord(0, 3), 1);
+        Events.Of(session);
+        await ClickTileAsync(service, session, new Coord(0, 3), 2);
 
         var turn = Assert.IsType<PyTuple>(Assert.Single(Events.Of(session)).Args[0]);
         var eventObjects = turn.Items.Cast<PyValue>().ToArray();
@@ -353,13 +342,9 @@ public sealed class ContainerSiteEndToEndTests
         await secondService.OpenAnalyzerAttemptAsync(restart, restart.CharacterId!.Value,
             secondContainerId, analyzer, CancellationToken.None);
         Events.Of(restart);
-        await secondService.CallAsync(new ServiceCall
-        {
-            Session = restart,
-            Method = "ClickedOnTile",
-            Args = [Py.Tuple(new PyInt(1), new PyInt(4))],
-            CallId = new PyInt(2),
-        });
+        await ClickTileAsync(secondService, restart, new Coord(1, 4), 2);
+        Events.Of(restart);
+        await ClickTileAsync(secondService, restart, new Coord(1, 4), 3);
         var pickedUp = Assert.IsType<PyTuple>(Assert.Single(Events.Of(restart)).Args[0]);
         Assert.All(pickedUp.Items, AssertEventDataIsMapping);
         var pickupData = Field(Assert.Single(pickedUp.Items,
@@ -367,6 +352,13 @@ public sealed class ContainerSiteEndToEndTests
         Assert.IsType<PyDict>(Field(pickupData, "replacementObject"));
         var updatedInventory = Assert.IsType<PyList>(Field(pickupData, "inventory"));
         Assert.All(updatedInventory.Items, item => Assert.IsType<PyDict>(item));
+
+        await ClickTileAsync(secondService, restart, new Coord(0, 3), 4);
+        Assert.Single(Events.Of(restart));
+        await ClickTileAsync(secondService, restart, new Coord(0, 3), 5);
+        var attack = Assert.IsType<PyTuple>(Assert.Single(Events.Of(restart)).Args[0]);
+        Assert.All(attack.Items, AssertEventDataIsMapping);
+        Assert.Contains(attack.Items, item => Number(Field(item, "eventID")) == HackingWire.EventAttack);
     }
 
     [PgFact]
@@ -429,6 +421,16 @@ public sealed class ContainerSiteEndToEndTests
         PyDict dict => dict.Entries.Single(entry => Eve.Macho.JsSemantics.StringValue(entry.Key) == key).Value,
         _ => throw new InvalidOperationException($"expected a key/value object, found {keyVal.GetType().Name}"),
     };
+
+    private static ValueTask<PyValue> ClickTileAsync(
+        HackingMgrService service, ClientSession session, Coord coord, long callId) =>
+        service.CallAsync(new ServiceCall
+        {
+            Session = session,
+            Method = "ClickedOnTile",
+            Args = [Py.Tuple(new PyInt(coord.X), new PyInt(coord.Y))],
+            CallId = new PyInt(callId),
+        });
 
     private static long Number(PyValue value) => value switch
     {

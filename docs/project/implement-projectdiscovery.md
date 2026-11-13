@@ -68,6 +68,6 @@ Verified locally in Release configuration; the database-backed tests used `EVE_P
 - A first Host-slice run found the new clock assertion was using a real-clock Host after a test restart. The test setup was corrected to keep the fake clock on both Host instances; the focused regression and full Host slice then passed.
 - A test-first encoded Exoplanet reward claim failed because the success path omitted `OnAnalysisKreditsChange`; after adding it after `OnPlayerStateUpdated`, the focused PostgreSQL-backed Host wire test passed.
 
-The explicit Release warning-as-error builds will be recorded after the merge with `origin/main` and before pushing. Rust is not changed by this feature.
+After merging `origin/main`, Release warning-as-error builds succeeded with 0 warnings and 0 errors for `Eve.Host.Tests`, `Eve.Services.Core.Tests`, and `Eve.Characters.Tests`. Rust is not changed by this feature.
 
 Not checked in this implementation: graphical-client rendering/interaction, live MMOS calls or rewards, authentic Subcellular tutorial catalog delivery, and long-running deployment/restart against production configuration. The offline COVID research replay is one fixed sample per character and is not the live retail task queue or consensus service.

@@ -980,7 +980,8 @@ private static PyValue RowField(PyValue value,string key)
                 "016_war_negotiations",
                 "017_peace_treaties",
                 "018_medal_award_visibility",
-                "019_character_bills"
+                "019_character_bills",
+                "020_alliance_contact_label_masks"
             },applied);
 
             await using var read = await rig.Source.OpenConnectionAsync();

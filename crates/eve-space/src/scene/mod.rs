@@ -447,6 +447,8 @@ pub enum Out {
     },
     /// An effect of a module ended (once per end): the host clears it from the ship it sends (`reason` is `Ending::wire_reason`, FP-C1).
     ModuleEnded { session: SessionId, module_id: i64, reason: u8 },
+    /// An offensive module effect is still running; the host uses this heartbeat to bound stale Crimewatch activity after a lost end event.
+    ModuleActivityRefresh { session: SessionId, module_id: i64 },
     /// A targeting order the scene refused, with what the client is told about the target.
     TargetRefused {
         session: SessionId,
@@ -485,6 +487,7 @@ impl Out {
             | Out::StructureDamageCandidatesRequest { session, .. }
             | Out::ModuleWorkCycle { session, .. }
             | Out::ModuleEnded { session, .. }
+            | Out::ModuleActivityRefresh { session, .. }
             | Out::DroneResults { session, .. }
             | Out::FighterLanded { session, .. }
             | Out::FighterReleased { session, .. }

@@ -1129,6 +1129,12 @@ public class RuntimeTests : IAsyncLifetime
         var refreshes = _waits.Made.Where(wait => wait.After == TimeSpan.FromSeconds(1)).ToArray();
         Assert.Single(refreshes);
         _now += 16 * 60_000;
+        var refreshedSuspect = Aggression.Record(CombatState.Idle, CombatState.Idle,
+            SecurityClass.LowSec, System, false, false, _now).Attacker;
+        await Store.UpdateAsync(2, state => refreshedSuspect with { SolarSystemId = System }, _now);
+        await Task.WhenAll(
+            runtime.RecordModuleAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false), 90_001),
+            runtime.RecordModuleAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, false), 90_002));
         refreshes[0].Done.SetResult();
         await Settle(() => _waits.Made.Count(wait => wait.After == TimeSpan.FromSeconds(1)) >= 2);
         Assert.Equal(2, _waits.Made.Count(wait => wait.After == TimeSpan.FromSeconds(1)));

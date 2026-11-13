@@ -110,7 +110,9 @@ public static class ContractCreationRules
         Require(request.Title.Length <= 50, nameof(request.Title));
         Require(request.Description is not null && request.Description.Length <= 4000, nameof(request.Description));
         var items = request.Items ?? throw new ArgumentOutOfRangeException(nameof(request.Items));
-        Require(items.Count is > 0 and <= 500, nameof(request.Items));
+        Require(items.Count <= 500, nameof(request.Items));
+        if (request.ContractType is 2 or 3)
+            Require(items.Count > 0, nameof(request.Items));
         Require(items.All(item => item is not null && item.ItemId > 0 && item.Quantity > 0), nameof(request.Items));
         Require(items.Select(item => item.ItemId).Distinct().Count() == items.Count, nameof(request.Items));
         Require(new[] { request.Price, request.Reward, request.BrokerFee, request.Deposit, request.SalesTax }

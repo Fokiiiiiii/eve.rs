@@ -1,3 +1,4 @@
+using System.Data;
 using Npgsql;
 
 namespace Eve.Corporations;
@@ -823,6 +824,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         },token);
     }
 
+    // The executor/role row locks serialize label writes; READ COMMITTED lets each mask update see the prior committed bit changes.
     public Task<AllianceContactLabel> CreateAllianceContactLabelAsync(long actor,long alliance,string name,int? color,CancellationToken token = default)
     {
         ValidateAllianceLabel(name,color);
@@ -830,12 +832,13 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         {
             await RequireAllianceExecutorAsync(connection,tx,actor,alliance,token);
             await using var nextCommand = Command(connection,tx,$"SELECT COALESCE(MAX(label_id),0)+1 FROM {_schema}.alliance_contact_labels WHERE alliance_id=$1",alliance);
-            var labelId = Convert.ToInt64(await nextCommand.ExecuteScalarAsync(token));
-            if (labelId > 63) throw new CorporationError("ALLIANCE_LABEL_LIMIT");
+            var previousLabelId = Convert.ToInt64(await nextCommand.ExecuteScalarAsync(token)) - 1;
+            if (previousLabelId >= 4611686018427387904L) throw new CorporationError("ALLIANCE_LABEL_LIMIT");
+            var labelId = previousLabelId == 0 ? 1 : previousLabelId << 1;
             await using var command = Command(connection,tx,$"INSERT INTO {_schema}.alliance_contact_labels (alliance_id,label_id,name,color) VALUES ($1,$2,$3,$4)",alliance,labelId,name,color);
             await command.ExecuteNonQueryAsync(token);
             return new AllianceContactLabel(labelId,name,color);
-        },token);
+        },token,IsolationLevel.ReadCommitted);
     }
 
     public Task DeleteAllianceContactLabelAsync(long actor,long alliance,long labelId,CancellationToken token = default)
@@ -847,12 +850,11 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             await using var command = Command(connection,tx,$"DELETE FROM {_schema}.alliance_contact_labels WHERE alliance_id=$1 AND label_id=$2",alliance,labelId);
             if (await command.ExecuteNonQueryAsync(token) > 0)
             {
-                var bit = 1L << ((int)labelId - 1);
-                await using var clear = Command(connection,tx,$"UPDATE {_schema}.alliance_contacts SET label_mask=label_mask & $2 WHERE alliance_id=$1",alliance,~bit);
+                await using var clear = Command(connection,tx,$"UPDATE {_schema}.alliance_contacts SET label_mask=label_mask & ~($2::bigint) WHERE alliance_id=$1",alliance,labelId);
                 await clear.ExecuteNonQueryAsync(token);
             }
             return true;
-        },token);
+        },token,IsolationLevel.ReadCommitted);
     }
 
     public Task EditAllianceContactLabelAsync(long actor,long alliance,long labelId,string? name,int? color,CancellationToken token = default)
@@ -866,7 +868,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             await using var command = Command(connection,tx,$"UPDATE {_schema}.alliance_contact_labels SET name=COALESCE($3,name),color=COALESCE($4,color) WHERE alliance_id=$1 AND label_id=$2",alliance,labelId,name,color);
             if (await command.ExecuteNonQueryAsync(token) == 0) throw new CorporationError("ALLIANCE_LABEL_NOT_FOUND");
             return true;
-        },token);
+        },token,IsolationLevel.ReadCommitted);
     }
 
     public Task AssignAllianceContactLabelsAsync(long actor,long alliance,IReadOnlyCollection<long> contacts,long labelMask,CancellationToken token = default) =>
@@ -889,7 +891,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
             await using var command = Command(connection,tx,$"UPDATE {_schema}.alliance_contacts SET label_mask=label_mask {operation} $3 WHERE alliance_id=$1 AND contact_id=ANY($2)",alliance,ids,labelMask);
             await command.ExecuteNonQueryAsync(token);
             return true;
-        },token);
+        },token,IsolationLevel.ReadCommitted);
     }
 
     private async Task<long> AllianceContactLabelMaskAsync(NpgsqlConnection connection,NpgsqlTransaction tx,long alliance,CancellationToken token)
@@ -898,7 +900,7 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
         await using var reader = await command.ExecuteReaderAsync(token);
         long mask = 0;
         while (await reader.ReadAsync(token))
-            mask |= 1L << (reader.GetInt16(0) - 1);
+            mask |= reader.GetInt64(0);
         return mask;
     }
 
@@ -916,7 +918,8 @@ public async Task<(short CurrentHour, short NewHour, long ValidAfterFileTime)> A
 
     private static void ValidateAllianceLabelId(long labelId)
     {
-        if (labelId is < 1 or > 63) throw new CorporationError("ALLIANCE_LABEL_INVALID");
+        if (labelId <= 0 || labelId > 4611686018427387904L || (labelId & (labelId - 1)) != 0)
+            throw new CorporationError("ALLIANCE_LABEL_INVALID");
     }
 
     public async Task<IReadOnlyList<CorporationContact>> CorporationContactsAsync(long corporationId,CancellationToken token = default)

@@ -63,6 +63,19 @@ public sealed class ContractWriteModelTests
     }
 
     [Fact]
+    public void Only_auction_and_courier_contracts_require_offered_items()
+    {
+        ContractCreationRules.ValidateItemExchangeTerms(Request(
+            availability: 1, assigneeId: 300, price: 0, reward: 20_000, items: []));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            ContractCreationRules.ValidateItemExchangeTerms(Request(contractType: 2, items: [])));
+        Assert.Throws<ArgumentOutOfRangeException>(() =>
+            ContractCreationRules.ValidateItemExchangeTerms(Request(contractType: 3,
+                endStationId: 700, numDays: 7, items: [])));
+    }
+
+    [Fact]
     public void Outstanding_limit_must_be_within_the_client_maximum()
     {
         ContractCreationRules.ValidateItemExchangeTerms(Request(outstandingLimit: 500));
@@ -97,6 +110,7 @@ public sealed class ContractWriteModelTests
         long endStationId = 0,
         int numDays = 0,
         IReadOnlyList<ContractOfferedItem>? items = null,
+        decimal reward = 0,
         string? title = null,
         string? description = null,
         int outstandingLimit = 500) => new(
@@ -109,7 +123,7 @@ public sealed class ContractWriteModelTests
         AssigneeId: assigneeId,
         ExpiryMinutes: expiryMinutes,
         Price: price,
-        Reward: 0,
+        Reward: reward,
         BrokerFee: 0,
         Deposit: 0,
         SalesTax: 0,

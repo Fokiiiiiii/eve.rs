@@ -45,7 +45,8 @@ public static class CoreServices
         TourneyMatchCallbacks? tournamentMatchCallbacks = null,
         CalendarCspaBilling? calendarCspaBilling = null,
         ReadDynamicBountyCallback? readDynamicBounty = null,
-        PosMgrOperationCallback? posMgrOperation = null)
+        PosMgrOperationCallback? posMgrOperation = null,
+        Func<long, long, int, CancellationToken, ValueTask<bool>>? canTakeCorporateWalletDivision = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -81,7 +82,8 @@ public static class CoreServices
             new RaffleMgrService(gameRpcCallbacks.SeedRafflesAsync),
             new RaffleProxyService(gameRpcCallbacks.RaffleProxy),
             new ContractProxyService(contractReadModel, contractWriteModel, contractSkillLevel, contractBrokerFeeAdjustment,
-                hasContractManagerRole, readCurrentCalendarGroups, isCharacterInCurrentCorporation) { Inventory = contractInventoryReader },
+                hasContractManagerRole, readCurrentCalendarGroups, isCharacterInCurrentCorporation,
+                canTakeCorporateWalletDivision) { Inventory = contractInventoryReader },
             new JumpCloneService(nowUnixMs, gameRpcCallbacks.JumpClones, gameRpcCallbacks.JumpCloneSpace),
             new ServiceGatewayMgrService(gameRpcCallbacks.SetHijackMode, gameRpcCallbacks.IsHijackModeEnabled),
             new SharedSettingsMgrService(gameRpcCallbacks.ReadSharedSettings, gameRpcCallbacks.WriteSharedSettingsAsync, nowUnixMs),

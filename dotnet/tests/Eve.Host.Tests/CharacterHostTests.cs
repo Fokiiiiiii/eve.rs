@@ -4113,6 +4113,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public string SkillsSchema => _schemas["EVE_SKILLS_SCHEMA"];
         public string InventorySchema => _schemas["EVE_INVENTORY_SCHEMA"];
         public string IndustrySchema => _schemas["EVE_INDUSTRY_SCHEMA"];
+        public string AgentsSchema => _schemas["EVE_AGENTS_SCHEMA"];
         public string MarketSchema => _schemas["EVE_MARKET_SCHEMA"];
         public string IdentitySchema => _schemas["EVE_IDENTITY_SCHEMA"];
         public string WalletSchema => _schemas["EVE_WALLET_SCHEMA"];
@@ -4122,6 +4123,8 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public string GameStoreSchema => _schemas["EVE_GAMESTORE_SCHEMA"];
         public string RelationsSchema => _schemas["EVE_RELATIONS_SCHEMA"];
         public string SchedulerSchema => _schemas["EVE_SCHEDULER_SCHEMA"];
+        public string ContractsSchema => _schemas.GetValueOrDefault("EVE_CONTRACTS_SCHEMA",
+            Eve.Host.Persistence.PersistenceContractReadModel.DefaultSchema);
         public string StructuresSchema => _schemas["EVE_STRUCTURES_SCHEMA"];
         public string SkinrSchema => _schemas["EVE_SKINR_SCHEMA"];
         public long NowUnixMs => _clock?.Read() ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -4272,7 +4275,8 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             return (int)(await command.ExecuteScalarAsync())!;
         }
 
-        public static async Task<CharacterHostRig> CreateAsync(long? nowUnixMs = null, string? simSocket = null, ClusterOptions? clusterOptions = null)
+        public static async Task<CharacterHostRig> CreateAsync(long? nowUnixMs = null, string? simSocket = null,
+            ClusterOptions? clusterOptions = null, string? contractsSchema = null)
         {
             var pgUrl = Environment.GetEnvironmentVariable("EVE_PG_URL")
                 ?? throw new InvalidOperationException("EVE_PG_URL is not set.");
@@ -4280,6 +4284,8 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             var schemas = SchemaVariables.ToDictionary(
                 variable => variable,
                 variable => $"jc_{suffix}_{variable[4..^7].ToLowerInvariant()}");
+            if (contractsSchema is not null)
+                schemas["EVE_CONTRACTS_SCHEMA"] = contractsSchema;
             var clock = nowUnixMs is long startUnixMs ? new ManualClock(startUnixMs) : null;
             var source = new NpgsqlDataSourceBuilder(new NpgsqlConnectionStringBuilder(Eve.Data.PgConnection.ForTest(pgUrl)).ConnectionString).Build();
             try
@@ -4436,7 +4442,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         private static async Task<(HostRuntime Runtime, Func<Task> Shutdown)> BuildHostAsync(IReadOnlyDictionary<string, string> schemas,
             Func<long>? clockOverride = null, string? simSocket = null, ClusterOptions? clusterOptions = null)
         {
-            var previous = SchemaVariables.Concat(["EVE_MARKET_SEED", "EVE_SIM", "EVE_SIM_SOCKET", "EVE_WORMHOLES", "EVE_ESS_SYSTEMS"])
+            var previous = SchemaVariables.Concat(["EVE_CONTRACTS_SCHEMA", "EVE_MARKET_SEED", "EVE_SIM", "EVE_SIM_SOCKET", "EVE_WORMHOLES", "EVE_ESS_SYSTEMS"])
                 .ToDictionary(variable => variable, variable => Environment.GetEnvironmentVariable(variable));
             try
             {

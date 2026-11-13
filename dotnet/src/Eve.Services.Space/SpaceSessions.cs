@@ -9,6 +9,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Npc;
 using Eve.Services.Ships;
+using Eve.Services;
 using Eve.Ships;
 using Eve.Space;
 using Eve.Universe;
@@ -527,6 +528,9 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
 
     /// <summary>The legacy POS tower's explicit online/offline dogma effect; unrelated fitted-module effects return null to the normal module path.</summary>
     public Func<ClientSession, long, bool, CancellationToken, Task<ModuleResult?>>? ControlTowerModuleOperation { get; set; }
+
+    /// <summary>The posMgr calls whose state owner is the deployed control-tower module.</summary>
+    public Func<ServiceCall, ValueTask<PyValue>>? PosMgrControlTowerOperation { get; set; }
 
     /// <summary>The probe scan of the probes in space (set by the composition root): the scanMgr requests answer through it.</summary>
     public SpaceProbeScans? ProbeScans { get; set; }

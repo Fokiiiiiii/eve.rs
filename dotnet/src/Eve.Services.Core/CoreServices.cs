@@ -44,7 +44,8 @@ public static class CoreServices
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
         TourneyMatchCallbacks? tournamentMatchCallbacks = null,
         CalendarCspaBilling? calendarCspaBilling = null,
-        ReadDynamicBountyCallback? readDynamicBounty = null)
+        ReadDynamicBountyCallback? readDynamicBounty = null,
+        PosMgrOperationCallback? posMgrOperation = null)
     {
         gameRpcCallbacks ??= new GameRpcCallbacks();
         var licenses = new OmegaLicenses(accounts, nowUnixMs);
@@ -63,7 +64,7 @@ public static class CoreServices
             new PingService(),
             new AlertService(),
             new BrowserLockdownService(),
-            new PosMgrService(readControlTowerRows, unanchorControlTower, anchorControlTower),
+            new PosMgrService(readControlTowerRows, unanchorControlTower, anchorControlTower, posMgrOperation),
             new KiringMgrService(),
             new PetitionerService(),
             new AbyssalContentManagerService(gameRpcCallbacks.AbyssalSpawnReportAsync),

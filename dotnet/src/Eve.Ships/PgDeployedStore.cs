@@ -93,6 +93,29 @@ public sealed class PgDeployedStore
         return await command.ExecuteScalarAsync(cancellationToken) as string;
     }
 
+    /// <summary>The persisted POS management settings for one control tower, as JSON.</summary>
+    public async Task<string?> TowerConfigurationAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction,
+        long deployableId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT tower_config::text FROM {_schema}.deployed WHERE deployable_id = $1 AND kind = 'control_tower'",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        return await command.ExecuteScalarAsync(cancellationToken) as string;
+    }
+
+    /// <summary>Writes POS management settings with the tower's other state in the caller's transaction.</summary>
+    public async Task<bool> SetTowerConfigurationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long deployableId, string json, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"UPDATE {_schema}.deployed SET tower_config = $2::jsonb WHERE deployable_id = $1 AND kind = 'control_tower'",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        command.Parameters.Add(new NpgsqlParameter { Value = json });
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
     /// <summary>The start time of an in-progress control-tower state transition, or null when the state has no timer.</summary>
     public async Task<long?> TowerStateStartedAtMsAsync(long deployableId, CancellationToken cancellationToken = default)
     {

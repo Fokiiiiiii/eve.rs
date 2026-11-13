@@ -7,6 +7,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Ships;
+using Eve.Space;
 using Npgsql;
 
 namespace Eve.Services.Space;
@@ -425,6 +426,116 @@ public sealed partial class SpaceContainers
             ? new[] { cargoGroup, cargoGroup2 }.Where(group => group > 0)
             : new double[] { 427, 429, 428, 422, 18 };
         return allowed.Contains(materialType.GroupId);
+    }
+
+    private bool IsPosProductionInventory(Item item) =>
+        _statics.Type(item.TypeId) is { CategoryId: StarbaseCategoryId, GroupId: SiloGroupId };
+
+    /// <summary>
+    /// POS production inventories use their deployed tower association and saved module usage row. A silo is usable only while offline;
+    /// reads, deposits and takes each re-read the persisted state so a retained inventory binding cannot keep stale access.
+    /// </summary>
+    private async Task<bool> ValidatePosProductionInventoryAsync(ClientSession session, Item item, string operation,
+        CancellationToken cancellationToken)
+    {
+        if (!IsPosProductionInventory(item) || _deployed is null || _source is null || session.CharacterId is not { } characterId ||
+            _space.SolarSystemOf(session) is not { } systemId || item.LocationId != systemId)
+            return false;
+
+        if (await _deployed.GetAsync(item.Id, cancellationToken).ConfigureAwait(false) is not { Kind: StarbaseModuleKind } module ||
+            module.SolarSystemId != systemId || module.ActivateAtMs > _nowUnixMs() || module.ControlTowerId <= 0)
+            throw MachoErrors.ThrowUserError("STARBASE_INVENTORY_OFFLINE");
+        if (await _deployed.TowerStateAsync(module.DeployableId, cancellationToken).ConfigureAwait(false) != TowerOffline)
+            throw MachoErrors.ThrowUserError("STARBASE_PRODUCTION_MUST_BE_OFFLINE");
+        if (await _deployed.GetAsync(module.ControlTowerId, cancellationToken).ConfigureAwait(false) is not { Kind: ControlTowerKind } tower ||
+            tower.OwnerId != module.OwnerId || tower.CorporationId != module.CorporationId || tower.SolarSystemId != systemId ||
+            tower.ActivateAtMs > _nowUnixMs() || await _deployed.TowerStateAsync(tower.DeployableId, cancellationToken).ConfigureAwait(false) is not (TowerOnline or TowerOffline))
+            throw MachoErrors.ThrowUserError("STARBASE_INVENTORY_TOWER_UNAVAILABLE");
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        var raw = await _deployed.TowerConfigurationAsync(connection, null, tower.DeployableId, cancellationToken).ConfigureAwait(false);
+        var configuration = Normalize(raw is null ? new PosMgrTowerConfiguration() :
+            JsonSerializer.Deserialize<PosMgrTowerConfiguration>(raw, PosMgrJson) ?? new PosMgrTowerConfiguration());
+
+        if (!await PosModulePermissionAsync(session, tower, configuration, module.DeployableId, operation, characterId, cancellationToken).ConfigureAwait(false))
+            return false;
+
+        var maximumDistance = _statics.AttributeId("maxOperationalDistance") is { } distanceAttribute &&
+            _statics.Type(item.TypeId) is { } moduleType
+                ? moduleType.Attributes.GetValueOrDefault(distanceAttribute, OpenRange)
+                : OpenRange;
+        if (!double.IsFinite(maximumDistance) || maximumDistance < 0)
+            return false;
+        CommandReply reply;
+        try
+        {
+            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Measure, [(double)item.Id], cancellationToken).ConfigureAwait(false);
+        }
+        catch (SimUnavailableException)
+        {
+            throw Unavailable();
+        }
+        if (!reply.Accepted || reply.Distance is not { } distance)
+            throw MachoErrors.ThrowUserError("CONTAINER_NOT_VISIBLE");
+        if (distance > maximumDistance)
+            throw MachoErrors.ThrowUserError("STARBASE_INVENTORY_TOO_FAR");
+        return true;
+    }
+
+    private async Task<bool> ValidatePosSiloDepositAsync(ClientSession session, Item silo, Item item, CancellationToken cancellationToken)
+    {
+        if (!await ValidatePosProductionInventoryAsync(session, silo, "viewput", cancellationToken).ConfigureAwait(false))
+            throw MachoErrors.ThrowUserError("STARBASE_PRODUCTION_ACCESS_DENIED");
+        if (_deployed is null || _source is null ||
+            await _deployed.GetAsync(silo.Id, cancellationToken).ConfigureAwait(false) is not { Kind: StarbaseModuleKind } module ||
+            module.ControlTowerId <= 0)
+            return false;
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        var raw = await _deployed.TowerConfigurationAsync(connection, null, module.ControlTowerId, cancellationToken).ConfigureAwait(false);
+        var configuration = Normalize(raw is null ? new PosMgrTowerConfiguration() :
+            JsonSerializer.Deserialize<PosMgrTowerConfiguration>(raw, PosMgrJson) ?? new PosMgrTowerConfiguration());
+        if (configuration.ProvisionTypes.GetValueOrDefault(silo.Id) is not { } provisionType || item.TypeId != provisionType)
+            return false;
+        await _statics.EnsureTypesAsync([item.TypeId], cancellationToken).ConfigureAwait(false);
+        return _statics.Type(item.TypeId) is { } materialType && CanSiloStoreType(silo.TypeId, materialType);
+    }
+
+    private async Task<bool> PosModulePermissionAsync(ClientSession session, DeployedRecord tower,
+        PosMgrTowerConfiguration configuration, long moduleId, string operation, long characterId, CancellationToken cancellationToken)
+    {
+        var corporationId = session.GetInt("corpid") ?? session.GetInt("corporationid") ?? 0;
+        var roles = session.GetInt("corprole") ?? 0;
+        var isCeo = session.Get("isCEO") switch
+        {
+            PyBool value => value.Value,
+            PyInt value => value.Value != 0,
+            PyLong value => value.Value != 0,
+            _ => false,
+        };
+        var sameCorporation = corporationId > 0 && corporationId == tower.CorporationId && characterId > 0;
+        if (sameCorporation && (isCeo || (roles & (DirectorRole | StarbaseConfigRole)) != 0))
+            return true;
+
+        var row = configuration.UsageFlags.FirstOrDefault(candidate => candidate.StructureId == moduleId) ?? new TowerUsage(moduleId);
+        var permission = operation switch
+        {
+            "viewput" => row.ViewPut,
+            "viewputtake" => row.ViewPutTake,
+            "use" => row.Use,
+            _ => 0,
+        };
+        bool Allowed(int value)
+        {
+            if (value == 1) return sameCorporation;
+            if (value == 2)
+            {
+                var allianceId = session.GetInt("allianceid") ?? session.GetInt("allianceID") ?? 0;
+                return sameCorporation || tower.AllianceId > 0 && allianceId == tower.AllianceId;
+            }
+            const long caretakerRole = 288_230_376_151_711_744L;
+            return value == 3 && sameCorporation && (roles & caretakerRole) != 0;
+        }
+        return operation == "viewput" ? Allowed(permission) || Allowed(row.ViewPutTake) : Allowed(permission);
     }
 
     private static bool HasLinkCycle(IReadOnlyDictionary<long, List<long>> graph)

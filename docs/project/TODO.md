@@ -2,6 +2,8 @@
 
 ## Project status
 
+The assorted service audit rows RPC-00780–RPC-02778 are recorded in [implement-assorted-services.md](implement-assorted-services.md). `ship.LaunchFromContainer` now covers hull maintenance bays and POS arrays in groups 363 and 397, including persistent tower association, access checks, space restoration, notifications and the next `Board` transition. Abyssal content-authoring calls preserve EveJS's rejected `None` response; they do not generate content. No graphical V24 client verification was run.
+
 Destiny crate audit r15 findings are fixed and recorded in [audit-fixes-crate-destiny.md](audit-fixes-crate-destiny.md); current EveJS ball fixtures and AddBalls2 wire regressions cover the changed behavior. Graphical-client verification remains open.
 
 EventBus audit r14 findings, SKINR notice delivery recovery, and EventBus option validation are recorded in [audit-fixes-events.md](audit-fixes-events.md).

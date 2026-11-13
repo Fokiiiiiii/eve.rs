@@ -416,10 +416,7 @@ impl IsAnyPlayerShipOnGridWithGroupMember {
             return Some(false);
         }
         let include_cloaked = t.required("includeCloaked")?;
-        if !include_cloaked.truthy() && is_ball_cloaked(t, target_id) {
-            return Some(false);
-        }
-        Some(true)
+        Some(include_cloaked.truthy() || !is_ball_cloaked(t, target_id))
     }
 
     /// `_bubble_contains_player`.

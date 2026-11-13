@@ -1,5 +1,7 @@
 # tourneyMgr 全クライアント呼び出し・Host深掘り監査
 
+> Historical snapshot. The current call inventory, verified provider wiring, and test results are in [implement-tourneymgr.md](../implement-tourneymgr.md). In particular, the final section below predates the persisted handlers and later registered-Host tests; do not treat its “未実装” statement as current status.
+
 対象は eve-logic V24.01 / build 3396210 全ツリー。CSVのtourneyMgr行を確認し、5つのremote service RPCと開発者ツールのbound-object呼び出しを分けて追った。
 
 ## 登録と共通wire

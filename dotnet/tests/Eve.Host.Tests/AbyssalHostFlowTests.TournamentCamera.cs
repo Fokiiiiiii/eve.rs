@@ -89,6 +89,18 @@ public sealed partial class AbyssalHostFlowTests
                 Assert.Equal(new PyInt(occupied ? system : 0),Field(details,"system"));
             }
             await AssertSetup(false);
+            var currentSeries = Assert.IsType<PyDict>(await Query("GetAllCurrentSeriesMatchDetails", new PyInt(1)));
+            var currentSeriesEntry = Assert.IsType<PyTuple>(Assert.Single(currentSeries.Entries).Value);
+            Assert.Equal(new PyInt(0), currentSeriesEntry.Items[0]);
+            Assert.Equal(new PyInt(1), currentSeriesEntry.Items[1]);
+            var tournamentDetails = Assert.IsType<PyDict>(await Query("QueryTournamentDetails", new PyInt(1)));
+            Assert.Equal(new PyInt(100), Field(tournamentDetails, "maximumPointsMatch"));
+            Assert.Equal(new PyInt(600), Field(tournamentDetails, "matchLength"));
+            Assert.Equal(new PyInt(60), Field(tournamentDetails, "overtimeLength"));
+            Assert.Same(PyNone.Instance, Field(tournamentDetails, "externalRulesetID"));
+            var configuredShip = Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(Field(tournamentDetails, "allowedShipList")).Items));
+            Assert.Equal(new PyInt(601), configuredShip.Items[1]);
+            Assert.NotEmpty(Eve.Macho.JsSemantics.StringValue(configuredShip.Items[0])!);
             var shipList=Assert.IsType<PyDict>(await Query("QueryShipList",new PyInt(1)));
             var option=Assert.IsType<PyTuple>(Assert.Single(Assert.IsType<PyList>(Field(shipList,"allowedShipList")).Items));
             Assert.Equal(new PyInt(601),option.Items[1]);

@@ -33,6 +33,12 @@ internal sealed class LocalProjectDiscoveryAssetServer : IAsyncDisposable
     public (int Width, int Height) AssetDimensions { get; }
     public Uri AssetUri => new(BaseUri, AssetKey);
     public string AssetSha256 => Convert.ToHexString(SHA256.HashData(_png)).ToLowerInvariant();
+    public Uri TutorialAssetUri(string code, long sequence)
+    {
+        if (!CovidTutorialCorpus.Contains(code) || sequence <= 0)
+            throw new ArgumentException("Unknown Project Discovery tutorial asset.", nameof(code));
+        return new Uri(BaseUri, $"projectdiscovery/tutorials/{code}/{sequence}.png");
+    }
 
     /// <summary>Maps client normalized gate coordinates (x right, y up) to top-origin PNG pixels.</summary>
     public static (int X, int Y) GateToPixel(double x, double y, int width, int height)
@@ -98,14 +104,17 @@ internal sealed class LocalProjectDiscoveryAssetServer : IAsyncDisposable
 
     private static Task RouteRequest(HttpContext context, byte[] png)
     {
-        if (!string.Equals(context.Request.Path.Value, Route, StringComparison.Ordinal))
+        byte[]? asset = string.Equals(context.Request.Path.Value, Route, StringComparison.Ordinal)
+            ? png
+            : TutorialAsset(context.Request.Path.Value);
+        if (asset is null)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return Task.CompletedTask;
         }
         if (HttpMethods.IsHead(context.Request.Method))
         {
-            SetPngHeaders(context, png.Length);
+            SetPngHeaders(context, asset.Length);
             context.Response.StatusCode = StatusCodes.Status200OK;
             return Task.CompletedTask;
         }
@@ -115,9 +124,22 @@ internal sealed class LocalProjectDiscoveryAssetServer : IAsyncDisposable
             context.Response.StatusCode = StatusCodes.Status405MethodNotAllowed;
             return Task.CompletedTask;
         }
-        SetPngHeaders(context, png.Length);
+        SetPngHeaders(context, asset.Length);
         context.Response.StatusCode = StatusCodes.Status200OK;
-        return context.Response.Body.WriteAsync(png, context.RequestAborted).AsTask();
+        return context.Response.Body.WriteAsync(asset, context.RequestAborted).AsTask();
+    }
+
+    private static byte[]? TutorialAsset(string? path)
+    {
+        if (path is null) return null;
+        var parts = path.Split('/');
+        if (parts.Length != 5 || parts[1] != "projectdiscovery" || parts[2] != "tutorials" ||
+            !parts[4].EndsWith(".png", StringComparison.Ordinal) ||
+            !long.TryParse(parts[4].AsSpan(0, parts[4].Length - 4), System.Globalization.NumberStyles.None,
+                System.Globalization.CultureInfo.InvariantCulture, out long sequence) || sequence <= 0 ||
+            !CovidTutorialCorpus.Contains(parts[3]))
+            return null;
+        return CovidTutorialCorpus.RenderPng(parts[3], sequence);
     }
 
     private static void SetPngHeaders(HttpContext context, int length)

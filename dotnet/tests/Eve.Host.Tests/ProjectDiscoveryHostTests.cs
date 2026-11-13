@@ -113,7 +113,7 @@ public sealed class ProjectDiscoveryHostTests : IAsyncLifetime
             var store = new ProjectDiscoveryTutorialStore(source, schema);
             Assert.Null(await store.ReadAsync(characterId));
             var service = host.Registry.Lookup("ProjectDiscovery")!;
-            var session = new ClientSession { CharacterId = characterId };
+            var session = new ClientSession { CharacterId = characterId, UserId = 1 };
 
             var first = await service.CallAsync(new ServiceCall { Method = "increase_tutorial_level", Args = [], Session = session });
             Assert.Equal(Py.KeyVal(
@@ -291,7 +291,9 @@ public sealed class ProjectDiscoveryHostTests : IAsyncLifetime
             var timing = Dict(("t", new PyInt(10)), ("tPolygons", new PyList([])));
             var result = await service.CallAsync(new ServiceCall { Method = "post_classification", Args = [answer, timing], Session = session, CallId = new PyInt(2) });
             var score = Assert.IsType<PyReal>(Field(Field(result, "player"), "score")).Value;
-            Assert.InRange(Math.Abs(score - .99115), 0, 1e-10);
+            Assert.Equal(.99, score);
+            Assert.InRange(Math.Abs(Assert.IsType<PyReal>(Field(result, "score")).Value - .99115), 0, 1e-10);
+            Assert.Equal(new PyLong(5), Field(result, "AK_Reward"));
             Assert.Equal(new PyInt(0), await service.CallAsync(new ServiceCall { Method = "get_remaining_bonus_samples", Args = [], Session = session }));
             await host.ShutdownAsync();
             host = await HostComposition.BuildAsync(Settings());
@@ -300,9 +302,343 @@ public sealed class ProjectDiscoveryHostTests : IAsyncLifetime
             var replay = await host.Registry.Lookup("ProjectDiscovery")!.CallAsync(new ServiceCall { Method = "post_classification", Args = [answer, timing], Session = session, CallId = new PyInt(2) });
             Assert.Equal(score, Assert.IsType<PyReal>(Field(Field(replay, "player"), "score")).Value);
             var state = await host.Registry.Lookup("ProjectDiscovery")!.CallAsync(new ServiceCall { Method = "get_player_state", Args = [], Session = session });
-            Assert.Equal(Py.KeyVal(("rank", new PyInt(2)), ("experience", new PyInt(200)), ("analysisKredits", new PyInt(0)), ("finishedTutorial", PyBool.False), ("tutorialLevel", new PyInt(0))), state);
+            Assert.Equal(Py.KeyVal(("rank", new PyInt(2)), ("experience", new PyInt(200)), ("analysisKredits", new PyInt(5)), ("finishedTutorial", PyBool.False), ("tutorialLevel", new PyInt(0))), state);
         }
         finally { await host.ShutdownAsync(); foreach (var (key, value) in savedBonus) Environment.SetEnvironmentVariable(key, value); }
+    }
+
+    [PgFact]
+    public async Task Scientific_replay_persists_client_rewards_and_notifies_after_registered_wire_submission()
+    {
+        string? oldMode = Environment.GetEnvironmentVariable("EVE_PROJECT_DISCOVERY_MODE");
+        string? oldBonus = Environment.GetEnvironmentVariable("EVE_PROJECT_DISCOVERY_BONUS_POLICY");
+        Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay");
+        Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_BONUS_POLICY", "none");
+        HostRuntime? host = null;
+        try
+        {
+            await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+            host = await HostComposition.BuildAsync(Settings());
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var characterId = await InsertPilotAsync(source, characters, "Scientific Reward Pilot");
+            var sink = new DiscoveryWireSink();
+            var session = new ClientSession(sink) { CharacterId = characterId, UserId = 1, SessionId = 782 };
+            var dispatcher = new PacketDispatcher(host.Registry) { StrictRpc = true };
+
+            static PyValue Request(int id, string method, PyValue[] args)
+            {
+                var from = new PyTuple([new PyInt(MachoAddress.TypeClient), new PyLong(782), new PyInt(id), PyNone.Instance]);
+                var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple(args), PyNone.Instance]);
+                var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
+                var head = new PyValue[] { new PyInt(6), from, MachoAddress.Any("ProjectDiscovery").Encode(), new PyInt(1001), payload, PyNone.Instance };
+                return new PyObject(new PyStr("carbon.common.script.net.machoNetPacket.CallReq"),
+                    new PyTuple([.. head, .. Enumerable.Repeat<PyValue>(PyNone.Instance, 14 - head.Length)]));
+            }
+
+            async Task<PyValue> Call(int id, string method, params PyValue[] args)
+            {
+                sink.Packets.Clear();
+                await dispatcher.DispatchAsync(MarshalCodec.Decode(MarshalCodec.Encode(Request(id, method, args))), session);
+                var callResponse = Assert.Single(sink.Packets,
+                    packet => MachoPacket.Decode(packet)?.Type == MachoMessage.CallRsp);
+                var fields = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(MarshalCodec.Decode(MarshalCodec.Encode(callResponse))).Args).Items;
+                var payload = Assert.IsType<PyTuple>(fields[4]);
+                return payload.Items[0] is PySubStream { Decoded: { } result } ? result : payload.Items[0];
+            }
+
+            static PyValue Field(PyValue value, string key) => Assert.Single(Assert.IsType<PyDict>(value).Entries,
+                entry => JsSemantics.StringValue(entry.Key) == key).Value;
+            PyDict Dict(params (string Key, PyValue Value)[] entries) => new(entries.Select(entry =>
+                new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Key), entry.Value)).ToArray());
+
+            Assert.Equal(new PyInt(10), await Call(1, "get_maximum_bonus_samples"));
+            Assert.Equal(new PyInt(10), await Call(2, "get_remaining_bonus_samples"));
+            var task = await Call(3, "get_new_task");
+            string taskId = JsSemantics.StringValue(Field(task, "taskID"))!;
+            await using (var elapsed = source.CreateCommand($"UPDATE {Schema("EVE_PROJECT_DISCOVERY_SCHEMA")}.scientific_assignments SET issued_ms=issued_ms-12001 WHERE actor=$1 AND dataset_key='frdr-1038-analysis-50'"))
+            {
+                elapsed.Parameters.AddWithValue(characterId);
+                Assert.Equal(1, await elapsed.ExecuteNonQueryAsync());
+            }
+
+            using var cohort = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(
+                DirectoryRoot(AppContext.BaseDirectory), "dotnet", "tests", "Eve.Host.Tests", "fixtures", "project-discovery", "covid-analysis50-gates.json")));
+            var polygons = cohort.RootElement[0].GetProperty("polygons").EnumerateArray().Select(poly =>
+                (PyValue)Dict(("vertices", new PyList(poly.EnumerateArray().Select(point =>
+                    (PyValue)new PyList([new PyReal(point[0].GetDouble()), new PyReal(point[1].GetDouble())])).ToArray())))).ToArray();
+            var answer = Dict(("skip", PyBool.False), ("polygons", new PyList(polygons)));
+            var timing = Dict(("t", new PyInt(10)), ("tPolygons", new PyList([])));
+            var response = await Call(4, "post_classification", answer, timing);
+            var resultPackets = sink.Packets.Select(MachoPacket.Decode).ToArray();
+            Assert.Equal(new[] { MachoMessage.CallRsp, MachoMessage.Notification, MachoMessage.Notification }, resultPackets.Select(packet => packet!.Type).ToArray());
+            Assert.Equal(new[] { "OnPlayerStateUpdated", "OnAnalysisKreditsChange" }, resultPackets.Skip(1).Select(packet => packet!.Dest.BroadcastId).ToArray());
+            Assert.Equal("clientID", resultPackets[1]!.Dest.IdType);
+            Assert.Equal("charid", resultPackets[2]!.Dest.IdType);
+            var score = Assert.IsType<PyReal>(Field(response, "score")).Value;
+            Assert.InRange(Math.Abs(score - 0.99115), 0, 1e-10);
+            Assert.Equal(new PyLong(178), Field(response, "XP_Reward"));
+            Assert.Equal(new PyLong(5), Field(response, "AK_Reward"));
+            Assert.Equal(new PyLong(0), Field(response, "ISK_Reward"));
+            Assert.Same(PyBool.True, Field(response, "gotBonusXP"));
+            Assert.Equal(new PyLong(9), Field(response, "bonusSamplesAfterClassification"));
+            Assert.Equal(taskId, JsSemantics.StringValue(Field(Field(response, "task"), "taskID")));
+            var playerState = Assert.IsType<PyObject>(Field(response, "playerState"));
+            Assert.Equal("util.KeyVal", JsSemantics.StringValue(playerState.Name));
+            Assert.Equal(new PyLong(2), Field(playerState.Args, "rank"));
+            Assert.Equal(new PyLong(178), Field(playerState.Args, "experience"));
+            Assert.Equal(new PyLong(5), Field(playerState.Args, "analysisKredits"));
+            Assert.Equal(new PyInt(9), await Call(5, "get_remaining_bonus_samples"));
+
+            await host.ShutdownAsync();
+            host = await HostComposition.BuildAsync(Settings());
+            var persisted = await host.Registry.Lookup("ProjectDiscovery")!.CallAsync(new ServiceCall
+            {
+                Method = "get_player_state", Args = [], Session = session,
+            });
+            Assert.Equal(Py.KeyVal(("rank", new PyInt(2)), ("experience", new PyInt(178)),
+                ("analysisKredits", new PyInt(5)), ("finishedTutorial", PyBool.False), ("tutorialLevel", new PyInt(0))), persisted);
+            var stats = await host.Registry.Lookup("ProjectDiscovery")!.CallAsync(new ServiceCall
+            {
+                Method = "get_player_statistics", Args = [], Session = session,
+            });
+            Assert.Equal(0.99, Assert.IsType<PyReal>(Field(Field(stats, "project"), "score")).Value);
+        }
+        finally
+        {
+            if (host is not null) await host.ShutdownAsync();
+            Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_MODE", oldMode);
+            Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_BONUS_POLICY", oldBonus);
+        }
+    }
+
+    [PgFact]
+    public async Task Covid_tutorial_task_calls_roundtrip_through_host_wire_without_consuming_research_assignment()
+    {
+        string? oldMode = Environment.GetEnvironmentVariable("EVE_PROJECT_DISCOVERY_MODE");
+        string? oldBonus = Environment.GetEnvironmentVariable("EVE_PROJECT_DISCOVERY_BONUS_POLICY");
+        Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay");
+        Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_BONUS_POLICY", "none");
+        HostRuntime? host = null;
+        try
+        {
+            await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url));
+            long fixedNow = new DateTimeOffset(2024, 6, 1, 23, 59, 0, TimeSpan.Zero).ToUnixTimeMilliseconds();
+            host = await HostComposition.BuildAsync(Settings(), () => fixedNow);
+            var characters = new PgCharacterStore(source, Schema("EVE_CHARACTERS_SCHEMA"));
+            var characterId = await InsertPilotAsync(source, characters, "Project Discovery Tutorial");
+            var sink = new DiscoveryWireSink();
+            var session = new ClientSession(sink) { CharacterId = characterId, UserId = 1, SessionId = 771 };
+            var dispatcher = new PacketDispatcher(host.Registry) { StrictRpc = true };
+
+            static PyValue Request(int id, string method, PyValue[] args, PyValue kwargs)
+            {
+                var from = new PyTuple([new PyInt(MachoAddress.TypeClient), new PyLong(771), new PyInt(id), PyNone.Instance]);
+                var body = new PyTuple([new PyInt(1), new PyStr(method), new PyTuple(args), kwargs]);
+                var payload = new PyTuple([new PyTuple([new PyInt(0), new PySubStream(body)])]);
+                var head = new PyValue[] { new PyInt(6), from, MachoAddress.Any("ProjectDiscovery").Encode(), new PyInt(1001), payload, PyNone.Instance };
+                return new PyObject(new PyStr("carbon.common.script.net.machoNetPacket.CallReq"),
+                    new PyTuple([.. head, .. Enumerable.Repeat<PyValue>(PyNone.Instance, 14 - head.Length)]));
+            }
+
+            async Task<PyValue> Call(int id, string method, PyValue[] args, PyValue? kwargs = null)
+            {
+                sink.Packets.Clear();
+                await dispatcher.DispatchAsync(MarshalCodec.Decode(MarshalCodec.Encode(Request(id, method, args, kwargs ?? PyNone.Instance))), session);
+                var packet = Assert.Single(sink.Packets, candidate => MachoPacket.Decode(candidate)?.Type == MachoMessage.CallRsp);
+                if (method == "post_classification")
+                {
+                    var messages = sink.Packets.Select(candidate => MachoPacket.Decode(candidate)!).ToArray();
+                    Assert.Equal(new[] { MachoMessage.CallRsp, MachoMessage.Notification, MachoMessage.Notification }, messages.Select(message => message.Type));
+                    Assert.Equal(new[] { "OnPlayerStateUpdated", "OnAnalysisKreditsChange" }, messages.Skip(1).Select(message => message.Dest.BroadcastId));
+                }
+                else
+                {
+                    Assert.Single(sink.Packets);
+                }
+                var decoded = MarshalCodec.Decode(MarshalCodec.Encode(packet));
+                var fields = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(decoded).Args).Items;
+                Assert.True(fields[0].Equals(new PyInt(MachoMessage.CallRsp)), System.Text.Encoding.Latin1.GetString(MarshalCodec.Encode(packet)));
+                var payload = Assert.IsType<PyTuple>(fields[4]);
+                return payload.Items[0] is PySubStream { Decoded: { } value } ? value : payload.Items[0];
+            }
+
+            var timing = new PyDict(new[]
+            {
+                new KeyValuePair<PyValue, PyValue>(new PyStr("t"), new PyInt(10)),
+                new KeyValuePair<PyValue, PyValue>(new PyStr("tPolygons"), new PyList([])),
+            });
+            async Task AssertTaskUnavailable(int id, PyValue answer)
+            {
+                sink.Packets.Clear();
+                await dispatcher.DispatchAsync(MarshalCodec.Decode(MarshalCodec.Encode(Request(id, "post_classification", [answer, timing], PyNone.Instance))), session);
+                var packet = Assert.Single(sink.Packets);
+                Assert.Equal(MachoMessage.ErrorResponse, MachoPacket.Decode(packet)!.Type);
+                Assert.Contains("PROJECT_DISCOVERY_TASK_UNAVAILABLE", System.Text.Encoding.Latin1.GetString(MarshalCodec.Encode(packet)));
+            }
+
+            static PyValue Field(PyValue value, string key) => Assert.Single(
+                Assert.IsType<PyDict>(value).Entries,
+                entry => JsSemantics.StringValue(entry.Key) == key).Value;
+            static PyDict Dict(params (string Key, PyValue Value)[] entries) => new(entries.Select(entry =>
+                new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Key), entry.Value)).ToArray());
+            static PyDict TutorialArguments(string code) => new(
+            [
+                new(new PyBytes(System.Text.Encoding.ASCII.GetBytes("original_code")), new PyBytes(System.Text.Encoding.ASCII.GetBytes(code))),
+                new(new PyBytes(System.Text.Encoding.ASCII.GetBytes("is_tutorial_task")), PyBool.True),
+            ]);
+
+            var codes = new[]
+            {
+                "ed134308-e080-49bc-be56-169a5f839c96",
+                "be362d8b-4ff4-448b-877f-23b8c2cb4fe0",
+                "eb4c6403-e878-43cf-a009-9c8c566ae90f",
+                "21cbef0c-684e-4a4c-b1fe-be6e24d894c2",
+                "ff9f9a21-954b-4c1c-9a54-16b21cf17670",
+            };
+            var expectedPolygonCounts = new[] { 2, 3, 3, 5, 4 };
+            var regions = new[]
+            {
+                new[] { new[] { .08, .10, .28, .26 }, new[] { .65, .72, .91, .93 } },
+                new[] { new[] { .05, .75, .20, .92 }, new[] { .42, .34, .56, .50 }, new[] { .82, .07, .95, .23 } },
+                new[] { new[] { .08, .10, .25, .28 }, new[] { .44, .76, .61, .94 }, new[] { .72, .38, .90, .58 } },
+                new[] { new[] { .04, .05, .15, .17 }, new[] { .33, .08, .46, .22 }, new[] { .68, .07, .82, .20 }, new[] { .19, .68, .31, .80 }, new[] { .80, .73, .93, .88 } },
+                new[] { new[] { .03, .45, .14, .58 }, new[] { .38, .12, .55, .27 }, new[] { .62, .76, .78, .92 }, new[] { .88, .38, .97, .50 } },
+            };
+            PyDict AnswerFor(int index, bool wrong = false)
+            {
+                var answerRegions = wrong
+                    ? new[] { new[] { .01, .01, .05, .05 }, new[] { .94, .94, .98, .98 } }
+                    : regions[index];
+                var polygons = answerRegions.Select(region => (PyValue)Dict(("vertices", new PyList(
+                [
+                    new PyList([new PyReal(region[0]), new PyReal(region[1])]),
+                    new PyList([new PyReal(region[2]), new PyReal(region[1])]),
+                    new PyList([new PyReal(region[2]), new PyReal(region[3])]),
+                    new PyList([new PyReal(region[0]), new PyReal(region[3])]),
+                ])))).ToArray();
+                return Dict(("skip", PyBool.False), ("polygons", new PyList(polygons)));
+            }
+
+            for (var index = 0; index < codes.Length; index++)
+            {
+                Assert.Equal(expectedPolygonCounts[index], regions[index].Length);
+                var task = await Call(index * 2 + 1, "get_new_task", [], TutorialArguments(codes[index]));
+                Assert.Same(PyBool.True, Field(task, "isTutorial"));
+                Assert.Same(PyBool.True, Field(task, "isTrainingSet"));
+                var assetUrl = JsSemantics.StringValue(Field(Field(task, "assets"), "url"))!;
+                using var http = new HttpClient();
+                var png = await http.GetByteArrayAsync(assetUrl);
+                Assert.True(png.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }));
+                var response = await Call(index * 2 + 2, "post_classification", [AnswerFor(index), timing]);
+                Assert.Equal(1L, Assert.IsType<PyLong>(Field(response, "score")).Value);
+                var solution = Field(Field(response, "task"), "solution");
+                Assert.Equal(regions[index].Length, Assert.IsType<PyList>(Field(solution, "clusters")).Items.Count);
+            }
+
+            await host.ShutdownAsync();
+            host = await HostComposition.BuildAsync(Settings(), () => fixedNow);
+            dispatcher = new PacketDispatcher(host.Registry) { StrictRpc = true };
+            var replay = await Call(10, "post_classification", [AnswerFor(4), timing]);
+            Assert.Equal(1L, Assert.IsType<PyLong>(Field(replay, "score")).Value);
+            var trainingStats = await Call(15, "get_player_statistics", [], Dict(("get_history", PyBool.True)));
+            Assert.Equal(1d, Assert.IsType<PyReal>(Field(Field(trainingStats, "project"), "score")).Value);
+            await AssertTaskUnavailable(10, AnswerFor(0));
+
+            var nextTutorial = await Call(11, "get_new_task", [], TutorialArguments(codes[0]));
+            Assert.NotEqual(JsSemantics.StringValue(Field(Field(replay, "task"), "taskID")), JsSemantics.StringValue(Field(nextTutorial, "taskID")));
+
+            var researchTask = await Call(12, "get_new_task", []);
+            var researchFields = Assert.IsType<PyDict>(researchTask).Entries;
+            Assert.Equal(new[] { "id", "taskID", "taskId", "projectID", "isTrainingSet", "isTutorial", "localMode", "assets", "url", "votes", "classificationCount" },
+                researchFields.Select(entry => JsSemantics.StringValue(entry.Key)));
+            var researchAsset = new Uri(JsSemantics.StringValue(Field(Field(researchTask, "assets"), "url"))!);
+            Assert.Equal("/projectdiscovery/covid-analysis50-science.png", researchAsset.AbsolutePath);
+            var lateTutorialRetry = await Call(10, "post_classification", [AnswerFor(4), timing]);
+            Assert.Equal(1L, Assert.IsType<PyLong>(Field(lateTutorialRetry, "score")).Value);
+            Assert.Same(PyBool.True, Field(Field(lateTutorialRetry, "task"), "isTutorial"));
+            // The science replay has two gates; its licensed cohort provides the answer used by its focused regression.
+            using var cohort = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(Path.Combine(
+                DirectoryRoot(AppContext.BaseDirectory), "dotnet", "tests", "Eve.Host.Tests", "fixtures", "project-discovery", "covid-analysis50-gates.json")));
+            var sciencePolygons = cohort.RootElement[0].GetProperty("polygons").EnumerateArray()
+                .Select(poly => (PyValue)Dict(("vertices", new PyList(poly.EnumerateArray().Select(point =>
+                    (PyValue)new PyList([new PyReal(point[0].GetDouble()), new PyReal(point[1].GetDouble())])).ToArray())))).ToArray();
+            var researchAnswer = Dict(("skip", PyBool.False), ("polygons", new PyList(sciencePolygons)));
+            var researchResponse = await Call(13, "post_classification", [researchAnswer, timing]);
+            var researchScore = Assert.IsType<PyReal>(Field(Field(researchResponse, "player"), "score")).Value;
+            var statistics = await Call(14, "get_player_statistics", [], Dict(("get_history", PyBool.True)));
+            Assert.Equal(researchScore, Assert.IsType<PyReal>(Field(Field(statistics, "project"), "score")).Value);
+
+            var retryTask = await Call(16, "get_new_task", [], TutorialArguments(codes[0]));
+            var rejected = await Call(17, "post_classification", [AnswerFor(0, wrong: true), timing]);
+            Assert.Equal(0L, Assert.IsType<PyLong>(Field(rejected, "score")).Value);
+            await AssertTaskUnavailable(18, AnswerFor(0));
+            var afterFailure = await Call(19, "get_new_task", [], TutorialArguments(codes[0]));
+            Assert.NotEqual(JsSemantics.StringValue(Field(retryTask, "taskID")), JsSemantics.StringValue(Field(afterFailure, "taskID")));
+            var recovered = await Call(20, "post_classification", [AnswerFor(0), timing]);
+            Assert.Equal(1L, Assert.IsType<PyLong>(Field(recovered, "score")).Value);
+
+            var projectDiscovery = host.Registry.Lookup("ProjectDiscovery")!;
+            var concurrent = await Task.WhenAll(Enumerable.Range(0, 2).Select(index => projectDiscovery.CallAsync(new ServiceCall
+            {
+                Method = "get_new_task",
+                Args = [],
+                Kwargs = TutorialArguments(codes[1]),
+                Session = new ClientSession { CharacterId = characterId, UserId = 1, SessionId = 800 + index },
+            }).AsTask()));
+            Assert.Equal(JsSemantics.StringValue(Field(concurrent[0], "taskID")), JsSemantics.StringValue(Field(concurrent[1], "taskID")));
+
+            sink.Packets.Clear();
+            await dispatcher.DispatchAsync(MarshalCodec.Decode(MarshalCodec.Encode(Request(21, "skip_tutorial", [], PyNone.Instance))), session);
+            var skipPackets = sink.Packets.Select(packet => MachoPacket.Decode(packet)!).ToArray();
+            Assert.Equal(new[] { MachoMessage.CallRsp, MachoMessage.Notification, MachoMessage.Notification }, skipPackets.Select(packet => packet.Type));
+            Assert.Equal(new[] { "OnPlayerStateUpdated", "OnAnalysisKreditsChange" }, skipPackets.Skip(1).Select(packet => packet.Dest.BroadcastId));
+            var skipResponsePacket = Assert.Single(sink.Packets, packet => MachoPacket.Decode(packet)?.Type == MachoMessage.CallRsp);
+            var skipFields = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(MarshalCodec.Decode(MarshalCodec.Encode(skipResponsePacket))).Args).Items;
+            var skipPayload = Assert.IsType<PyTuple>(skipFields[4]);
+            var playerState = skipPayload.Items[0] is PySubStream { Decoded: { } state } ? state : skipPayload.Items[0];
+            var expectedRewardedState = Py.KeyVal(
+                ("rank", new PyInt(2)), ("experience", new PyInt(100)), ("analysisKredits", new PyInt(15)),
+                ("finishedTutorial", PyBool.True), ("tutorialLevel", new PyInt(8)));
+            static void AssertRewardedWireState(PyValue value)
+            {
+                var state = Assert.IsType<PyObject>(value);
+                Assert.IsType<PyBytes>(state.Name);
+                Assert.Equal("util.KeyVal", JsSemantics.StringValue(state.Name));
+                var stateFields = Assert.IsType<PyDict>(state.Args);
+                Assert.All(stateFields.Entries, entry => Assert.IsType<PyBytes>(entry.Key));
+                PyValue Field(string name) => Assert.Single(stateFields.Entries,
+                    entry => JsSemantics.StringValue(entry.Key) == name).Value;
+                Assert.Equal(new PyInt(2), Field("rank"));
+                Assert.Equal(new PyInt(100), Field("experience"));
+                Assert.Equal(new PyInt(15), Field("analysisKredits"));
+                Assert.Same(PyBool.True, Field("finishedTutorial"));
+                Assert.Equal(new PyInt(8), Field("tutorialLevel"));
+            }
+            AssertRewardedWireState(playerState);
+            Assert.Equal(new PyInt(15), await Call(22, "get_player_analysis_kredits", []));
+            var duplicateSkip = await host.Registry.Lookup("ProjectDiscovery")!.CallAsync(new ServiceCall
+            {
+                Method = "skip_tutorial", Args = [], Session = new ClientSession { CharacterId = characterId, UserId = 1 },
+            });
+            Assert.Equal(expectedRewardedState, duplicateSkip);
+            await using (var rewardTime = source.CreateCommand($"SELECT created_ms FROM {Schema("EVE_PROJECT_DISCOVERY_SCHEMA")}.covid_tutorial_completion_rewards WHERE actor=$1"))
+            {
+                rewardTime.Parameters.AddWithValue(characterId);
+                Assert.Equal(fixedNow, (long)(await rewardTime.ExecuteScalarAsync())!);
+            }
+
+            await host.ShutdownAsync();
+            host = await HostComposition.BuildAsync(Settings());
+            dispatcher = new PacketDispatcher(host.Registry) { StrictRpc = true };
+            var persistedReward = await Call(23, "get_player_state", []);
+            AssertRewardedWireState(persistedReward);
+        }
+        finally
+        {
+            if (host is not null) await host.ShutdownAsync();
+            Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_MODE", oldMode);
+            Environment.SetEnvironmentVariable("EVE_PROJECT_DISCOVERY_BONUS_POLICY", oldBonus);
+        }
     }
 
     [PgFact]
@@ -561,6 +897,12 @@ public sealed class ProjectDiscoveryHostTests : IAsyncLifetime
             Assert.Equal(MachoMessage.CallRsp, packets[0].Type);
             Assert.Contains(packets, p => p.Type == MachoMessage.Notification && p.Dest.BroadcastId == "OnItemChange");
             Assert.Contains(packets, p => p.Type == MachoMessage.Notification && p.Dest.BroadcastId == "OnPlayerStateUpdated");
+            var playerStateNotice = Array.FindIndex(packets, p => p.Type == MachoMessage.Notification && p.Dest.BroadcastId == "OnPlayerStateUpdated");
+            var kreditsNotice = Array.FindIndex(packets, p => p.Type == MachoMessage.Notification && p.Dest.BroadcastId == "OnAnalysisKreditsChange");
+            Assert.True(playerStateNotice > 0);
+            Assert.True(kreditsNotice > playerStateNotice);
+            Assert.Equal("clientID", packets[playerStateNotice].Dest.IdType);
+            Assert.Equal("charid", packets[kreditsNotice].Dest.IdType);
             var failingId = await InsertPilotAsync(source, chars, "Exo Failing Sink");
             await using (var conn = await source.OpenConnectionAsync()) await using (var tx = await conn.BeginTransactionAsync())
             { await wallet.EnsureAsync(conn, tx, failingId); await tx.CommitAsync(); }
@@ -690,6 +1032,14 @@ public sealed class ProjectDiscoveryHostTests : IAsyncLifetime
         var id = await characters.InsertAsync(connection, transaction, pilot);
         await transaction.CommitAsync();
         return id;
+    }
+
+    private static string DirectoryRoot(string start)
+    {
+        var directory = new DirectoryInfo(start);
+        while (directory is not null && !Directory.Exists(Path.Combine(directory.FullName, "dotnet", "tests", "Eve.Host.Tests", "fixtures", "project-discovery")))
+            directory = directory.Parent;
+        return directory?.FullName ?? throw new DirectoryNotFoundException("Project Discovery test fixture directory was not found.");
     }
 
     private static HostSettings Settings() => new(

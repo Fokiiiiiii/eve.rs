@@ -1,5 +1,11 @@
 # Deviations from the reference server
 
+## HyperNet account ban state (2026-11-13)
+
+V24.01's raffle service expects `AmIBanned()` to return a boolean and uses a true result to deny access (`/home/user/eve-logic/raffles/client/raffle_service.py:32-59`). EveJS v0.12.9 returns false unconditionally (`/home/user/evejs-261108.1/server/src/services/raffles/raffleProxyService.js:29-33`), so it does not reflect account-specific moderation state.
+
+eve.rs reads the authenticated account's persisted `identity.accounts.banned` value and denies raffle mutations for banned accounts. With no authenticated account, `AmIBanned` returns false; mutation calls still require an account. The Host PostgreSQL test checks unbanned, banned, and unknown-account answers and verifies a banned creator cannot escrow an item. The raffle implementation record contains the full client/runtime trace and remaining verification gaps (`docs/project/implement-raffleproxy.md`). The V24 graphical client was not run.
+
 ## MachoNet PING_RSP timing entries follow V24.01 (2026-11-08)
 
 V24.01's `PingReq` handler appends one `(GetWallclockTime(), GetWallclockTimeNow(), mode + '::turnaround')` entry to the received `times` list, then responds with a copy (`/home/user/eve-logic/carbon/common/script/net/machoNet.py:4310-4313`). The client declares that field on both packet classes (`machoNetPacket.py:327-337`) and the keepalive path reads the first returned sample (`machoNet.py:3566-3571`). EveJS v0.12.9 instead synthesizes six timing entries (`/home/user/evejs-261028.1/server/src/network/packetDispatcher.js:881-927`).

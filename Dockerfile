@@ -20,7 +20,7 @@ WORKDIR /src
 COPY dotnet dotnet
 RUN dotnet publish dotnet/src/Eve.Host -c Release -o /out/host --nologo
 
-FROM mcr.microsoft.com/dotnet/runtime:10.0@sha256:4f1f30cf0bb4ab0c8b2daa84613051683456f8df4a9bf7c812e20d74962992ac AS runtime
+FROM mcr.microsoft.com/dotnet/runtime:11.0@sha256:3fe5f5495141c97986a49d3a4e76061f6225c3f93f94e8a7e522781376193863 AS runtime
 # curl does eve-sde's downloading
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \

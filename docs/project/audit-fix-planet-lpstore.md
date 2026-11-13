@@ -1,6 +1,6 @@
 # Planet command-center stacks and LP-store item requirements
 
-Audit date: 2026-11-13  
+Audit date: 2026-11-13
 Verdicts: **H-09 confirmed; H-04 confirmed.**
 
 ## H-09: command-center stacks

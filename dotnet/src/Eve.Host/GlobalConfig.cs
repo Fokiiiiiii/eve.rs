@@ -6,6 +6,23 @@ namespace Eve.Host;
 /// <summary>The settings that reach the client as its global configuration (<c>machoNet.GetGlobalConfig</c>).</summary>
 public sealed record ClusterOptions
 {
+    /// <summary>The cluster label returned by <c>machoNet.GetConnectedClusterName</c>.</summary>
+    public string ClusterName { get; init; } = DefaultClusterName();
+
+    /// <summary>V24 preferences use COMPUTERNAME@USERDOMAIN when no explicit cluster name is configured.</summary>
+    public static string DefaultClusterName()
+    {
+        static string EnvironmentOr(string name, string fallback) =>
+            Environment.GetEnvironmentVariable(name) is { Length: > 0 } value ? value : fallback;
+
+        var configured = Environment.GetEnvironmentVariable("EVE_CLUSTER_NAME");
+        return (string.IsNullOrWhiteSpace(configured)
+                ? $"{EnvironmentOr("COMPUTERNAME", "LOCALHOST")}@{EnvironmentOr("USERDOMAIN", "NODOMAIN")}"
+                : configured.Trim())
+            .Trim()
+            .ToUpperInvariant();
+    }
+
     /// <summary>Where the client fetches portraits and logos from.</summary>
     public string ImageServerUrl { get; init; } = "http://127.0.0.1:26001/";
 

@@ -466,7 +466,7 @@ public sealed partial class InvBrokerService(
             return await RowsAsync(contents.Where(item => item.OwnerId == character), cancellationToken);
         if (context.Kind == Kind.Container && space is not null && space.IsInSpace(session))
         {
-            if (!await space.MayTakeFromAsync(session, container, cancellationToken))
+            if (!await space.MayViewFromAsync(session, container, cancellationToken))
                 return [];
             return await RowsAsync(contents, cancellationToken);
         }

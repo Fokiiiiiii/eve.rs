@@ -130,6 +130,12 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
 
         await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
         var type = _statics.Type(item.TypeId);
+        if (type is { CategoryId: StarbaseCategoryId, GroupId: SiloGroupId })
+        {
+            if (!await ValidatePosProductionInventoryAsync(session, item, "viewput", cancellationToken))
+                throw MachoErrors.ThrowUserError("STARBASE_PRODUCTION_ACCESS_DENIED");
+            return item;
+        }
         if (type is null ||
             (type.GroupId != CanGroup && type.GroupId != WreckGroup && type.GroupId != AnalysisBeaconGroup && type.GroupId != Customs.OfficeGroupId &&
              !Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(item.TypeId, item.CustomInfo) &&
@@ -186,9 +192,20 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     }
 
     public Task<bool> MayTakeFromAsync(ClientSession session, Item container, CancellationToken cancellationToken) =>
-        session.CharacterId is { } characterId
-            ? MayTakeFromAsync(characterId, container, cancellationToken)
-            : Task.FromResult(false);
+        IsPosProductionInventory(container)
+            ? ValidatePosProductionInventoryAsync(session, container, "viewputtake", cancellationToken)
+            : session.CharacterId is { } characterId
+                ? MayTakeFromAsync(characterId, container, cancellationToken)
+                : Task.FromResult(false);
+
+    public Task<bool> MayViewFromAsync(ClientSession session, Item container, CancellationToken cancellationToken) =>
+        IsPosProductionInventory(container)
+            ? ValidatePosProductionInventoryAsync(session, container, "viewput", cancellationToken)
+            : MayTakeFromAsync(session, container, cancellationToken);
+
+    public async Task<bool> MayDepositIntoAsync(ClientSession session, Item container, Item item, CancellationToken cancellationToken) =>
+        !IsPosProductionInventory(container)
+            || await ValidatePosSiloDepositAsync(session, container, item, cancellationToken);
 
     private bool HasAnalysisBeaconLootAccess(Item item, long? characterId)
     {
@@ -306,8 +323,20 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         if (toShip == (sourceId == shipId)) return null;
         var containerId = toShip ? sourceId : destinationId;
         if (await OpenAsync(session, containerId, cancellationToken) is not { } container) return null;
-        if (toShip && !await MayTakeFromAsync(characterId, container, cancellationToken, itemIds: [itemId]))
-            throw MachoErrors.ThrowUserError("SafetyActivated");
+        if (toShip)
+        {
+            if (IsPosProductionInventory(container))
+            {
+                if (!await MayTakeFromAsync(session, container, cancellationToken))
+                    throw MachoErrors.ThrowUserError("STARBASE_PRODUCTION_ACCESS_DENIED");
+            }
+            else if (!await MayTakeFromAsync(characterId, container, cancellationToken, itemIds: [itemId]))
+                throw MachoErrors.ThrowUserError("SafetyActivated");
+        }
+        else if (await _items.GetAsync(itemId, cancellationToken) is not { } item)
+            return null;
+        else if (!await MayDepositIntoAsync(session, container, item, cancellationToken))
+            throw MachoErrors.ThrowUserError("STARBASE_PRODUCTION_PROVISION_INVALID");
         var wasEmpty = (await _items.InContainerAsync(containerId, cancellationToken)).Count == 0;
         var targetFlag = toShip ? destinationFlag ?? CargoFlag : CharacterShips.ContainerFlag;
         switch (await _ships.MoveInSpaceAsync(characterId, itemId, sourceId, destinationId, quantity, targetFlag, cancellationToken))
@@ -358,7 +387,12 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
             || destinationId != shipId || sourceId == shipId)
             return null;
         if (await OpenAsync(session, sourceId, cancellationToken) is not { } container) return null;
-        if (!await MayTakeFromAsync(characterId, container, cancellationToken, itemIds: itemIds))
+        if (IsPosProductionInventory(container))
+        {
+            if (!await MayTakeFromAsync(session, container, cancellationToken))
+                throw MachoErrors.ThrowUserError("STARBASE_PRODUCTION_ACCESS_DENIED");
+        }
+        else if (!await MayTakeFromAsync(characterId, container, cancellationToken, itemIds: itemIds))
             throw MachoErrors.ThrowUserError("SafetyActivated");
         var flag = destinationFlag ?? CargoFlag;
         switch (await _ships.MoveAllInSpaceAsync(characterId, itemIds, sourceId, flag, cancellationToken, quantity))

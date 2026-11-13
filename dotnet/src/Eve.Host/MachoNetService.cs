@@ -66,7 +66,8 @@ public static class ServiceLocations
 public sealed partial class MachoNetService(
     IMachoNetInfo info,
     Func<long> nowUnixMs,
-    MachoNetGlobalConfigUpdateCallback? setGlobalConfigValue = null)
+    MachoNetGlobalConfigUpdateCallback? setGlobalConfigValue = null,
+    string? clusterName = null)
 {
     private const string ServerStatusLabel = "/Carbon/MachoNet/ServerStatus/OK";
     private const long RoleAdmin = 1L << 56;
@@ -85,6 +86,10 @@ public sealed partial class MachoNetService(
 
     [Method("GetServiceInfo")]
     public PyValue GetServiceInfo(ServiceCall call) => ServiceInfo();
+
+    /// <summary>The server's configured cluster label, as read by the V24 client's monolith telemetry.</summary>
+    [Method("GetConnectedClusterName")]
+    public PyValue GetConnectedClusterName(ServiceCall call) => new PyStr(clusterName ?? ClusterOptions.DefaultClusterName());
 
     /// <summary>Returns the live map counts for EVE, or the caller's default for other clusters.</summary>
     [Method("GetClusterGameStatisticsForClient")]

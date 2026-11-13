@@ -149,7 +149,9 @@ public delegate ValueTask ProcessSeasonClientEventCallback(
     CancellationToken cancellationToken);
 
 [Service("seasonManager")]
-public sealed partial class SeasonManagerService(ProcessSeasonClientEventCallback? processEvent = null)
+public sealed partial class SeasonManagerService(
+    ProcessSeasonClientEventCallback? processEvent = null,
+    Action<ClientSession, IReadOnlyList<PyValue>>? auditReloadFsdData = null)
 {
 
     [Method("get_season_data_for_character")]
@@ -217,5 +219,21 @@ public sealed partial class SeasonManagerService(ProcessSeasonClientEventCallbac
             call.Session,
             call.Cancellation);
         return PyNone.Instance;
+    }
+
+    /// <summary>
+    /// The V24 Insider button records the request and reports that this server
+    /// did not reload its static data, matching EveJS v0.12.9.
+    /// </summary>
+    [Method("reload_fsd_data")]
+    public PyValue ReloadFsdData(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        if (auditReloadFsdData is { } audit)
+            audit(call.Session, call.Args);
+        else
+            Console.Error.WriteLine(
+                $"eve-host: seasonManager.reload_fsd_data requested by character {call.Session.CharacterId?.ToString() ?? "?"}; static data reload is unavailable.");
+        return PyBool.False;
     }
 }

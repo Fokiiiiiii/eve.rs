@@ -13,6 +13,19 @@ public delegate ValueTask<PyValue?> AbyssalSpawnReportCallback(
 [Service("abyssal_content_manager")]
 public sealed partial class AbyssalContentManagerService(AbyssalSpawnReportCallback? report = null)
 {
+    // EveJS v0.12.9 explicitly accepts only generate_abyss_npc_spawn_report
+    // on this client service. Its callMethod returns null for these three
+    // devtool methods, so preserve that observed wire result without claiming
+    // that eve.rs can author or inspect live Abyssal content.
+    [Method("GenerateAbyssEncounterContent")]
+    public PyValue GenerateAbyssEncounterContent(ServiceCall call) => RejectedClientMethod(call);
+
+    [Method("GenerateContentFromExistingPlan")]
+    public PyValue GenerateContentFromExistingPlan(ServiceCall call) => RejectedClientMethod(call);
+
+    [Method("GetContentDetailsForShipLocation")]
+    public PyValue GetContentDetailsForShipLocation(ServiceCall call) => RejectedClientMethod(call);
+
     [Method("generate_abyss_npc_spawn_report")]
     public async ValueTask<PyValue> GenerateAbyssNpcSpawnReport(ServiceCall call)
     {
@@ -30,6 +43,12 @@ public sealed partial class AbyssalContentManagerService(AbyssalSpawnReportCallb
             throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_UNAVAILABLE");
         return await callback(new(difficultyTier, spawnTableId, repetitions, call.Session), call.Cancellation).ConfigureAwait(false)
             ?? throw MachoErrors.ThrowUserError("ABYSSAL_SPAWN_REPORT_UNAVAILABLE");
+    }
+
+    private static PyValue RejectedClientMethod(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        return PyNone.Instance;
     }
 
     private static int Integer(PyValue value) => value switch

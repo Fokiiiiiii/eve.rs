@@ -270,9 +270,11 @@ public sealed partial class SpaceContainers
 
     private async Task<Exception> RunMoonCycleAsync(ServiceCall call)
     {
-        _ = await ReadTowerConfigurationAsync(call, ReadPositiveId(call.Arg(0)), true).ConfigureAwait(false);
+        var (_, configuration) = await ReadTowerConfigurationAsync(call, ReadPositiveId(call.Arg(0)), true).ConfigureAwait(false);
         if (((call.Session.GetInt("role") ?? 0) & (1L << 54)) == 0)
             return MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Only a Game Master may force a starbase production cycle.")));
+        if (configuration.Links.Count == 0)
+            return ProductionGraphRequired();
         return LegacyProductionUnavailable();
     }
 
@@ -440,8 +442,10 @@ public sealed partial class SpaceContainers
         ("notify", new PyStr("The control tower could not be found or is not available in this system.")));
     private static MachoWrappedException LegacyProductionUnavailable() => MachoErrors.ThrowUserError("CustomNotify",
         ("notify", new PyStr("Legacy POS production is not available: historical recipes, moon abundance and the removed production interface have not been restored. No cycle was run.")));
+    private static MachoWrappedException ProductionGraphRequired() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("No production links are configured for this control tower. No cycle was run.")));
     private static MachoWrappedException ProcessInfoUnavailable() => MachoErrors.ThrowUserError("CustomNotify",
-        ("notify", new PyStr("The historical production-info RPC payload is unavailable in this client build.")));
+        ("notify", new PyStr("The historical production-info RPC payload is unavailable in this client build. Use /pos production status <towerID> for server diagnostics.")));
     private static MachoWrappedException NotAvailable() => MachoErrors.ThrowUserError("CustomNotify",
         ("notify", new PyStr("POS management is not available on this server.")));
 }

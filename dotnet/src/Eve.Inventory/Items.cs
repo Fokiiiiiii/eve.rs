@@ -17,6 +17,9 @@ public static class ItemFlags
     /// <summary>The cargo hold of a ship (what a character carries loose in its ship).</summary>
     public const int Cargo = 5;
 
+    /// <summary>The construction-material bay on a planetary orbital (eve-logic inventorycommon/const.py).</summary>
+    public const int SpecializedMaterialBay = 151;
+
     public const int CorpDeliveries = 62;
     public const int Deliveries = 184;
     public const int CapsuleerDeliveries = 187;
@@ -755,6 +758,21 @@ public sealed class PgItemStore
         command.Parameters.Add(new NpgsqlParameter { Value = id });
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
+    }
+
+    /// <summary>Changes an item's static type under its inventory row lock.</summary>
+    public async Task<Item?> SetTypeAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long id, int typeId, CancellationToken cancellationToken = default)
+    {
+        if (typeId <= 0) throw new ArgumentOutOfRangeException(nameof(typeId));
+        var item = await LockAndGetAsync(connection, transaction, id, cancellationToken);
+        if (item is null) return null;
+        await using var command = new NpgsqlCommand($"UPDATE {_schema}.items SET type_id = $2 WHERE id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = id }, new() { Value = typeId } },
+        };
+        await command.ExecuteNonQueryAsync(cancellationToken);
+        return item with { TypeId = typeId };
     }
 
     /// <summary>Reads a bounded set of item rows in one query, preserving their decoded custom info.</summary>

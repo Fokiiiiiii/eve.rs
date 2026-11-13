@@ -198,7 +198,8 @@ public sealed partial class SpaceContainers
             throw Refuse("That control tower is not in space.");
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
         await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: true, cancellationToken,
-            requireInteractionDistance: state != TowerAnchoring);
+            requireInteractionDistance: state != TowerAnchoring, requireConfigurationRole: false,
+            operation: "anchor", connection: connection, transaction: transaction);
         if (state == TowerAnchoring)
         {
             await transaction.CommitAsync(cancellationToken);
@@ -278,7 +279,8 @@ public sealed partial class SpaceContainers
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken) is not { Kind: ControlTowerKind } record)
             throw Refuse("That control tower is not in space.");
-        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: false, cancellationToken);
+        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: false, cancellationToken,
+            requireConfigurationRole: false, operation: "online", connection: connection, transaction: transaction);
         if (record.ActivateAtMs == NeverAnchored || record.ActivateAtMs > _nowUnixMs())
             throw Refuse("The control tower must finish anchoring before it can be put online.");
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
@@ -326,7 +328,8 @@ public sealed partial class SpaceContainers
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken) is not { Kind: ControlTowerKind } record)
             throw Refuse("That control tower is not in space.");
-        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: false, cancellationToken);
+        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: false, cancellationToken,
+            requireConfigurationRole: false, operation: "offline", connection: connection, transaction: transaction);
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
         if (state == TowerOffline)
         {
@@ -344,7 +347,8 @@ public sealed partial class SpaceContainers
     }
 
     private async Task RequireControlTowerAccessAsync(ClientSession session, DeployedRecord record, bool requireAnchoringSkill, CancellationToken cancellationToken,
-        bool requireInteractionDistance = true)
+        bool requireInteractionDistance = true, bool requireConfigurationRole = true, string? operation = null,
+        NpgsqlConnection? connection = null, NpgsqlTransaction? transaction = null)
     {
         var characterId = session.CharacterId ?? 0;
         var corporationId = session.GetInt("corpid") ?? session.GetInt("corporationid") ?? 0;
@@ -360,10 +364,26 @@ public sealed partial class SpaceContainers
         var roles = session.GetInt("corprole") ?? 0;
         if (characterId <= 0 || corporationId <= 0 || systemId != record.SolarSystemId || shipId <= 0 || !_space.IsInSpace(session))
             throw Refuse("A control tower can only be managed by a pilot in its system and in space.");
-        if (record.CorporationId != corporationId || record.OwnerId != corporationId)
+        var sameCorporation = record.CorporationId == corporationId && record.OwnerId == corporationId;
+        if (!sameCorporation && operation is null)
             throw Refuse("You must belong to the corporation that owns the control tower.");
-        if (!isCeo && (roles & (DirectorRole | StarbaseConfigRole)) == 0)
+        var hasConfigurationRole = sameCorporation && (isCeo || (roles & (DirectorRole | StarbaseConfigRole)) != 0);
+        if (requireConfigurationRole && !hasConfigurationRole)
             throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
+        if (!requireConfigurationRole && operation is not null && !hasConfigurationRole)
+        {
+            if (connection is null || _deployed is null)
+                throw new InvalidOperationException("A transaction is required to check persisted control tower deployment permissions.");
+            var rawConfiguration = await _deployed.TowerConfigurationAsync(connection, transaction, record.DeployableId, cancellationToken);
+            var configuration = rawConfiguration is null ? new PosMgrTowerConfiguration() :
+                JsonSerializer.Deserialize<PosMgrTowerConfiguration>(rawConfiguration, PosMgrJson) ?? new PosMgrTowerConfiguration();
+            var permission = Normalize(configuration).DeployFlags.GetValueOrDefault(operation);
+            var allianceId = session.GetInt("allianceid") ?? session.GetInt("allianceID") ?? 0;
+            var sameAlliance = record.AllianceId > 0 && allianceId == record.AllianceId;
+            var permitted = permission == 1 && sameCorporation || permission == 2 && (sameCorporation || sameAlliance);
+            if (!permitted)
+                throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
+        }
 
         if (await _space.PositionOfAsync(session, record.DeployableId, cancellationToken) is null ||
             await _space.PositionOfAsync(session, shipId, cancellationToken) is not { } shipPosition || shipPosition.SolarSystemId != systemId)
@@ -566,7 +586,8 @@ public sealed partial class SpaceContainers
             throw Refuse("The control tower is not anchored yet.");
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
         await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: false, cancellationToken,
-            requireInteractionDistance: state != TowerUnanchoring);
+            requireInteractionDistance: state != TowerUnanchoring, requireConfigurationRole: false,
+            operation: "unanchor", connection: connection, transaction: transaction);
         if (state == TowerUnanchoring)
         {
             await transaction.CommitAsync(cancellationToken);

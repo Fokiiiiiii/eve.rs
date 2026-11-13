@@ -67,6 +67,7 @@ public static class CoreServices
             new BrowserLockdownService(),
             new PosMgrService(readControlTowerRows, unanchorControlTower, anchorControlTower, posMgrOperation),
             new KiringMgrService(),
+            new InventoryAssetHoldingMgrService(),
             new PetitionerService(),
             new AbyssalContentManagerService(gameRpcCallbacks.AbyssalSpawnReportAsync),
             new DungeonExplorationMgrService(readEscalatingPathDetails, nowUnixMs),

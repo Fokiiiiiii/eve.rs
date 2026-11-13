@@ -42,7 +42,8 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
     Eve.Host.Xmpp.XmppListener? xmppListener = null,
     System.Security.Cryptography.X509Certificates.X509Certificate2? xmppCertificate = null,
     Eve.Host.ProjectDiscovery.ScientificReplayComposition? scientificReplay = null, HttpClient? discoveryHttp = null,
-    OnlineStatusNotifications? onlineStatusNotifications = null, ConnectedSessions? connectedSessions = null)
+    OnlineStatusNotifications? onlineStatusNotifications = null, ConnectedSessions? connectedSessions = null,
+    WalletAnnouncer? raffleWalletAnnouncer = null)
 {
     internal HostServer Server { get; } = server;
 
@@ -92,6 +93,7 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
         }
         if (scientificReplay is not null) await scientificReplay.DisposeAsync();
         discoveryHttp?.Dispose();
+        raffleWalletAnnouncer?.Dispose();
         if (OnlineStatusNotifications is not null) await OnlineStatusNotifications.DisposeAsync();
         if (legacy is not null) await legacy.DisposeAsync();
         if (foundations is not null)

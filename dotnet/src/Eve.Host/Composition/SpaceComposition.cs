@@ -502,6 +502,7 @@ internal sealed partial class CharacterServicesComposition
             await foundations.Scheduler.EnsureRecurringAsync("space.ess.tick", "tick", TimeSpan.FromSeconds(10));
             deployedStore = new PgDeployedStore(source, spaceSchema);
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: deployedStore, scheduler: foundations.Scheduler, source: source);
+            spaceContainers.CharacterSessions = characterSessions;
             new Eve.Services.Space.ControlTowerFuelNotifications(characterSessions, dogma).Subscribe(foundations.Events);
 
             // Tournament beacons are durable deployed items; restore them when their system scene opens.
@@ -563,6 +564,7 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.ControlTowerUnanchor = spaceContainers.UnanchorControlTowerAsync;
             spaceSessions.ControlTowerAnchor = spaceContainers.AnchorControlTowerAsync;
             spaceSessions.ControlTowerModuleOperation = spaceContainers.ControlTowerModuleOperationAsync;
+            spaceSessions.PosMgrControlTowerOperation = spaceContainers.PosMgrControlTowerOperationAsync;
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
             {
                 var id = context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId;

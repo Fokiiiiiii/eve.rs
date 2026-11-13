@@ -31,6 +31,9 @@ public sealed record ColonyDocument(long PlanetId, long OwnerId, int PlanetTypeI
         [.. colony.Pins.Values.OrderBy(p => p.Id)], [.. colony.Links.Values.OrderBy(l => l.End1).ThenBy(l => l.End2)], [.. colony.Routes.Values.OrderBy(r => r.Id)]);
 }
 
+/// <summary>One orbital's durable anchor, online, or unanchor transition.</summary>
+public sealed record OrbitalStateRecord(long ItemId, int SolarSystemId, int State, long? StartedAtMs, long? EndsAtMs);
+
 /// <summary>The PostgreSQL side of PI: the colony documents and the launches. Writes run in the caller's transaction.</summary>
 public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetStore.DefaultSchema)
 {
@@ -55,6 +58,52 @@ public sealed class PlanetStore(NpgsqlDataSource source, string schema = PlanetS
         command.Parameters.Add(new NpgsqlParameter { Value = ownerCorporationIds });
         command.Parameters.Add(new NpgsqlParameter { Value = Customs.OfficeTypeId });
         return (bool)(await command.ExecuteScalarAsync(cancellationToken))!;
+    }
+
+    /// <summary>Reads an orbital's transition under the same lock as its inventory item.</summary>
+    public async Task<OrbitalStateRecord?> LockOrbitalStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long itemId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT solar_system_id, state, state_started_at_ms, state_ends_at_ms FROM {schema}.orbital_states WHERE item_id = $1 FOR UPDATE",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = itemId });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        return new OrbitalStateRecord(itemId, reader.GetInt32(0), reader.GetInt16(1),
+            reader.IsDBNull(2) ? null : reader.GetInt64(2), reader.IsDBNull(3) ? null : reader.GetInt64(3));
+    }
+
+    /// <summary>Writes an orbital's state in the caller's inventory transaction.</summary>
+    public async Task SaveOrbitalStateAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        OrbitalStateRecord state, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"""
+            INSERT INTO {schema}.orbital_states (item_id, solar_system_id, state, state_started_at_ms, state_ends_at_ms)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (item_id) DO UPDATE SET solar_system_id = EXCLUDED.solar_system_id,
+                state = EXCLUDED.state, state_started_at_ms = EXCLUDED.state_started_at_ms, state_ends_at_ms = EXCLUDED.state_ends_at_ms
+            """, connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = state.ItemId });
+        command.Parameters.Add(new NpgsqlParameter { Value = state.SolarSystemId });
+        command.Parameters.Add(new NpgsqlParameter { Value = (short)state.State });
+        command.Parameters.Add(new NpgsqlParameter { Value = (object?)state.StartedAtMs ?? DBNull.Value });
+        command.Parameters.Add(new NpgsqlParameter { Value = (object?)state.EndsAtMs ?? DBNull.Value });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    /// <summary>Reads the persisted orbital state outside an operation transaction.</summary>
+    public async Task<OrbitalStateRecord?> OrbitalStateAsync(long itemId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"SELECT solar_system_id, state, state_started_at_ms, state_ends_at_ms FROM {schema}.orbital_states WHERE item_id = $1",
+            connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = itemId });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        if (!await reader.ReadAsync(cancellationToken)) return null;
+        return new OrbitalStateRecord(itemId, reader.GetInt32(0), reader.GetInt16(1),
+            reader.IsDBNull(2) ? null : reader.GetInt64(2), reader.IsDBNull(3) ? null : reader.GetInt64(3));
     }
 
     public async Task<IReadOnlySet<long>> CustomsOfficeOwnersAsync(NpgsqlConnection connection,

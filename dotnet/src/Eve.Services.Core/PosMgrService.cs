@@ -1,4 +1,5 @@
 using Eve.Marshal;
+using Eve.Macho;
 using Eve.Services;
 
 namespace Eve.Services.Core;
@@ -15,12 +16,42 @@ public delegate ValueTask UnanchorControlTowerCallback(ClientSession session, lo
 /// <summary>Anchors a control tower at the V24 client supplied position (the legacy server resolves its moon placement).</summary>
 public delegate ValueTask AnchorControlTowerCallback(ClientSession session, long itemId, IReadOnlyList<double> position, CancellationToken cancellationToken);
 
+/// <summary>Executes a client posMgr operation in the owning domain and returns its client wire value.</summary>
+public delegate ValueTask<PyValue> PosMgrOperationCallback(ServiceCall call);
+
 [Service("posMgr")]
 public sealed partial class PosMgrService(
     ReadControlTowerRowsCallback? readControlTowers = null,
     UnanchorControlTowerCallback? unanchorControlTower = null,
-    AnchorControlTowerCallback? anchorControlTower = null)
+    AnchorControlTowerCallback? anchorControlTower = null,
+    PosMgrOperationCallback? operation = null)
 {
+    [Method("MachoResolveObject")]
+    public PyValue MachoResolveObject(ServiceCall call) => new PyInt(MachoMessage.ProxyNodeId);
+
+    [Method("MachoBindObject")]
+    public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
+    {
+        var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
+        var bound = new PySubStruct(new PySubStream(Py.Tuple(new PyStr(oid),
+            new PyLong(Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())))));
+        PyValue result = PyNone.Instance;
+        if (call.Arg(1) is PyTuple { Items.Count: > 0 } nested && JsSemantics.StringValue(nested.Items[0]) is { } method)
+        {
+            result = await ((IService)this).CallAsync(new ServiceCall
+            {
+                Method = method,
+                Args = [.. ArgsOf(nested.Items.Count > 1 ? nested.Items[1] : PyNone.Instance)],
+                Kwargs = nested.Items.Count > 2 ? nested.Items[2] : PyNone.Instance,
+                Session = call.Session,
+                CallId = call.CallId,
+                BoundObjectId = oid,
+                Cancellation = call.Cancellation,
+            }).ConfigureAwait(false);
+        }
+        return Py.Tuple(bound, result);
+    }
+
     [Method("AnchorStructure")]
     public async ValueTask<PyValue> AnchorStructure(ServiceCall call)
     {
@@ -65,6 +96,70 @@ public sealed partial class PosMgrService(
                 WireId(row.SolarSystemId),
             ]))]);
     }
+
+    [Method("AnchorOrbital")]
+    public ValueTask<PyValue> AnchorOrbital(ServiceCall call) => Invoke(call);
+
+    [Method("ChangeStructureProvisionType")]
+    public ValueTask<PyValue> ChangeStructureProvisionType(ServiceCall call) => Invoke(call);
+
+    [Method("GetConsumptionFactor")]
+    public ValueTask<PyValue> GetConsumptionFactor(ServiceCall call) => Invoke(call);
+
+    [Method("GetMoonForTower")]
+    public ValueTask<PyValue> GetMoonForTower(ServiceCall call) => Invoke(call);
+
+    [Method("GetMoonProcessInfoForTower")]
+    public ValueTask<PyValue> GetMoonProcessInfoForTower(ServiceCall call) => Invoke(call);
+
+    [Method("GetSiloCapacityByItemID")]
+    public ValueTask<PyValue> GetSiloCapacityByItemID(ServiceCall call) => Invoke(call);
+
+    [Method("GetStarbasePermissions")]
+    public ValueTask<PyValue> GetStarbasePermissions(ServiceCall call) => Invoke(call);
+
+    [Method("GetTowerNotificationSettings")]
+    public ValueTask<PyValue> GetTowerNotificationSettings(ServiceCall call) => Invoke(call);
+
+    [Method("GetTowerSentrySettings")]
+    public ValueTask<PyValue> GetTowerSentrySettings(ServiceCall call) => Invoke(call);
+
+    [Method("LinkResourceForTower")]
+    public ValueTask<PyValue> LinkResourceForTower(ServiceCall call) => Invoke(call);
+
+    [Method("OnlineOrbital")]
+    public ValueTask<PyValue> OnlineOrbital(ServiceCall call) => Invoke(call);
+
+    [Method("RunMoonProcessCycleforTower")]
+    public ValueTask<PyValue> RunMoonProcessCycleforTower(ServiceCall call) => Invoke(call);
+
+    [Method("SetStarbasePermissions")]
+    public ValueTask<PyValue> SetStarbasePermissions(ServiceCall call) => Invoke(call);
+
+    [Method("SetTowerNotifications")]
+    public ValueTask<PyValue> SetTowerNotifications(ServiceCall call) => Invoke(call);
+
+    [Method("SetTowerPassword")]
+    public ValueTask<PyValue> SetTowerPassword(ServiceCall call) => Invoke(call);
+
+    [Method("SetTowerSentrySettings")]
+    public ValueTask<PyValue> SetTowerSentrySettings(ServiceCall call) => Invoke(call);
+
+    [Method("UnanchorOrbital")]
+    public ValueTask<PyValue> UnanchorOrbital(ServiceCall call) => Invoke(call);
+
+    private ValueTask<PyValue> Invoke(ServiceCall call)
+    {
+        call.Cancellation.ThrowIfCancellationRequested();
+        return operation is null ? ValueTask.FromException<PyValue>(NotAvailable()) : operation(call);
+    }
+
+    private static IEnumerable<PyValue> ArgsOf(PyValue value) => value switch
+    {
+        PyTuple tuple => tuple.Items,
+        PyList list => list.Items,
+        _ => [],
+    };
 
     private static PyValue WireId(long value) => value <= int.MaxValue
         ? new PyInt((int)value)

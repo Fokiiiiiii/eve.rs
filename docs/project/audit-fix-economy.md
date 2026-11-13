@@ -35,10 +35,20 @@ The existing eve.rs docking hook still initiates turn-in on docking. EveJS's ins
 - Before this change, main's latest required CI gate was green in [run 1767](https://github.com/Fokiiiiiii/eve.rs/actions/runs/43423204713). Its advisory latest-stable Rust clippy job failed, while the required gate and all other listed jobs succeeded.
 - The V24.01 client source and EveJS 261108.1 implementation were inspected. EveJS was not executed; its checked-out server package does not define a test script for these flows.
 - A native V24.01 graphical-client run was not performed. Headless Host tests do not establish graphical-client acceptance.
-- Post-push CI is monitored separately; this record makes no claim about that run.
+- Post-push [CI run 1770](https://github.com/Fokiiiiiii/eve.rs/actions/runs/43460790743) for commit `1ec7e0ab5` completed successfully, and its required gate passed. The Rust latest-stable clippy advisory job reported the existing `clippy::needless_bool` lint at `crates/eve-behaviors/src/actions/group.rs:419`; that job is configured with `continue-on-error` and did not fail the required gate.
 
 ## CI follow-up (2026-11-13)
 
 Run 1769 exposed a fixture error in `HostServerTests.Courier_mission_hasCargo_counts_only_active_ship_cargo_or_dropoff_hangar`. Its successful ship-cargo case put the type-587 ship row at the delivery station with item ID `10`, while the active ship ID was `500001`. `HasCourierCargo` correctly counts cargo aboard the active ship only when that ship row is in the destination hangar. The fixture now uses the active ship ID; the assertion and production behavior are unchanged.
 
-After that correction, the focused regression passed **1/1, 0 skipped**. The full `HostServerTests` class passed **487/487, 0 skipped**. On `eve_p5`, the four registered-Host economy regressions passed **4/4, 0 skipped**, and the related Core slice passed **43/43, 0 skipped**. This verifies the local fix only; the rerun of main CI is still pending.
+After that correction, the focused regression passed **1/1, 0 skipped**. The full `HostServerTests` class passed **487/487, 0 skipped**. On `eve_p5`, the four registered-Host economy regressions passed **4/4, 0 skipped**, and the related Core slice passed **43/43, 0 skipped**.
+
+## Independent verification (2026-11-13)
+
+An independent review confirmed all three findings and verified that the existing fixes are present in main. The relevant production and regression-test files matched between the tested worktree and `origin/main` at `079bafd1a`; fix commits `be9142b5a`, `0164fdd20`, and `46b359144` are ancestors of main. No additional gameplay code change was needed.
+
+- Release builds of `Eve.Services.Crimewatch`, `Eve.Services.Core`, `Eve.Host`, `Eve.Host.Tests`, and `Eve.Services.Core.Tests` succeeded with **0 warnings and 0 errors**.
+- On `eve_p5`, the selected Host classes (`PlayerBountyHostTests`, `IndustryFacilityHostFlowTests`, `ContractCorporateWalletDivisionHostTests`, `CharacterHostTests`, `MissionCourierDeliveryHostTests`, `AgentMgrReadWireTests`, `ContractProxyPersistenceWireTests`, and `ContractWriteModelTests`) reported **100 passed, 0 failed, 3 skipped**. The three skips were `[RealAbyssalSimPgFact]` cases that require the headless simulation binary and matching SDE; they are unrelated to these findings and are not counted as passes.
+- The Core classes `IndustryJobsServiceTests`, `Arc29StepsTests`, and `MissionDungeonRuntimeTests` reported **43 passed, 0 failed, 0 skipped**; `ContractProxyServiceTests` reported **23 passed, 0 failed, 0 skipped**.
+- The current main CI run, [1772](https://github.com/Fokiiiiiii/eve.rs/actions/runs/43468124287) for `079bafd1a`, completed successfully.
+- V24.01 client paths and EveJS source paths were checked again. EveJS was not executed because its checked-out `package.json` has no scripts. The native graphical client was not run, so graphical acceptance remains unverified.

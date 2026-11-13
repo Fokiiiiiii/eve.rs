@@ -5,6 +5,7 @@ using Eve.Dogma;
 using Eve.Planets;
 using Eve.Scheduler;
 using Eve.Services;
+using Eve.Services.Ships;
 using Eve.Ships;
 using Eve.Skills;
 using Eve.Space;
@@ -235,7 +236,7 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
             var commands = new List<ColonyCommand>();
             foreach (var change in changes) commands.Add(await DecodeAsync(change, colony, context, call.Cancellation));
             return commands;
-        }, call.Cancellation);
+        }, call.Cancellation, session: call.Session);
         return Py.KeyVal([.. snapshot.Snapshot]);
     }
 
@@ -408,14 +409,16 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         return Py.Tuple(new PyLong(times.Item1), new PyLong(times.Item2));
     }
 
-    private sealed class ChangeContext(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner, long planetId)
+    private sealed class ChangeContext(NpgsqlConnection connection, NpgsqlTransaction transaction, long owner, long planetId, ClientSession? session)
     {
         public NpgsqlConnection Connection { get; } = connection;
         public NpgsqlTransaction Transaction { get; } = transaction;
         public long Owner { get; } = owner;
         public long PlanetId { get; } = planetId;
+        public ClientSession? Session { get; } = session;
         public Dictionary<(long Kind, long Number), long> PinIds { get; } = [];
         public Dictionary<(long Kind, long Number), long> RouteIds { get; } = [];
+        public List<ItemChanged> InventoryChanges { get; } = [];
     }
 
     private sealed record ChangeResult(long Owner, long PlanetId, IReadOnlyList<(string, PyValue)> Snapshot);
@@ -429,11 +432,11 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     /// One change of a colony: locks it, runs the colony to now, lets <paramref name="build"/> make the commands (and the direct
     /// </summary>
     private async Task<ChangeResult> ChangeAsync(long owner, long planetId, Func<Colony, ChangeContext, Task<List<ColonyCommand>>> build,
-        CancellationToken cancellationToken, Func<NpgsqlConnection, NpgsqlTransaction, Task>? extra = null)
+        CancellationToken cancellationToken, Func<NpgsqlConnection, NpgsqlTransaction, Task>? extra = null, ClientSession? session = null)
     {
         try
         {
-            return await ChangeCoreAsync(owner, planetId, build, cancellationToken, extra);
+            return await ChangeCoreAsync(owner, planetId, build, cancellationToken, extra, session);
         }
         catch (PlanetRefusal refusal)
         {
@@ -442,14 +445,14 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
     }
 
     private async Task<ChangeResult> ChangeCoreAsync(long owner, long planetId, Func<Colony, ChangeContext, Task<List<ColonyCommand>>> build,
-        CancellationToken cancellationToken, Func<NpgsqlConnection, NpgsqlTransaction, Task>? extra = null)
+        CancellationToken cancellationToken, Func<NpgsqlConnection, NpgsqlTransaction, Task>? extra = null, ClientSession? session = null)
     {
         var nowUnixMs = nowMs();
         var now = Py.FileTimeFromUnixMs(nowUnixMs);
         var body = await BodyAsync(planetId, cancellationToken);
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        var context = new ChangeContext(connection, transaction, owner, planetId);
+        var context = new ChangeContext(connection, transaction, owner, planetId, session);
         await LockOwnerColoniesAsync(connection, transaction, owner, cancellationToken);
         var doc = await store.LockAsync(connection, transaction, owner, planetId, cancellationToken);
         var colony = doc?.ToColony(catalog, field) ?? await NewColonyAsync(owner, planetId, now, cancellationToken);
@@ -475,7 +478,32 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
         // a planet with pins has its customs office (the client's launchpad reaches it through the office's ball in space)
         var office = !outcome.Abandoned && colony.Pins.Count > 0;
         if (office) await EnsureOfficeAsync(connection, transaction, planetId, body.SolarSystemId, cancellationToken);
+        var inventoryTypes = new Dictionary<int, TypeDef>();
+        if (context.Session is not null && context.InventoryChanges.Count > 0)
+        {
+            var staticData = dogma ?? throw new InvalidOperationException("Planet command-center inventory notifications require item type static data.");
+            await staticData.EnsureTypesAsync(context.InventoryChanges.Select(change => change.After.TypeId).Distinct().ToArray(), cancellationToken);
+            foreach (var typeId in context.InventoryChanges.Select(change => change.After.TypeId).Distinct())
+                inventoryTypes[typeId] = staticData.Type(typeId) ?? throw new InvalidOperationException($"The SDE has no item type {typeId}.");
+        }
         await transaction.CommitAsync(cancellationToken);
+        if (context.Session is { } changedSession)
+        {
+            foreach (var change in context.InventoryChanges)
+            {
+                var type = inventoryTypes[change.After.TypeId];
+                try
+                {
+                    ShipNotifications.SendItemChange(changedSession, change, item => new ItemRow(
+                        item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag,
+                        item.Singleton ? -1 : item.Quantity, type.GroupId, type.CategoryId));
+                }
+                catch (Exception error)
+                {
+                    Console.Error.WriteLine($"eve-host: command-center inventory notification failed for item {change.After.Id}: {error.Message}");
+                }
+            }
+        }
         if (office)
         {
             try { PlaceOffice(planetId, body); }
@@ -556,7 +584,14 @@ public sealed partial class PlanetMgrService(NpgsqlDataSource source, PlanetStor
                         var hold = await items.LockAndGetAsync(c.Connection, c.Transaction, pinId, cancellationToken)
                             ?? throw MachoErrors.ThrowUserError("CannotBuildCommandPin");
                         if (hold.OwnerId != c.Owner || hold.TypeId != typeId) throw MachoErrors.ThrowUserError("CannotBuildCommandPin");
-                        await items.DeleteAsync(c.Connection, c.Transaction, pinId, cancellationToken);
+                        if (!hold.Singleton && hold.Quantity > 1)
+                        {
+                            var after = hold with { Quantity = hold.Quantity - 1 };
+                            await items.SetQuantityAsync(c.Connection, c.Transaction, pinId, after.Quantity, cancellationToken);
+                            c.InventoryChanges.Add(new ItemChanged(after, hold.LocationId, hold.Flag, hold.Quantity));
+                        }
+                        else
+                            await items.DeleteAsync(c.Connection, c.Transaction, pinId, cancellationToken);
                     }
                 }
                 return new CreatePinCommand(pinId, typeId, Number(At(2)), Number(At(3)));

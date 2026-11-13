@@ -2857,3 +2857,7 @@ Security review follow-up: `officeManager.GetMyCorporationsOffices` now consumes
 ## Wormhole scheduler slim-state retry audit (2026-11-10)
 
 - The confirmed P2 is fixed: failed age-bucket slim updates retry through the durable scheduler, including after a scheduler restart. The end-to-end regression and client/EveJS evidence are recorded in [scheduler audit fixes](audit-fixes-scheduler.md).
+
+## Economy audit follow-up (2026-11-13)
+
+- The C-01 bounty/industry operation-key, M-01 corporate-contract wallet, and H-05 courier-location findings are confirmed. Evidence, fixes, test-first reproductions, final validation, and remaining parity gaps are recorded in [economy audit fixes](audit-fix-economy.md).

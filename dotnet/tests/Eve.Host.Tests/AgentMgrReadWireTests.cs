@@ -390,9 +390,10 @@ public partial class HostServerTests
         const long otherShipId = 500_002;
         const long pickupStationId = 60_000_001;
         const long dropoffStationId = 60_000_002;
+        const string cargoTag = "courier:9401";
 
         Item Stack(long id, long locationId, int flag, long quantity, int stackTypeId = typeId) =>
-            new(id, stackTypeId, ownerId, locationId, flag, quantity, false, null);
+            new(id, stackTypeId, ownerId, locationId, flag, quantity, false, null, CustomInfo: cargoTag);
 
         Assert.False(Eve.Host.CharacterServicesComposition.HasCourierCargo(
             [
@@ -402,37 +403,46 @@ public partial class HostServerTests
             typeId,
             required,
             activeShipId,
-            dropoffStationId));
+            dropoffStationId,
+            cargoTag));
 
         Assert.False(Eve.Host.CharacterServicesComposition.HasCourierCargo(
-            [Stack(3, activeShipId, ItemFlags.Cargo, required - 1)],
+            [
+                Stack(11, pickupStationId, ItemFlags.Hangar, 1, 587),
+                Stack(3, activeShipId, ItemFlags.Cargo, required - 1),
+            ],
             typeId,
             required,
             activeShipId,
-            dropoffStationId));
+            dropoffStationId,
+            cargoTag));
 
         Assert.True(Eve.Host.CharacterServicesComposition.HasCourierCargo(
             [
+                Stack(10, dropoffStationId, ItemFlags.Hangar, 1, 587),
                 Stack(4, activeShipId, ItemFlags.Cargo, 1),
                 Stack(5, activeShipId, ItemFlags.Cargo, required - 1),
             ],
             typeId,
             required,
             activeShipId,
-            dropoffStationId));
+            dropoffStationId,
+            cargoTag));
 
         Assert.True(Eve.Host.CharacterServicesComposition.HasCourierCargo(
             [Stack(6, dropoffStationId, ItemFlags.Hangar, required)],
             typeId,
             required,
             activeShipId,
-            dropoffStationId));
+            dropoffStationId,
+            cargoTag));
 
         Assert.False(Eve.Host.CharacterServicesComposition.HasCourierCargo(
             [Stack(7, activeShipId, ItemFlags.Cargo, required, typeId + 1)],
             typeId,
             required,
             activeShipId,
-            dropoffStationId));
+            dropoffStationId,
+            cargoTag));
     }
 }

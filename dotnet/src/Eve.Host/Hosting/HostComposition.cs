@@ -91,6 +91,7 @@ internal static class HostComposition
         Func<long, int, CancellationToken, ValueTask<int>>? contractSkillLevel = null;
         Func<long, long, CancellationToken, ValueTask<decimal>>? contractBrokerFeeAdjustment = null;
         Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null;
+        Func<long, long, int, CancellationToken, ValueTask<bool>>? canTakeCorporateWalletDivision = null;
         Func<long, long, short, CancellationToken, ValueTask<bool>>? canManageCalendarGroupEvent = null;
         Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentCalendarGroups = null;
         Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null;
@@ -177,7 +178,7 @@ internal static class HostComposition
                 clock, contractSchema, contractExpiryJobs, foundations.Events);
             legacy = await LegacyGameStoreComposition.OpenAsync(source, foundations.Events);
             var notices = new PublicGateway.NoticeHub();
-            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, calendarCspaBilling, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, onlineStatusNotifications, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups, readDynamicBounty) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache,
+            (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, calendarCspaBilling, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, onlineStatusNotifications, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups, readDynamicBounty, canTakeCorporateWalletDivision) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache,
                 options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected, notices, hooks => characterEntryHooks = hooks,
                 containers => tournamentContainers = containers, ships => tournamentShips = ships, clusterOptions: options);
             if (characterSessions is not null && raffleProxyStore is { } composedRaffleStore)
@@ -507,6 +508,7 @@ internal static class HostComposition
             readCurrentCalendarGroups: readCurrentCalendarGroups,
             contractBrokerFeeAdjustment: contractBrokerFeeAdjustment,
             hasContractManagerRole: hasContractManagerRole,
+            canTakeCorporateWalletDivision: canTakeCorporateWalletDivision,
             localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", "")),
             calendarCspaBilling: calendarCspaBilling))
         {

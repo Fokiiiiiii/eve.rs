@@ -8,7 +8,7 @@ namespace Eve.Ships;
 /// </summary>
 public sealed record DeployedRecord(
     long DeployableId, string Kind, int SolarSystemId, string Name, int TypeId, int GroupId, double[] Position, double Radius, long OwnerId, int CorporationId,
-    int AllianceId, long ShipId, long ExpiresAtMs, long ActivateAtMs = 0, double RangeMeters = 0);
+    int AllianceId, long ShipId, long ExpiresAtMs, long ActivateAtMs = 0, double RangeMeters = 0, long ControlTowerId = 0);
 
 /// <summary>The deployed records in PostgreSQL (the <c>deployed</c> table of the <c>space</c> schema, migration 0004).</summary>
 public sealed class PgDeployedStore
@@ -16,7 +16,7 @@ public sealed class PgDeployedStore
     public const string DefaultSchema = "space";
 
     private const string Columns =
-        "deployable_id, kind, solar_system_id, name, type_id, group_id, x, y, z, radius, owner_id, corporation_id, alliance_id, ship_id, expires_at_ms, activate_at_ms, range_m";
+        "deployable_id, kind, solar_system_id, name, type_id, group_id, x, y, z, radius, owner_id, corporation_id, alliance_id, ship_id, expires_at_ms, activate_at_ms, range_m, control_tower_id";
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -33,7 +33,7 @@ public sealed class PgDeployedStore
 
     private static DeployedRecord Read(NpgsqlDataReader r) => new(
         r.GetInt64(0), r.GetString(1), r.GetInt32(2), r.GetString(3), r.GetInt32(4), r.GetInt32(5), [r.GetDouble(6), r.GetDouble(7), r.GetDouble(8)], r.GetDouble(9),
-        r.GetInt64(10), r.GetInt32(11), r.GetInt32(12), r.GetInt64(13), r.GetInt64(14), r.GetInt64(15), r.GetDouble(16));
+        r.GetInt64(10), r.GetInt32(11), r.GetInt32(12), r.GetInt64(13), r.GetInt64(14), r.GetInt64(15), r.GetDouble(16), r.GetInt64(17));
 
     /// <summary>The record of a deployable, or null when it is not recorded.</summary>
     public async Task<DeployedRecord?> GetAsync(long deployableId, CancellationToken cancellationToken = default)
@@ -57,17 +57,18 @@ public sealed class PgDeployedStore
     {
         await using var command = new NpgsqlCommand(
             $"""
-            INSERT INTO {_schema}.deployed ({Columns}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+            INSERT INTO {_schema}.deployed ({Columns}) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             ON CONFLICT (deployable_id) DO UPDATE SET
                 kind = EXCLUDED.kind, solar_system_id = EXCLUDED.solar_system_id, name = EXCLUDED.name, type_id = EXCLUDED.type_id, group_id = EXCLUDED.group_id,
                 x = EXCLUDED.x, y = EXCLUDED.y, z = EXCLUDED.z, radius = EXCLUDED.radius, owner_id = EXCLUDED.owner_id, corporation_id = EXCLUDED.corporation_id,
                 alliance_id = EXCLUDED.alliance_id, ship_id = EXCLUDED.ship_id, expires_at_ms = EXCLUDED.expires_at_ms,
-                activate_at_ms = EXCLUDED.activate_at_ms, range_m = EXCLUDED.range_m
+                activate_at_ms = EXCLUDED.activate_at_ms, range_m = EXCLUDED.range_m, control_tower_id = EXCLUDED.control_tower_id
             """, connection, transaction);
         foreach (var value in new object[]
         {
             record.DeployableId, record.Kind, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position[0], record.Position[1], record.Position[2],
             record.Radius, record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId, record.ExpiresAtMs, record.ActivateAtMs, record.RangeMeters,
+            record.ControlTowerId,
         }) command.Parameters.Add(new NpgsqlParameter { Value = value });
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
@@ -183,6 +184,22 @@ public sealed class PgDeployedStore
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand($"SELECT {Columns} FROM {_schema}.deployed WHERE kind = $1 ORDER BY deployable_id", connection);
         command.Parameters.Add(new NpgsqlParameter { Value = kind });
+        return await ReadAllAsync(command, cancellationToken);
+    }
+
+    /// <summary>The POS modules associated with a control tower, oldest first.</summary>
+    public async Task<IReadOnlyList<DeployedRecord>> ByControlTowerAsync(long controlTowerId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        return await ByControlTowerAsync(connection, null, controlTowerId, cancellationToken);
+    }
+
+    /// <summary>The POS modules associated with a control tower, in a caller's transaction.</summary>
+    public async Task<IReadOnlyList<DeployedRecord>> ByControlTowerAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction,
+        long controlTowerId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand($"SELECT {Columns} FROM {_schema}.deployed WHERE kind = 'starbase_module' AND control_tower_id = $1 ORDER BY deployable_id", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = controlTowerId });
         return await ReadAllAsync(command, cancellationToken);
     }
 

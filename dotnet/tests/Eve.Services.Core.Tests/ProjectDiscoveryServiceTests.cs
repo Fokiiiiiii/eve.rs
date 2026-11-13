@@ -17,6 +17,7 @@ public sealed class ProjectDiscoveryServiceTests
         foreach (var method in new[]
                  {
                      "fix_task_id",
+                     "get_new_task",
                      "get_player_analysis_kredits",
                      "get_player_state",
                      "get_player_statistics",
@@ -121,6 +122,47 @@ public sealed class ProjectDiscoveryServiceTests
     }
 
     [Fact]
+    public async Task Project_discovery_forwards_the_client_tutorial_keyword_arguments_to_the_host()
+    {
+        ServiceCall? forwarded = null;
+        var service = new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(
+            GetTaskAsync: call =>
+            {
+                forwarded = call;
+                return ValueTask.FromResult<PyValue>(Py.KeyVal(("taskID", new PyStr("tutorial-task"))));
+            }));
+        var session = new ClientSession { CharacterId = 42, UserId = 7 };
+        var kwargs = new PyDict(
+        [
+            Pair(new PyBytes(System.Text.Encoding.ASCII.GetBytes("original_code")), new PyBytes(System.Text.Encoding.ASCII.GetBytes("ed134308-e080-49bc-be56-169a5f839c96"))),
+            Pair(new PyBytes(System.Text.Encoding.ASCII.GetBytes("is_tutorial_task")), PyBool.True),
+        ]);
+        var request = new ServiceCall { Method = "get_new_task", Args = [], Kwargs = kwargs, Session = session };
+
+        Assert.Equal(Py.KeyVal(("taskID", new PyStr("tutorial-task"))), await service.CallAsync(request));
+        Assert.Same(request, forwarded);
+        Assert.Same(kwargs, forwarded!.Kwargs);
+
+        var callbackCalls = 0;
+        var guarded = new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(
+            GetTaskAsync: _ =>
+            {
+                callbackCalls++;
+                return ValueTask.FromResult<PyValue>(PyNone.Instance);
+            }));
+        var invalid = new ServiceCall
+        {
+            Method = "get_new_task",
+            Args = [],
+            Kwargs = new PyDict([Pair(new PyStr("unexpected"), PyBool.True)]),
+            Session = session,
+        };
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => guarded.CallAsync(invalid).AsTask());
+        Assert.Equal("PROJECT_DISCOVERY_ARGUMENTS_INVALID", error.Error.UserErrorMessage);
+        Assert.Equal(0, callbackCalls);
+    }
+
+    [Fact]
     public async Task Project_discovery_task_fix_requires_a_staff_account_role()
     {
         var callbackCalls = 0;
@@ -222,6 +264,8 @@ public sealed class ProjectDiscoveryServiceTests
 
     private static KeyValuePair<PyValue, PyValue> Pair(string key, PyValue value) =>
         new(new PyStr(key), value);
+
+    private static KeyValuePair<PyValue, PyValue> Pair(PyValue key, PyValue value) => new(key, value);
 
     private sealed class NoAccounts : IOmegaAccountStore
     {

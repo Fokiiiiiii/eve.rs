@@ -350,7 +350,8 @@ internal static class HostComposition
             long bonusXp = long.Parse(Env("EVE_PROJECT_DISCOVERY_BONUS_XP", ""), System.Globalization.CultureInfo.InvariantCulture);
             int resetHour = int.Parse(Env("EVE_PROJECT_DISCOVERY_BONUS_RESET_UTC_HOUR", ""), System.Globalization.CultureInfo.InvariantCulture);
             if (maximum <= 0 || bonusXp <= 0 || resetHour is < 0 or > 23) throw new InvalidOperationException("Invalid Project Discovery bonus policy.");
-            discoveryBonus = new(dataSource, Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema), maximum, bonusXp, resetHour);
+            discoveryBonus = new(dataSource, Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema), maximum, bonusXp, resetHour,
+                () => DateTimeOffset.FromUnixTimeMilliseconds(clock()));
         }
         else if (bonusPolicy != "none") throw new InvalidOperationException("Unsupported Project Discovery bonus policy.");
         if (dataSource is not null)
@@ -380,7 +381,7 @@ internal static class HostComposition
                     {
                         Enabled = true, BaseUri = new Uri(Env("EVE_PROJECT_DISCOVERY_MMOS_ORIGIN", ""), UriKind.Absolute),
                         Credential = Env("EVE_PROJECT_DISCOVERY_MMOS_CREDENTIAL", ""), Secret = Env("EVE_PROJECT_DISCOVERY_MMOS_SECRET", "")
-                    });
+                    }, () => DateTimeOffset.FromUnixTimeMilliseconds(clock()));
                     var remote = new Eve.Host.ProjectDiscovery.RemoteDiscoveryProvider(dataSource, pins, api,
                         new Eve.Host.ProjectDiscovery.RemoteDiscoveryOptions { Enabled = true, Game = Env("EVE_PROJECT_DISCOVERY_MMOS_GAME", ""), Project = remoteProject, Protocol = protocol }, discoverySchema, discoveryBonus, Env("EVE_CHARACTERS_SCHEMA", PgCharacterStore.DefaultSchema));
                     await remote.MigrateAsync();
@@ -390,15 +391,17 @@ internal static class HostComposition
             }
             else
             {
-                scientificReplay = await Eve.Host.ProjectDiscovery.ScientificReplayComposition.StartAsync(mode, dataSource, pins, replayOptions, discoverySchema);
+                scientificReplay = await Eve.Host.ProjectDiscovery.ScientificReplayComposition.StartAsync(mode, dataSource, pins, replayOptions,
+                    discoverySchema, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema), now: clock);
                 if (scientificReplay is not null)
                     gameRpcCallbacks = scientificReplay.Attach(gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks());
             }
         }
         gameRpcCallbacks = (gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks()) with
         {
-            ReadProjectDiscoveryBonusSamples = discoveryBonus is null ? (_, _, _) => ValueTask.FromResult(0) : discoveryBonus.ReadAsync,
-            NotifyProjectDiscoveryStateAfterSubmit = discoveryBonus is not null
+            ReadProjectDiscoveryBonusSamples = gameRpcCallbacks?.ReadProjectDiscoveryBonusSamples ??
+                (discoveryBonus is null ? (_, _, _) => ValueTask.FromResult(0) : discoveryBonus.ReadAsync),
+            NotifyProjectDiscoveryStateAfterSubmit = gameRpcCallbacks?.NotifyProjectDiscoveryStateAfterSubmit == true || discoveryBonus is not null
         };
         var activeSurveyId = HostConfiguration.ParseActiveSurveyId(Env("EVE_ACTIVE_SURVEY_ID", ""));
         var configuredGameRpcCallbacks = gameRpcCallbacks ?? new Eve.Services.Core.GameRpcCallbacks();

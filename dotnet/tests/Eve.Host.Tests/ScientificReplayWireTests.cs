@@ -24,30 +24,47 @@ public sealed class ScientificReplayWireTests
     [Fact]
     public async Task RegisteredEncodedRpcServesRealImageAndPersistsScientificAnswer()
     {
-        string schema = "pd_wire_" + Guid.NewGuid().ToString("N")[..12], pinSchema = schema + "_pins";
+        string schema = "pd_wire_" + Guid.NewGuid().ToString("N")[..12], pinSchema = schema + "_pins", characterSchema = schema + "_characters";
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var options = Options();
         try
         {
-            await using (var setup = source.CreateCommand($"CREATE SCHEMA {pinSchema}; CREATE TABLE {pinSchema}.project_discovery_task_pins(character_id bigint PRIMARY KEY,task_id bigint NOT NULL,updated_ms bigint NOT NULL)")) await setup.ExecuteNonQueryAsync();
+            await using (var setup = source.CreateCommand($"""
+                CREATE SCHEMA {pinSchema};
+                CREATE TABLE {pinSchema}.project_discovery_task_pins(character_id bigint PRIMARY KEY,task_id bigint NOT NULL,updated_ms bigint NOT NULL);
+                CREATE SCHEMA {characterSchema};
+                CREATE TABLE {characterSchema}.project_discovery_progress(character_id bigint PRIMARY KEY,experience bigint NOT NULL DEFAULT 0,analysis_kredits bigint NOT NULL DEFAULT 0);
+                CREATE TABLE {characterSchema}.project_discovery_tutorials(character_id bigint PRIMARY KEY,finished boolean NOT NULL DEFAULT false,tutorial_level integer NOT NULL DEFAULT 0,updated_ms bigint NOT NULL DEFAULT 0);
+                """)) await setup.ExecuteNonQueryAsync();
             var pins = new ProjectDiscoveryTaskPinStore(source,pinSchema);
             Assert.Null(await ScientificReplayComposition.StartAsync("disabled", source, pins, options, schema));
-            await using var host = (await ScientificReplayComposition.StartAsync("scientific-replay", source, pins, ScientificReplayOptions.Bundled, schema))!;
+            await using var host = (await ScientificReplayComposition.StartAsync("scientific-replay", source, pins, ScientificReplayOptions.Bundled, schema, characterSchema))!;
             var callbacks = host.Attach(new GameRpcCallbacks());
             var registry = new ServiceRegistry();
-            registry.Register(new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(GetTaskAsync: callbacks.GetProjectDiscoveryTask, SubmitClassificationAsync: callbacks.SubmitProjectDiscoveryClassification, ReadPlayerStatisticsAsync: callbacks.ReadProjectDiscoveryStatistics)));
+            registry.Register(new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(
+                ReadPlayerStateAsync: callbacks.ReadProjectDiscoveryState,
+                ReadBonusSamplesAsync: callbacks.ReadProjectDiscoveryBonusSamples,
+                NotifyStateAfterSubmit: callbacks.NotifyProjectDiscoveryStateAfterSubmit,
+                GetTaskAsync: callbacks.GetProjectDiscoveryTask,
+                SubmitClassificationAsync: callbacks.SubmitProjectDiscoveryClassification,
+                ReadPlayerStatisticsAsync: callbacks.ReadProjectDiscoveryStatistics)));
             var dispatcher = new PacketDispatcher(registry) { StrictRpc = true };
             var sink = new Sink(); var session = new ClientSession(sink) { CharacterId = 1001, UserId = 2001, SessionId = 7 };
             async Task<PyValue> Call(int id, string method, params PyValue[] args)
             {
                 sink.Packets.Clear(); await dispatcher.DispatchAsync(MarshalCodec.Decode(MarshalCodec.Encode(Request(id,method,args))),session);
-                var packet = Assert.Single(sink.Packets); var state = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(MarshalCodec.Decode(MarshalCodec.Encode(packet))).Args).Items;
+                var packet = Assert.Single(sink.Packets, value => MachoPacket.Decode(value)?.Type == MachoMessage.CallRsp); var state = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(MarshalCodec.Decode(MarshalCodec.Encode(packet))).Args).Items;
                 Assert.True(Assert.IsType<PyInt>(state[0]).Value == MachoMessage.CallRsp, System.Text.Encoding.Latin1.GetString(MarshalCodec.Encode(packet)));
                 var payload = Assert.IsType<PyTuple>(state[4]);
                 return payload.Items[0] is PySubStream { Decoded: { } value } ? value : payload.Items[0];
             }
             PyValue Field(PyValue value, string key) => Assert.Single(Assert.IsType<PyDict>(value).Entries, x => JsSemantics.StringValue(x.Key) == key).Value;
-            var task = await Call(1,"get_new_task"); var assets = Field(task,"assets");
+            var task = await Call(1,"get_new_task");
+            string taskId = JsSemantics.StringValue(Field(task, "taskID"))!;
+            Assert.Equal(new PyBytes(System.Text.Encoding.UTF8.GetBytes("mcgill-polyseg")), Field(task, "projectID"));
+            Assert.Equal(PyBool.True, Field(task, "isTrainingSet"));
+            Assert.Equal(new PyBytes(System.Text.Encoding.UTF8.GetBytes("Public research replay; not live MMOS")), Field(task, "localMode"));
+            var assets = Field(task,"assets");
             string url = JsSemantics.StringValue(Field(assets,"url")) ?? throw new InvalidDataException("Missing asset URL.");
             using var http = new HttpClient(); byte[] png = await http.GetByteArrayAsync(url);
             Assert.True(png.AsSpan(0,8).SequenceEqual(new byte[] { 137,80,78,71,13,10,26,10 }));
@@ -57,14 +74,42 @@ public sealed class ScientificReplayWireTests
             var timing = Dict(("t",new PyInt(10)),("tPolygons",new PyList([])));
             var response = await Call(2,"post_classification",result,timing);
             var score = Assert.IsType<PyReal>(Field(Field(response,"player"),"score")).Value;
-            Assert.InRange(Math.Abs(score - .99115),0,1e-10);
+            Assert.Equal(.99, score);
+            Assert.Equal(PyBool.True, Field(response, "isSolved"));
+            Assert.InRange(Math.Abs(.99115 - Assert.IsType<PyReal>(Field(response, "score")).Value), 0, 1e-10);
+            Assert.Equal(1L, Assert.IsType<PyLong>(Field(response, "classificationCount")).Value);
+            var stateInResult = Assert.IsType<PyObject>(Field(response, "playerState"));
+            Assert.Equal("util.KeyVal", JsSemantics.StringValue(stateInResult.Name));
+            Assert.Equal(new PyLong(5), Field(stateInResult.Args, "analysisKredits"));
+            var resultTask = Field(response, "task");
+            Assert.Equal(new PyBytes(System.Text.Encoding.UTF8.GetBytes("mcgill-polyseg")), Field(resultTask, "projectID"));
+            Assert.Equal(taskId, JsSemantics.StringValue(Field(resultTask, "taskID")));
+            var taskVotes = Field(resultTask, "votes");
+            var highScore = Assert.IsType<PyReal>(Field(taskVotes, "highScore")).Value;
+            var averageScore = Assert.IsType<PyReal>(Field(taskVotes, "avgScore")).Value;
+            Assert.InRange(highScore, 0, 1);
+            Assert.InRange(averageScore, 0, highScore);
+            var solutionClusters = Assert.IsType<PyList>(Field(Field(resultTask, "solution"), "clusters")).Items;
+            Assert.Equal(2, solutionClusters.Count);
+            foreach (var cluster in solutionClusters)
+            {
+                var solutionPolygons = Assert.IsType<PyList>(Field(cluster, "polygons")).Items;
+                Assert.NotEmpty(solutionPolygons);
+                Assert.IsType<PyList>(Field(Assert.Single(solutionPolygons), "vertices"));
+            }
             var replay = await Call(2,"post_classification",result,timing);
             Assert.Equal(score,Assert.IsType<PyReal>(Field(Field(replay,"player"),"score")).Value);
             // A new listener has a new URL, but the same content revision and durable call result.
-            await using var restarted = (await ScientificReplayComposition.StartAsync("scientific-replay", source, pins, ScientificReplayOptions.Bundled, schema))!;
+            await using var restarted = (await ScientificReplayComposition.StartAsync("scientific-replay", source, pins, ScientificReplayOptions.Bundled, schema, characterSchema))!;
             var nextCallbacks = restarted.Attach(new GameRpcCallbacks());
             var nextRegistry = new ServiceRegistry();
-            nextRegistry.Register(new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(GetTaskAsync: nextCallbacks.GetProjectDiscoveryTask, SubmitClassificationAsync: nextCallbacks.SubmitProjectDiscoveryClassification, ReadPlayerStatisticsAsync: nextCallbacks.ReadProjectDiscoveryStatistics)));
+            nextRegistry.Register(new ProjectDiscoveryService(new ProjectDiscoveryRpcCallbacks(
+                ReadPlayerStateAsync: nextCallbacks.ReadProjectDiscoveryState,
+                ReadBonusSamplesAsync: nextCallbacks.ReadProjectDiscoveryBonusSamples,
+                NotifyStateAfterSubmit: nextCallbacks.NotifyProjectDiscoveryStateAfterSubmit,
+                GetTaskAsync: nextCallbacks.GetProjectDiscoveryTask,
+                SubmitClassificationAsync: nextCallbacks.SubmitProjectDiscoveryClassification,
+                ReadPlayerStatisticsAsync: nextCallbacks.ReadProjectDiscoveryStatistics)));
             dispatcher = new PacketDispatcher(nextRegistry) { StrictRpc = true };
             var statistics = await Call(5,"get_player_statistics");
             Assert.Equal(score, Assert.IsType<PyReal>(Field(Field(statistics,"project"),"score")).Value);
@@ -78,7 +123,7 @@ public sealed class ScientificReplayWireTests
             await dispatcher.DispatchAsync(MarshalCodec.Decode(MarshalCodec.Encode(Request(4,"get_new_task"))),other);
             Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(Assert.Single(otherSink.Packets))).Type);
         }
-        finally { await using var clean = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE; DROP SCHEMA IF EXISTS {pinSchema} CASCADE"); await clean.ExecuteNonQueryAsync(); }
+        finally { await using var clean = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE; DROP SCHEMA IF EXISTS {pinSchema} CASCADE; DROP SCHEMA IF EXISTS {characterSchema} CASCADE"); await clean.ExecuteNonQueryAsync(); }
     }
     private static PyDict Dict(params (string Key, PyValue Value)[] entries) => new(entries.Select(x => new KeyValuePair<PyValue, PyValue>(new PyStr(x.Key), x.Value)).ToArray());
     private static ScientificReplayOptions Options()

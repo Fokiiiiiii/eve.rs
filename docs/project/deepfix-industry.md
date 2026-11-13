@@ -23,13 +23,13 @@ EveJS 0.12.9 routes the same facility and job RPCs in `server/src/services/indus
 ## Checks run
 
 - Red/green regression: `IndustryFacilityHostFlowTests.Facility_cost_gauge_uses_the_maximum_saved_index_per_activity_across_systems` failed before the handler change and passed after it (Release, PostgreSQL database `eve_p4`, 0 skipped).
-- `Eve.Host.Tests` industry slice: `dotnet test ... --filter FullyQualifiedName~Industry` passed 56, failed 0, skipped 0.
-- `Eve.Services.Core.Tests` job service class: passed 17, failed 0, skipped 0.
-- `Eve.Market.Tests.IndustryCostIndexTests`: passed 5, failed 0, skipped 0, including PostgreSQL store reads.
-- `CharacterHostTests`: passed 80, failed 0, skipped 3. The three skips require `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`, which were not configured; they exercise ship-death reporting, nullsec ESS placement, and clone-jump simulation, not industry.
+- After merging `origin/main`, `Eve.Host.Tests` industry slice (`--filter FullyQualifiedName~Industry`) passed 56, failed 0, skipped 0.
+- After merging `origin/main`, `Eve.Services.Core.Tests` job service class passed 17, failed 0, skipped 0.
+- After merging `origin/main`, `Eve.Market.Tests.IndustryCostIndexTests` passed 5, failed 0, skipped 0, including PostgreSQL store reads.
+- After merging `origin/main`, `CharacterHostTests` passed 80, failed 0, skipped 3. The three skips require `EVE_ABYSSAL_SIM_BINARY` and `EVE_ABYSSAL_SIM_SDE`, which were not configured; they exercise ship-death reporting, nullsec ESS placement, and clone-jump simulation, not industry.
 - The first unfiltered Host attempt was cancelled while the default ESI index seed was waiting on network access. It is not counted as a pass; subsequent Host runs used `EVE_INDUSTRY_INDEX_SEED=skip` and seeded database rows directly.
-- Direct Release builds passed with 0 warnings and 0 errors for `Eve.Host`, `Eve.Services.Core`, `Eve.Structures`, `Eve.Host.Tests`, and `Eve.Services.Core.Tests`.
-- Main CI must be checked again after fetching and merging `origin/main`; post-push CI is still pending.
+- After merging `origin/main`, direct Release builds passed with 0 warnings and 0 errors for `Eve.Host`, `Eve.Services.Core`, `Eve.Structures`, `Eve.Host.Tests`, and `Eve.Services.Core.Tests`.
+- At pre-push audit, the latest completed main CI was run 1765 on `362b4a0b5e36`; the required CI gate and all required jobs succeeded. The advisory latest-stable Rust clippy job failed. The current main tip `9ae04d0f1` only refreshes POS manager verification documentation and has no newer CI run.
 
 ## Gaps and not checked
 

@@ -85,6 +85,7 @@ internal static class HostConfiguration
     //
     //   EVE_HOST               where to listen: a socket path, "unix:/path" or "tcp:host:port"   (default /tmp/eve-host.sock; tcp:127.0.0.1:26010 on Windows)
     //   EVE_IMAGE_SERVER_URL   the image server the client is told about                         (default http://127.0.0.1:26001/)
+    //   EVE_CLUSTER_NAME      cluster label returned by machoNet.GetConnectedClusterName           (default COMPUTERNAME@USERDOMAIN, V24 prefs fallback)
     //   EVE_PG_URL             PostgreSQL for accounts (postgres://... or an Npgsql string); without it accounts
     //                          live in memory and are lost when the host stops
     //   EVE_IDENTITY_SCHEMA    the schema of the accounts module                                  (default identity)
@@ -181,6 +182,7 @@ internal static class HostConfiguration
             throw new InvalidOperationException("EVE_NEW_CHARACTER_EXPERIENCE_MODE must be disabled, tutorial, or cinematic.");
         var options = new ClusterOptions
         {
+            ClusterName = ClusterOptions.DefaultClusterName(),
             ImageServerUrl = Env("EVE_IMAGE_SERVER_URL", "http://127.0.0.1:26001/"),
             NewCharacterExperienceEnabled = newCharacterExperienceMode == "tutorial",
             NewCharacterExperienceMode = newCharacterExperienceMode,

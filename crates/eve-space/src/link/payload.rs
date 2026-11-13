@@ -1269,6 +1269,10 @@ impl Message {
                 out.extend_from_slice(&module_id.to_le_bytes());
                 out.push(*reason);
             }
+            Self::ModuleActivityRefresh { session_id, module_id } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+            }
             Self::Measured { session_id, command, distance } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*command);

@@ -74,14 +74,25 @@ public class Arc29StepsTests
         public AgentMissionStore? Store { get; set; }
 
         public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken) =>
-
-            consume.Count == 0 && Store is not null && await Store.CompleteAsync(characterId, agentId, now, reference, cancellationToken) is not null;
+            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, long loyaltyPoints,
+            long issuerCorporationId, CancellationToken cancellationToken, long deliveryStationId = 0, long activeShipId = 0,
+            IReadOnlyList<MissionWalletReward>? walletRewards = null)
+        {
+            if (consume.Count != 0 || Store is null ||
+                await Store.CompleteAsync(characterId, agentId, now, reference, cancellationToken) is null) return false;
+            foreach (var reward in walletRewards ?? []) Credits.Add((characterId, reward.Amount, reward.OperationKey));
+            return true;
+        }
 
         public Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken) =>
             Task.CompletedTask;
 
         public Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) => Task.FromResult(0L);
+
+        public Task<long> CourierDeliveryQuantityAsync(long characterId, long missionId, int typeId, long stationId,
+            CancellationToken cancellationToken) => Task.FromResult(0L);
+
+        public long ActiveShipIdOf(long characterId) => 0;
 
         public Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken) =>
             Task.CompletedTask;

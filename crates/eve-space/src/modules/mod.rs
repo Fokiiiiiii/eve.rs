@@ -50,6 +50,8 @@ pub(crate) const MODULE_DAMAGE: i32 = 3;
 
 /// The most module moments one settle takes for a ship (M-1). What is still due is taken by the next settle, so one ship cannot hold the sim thread.
 pub(crate) const MAX_MOMENTS_PER_SETTLE: usize = 10_000;
+/// How often the scene confirms that an offensive module effect is still running to the host's Crimewatch runtime.
+pub(crate) const COMBAT_ACTIVITY_HEARTBEAT_TICKS: i64 = 30 * TICKS_PER_SECOND;
 
 pub(crate) const TICK: i64 = TICKS_PER_SECOND / 10;
 
@@ -923,6 +925,8 @@ pub(crate) struct Running {
     pub(crate) cycle_id: u64,
     /// When the cycle that is on began.
     cycle_start: i64,
+    /// When the host should next be told that this offensive effect is still active.
+    combat_activity_heartbeat_at: i64,
     cycles: i32,
     /// The pulses of a strike the cycle has made (the next one is due at its `pulse_offset_ms`).
     strike_done: i32,
@@ -1143,6 +1147,7 @@ pub(crate) enum Jam {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Moment {
     CycleEnd(usize),
+    CombatActivityHeartbeat(usize),
     Charge,
     Shield,
     /// A parked work cycle is sent again (same id, same rolls).

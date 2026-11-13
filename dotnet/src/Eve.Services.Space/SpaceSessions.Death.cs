@@ -433,6 +433,7 @@ public sealed partial class SpaceSessions
         if (!_dying.TryAdd(pilot.ShipId, 0))
             return;
         pilot.End();
+        await EndActiveModuleCombatActivitiesAsync(pilot).ConfigureAwait(false);
         ShipDeath? death = null;
         SelfDestruct? done = null;
         var handedOver = false;

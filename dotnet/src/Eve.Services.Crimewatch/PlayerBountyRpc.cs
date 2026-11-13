@@ -70,10 +70,12 @@ public sealed class PlayerBountyRpc(
         if (!(amount > 0) || amount < minimum)
             throw Custom($"Bounty must be at least {minimum:0} ISK for this target.");
 
-        var key = OperationKey(placer, call.CallId);
+        var key = OperationKey(placer, call.Session.SessionId, call.CallId, targetId, amount);
         await using var connection = await source.OpenConnectionAsync(call.Cancellation);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation);
         var placement = new BountyPlacement(placer, targetId, owner.Kind, owner.CorporationId, owner.AllianceId, amount, key);
+        await Sql.ExecuteAsync(connection, transaction,
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", call.Cancellation, $"bounty-placement:{key}");
         // a retried placement answers the pool it already changed, and debits nothing again (its notifications are keyed, so they are sent once)
         if (await store.PlacementPoolAsync(connection, transaction, key, call.Cancellation) is { } placed)
         {
@@ -190,9 +192,11 @@ public sealed class PlayerBountyRpc(
         return owners.Where(id => id > 0).Distinct().ToArray();
     }
 
-    /// <summary>A placement retried by the same call keeps its key; a call without a call id gets a key of its own.</summary>
-    private static string OperationKey(long placer, PyValue callId) =>
-        Id(callId) is > 0 and var id ? $"bounty-place:{placer}:{id}" : $"bounty-place:{placer}:{Guid.NewGuid():N}";
+    /// <summary>A placement retry is scoped to its connection, call id, target, and amount; a call without an id gets a key of its own.</summary>
+    private static string OperationKey(long placer, long sessionId, PyValue callId, long targetId, decimal amount) =>
+        Id(callId) is > 0 and var id
+            ? $"bounty-place:{placer}:{sessionId}:{id}:{targetId}:{amount.ToString("G29", System.Globalization.CultureInfo.InvariantCulture)}"
+            : $"bounty-place:{placer}:{sessionId}:{Guid.NewGuid():N}";
 
     private static long Id(PyValue? value) => value switch
     {

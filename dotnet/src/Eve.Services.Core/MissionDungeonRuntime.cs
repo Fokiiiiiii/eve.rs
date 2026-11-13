@@ -111,7 +111,8 @@ public interface IMissionDungeonHost
     /// </summary>
     Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
         IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume,
-        long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken);
+        long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken,
+        long deliveryStationId = 0, long activeShipId = 0, IReadOnlyList<MissionWalletReward>? walletRewards = null);
 
     /// <summary>
 
@@ -122,12 +123,20 @@ public interface IMissionDungeonHost
     /// <summary>How many of an item type the character holds, in any location.</summary>
     Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken);
 
+    /// <summary>How much mission-tagged courier cargo is in the delivery station hangar or the ship docked there.</summary>
+    Task<long> CourierDeliveryQuantityAsync(long characterId, long missionId, int typeId, long stationId, CancellationToken cancellationToken);
+
+    /// <summary>The active ship in the character's session, if any.</summary>
+    long ActiveShipIdOf(long characterId);
+
     /// <summary>Creates a courier's cargo into the hangar of the station (the pickup at acceptance): the quantity, as singletons when the data says so.</summary>
     Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken);
 
     /// <summary>Takes back the cargo a courier mission was handed over (the stacks tagged with the mission, not other items of the type).</summary>
     Task TakeCargoAsync(long characterId, long missionId, int typeId, CancellationToken cancellationToken);
 }
+
+public sealed record MissionWalletReward(decimal Amount, long CounterpartyId, int RefTypeId, string Reason, string OperationKey);
 
 
 
@@ -214,9 +223,9 @@ public sealed class MissionDungeonRuntime(
         {
             if (CourierOf(record.Content.MissionId) is not { ObjectiveTypeId: { } typeId, ObjectiveQuantity: > 0 } courier) continue;
             if (CourierDestinationOf(record) is not { } destination || destination.Id != stationId) continue;
-            if (await host.HeldQuantityAsync(owner, (int)typeId, cancellationToken) < courier.ObjectiveQuantity) continue;
+            if (await host.CourierDeliveryQuantityAsync(owner, record.Content.MissionId, (int)typeId, stationId, cancellationToken) < courier.ObjectiveQuantity) continue;
             await CompleteWithRewardAsync(owner, record, $"delivery:{record.Content.MissionId}", $"delivery:{record.Content.MissionId}:{record.AgentId}",
-                cancellationToken, [((int)typeId, courier.ObjectiveQuantity, MissionCourierRules.CargoTag(record.Content.MissionId))]);
+                cancellationToken, [((int)typeId, courier.ObjectiveQuantity, MissionCourierRules.CargoTag(record.Content.MissionId))], stationId);
         }
     }
 
@@ -240,8 +249,7 @@ public sealed class MissionDungeonRuntime(
     {
         var record = await store.ReadAsync(owner, agentId, cancellationToken);
         if (record is null || record.State != AgentMissionState.Accepted) return false;
-        await CompleteWithRewardAsync(owner, record, $"gm:{record.Content.MissionId}", $"gm:{owner}:{record.Content.MissionId}:{agentId}", cancellationToken);
-        return true;
+        return await CompleteWithRewardAsync(owner, record, $"gm:{record.Content.MissionId}", $"gm:{owner}:{record.Content.MissionId}:{agentId}", cancellationToken);
     }
 
 
@@ -341,8 +349,8 @@ public sealed class MissionDungeonRuntime(
         return null;
     }
 
-    private async Task CompleteWithRewardAsync(long owner, AgentMissionRecord record, string rewardKey, string reference, CancellationToken cancellationToken,
-        IReadOnlyList<(int TypeId, long Quantity, string? Tag)>? consume = null)
+    private async Task<bool> CompleteWithRewardAsync(long owner, AgentMissionRecord record, string rewardKey, string reference, CancellationToken cancellationToken,
+        IReadOnlyList<(int TypeId, long Quantity, string? Tag)>? consume = null, long deliveryStationId = 0)
     {
         var mission = catalog.Mission(record.Content.MissionId)!;
         var place = agentPlaceOf(record.AgentId);
@@ -358,21 +366,15 @@ public sealed class MissionDungeonRuntime(
         var negotiationLevel = place is not null && (isk > 0 || paysBonus) && negotiationLevelOf is { } readNegotiation
             ? await readNegotiation(owner, cancellationToken)
             : 0;
-        if (place is not null)
-        {
-            if (isk > 0)
-            {
-                await host.CreditIskAsync(owner, ApproximateMissionRewardRules.NegotiatedIskReward(isk, negotiationLevel), place.CorporationId, AgentMissionRewardRefType,
-                    $"Agent mission reward: {mission.NameEn}", $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}", cancellationToken);
-            }
-
-            if (paysBonus)
-            {
-                await host.CreditIskAsync(owner, ApproximateMissionRewardRules.NegotiatedIskReward(bonus!.BonusRewardQuantity, negotiationLevel), place.CorporationId, AgentMissionBonusRefType,
-                    $"Agent mission time bonus: {mission.NameEn}",
-                    $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}:bonus", cancellationToken);
-            }
-        }
+        var walletRewards = new List<MissionWalletReward>(2);
+        if (place is not null && isk > 0)
+            walletRewards.Add(new(ApproximateMissionRewardRules.NegotiatedIskReward(isk, negotiationLevel), place.CorporationId,
+                AgentMissionRewardRefType, $"Agent mission reward: {mission.NameEn}",
+                $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}"));
+        if (place is not null && paysBonus)
+            walletRewards.Add(new(ApproximateMissionRewardRules.NegotiatedIskReward(bonus!.BonusRewardQuantity, negotiationLevel), place.CorporationId,
+                AgentMissionBonusRefType, $"Agent mission time bonus: {mission.NameEn}",
+                $"agent-mission:{owner}:{record.Content.MissionId}:{rewardKey}:bonus"));
 
         var standingMessage = string.IsNullOrWhiteSpace(mission.NameEn) ? "Agent mission standing" : mission.NameEn;
         var gains = mission.ExtraStandings.Select(item => new MissionStandingGain(item.Id, item.Value / 10, false, standingMessage)).ToList();
@@ -392,7 +394,9 @@ public sealed class MissionDungeonRuntime(
                 lp = ApproximateMissionRewardRules.LoyaltyPoints(record.Content.MissionTypeLabel, rewardLevel, systemSecurity,
                     divisionConnectionsLevelOf is null ? 0 : await divisionConnectionsLevelOf(owner, record.Content.MissionTypeLabel, cancellationToken), rewardSettings);
         }
-        await host.CompleteMissionAsync(owner, record.AgentId, now(), reference, gains, consume ?? [], lp, issuerCorporationId, cancellationToken);
+        var activeShipId = deliveryStationId > 0 ? host.ActiveShipIdOf(owner) : 0;
+        return await host.CompleteMissionAsync(owner, record.AgentId, now(), reference, gains, consume ?? [], lp, issuerCorporationId,
+            cancellationToken, deliveryStationId, activeShipId, walletRewards);
     }
 
     private static async Task<AgentMissionChange?> TransitionAsync(Func<Task<AgentMissionChange?>> transition)

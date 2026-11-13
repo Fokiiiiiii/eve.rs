@@ -573,6 +573,25 @@ public sealed partial class SpaceSessions
     /// <summary>Host ends the Crimewatch combat activity when the simulation reports the final module cycle.</summary>
     public Func<long, long, CancellationToken, Task>? ModuleCombatActivityEnded { get; set; }
 
+    /// <summary>Host refreshes an existing Crimewatch activity while the simulation confirms the module effect is active.</summary>
+    public Func<long, long, CancellationToken, Task>? ModuleCombatActivityUpdated { get; set; }
+
+    private async Task EndActiveModuleCombatActivitiesAsync(Pilot pilot)
+    {
+        if (ModuleCombatActivityEnded is not { } endCombatActivity) return;
+        foreach (var moduleId in pilot.ActiveModules.Keys.Order())
+        {
+            try
+            {
+                await endCombatActivity(pilot.CharacterId, moduleId, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _log?.Invoke($"combat activity for module {moduleId} of character {pilot.CharacterId} could not be closed: {error.Message}");
+            }
+        }
+    }
+
     public Func<AggressionRequest, int, CancellationToken, Task<PolicyDecision>>? RemoteAssistancePolicyOf { get; set; }
 
     public Func<AggressionRequest, CancellationToken, Task>? RecordRemoteAssistance { get; set; }

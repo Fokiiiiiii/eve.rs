@@ -27,7 +27,7 @@ public sealed record ApproximateMissionRewardConfiguration(
 
 public static class ApproximateMissionRewardRules
 {
-    public const int NegotiationSkillTypeId = 3359;
+    public const int NegotiationSkillTypeId = ResearchRules.NegotiationSkillTypeId;
 
     public static decimal NegotiatedIskReward(decimal reward, int negotiationLevel)
     {

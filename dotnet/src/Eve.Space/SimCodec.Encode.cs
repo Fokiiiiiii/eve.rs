@@ -1997,6 +1997,11 @@ private static void WriteStructureDamageCorrelation(
                 w.I64(m.ModuleId);
                 w.U8(m.Reason);
                 break;
+            case SimModuleActivityRefresh m:
+                w.U8(Kind.ModuleActivityRefresh);
+                w.U64(m.SessionId);
+                w.I64(m.ModuleId);
+                break;
             case SimRemoteRepairCycleResult m:
                 w.U8(Kind.RemoteRepairCycleResult);
                 w.U64(m.SessionId);

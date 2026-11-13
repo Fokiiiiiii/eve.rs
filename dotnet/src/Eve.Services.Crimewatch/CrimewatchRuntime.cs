@@ -20,11 +20,14 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     private readonly ConcurrentDictionary<(long FirstCharacterId, long SecondCharacterId), byte> _ongoingEngagements = new();
     private bool _moduleCombatRefreshScheduled;
 
+    public const long ModuleCombatActivityIdleTimeoutMs = CombatState.WeaponsDurationMs;
+
     private sealed record ModuleCombatActivity(
         long AttackerCharacterId,
         long TargetCharacterId,
         long SolarSystemId,
-        AggressionReason Reason);
+        AggressionReason Reason,
+        long LastUpdatedAtUnixMs);
 
     /// <summary>Whether the law lets the first pilot attack the second at this time (a war, a limited engagement, a corporation that may shoot its own). Nothing is legal until something says so.</summary>
     public Func<long, long, long, CancellationToken, Task<bool>>? Legal { get; set; }
@@ -282,6 +285,31 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         CancellationToken cancellationToken = default) =>
         RecordAggressionAsync(request, moduleId > 0 ? moduleId : null, cancellationToken);
 
+    /// <summary>Refreshes an existing module activity while the simulation confirms its effect remains active.</summary>
+    public async Task RefreshModuleCombatActivityAsync(
+        long characterId,
+        long moduleId,
+        CancellationToken cancellationToken = default)
+    {
+        if (characterId <= 0 || moduleId <= 0)
+            return;
+
+        await _engagementGate.WaitAsync(cancellationToken);
+        try
+        {
+            var key = (characterId, moduleId);
+            if (_moduleCombatActivities.TryGetValue(key, out var activity))
+            {
+                _moduleCombatActivities[key] = activity with { LastUpdatedAtUnixMs = nowUnixMs() };
+                ScheduleModuleCombatActivityRefresh();
+            }
+        }
+        finally
+        {
+            _engagementGate.Release();
+        }
+    }
+
     private async Task<AggressionResult> RecordAggressionAsync(
         AggressionRequest request,
         long? moduleId,
@@ -327,11 +355,12 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
             await _engagementGate.WaitAsync(cancellationToken);
             try
             {
-                if (_moduleCombatActivities.TryAdd((request.Attacker, acceptedModuleId),
-                    new ModuleCombatActivity(request.Attacker, request.Target, request.SolarSystemId, result.Outcome.Reason)))
-                {
-                    ScheduleModuleCombatActivityRefresh();
-                }
+                _moduleCombatActivities.AddOrUpdate(
+                    (request.Attacker, acceptedModuleId),
+                    new ModuleCombatActivity(request.Attacker, request.Target, request.SolarSystemId,
+                        result.Outcome.Reason, now),
+                    (_, active) => active with { LastUpdatedAtUnixMs = now });
+                ScheduleModuleCombatActivityRefresh();
             }
             finally
             {
@@ -397,41 +426,15 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         await _engagementGate.WaitAsync(cancellationToken);
         try
         {
-            if (!_moduleCombatActivities.TryRemove((characterId, moduleId), out var endedActivity))
+            var key = (characterId, moduleId);
+            if (!_moduleCombatActivities.TryGetValue(key, out var endedActivity))
             {
                 return;
             }
             activity = endedActivity;
 
             var now = nowUnixMs();
-            await UpdateModuleCombatTimersAsync([activity], now, cancellationToken);
-
-            var (first, second) = Pair(activity.AttackerCharacterId, activity.TargetCharacterId);
-            if (_ongoingEngagements.ContainsKey((first, second)))
-            {
-                var exists = (await persistence.LimitedEngagementsAsync(now, first, cancellationToken))
-                    .Any(row => row.FirstCharacterID == first && row.SecondCharacterID == second && row.ExpiresAtUnixMs > now);
-                if (exists)
-                {
-                    var engagement = new LimitedEngagement(first, second, now + LimitedEngagementDurationMs);
-                    await persistence.UpsertLimitedEngagementAsync(first, second, engagement.ExpiresAtUnixMs, cancellationToken);
-                    if (HasModuleCombatActivityForPair(first, second))
-                    {
-                        MarkEngagementOngoing(first, second);
-                        ScheduleLimitedEngagementExpiry(engagement);
-                    }
-                    else
-                    {
-                        _ongoingEngagements.TryRemove((first, second), out _);
-                        ScheduleLimitedEngagementExpiry(engagement);
-                        TellEngagement(engagement, created: false);
-                    }
-                }
-                else
-                {
-                    _ongoingEngagements.TryRemove((first, second), out _);
-                }
-            }
+            await CompleteModuleCombatActivityLockedAsync(key, activity, now, cancellationToken);
 
             if (_moduleCombatActivities.IsEmpty)
             {
@@ -455,6 +458,39 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
         }
     }
 
+    private async Task CompleteModuleCombatActivityLockedAsync(
+        (long CharacterId, long ModuleId) key,
+        ModuleCombatActivity activity,
+        long now,
+        CancellationToken cancellationToken)
+    {
+        await UpdateModuleCombatTimersAsync([activity], now, cancellationToken);
+        _moduleCombatActivities.TryRemove(key, out _);
+        var (first, second) = Pair(activity.AttackerCharacterId, activity.TargetCharacterId);
+        if (!_ongoingEngagements.ContainsKey((first, second))) return;
+
+        var exists = (await persistence.LimitedEngagementsAsync(now, first, cancellationToken))
+            .Any(row => row.FirstCharacterID == first && row.SecondCharacterID == second && row.ExpiresAtUnixMs > now);
+        if (!exists)
+        {
+            _ongoingEngagements.TryRemove((first, second), out _);
+            return;
+        }
+
+        var engagement = new LimitedEngagement(first, second, now + LimitedEngagementDurationMs);
+        await persistence.UpsertLimitedEngagementAsync(first, second, engagement.ExpiresAtUnixMs, cancellationToken);
+        if (HasModuleCombatActivityForPair(first, second))
+        {
+            MarkEngagementOngoing(first, second);
+            ScheduleLimitedEngagementExpiry(engagement);
+            return;
+        }
+
+        _ongoingEngagements.TryRemove((first, second), out _);
+        ScheduleLimitedEngagementExpiry(engagement);
+        TellEngagement(engagement, created: false);
+    }
+
     private void ScheduleModuleCombatActivityRefresh()
     {
         if (_moduleCombatRefreshScheduled || _moduleCombatActivities.IsEmpty)
@@ -467,28 +503,37 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
 
     private async Task RefreshModuleCombatActivitiesAsync()
     {
+        List<ModuleCombatActivity> ended = [];
+        var now = nowUnixMs();
         await _engagementGate.WaitAsync(CancellationToken.None);
         try
         {
             _moduleCombatRefreshScheduled = false;
-            var activities = _moduleCombatActivities.Values.ToArray();
-            if (activities.Length == 0)
+            foreach (var entry in _moduleCombatActivities.ToArray())
             {
-                return;
+                var activity = entry.Value;
+                if (now < activity.LastUpdatedAtUnixMs || now - activity.LastUpdatedAtUnixMs < ModuleCombatActivityIdleTimeoutMs ||
+                    !_moduleCombatActivities.TryGetValue(entry.Key, out var current) || current != activity)
+                    continue;
+                await CompleteModuleCombatActivityLockedAsync(entry.Key, activity, now, CancellationToken.None);
+                ended.Add(activity);
             }
 
-            var now = nowUnixMs();
-            await UpdateModuleCombatTimersAsync(activities, now, CancellationToken.None);
-            var activePairs = activities
-                .Select(activity => Pair(activity.AttackerCharacterId, activity.TargetCharacterId))
-                .Distinct()
-                .Where(pair => _ongoingEngagements.ContainsKey(pair))
-                .OrderBy(pair => pair.First)
-                .ThenBy(pair => pair.Second);
-            foreach (var (first, second) in activePairs)
+            var activities = _moduleCombatActivities.Values.ToArray();
+            if (activities.Length > 0)
             {
-                await persistence.UpsertLimitedEngagementAsync(
-                    first, second, now + LimitedEngagementDurationMs, CancellationToken.None);
+                await UpdateModuleCombatTimersAsync(activities, now, CancellationToken.None);
+                var activePairs = activities
+                    .Select(activity => Pair(activity.AttackerCharacterId, activity.TargetCharacterId))
+                    .Distinct()
+                    .Where(pair => _ongoingEngagements.ContainsKey(pair))
+                    .OrderBy(pair => pair.First)
+                    .ThenBy(pair => pair.Second);
+                foreach (var (first, second) in activePairs)
+                {
+                    await persistence.UpsertLimitedEngagementAsync(
+                        first, second, now + LimitedEngagementDurationMs, CancellationToken.None);
+                }
             }
         }
         finally
@@ -498,6 +543,13 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
                 ScheduleModuleCombatActivityRefresh();
             }
             _engagementGate.Release();
+        }
+
+        foreach (var activity in ended)
+        {
+            await SyncAsync(activity.AttackerCharacterId, CancellationToken.None);
+            if (activity.TargetCharacterId != activity.AttackerCharacterId)
+                await SyncAsync(activity.TargetCharacterId, CancellationToken.None);
         }
     }
 

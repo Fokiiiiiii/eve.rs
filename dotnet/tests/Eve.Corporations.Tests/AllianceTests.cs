@@ -1,3 +1,4 @@
+using Eve.Data;
 using Eve.Skills;
 using Eve.Wallet;
 
@@ -34,6 +35,53 @@ public class AllianceTests
             if ((await store.ProcessDueAllianceApplicationAsync(job, readWars, writeAffiliation)).Effective)
                 changed.Add(job.CorporationId);
         return changed;
+    }
+
+    [PgFact]
+    public async Task Alliance_contact_label_migration_converts_legacy_indices_to_wire_masks()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var schema = $"alliance_label_migration_{Guid.NewGuid():N}";
+        try
+        {
+            await using (var seed = rig.Source.CreateCommand($"""
+                CREATE SCHEMA {schema};
+                CREATE TABLE {schema}.alliance_contact_labels (
+                    alliance_id bigint NOT NULL,
+                    label_id smallint NOT NULL CHECK (label_id BETWEEN 1 AND 63),
+                    name text NOT NULL,
+                    color integer,
+                    PRIMARY KEY (alliance_id,label_id)
+                );
+                INSERT INTO {schema}.alliance_contact_labels VALUES
+                    (1,1,'First',NULL),(1,2,'Second',NULL),(1,3,'Third',NULL);
+                CREATE TABLE {schema}.alliance_contacts (
+                    alliance_id bigint NOT NULL,
+                    contact_id bigint NOT NULL,
+                    label_mask bigint NOT NULL
+                );
+                INSERT INTO {schema}.alliance_contacts VALUES (1,77,4);
+                """))
+                await seed.ExecuteNonQueryAsync();
+
+            var migration = CorporationStore.MigrationSet().Single(item => item.Name == "020_alliance_contact_label_masks");
+            Assert.Equal([migration.Name], await Migrations.ApplyAsync(rig.Source, schema, [migration]));
+
+            await using (var labels = rig.Source.CreateCommand($"SELECT label_id FROM {schema}.alliance_contact_labels ORDER BY label_id"))
+            await using (var reader = await labels.ExecuteReaderAsync())
+            {
+                var ids = new List<long>();
+                while (await reader.ReadAsync()) ids.Add(reader.GetInt64(0));
+                Assert.Equal([1L, 2L, 4L], ids);
+            }
+            await using var contact = rig.Source.CreateCommand($"SELECT label_mask FROM {schema}.alliance_contacts WHERE contact_id=77");
+            Assert.Equal(4L, (long)(await contact.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            await using var cleanup = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await cleanup.ExecuteNonQueryAsync();
+        }
     }
 
     [PgFact]
@@ -571,6 +619,13 @@ public class AllianceTests
             Assert.Equal("ALLIANCE_CONTACT_LABEL_NAME_LIMIT_EXCEEDED",oversizedAllianceLabelEdit.Code);
             Assert.Equal(maximumAllianceLabelName,Assert.Single(await store.AllianceContactLabelsAsync(alliance.Id)).Name);
             await service.CallAsync(Call(executor,"DeleteLabel",new Eve.Marshal.PyInt(maximumAllianceLabelId)));
+            Assert.Empty(await store.AllianceContactLabelsAsync(alliance.Id));
+            var concurrentLabels = await Task.WhenAll(Enumerable.Range(0, 8).Select(index =>
+                service.CallAsync(Call(executor,"CreateLabel",new Eve.Marshal.PyWString($"Concurrent {index}"),Eve.Marshal.PyNone.Instance)).AsTask()));
+            var concurrentMasks = concurrentLabels.Select(value => Assert.IsType<Eve.Marshal.PyInt>(value).Value).Order().ToArray();
+            Assert.Equal(Enumerable.Range(0, 8).Select(index => 1L << index), concurrentMasks);
+            await Task.WhenAll(concurrentMasks.Select(labelMask =>
+                service.CallAsync(Call(executor,"DeleteLabel",new Eve.Marshal.PyInt(labelMask))).AsTask()));
             Assert.Empty(await store.AllianceContactLabelsAsync(alliance.Id));
             var oversizedContacts = new Eve.Marshal.PyList(Enumerable.Range(1, 501)
                 .Select(id => (Eve.Marshal.PyValue)new Eve.Marshal.PyInt(id)).ToArray());

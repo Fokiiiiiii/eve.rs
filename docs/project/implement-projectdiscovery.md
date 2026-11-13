@@ -59,7 +59,7 @@ One intentional additive wire difference follows direct V24 evidence: EveJS's `g
 
 ## Verification and limits
 
-Verified locally in Release configuration; the database-backed tests used `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p5`:
+Verified locally on 2026-11-13 in Release configuration; the database-backed tests used `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p5`:
 
 - `Eve.Host.Tests` filter `ProjectDiscovery|ScientificReplay|RemoteDiscovery|MmosApiClient`: 31 passed, 0 failed, 0 skipped. This exercises registered Macho calls, local research assignment/submission, HTTP image delivery, remote protocol profiles with a mock upstream, tutorial state/reward persistence and notification order.
 - `Eve.Services.Core.Tests` filter `ProjectDiscovery|CoreCatalogTests`: 14 passed, 0 failed, 0 skipped.
@@ -68,6 +68,6 @@ Verified locally in Release configuration; the database-backed tests used `EVE_P
 - A first Host-slice run found the new clock assertion was using a real-clock Host after a test restart. The test setup was corrected to keep the fake clock on both Host instances; the focused regression and full Host slice then passed.
 - A test-first encoded Exoplanet reward claim failed because the success path omitted `OnAnalysisKreditsChange`; after adding it after `OnPlayerStateUpdated`, the focused PostgreSQL-backed Host wire test passed.
 
-After merging `origin/main`, Release warning-as-error builds succeeded with 0 warnings and 0 errors for `Eve.Host.Tests`, `Eve.Services.Core.Tests`, and `Eve.Characters.Tests`. Rust is not changed by this feature.
+After merging `origin/main`, Release warning-as-error builds succeeded with 0 warnings and 0 errors for `Eve.Host`, `Eve.Services.Core`, `Eve.Characters`, `Eve.Host.Tests`, `Eve.Services.Core.Tests`, and `Eve.Characters.Tests`. Rust is not changed by this feature.
 
-Not checked in this implementation: graphical-client rendering/interaction, live MMOS calls or rewards, authentic Subcellular tutorial catalog delivery, and long-running deployment/restart against production configuration. The offline COVID research replay is one fixed sample per character and is not the live retail task queue or consensus service.
+Not checked in this implementation: graphical-client rendering/interaction, live MMOS calls or rewards, authentic Subcellular tutorial catalog delivery, and long-running deployment/restart against production configuration. The offline COVID research replay is one fixed sample per character and is not the live retail task queue or consensus service. The V24 COVID window returns to its drawing step and requests another task after the results/rewards steps (`/home/user/eve-logic/projectdiscovery/client/projects/covid/gameplaymodes/covidproject.py:328-360`); after this replay's single licensed analysis is completed or skipped, the next request returns `PROJECT_DISCOVERY_TASK_EXHAUSTED` (`ScientificReplayProvider.cs:199-214,346-349`). This exhaustion is covered by `ScientificReplayWireTests.RegisteredEncodedRpcServesRealImageAndPersistsScientificAnswer`. The configured remote provider can request subsequent tasks from MMOS, but that path was exercised only with a mock upstream. EveJS 261108.1 increments a per-character task sequence and issues further local corpus tasks (`/home/user/evejs-261108.1/server/src/services/character/projectDiscoveryRuntime.js:117-131`); its authored corpus is not copied into eve.rs. A repeatable production task queue therefore remains dependent on real MMOS configuration and was not verified here.

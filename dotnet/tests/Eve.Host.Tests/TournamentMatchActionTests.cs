@@ -13,20 +13,22 @@ namespace Eve.Host.Tests;
 public sealed class TournamentMatchActionTests
 {
     [PgFact]
-    public async Task Bans_and_countdown_are_transactional_authorized_and_retry_safe()
+    public async Task Bans_fleet_consent_and_countdown_are_transactional_authorized_and_retry_safe()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var suffix = Guid.NewGuid().ToString("N")[..10];
-        var schema = "ta_" + suffix; var schedSchema = "ts_" + suffix; var eventSchema = "te_" + suffix;
+        var schema = "ta_" + suffix; var schedSchema = "ts_" + suffix; var eventSchema = "te_" + suffix; var fleetSchema = "tf_" + suffix;
         long now = 1_700_000_000_000;
         try
         {
             await DurableScheduler.MigrateAsync(source, schedSchema);
             await EventBus.MigrateAsync(source, eventSchema);
             await using (var seed = source.CreateCommand($"""
-                CREATE SCHEMA {schema};
+                CREATE SCHEMA {schema}; CREATE SCHEMA {fleetSchema};
                 CREATE TABLE {schema}.tournaments (id bigint PRIMARY KEY, ship_types integer[] NOT NULL);
                 CREATE TABLE {schema}.series (tournament_id bigint NOT NULL REFERENCES {schema}.tournaments(id), id bigint NOT NULL, red_team text NOT NULL DEFAULT 'Red', blue_team text NOT NULL DEFAULT 'Blue', PRIMARY KEY(tournament_id,id));
+                CREATE TABLE {fleetSchema}.fleets (fleet_id bigint PRIMARY KEY);
+                CREATE TABLE {fleetSchema}.fleet_members (fleet_id bigint NOT NULL REFERENCES {fleetSchema}.fleets(fleet_id), character_id bigint PRIMARY KEY);
                 INSERT INTO {schema}.tournaments VALUES (1, ARRAY[601,602]);
                 INSERT INTO {schema}.series(tournament_id,id) VALUES (1,1);
                 """)) await seed.ExecuteNonQueryAsync();
@@ -40,6 +42,7 @@ public sealed class TournamentMatchActionTests
             await PersistenceTournamentMatches.MigrateRosterAsync(source, schema);
             await PersistenceTournamentMatches.MigrateParticipantDeathsAsync(source, schema);
             await PersistenceTournamentMatches.MigrateAutobansAsync(source, schema);
+            await PersistenceTournamentMatches.MigrateFleetAsync(source, schema);
             await using (var seed = source.CreateCommand($"""
                 INSERT INTO {schema}.matches(tournament_id,series_id,system_id,maximum_points,match_length,overtime_length)
                 VALUES (1,1,30000142,100,600,0);
@@ -48,13 +51,24 @@ public sealed class TournamentMatchActionTests
             await using var scheduler = new DurableScheduler(source, () => now, schema: schedSchema);
             var events = new EventBus(source, scheduler, schema: eventSchema);
             var sessions = new CharacterSessions();
-            var store = new PersistenceTournamentMatches(source, null!, null!, null!, events, null, new Eve.Sde.SdeReader(source), schema, scheduler, sessions);
-            store.RegisterActionHandlers();
+            var store = new PersistenceTournamentMatches(source, null!, null!, null!, events, null, new Eve.Sde.SdeReader(source), schema, scheduler, sessions, fleetSchema);
+            store.RegisterFleetHandlers(); store.RegisterActionHandlers();
+            var callbacks = new TourneyMatchCallbacks(
+                (_, _) => ValueTask.FromResult(new TourneyCreateMatchResult(1, [1], null, null)),
+                (_, _) => ValueTask.CompletedTask,
+                NominateFleetAsync: store.NominateFleetAsync,
+                AcceptFleetAsync: store.AcceptFleetAsync,
+                SubmitBanAsync: store.SubmitBanAsync);
+            var registry = new ServiceRegistry();
+            foreach (var registered in CoreServices.Create(accounts: null!, nowUnixMs: () => now, tournamentMatchCallbacks: callbacks))
+                registry.Register(registered);
+            var dispatcher = new PacketDispatcher(registry, () => now);
             var sink = new RecordingSink();
             var session = new ClientSession { SessionId = 10, CharacterId = 100, UserId = 1, Sink = sink };
             sessions.Enter(100, session);
             await events.PumpAsync();
             session.Set("solarsystemid", new PyInt(30000142));
+            session.Set("accountRole", new PyLong(GameMasterRoles.Staff));
             TourneyMatchActionRequest Request(TourneyMatchAction action, params PyValue[] tail) =>
                 new(action, 1, [new PyInt(1), .. tail], PyNone.Instance, 30000142, "N=1:1", session);
             async Task<PyValue> Run(TourneyMatchAction action, params PyValue[] tail) =>
@@ -85,25 +99,48 @@ public sealed class TournamentMatchActionTests
             var prompt = Assert.Single(Notifications(redSink), x => x.Name == "OnTournamentPerformBan");
             Assert.Equal(new PyLong(redBan), prompt.Args[0]); Assert.Equal(new PyInt(1), prompt.Args[1]);
             Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(now + 60000)), prompt.Args[3]);
-            await Assert.ThrowsAsync<InvalidOperationException>(async () => await store.SubmitBanAsync(new TourneyBanSubmitRequest(redBan, [new PyInt(601)], blue), CancellationToken.None));
+            var updateNotificationsBeforeSubmission = Notifications(sink).Count(x => x.Name == "ProcessTournamentMatchUpdate");
+            long callId = 1;
+            async Task<PyValue> Dispatch(ClientSession caller, string? service, PyValue remote, string method, params PyValue[] args)
+            {
+                var packet = TournamentWireRequest(callId++, service, remote, method, args);
+                Assert.True(await dispatcher.DispatchAsync(MarshalCodec.Decode(MarshalCodec.Encode(packet)), caller));
+                return Assert.IsType<RecordingSink>(caller.Sink).Sent[^1];
+            }
+            async Task<PyValue> BanShip(ClientSession caller, long id, params PyValue[] types) =>
+                await Dispatch(caller, "tourneyMgr", new PyInt(1), "BanShip", new PyLong(id), new PyList(types));
+
+            var wrongPilot = await BanShip(blue, redBan, new PyInt(601));
+            Assert.Equal(MachoMessage.ErrorResponse, ResponseCode(wrongPilot));
             await Assert.ThrowsAsync<InvalidOperationException>(async () => await Run(TourneyMatchAction.FinalizeBans));
-            await Assert.ThrowsAsync<ArgumentException>(async () => await store.SubmitBanAsync(new TourneyBanSubmitRequest(redBan, [new PyInt(999)], red), CancellationToken.None));
-            await store.SubmitBanAsync(new TourneyBanSubmitRequest(redBan, [new PyInt(601)], red), CancellationToken.None);
-            await store.SubmitBanAsync(new TourneyBanSubmitRequest(redBan, [new PyInt(601)], red), CancellationToken.None);
+            var badShip = await BanShip(red, redBan, new PyInt(999));
+            Assert.Equal(MachoMessage.ErrorResponse, ResponseCode(badShip));
+            Assert.Same(PyNone.Instance, WireResult(await BanShip(red, redBan, new PyInt(601))));
+            await events.PumpAsync();
+            Assert.Equal(updateNotificationsBeforeSubmission + 1,
+                Notifications(sink).Count(x => x.Name == "ProcessTournamentMatchUpdate"));
+            Assert.Same(PyNone.Instance, WireResult(await BanShip(red, redBan, new PyInt(601))));
+            await events.PumpAsync();
+            Assert.Equal(updateNotificationsBeforeSubmission + 1,
+                Notifications(sink).Count(x => x.Name == "ProcessTournamentMatchUpdate"));
             var oldBlue = blue; var newBlueSink = new RecordingSink();
             blue = new ClientSession { SessionId = 23, CharacterId = 202, UserId = 3, Sink = newBlueSink };
             sessions.Enter(202, blue); now += 5000;
             await store.ActionAsync(autoban, CancellationToken.None);
             Assert.Equal(1, await Scalar($"SELECT count(*) FROM {schema}.autoban_rounds"));
-            await Assert.ThrowsAsync<InvalidOperationException>(async () => await store.SubmitBanAsync(new TourneyBanSubmitRequest(blueBan, [], oldBlue), CancellationToken.None));
+            var oldSession = await BanShip(oldBlue, blueBan);
+            Assert.Equal(MachoMessage.ErrorResponse, ResponseCode(oldSession));
             await events.PumpAsync();
             var resumed = Assert.Single(Notifications(newBlueSink), x => x.Name == "OnTournamentPerformBan");
             Assert.Equal(new PyLong(blueBan), resumed.Args[0]);
             Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(now + 55000)), resumed.Args[3]);
-            await store.SubmitBanAsync(new TourneyBanSubmitRequest(blueBan, [], blue), CancellationToken.None);
+            Assert.Same(PyNone.Instance, WireResult(await BanShip(blue, blueBan)));
             await events.PumpAsync();
             Assert.Contains(Notifications(newBlueSink), x => x.Name == "OnTournamentPerformBan" && x.Args[1] is PyInt { Value: 0 });
-            await store.SubmitBanAsync(new TourneyBanSubmitRequest(redBan, [], red), CancellationToken.None);
+            Assert.Same(PyNone.Instance, WireResult(await BanShip(red, redBan)));
+            await events.PumpAsync();
+            Assert.Equal(2, Notifications(redSink).Count(x => x.Name == "OnTournamentPerformBan"));
+            Assert.Equal(2, Notifications(newBlueSink).Count(x => x.Name == "OnTournamentPerformBan"));
             Assert.Equal(1, await Scalar($"SELECT count(*) FROM {schema}.match_bans WHERE type_id=601"));
             await Run(TourneyMatchAction.UnBanShipType, new PyInt(601), new PyInt(0));
             await store.ActionAsync(autoban, CancellationToken.None);
@@ -140,15 +177,83 @@ public sealed class TournamentMatchActionTests
             await scheduler.ScheduleAsync(new JobSpec("tournament.match.countdown", now) { Key = $"match:{oldId}", Payload = new { matchId = oldId, startMs = now } });
             await scheduler.RunDueAsync();
             Assert.Equal(0, await Scalar($"SELECT state FROM {schema}.matches WHERE id={replacement}"));
+
+            await using (var seed = source.CreateCommand($"""
+                INSERT INTO {schema}.series(tournament_id,id) VALUES (1,3);
+                INSERT INTO {schema}.matches(tournament_id,series_id,system_id,maximum_points,match_length,overtime_length,state)
+                VALUES (1,3,30000144,100,600,0,1);
+                INSERT INTO {fleetSchema}.fleets(fleet_id) VALUES (500);
+                INSERT INTO {fleetSchema}.fleet_members(fleet_id,character_id) VALUES (500,303);
+                """)) await seed.ExecuteNonQueryAsync();
+            var consentMatch = await Scalar($"SELECT id FROM {schema}.matches WHERE system_id=30000144");
+            session.Set("solarsystemid", new PyInt(30000144));
+            var binding = Assert.IsType<PyTuple>(WireResult(await Dispatch(session, "tourneyMgr", new PyInt(1),
+                "MachoBindObject", new PyInt(30000144))));
+            var refereeOid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(binding.Items[0]));
+            Assert.NotNull(refereeOid);
+            await using (var referee = source.CreateCommand($"INSERT INTO {schema}.match_referees(oid,match_id,session_id,character_id) VALUES ($1,$2,10,100)"))
+            {
+                referee.Parameters.AddWithValue(refereeOid!); referee.Parameters.AddWithValue(consentMatch);
+                await referee.ExecuteNonQueryAsync();
+            }
+            var nomineeSink = new RecordingSink();
+            var nominee = new ClientSession { SessionId = 31, CharacterId = 303, UserId = 4, Sink = nomineeSink };
+            sessions.Enter(303, nominee);
+            Assert.Same(PyNone.Instance, WireResult(await Dispatch(session, null, new PyStr(refereeOid!),
+                "OverrideFleetBossID", new PyLong(consentMatch), new PyInt(0), new PyLong(303))));
+            await events.PumpAsync();
+            var nomination = Assert.Single(Notifications(nomineeSink), x => x.Name == "OnChangeFleetBoss");
+            Assert.Equal(new PyLong(100), nomination.Args[0]);
+            Assert.Equal(new PyInt(MachoMessage.ProxyNodeId), nomination.Args[1]);
+
+            async Task<PyValue> ExecuteMemberChange(ClientSession caller) =>
+                await Dispatch(caller, "tourneyMgr", new PyInt(1), "ExecuteMemberChange");
+            var staleNominee = new ClientSession { SessionId = 32, CharacterId = 303, UserId = 4, Sink = new RecordingSink() };
+            Assert.Equal(MachoMessage.ErrorResponse, ResponseCode(await ExecuteMemberChange(staleNominee)));
+            var rosterUpdatesBeforeConsent = Notifications(sink).Count(x => x.Name == "ProcessTournamentMatchUpdate");
+            Assert.Same(PyNone.Instance, WireResult(await ExecuteMemberChange(nominee)));
+            Assert.Equal(rosterUpdatesBeforeConsent, Notifications(sink).Count(x => x.Name == "ProcessTournamentMatchUpdate"));
+            Assert.Equal(303L, await Scalar($"SELECT red_captain_id FROM {schema}.matches WHERE id={consentMatch}"));
+            Assert.Equal(500L, await Scalar($"SELECT red_fleet_id FROM {schema}.matches WHERE id={consentMatch}"));
+            Assert.Equal(0L, await Scalar($"SELECT count(*) FROM {schema}.fleet_nominations WHERE match_id={consentMatch}"));
+            await events.PumpAsync();
+            Assert.Equal(rosterUpdatesBeforeConsent + 1, Notifications(sink).Count(x => x.Name == "ProcessTournamentMatchUpdate"));
+            var matchUpdates = Notifications(sink).Where(x => x.Name == "ProcessTournamentMatchUpdate")
+                .Select(x => Assert.IsType<PyDict>(Assert.Single(x.Args))).ToArray();
+            var consentUpdate = Assert.Single(matchUpdates,
+                x => x.Entries.Any(kv => Key(kv.Key) == "matchID" && kv.Value is PyLong matchId && matchId.Value == consentMatch));
+            Assert.Contains(consentUpdate.Entries, kv => Key(kv.Key) == "state" && kv.Value is PyInt { Value: 1 });
         }
         finally
         {
-            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema},{schedSchema},{eventSchema} CASCADE");
+            await using var cleanup = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema},{schedSchema},{eventSchema},{fleetSchema} CASCADE");
             await cleanup.ExecuteNonQueryAsync();
         }
     }
 
     private static string? Key(PyValue value) => value switch { PyBytes bytes => System.Text.Encoding.UTF8.GetString(bytes.Value.Span), PyStr text => text.Value, _ => null };
+
+    private static PyValue TournamentWireRequest(long callId, string? service, PyValue remote, string method, params PyValue[] args)
+    {
+        var body = new PyTuple([remote, new PyStr(method), new PyTuple(args), PyNone.Instance]);
+        var payload = new PyTuple([new PyTuple([PyBool.True, new PySubStream(body)])]);
+        var source = new MachoAddress(AddressKind.Client, CallId: new PyInt(callId), ClientId: new PyInt(42));
+        var destination = new MachoAddress(AddressKind.Node, Service: service, CallId: new PyInt(callId), NodeId: new PyInt(MachoMessage.ProxyNodeId));
+        return new PyObject(new PyStr("carbon.common.script.net.machoNetPacket.CallReq"), new PyTuple([
+            new PyInt(MachoMessage.CallReq), source.Encode(), destination.Encode(), new PyInt(7), payload,
+            new PyDict([]), PyNone.Instance, PyNone.Instance, PyNone.Instance, PyNone.Instance, PyNone.Instance,
+            PyNone.Instance, PyNone.Instance, PyNone.Instance]));
+    }
+
+    private static long ResponseCode(PyValue response) =>
+        Assert.IsType<PyInt>(Assert.IsType<PyTuple>(Assert.IsType<PyObject>(response).Args).Items[0]).Value;
+
+    private static PyValue WireResult(PyValue response)
+    {
+        var packet = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(response).Args).Items;
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<PyInt>(packet[0]).Value);
+        return Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(packet[4]).Items[0]).Decoded!;
+    }
 
     private sealed class RecordingSink : IPacketSink
     {

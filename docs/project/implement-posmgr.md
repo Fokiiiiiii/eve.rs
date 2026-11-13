@@ -69,7 +69,7 @@ Verified in this worktree:
 - Direct EveJS `GetConsumptionFactor` invocation — returned `1.0`.
 - The first full Host test attempt stopped on a missing `sde_mission.skinrComponentPointValues` table in `eve_p3`. The missing schema was copied locally from the checked `eve_p4` mission SDE build 3405148 (`sde_mission._build`); the subsequent full Host test class passed. The `sde` schema in `eve_p3` is the V24.01 static build 3396210.
 - The latest checked main CI run was run 1764 at `8a40fe4e5cfb`; the workflow and Required CI gate succeeded. Its advisory latest-stable Rust clippy job failed, as it did in the preceding successful main runs.
-- No graphical V24 client was launched. The six-commit merge from `origin/main` and push are not checked yet.
+- No graphical V24 client was launched. The six commits from `origin/main` were merged without conflicts at merge commit `66d810c1f`; the push and its CI run are not checked yet.
 
 ## Tooling note
 

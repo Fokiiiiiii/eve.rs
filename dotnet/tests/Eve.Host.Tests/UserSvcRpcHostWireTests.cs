@@ -8,6 +8,63 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
+    public async Task Redeem_token_ids_round_trip_at_int32_and_int64_boundaries_over_host_wire()
+    {
+        const long int32Max = int.MaxValue;
+        var callbacks = new WireRedeemCallbacks
+        {
+            RedeemTokenRows = new PyList(
+            [
+                RedeemToken(int32Max, int32Max - 1),
+                RedeemToken(int32Max + 1, int32Max + 2),
+                RedeemToken(long.MaxValue, long.MaxValue - 1),
+            ]),
+        };
+        var service = new RedeemService(callbacks);
+        Start(configure: registry => registry.Register(service), strictRpc: true, sessionOpened: session =>
+        {
+            session.UserId = 7;
+            session.CharacterId = 42;
+        });
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+        var kwargs = new PyDict(
+        [
+            new(new PyStr("machoVersion"), new PyInt(1)),
+        ]);
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+            open, 1, "userSvc", "GetRedeemTokens", new PyTuple([]), kwargs))));
+
+        var reply = Assert.IsType<Send>(await front.ReceiveAsync());
+        var decoded = MarshalCodec.Decode(reply.Payload);
+        Assert.Equal(MachoMessage.CallRsp, Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded)).Type);
+        var tokens = Assert.IsType<PyObjectEx>(Result(decoded));
+        var rows = tokens.List.Select(item => Assert.IsType<PyPackedRow>(item).Fields()
+            .ToDictionary(field => field.Key, field => field.Value)).ToArray();
+        Assert.Equal(3, rows.Length);
+        Assert.Equal(int32Max, Number(rows[0]["tokenID"]));
+        Assert.Equal(int32Max - 1, Number(rows[0]["massTokenID"]));
+        Assert.Equal(int32Max + 1, Number(rows[1]["tokenID"]));
+        Assert.Equal(int32Max + 2, Number(rows[1]["massTokenID"]));
+        Assert.Equal(long.MaxValue, Number(rows[2]["tokenID"]));
+        Assert.Equal(long.MaxValue - 1, Number(rows[2]["massTokenID"]));
+    }
+
+    private static PyDict RedeemToken(long tokenId, long massTokenId) => Py.Dict(
+        ("tokenID", new PyLong(tokenId)),
+        ("massTokenID", new PyLong(massTokenId)),
+        ("typeID", new PyInt(34)),
+        ("quantity", new PyInt(1)),
+        ("dateTime", new PyLong(0)),
+        ("expireDateTime", new PyLong(0)),
+        ("availableDateTime", new PyLong(0)),
+        ("stationID", new PyLong(0)),
+        ("soulbound", PyBool.False),
+        ("available", PyBool.True));
+
+    [Fact]
     public async Task User_service_compatibility_replies_are_dispatched_through_host_wire()
     {
         var training = new WireMultipleTraining();
@@ -284,9 +341,10 @@ public partial class HostServerTests
         public PyValue? LastClaimTokens { get; private set; }
         public long LastClaimCharacterId { get; private set; }
         public bool LastClaimUseHomeStation { get; private set; }
+        public PyValue? RedeemTokenRows { get; init; }
 
         public ValueTask<PyValue> GetRedeemTokensAsync(long userId, CancellationToken cancellationToken) =>
-            ValueTask.FromResult<PyValue>(new PyList([
+            ValueTask.FromResult(RedeemTokenRows ?? new PyList([
                 Token(100, true, true, 200_000_000_000_000_000),
                 Token(101, false, false, 200_000_000_000_000_000),
                 Token(102, true, false, 1),

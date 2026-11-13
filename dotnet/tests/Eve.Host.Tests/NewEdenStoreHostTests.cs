@@ -746,6 +746,13 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
             var redeem = host.Registry.Lookup("userSvc")!;
             var redeemTokens = Assert.IsType<PyObjectEx>(await redeem.CallAsync(Call(session, "GetRedeemTokens", 7, [])));
             Assert.Equal(2, redeemTokens.List.Count);
+            var wireTokens = Assert.IsType<PyObjectEx>(MarshalCodec.Decode(MarshalCodec.Encode(redeemTokens)));
+            Assert.Equal(2, wireTokens.List.Count);
+            var seasonalTokenIds = wireTokens.List
+                .Select(row => Integer(Assert.IsType<PyPackedRow>(row).Fields()
+                    .Single(field => field.Key == "tokenID").Value))
+                .ToArray();
+            Assert.All(seasonalTokenIds, tokenId => Assert.True(tokenId > int.MaxValue));
         }
         finally
         {

@@ -561,6 +561,8 @@ internal sealed partial class CharacterServicesComposition
             CompleteMissionAsync,
             GrantObjectiveItemAsync,
             HeldQuantityAsync,
+            CourierDeliveryQuantityAsync,
+            ActiveShipIdOf,
             GrantCargoAsync,
             TakeCargoAsync);
         missionDungeons = new MissionDungeonRuntime(
@@ -730,7 +732,8 @@ internal sealed partial class CharacterServicesComposition
         var volume = type is not null && dogma.AttributeId("volume") is { } attribute ? type.Attributes.GetValueOrDefault(attribute, 0) : 0;
         var activeShipId = FleetSessionForCharacter(characterId)?.GetInt("shipid");
         var ownedItems = await items.OwnedByAsync(characterId, cancellationToken);
-        var hasCargo = HasCourierCargo(ownedItems, (int)typeId, courier.ObjectiveQuantity, activeShipId, destination.Id);
+        var hasCargo = HasCourierCargo(ownedItems, (int)typeId, courier.ObjectiveQuantity, activeShipId, destination.Id,
+            Eve.Services.Core.MissionCourierRules.CargoTag(record.Content.MissionId));
         return new Eve.Services.Core.CourierObjectiveView((int)typeId, courier.ObjectiveQuantity, volume, hasCargo, pickup, destination.Id, agent.CorporationId);
     }
 
@@ -739,15 +742,18 @@ internal sealed partial class CharacterServicesComposition
         int typeId,
         long requiredQuantity,
         long? activeShipId,
-        long dropoffStationId)
+        long dropoffStationId,
+        string cargoTag)
     {
         if (requiredQuantity <= 0) return false;
+        var activeShipIsDockedAtDropoff = activeShipId is { } shipId && shipId > 0 &&
+            ownedItems.Any(item => item.Id == shipId && item.LocationId == dropoffStationId && item.Flag == ItemFlags.Hangar);
         long shipCargoQuantity = 0;
         long dropoffHangarQuantity = 0;
         foreach (var item in ownedItems)
         {
-            if (item.TypeId != typeId) continue;
-            if (activeShipId is { } shipId && shipId > 0 && item.LocationId == shipId && item.Flag == ItemFlags.Cargo)
+            if (item.TypeId != typeId || item.CustomInfo != cargoTag) continue;
+            if (activeShipIsDockedAtDropoff && item.LocationId == activeShipId && item.Flag == ItemFlags.Cargo)
             {
                 shipCargoQuantity += item.Quantity;
                 if (shipCargoQuantity >= requiredQuantity) return true;
@@ -830,7 +836,8 @@ internal sealed partial class CharacterServicesComposition
     /// </summary>
     private async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
         IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume,
-        long loyaltyAmount, long issuerCorporationId, CancellationToken cancellationToken)
+        long loyaltyAmount, long issuerCorporationId, CancellationToken cancellationToken,
+        long deliveryStationId = 0, long activeShipId = 0, IReadOnlyList<MissionWalletReward>? walletRewards = null)
     {
         var member = loyaltyAmount > 0 ? await corporations.MemberAsync(characterId, cancellationToken) : null;
         var taxCorporation = member is null ? null : await corporations.GetAsync(member.CorporationId, cancellationToken);
@@ -841,7 +848,9 @@ internal sealed partial class CharacterServicesComposition
             {
                 characterSessions.Of(characterId)?.SendNotification("OnStandingsModified", "charid", modifications);
                 return Task.CompletedTask;
-            });
+            }, deliveryStationId: deliveryStationId, activeShipId: activeShipId, walletRewards: walletRewards,
+            settleWalletRewards: (connection, transaction, rewards, token) => SettleMissionWalletRewardsAsync(
+                connection, transaction, characterId, rewards, this.now(), token));
     }
 
     /// <summary>Commits a decline and, for a second decline inside four hours, its direct agent and corporation losses together.</summary>
@@ -946,10 +955,17 @@ internal sealed partial class CharacterServicesComposition
         IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, CancellationToken cancellationToken,
         Eve.Agents.StorylineCounters? counters = null, (long FactionId, long Level)? counted = null,
         LoyaltyPointStore? loyalty = null, long loyaltyAmount = 0, long issuerCorporationId = 0, long taxCorporationId = 0, decimal loyaltyTaxRate = 0,
-        Func<PyValue, Task>? afterStandingCommit = null)
+        Func<PyValue, Task>? afterStandingCommit = null, long deliveryStationId = 0, long activeShipId = 0,
+        IReadOnlyList<MissionWalletReward>? walletRewards = null,
+        Func<NpgsqlConnection, NpgsqlTransaction, IReadOnlyList<MissionWalletReward>, CancellationToken, Task>? settleWalletRewards = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        Eve.Inventory.Item? dockedShip = null;
+        if (deliveryStationId > 0 && activeShipId > 0 &&
+            await items.LockAndGetAsync(connection, transaction, activeShipId, cancellationToken) is { } candidateShip &&
+            candidateShip.OwnerId == characterId && candidateShip.LocationId == deliveryStationId && candidateShip.Flag == Eve.Inventory.ItemFlags.Hangar)
+            dockedShip = candidateShip;
         // the stacks are locked before anything is written: a second turn-in waits here and then finds them gone (or short)
         var takes = new List<(Eve.Inventory.Item Stack, long Taken)>();
         foreach (var (typeId, quantity, tag) in consume)
@@ -957,7 +973,10 @@ internal sealed partial class CharacterServicesComposition
             var left = quantity;
             // a courier cargo is consumed by its tag only: the other stacks of the type belong to the pilot and stay
             foreach (var stack in (await items.LockOwnedOfTypeAsync(connection, transaction, characterId, typeId, cancellationToken))
-                         .Where(candidate => tag is null || candidate.CustomInfo == tag))
+                         .Where(candidate => (tag is null || candidate.CustomInfo == tag) &&
+                             (deliveryStationId <= 0 ||
+                              candidate.LocationId == deliveryStationId && candidate.Flag == Eve.Inventory.ItemFlags.Hangar ||
+                              dockedShip is not null && candidate.LocationId == dockedShip.Id && candidate.Flag == Eve.Inventory.ItemFlags.Cargo)))
             {
                 if (left == 0) break;
                 var taken = Math.Min(left, stack.Quantity);
@@ -976,6 +995,9 @@ internal sealed partial class CharacterServicesComposition
             return false;
         }
         if (change is null) return false;
+
+        if (walletRewards is { Count: > 0 } rewards && settleWalletRewards is not null)
+            await settleWalletRewards(connection, transaction, rewards, cancellationToken);
 
         var loyaltyChanges = new List<LoyaltyPointChange>();
         if (loyalty is not null && loyaltyAmount > 0 && issuerCorporationId > 0)
@@ -1097,38 +1119,64 @@ internal sealed partial class CharacterServicesComposition
     private async Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) =>
         (await items.OwnedByAsync(characterId, cancellationToken)).Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
 
+    private long ActiveShipIdOf(long characterId) => FleetSessionForCharacter(characterId)?.GetInt("shipid") ?? 0;
+
+    private async Task<long> CourierDeliveryQuantityAsync(long characterId, long missionId, int typeId, long stationId,
+        CancellationToken cancellationToken)
+    {
+        var activeShipId = ActiveShipIdOf(characterId);
+        var owned = await items.OwnedByAsync(characterId, cancellationToken);
+        var shipIsDockedAtDestination = activeShipId > 0 && owned.Any(item => item.Id == activeShipId &&
+            item.OwnerId == characterId && item.LocationId == stationId && item.Flag == Eve.Inventory.ItemFlags.Hangar);
+        var tag = MissionCourierRules.CargoTag(missionId);
+        return owned.Where(item => item.TypeId == typeId && item.CustomInfo == tag &&
+                (item.LocationId == stationId && item.Flag == Eve.Inventory.ItemFlags.Hangar ||
+                 shipIsDockedAtDestination && item.LocationId == activeShipId && item.Flag == Eve.Inventory.ItemFlags.Cargo))
+            .Sum(item => item.Quantity);
+    }
+
     /// <summary>The ISK of a mission reward: one idempotent wallet adjustment, in its own transaction.</summary>
     private async Task CreditMissionIskAsync(long characterId, decimal amount, long counterpartyId, int refTypeId, string reason, string operationKey, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        BountyTaxTerms? terms = null;
-        if (refTypeId == 33 && amount >= NpcBounty.MinimumCorporationTax)
-        {
-            var member = await corporations.MemberAsync(characterId, cancellationToken);
-            var corporation = member is null ? null : await corporations.GetAsync(member.CorporationId, cancellationToken);
-            if (corporation is not null)
-                terms = new BountyTaxTerms(corporation.Id, corporation.IsNpc, corporation.TaxRate);
-        }
-
-        var tax = terms is null ? 0m : NpcBounty.CorporationTaxOf(amount, terms.TaxRate);
-        var paidAt = now();
-        var memberReason = tax > 0
-            ? reason + "\n" + string.Create(System.Globalization.CultureInfo.InvariantCulture,
-                $"{NpcBounty.CorporationTaxRefType}: [{terms!.CorporationId}, {tax:0.########}]")
-            : reason;
-        if (amount - tax > 0)
-        {
-            await economyWallets.AdjustAsync(connection, transaction, characterId, amount - tax, counterpartyId, refTypeId, memberReason,
-                paidAt, operationKey, cancellationToken);
-        }
-
-        if (tax > 0 && terms is { IsNpc: false, CorporationId: > 0 })
-        {
-            await economyWallets.AdjustAsync(connection, transaction, new WalletAccount(terms.CorporationId), tax, characterId, 59885,
-                "Corporation tax on agent mission rewards", paidAt, operationKey + ":corp-tax", operationKey + ":corp-tax", cancellationToken);
-        }
+        await SettleMissionWalletRewardsAsync(connection, transaction, characterId,
+            [new MissionWalletReward(amount, counterpartyId, refTypeId, reason, operationKey)], now(), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task SettleMissionWalletRewardsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long characterId, IReadOnlyList<MissionWalletReward> rewards, long paidAt, CancellationToken cancellationToken)
+    {
+        foreach (var reward in rewards)
+        {
+            BountyTaxTerms? terms = null;
+            if (reward.RefTypeId == MissionDungeonRuntime.AgentMissionRewardRefType && reward.Amount >= NpcBounty.MinimumCorporationTax)
+            {
+                var member = await corporations.MemberAsync(characterId, cancellationToken);
+                var corporation = member is null ? null : await corporations.GetAsync(member.CorporationId, cancellationToken);
+                if (corporation is not null)
+                    terms = new BountyTaxTerms(corporation.Id, corporation.IsNpc, corporation.TaxRate);
+            }
+
+            var tax = terms is null ? 0m : NpcBounty.CorporationTaxOf(reward.Amount, terms.TaxRate);
+            var memberReason = tax > 0
+                ? reward.Reason + "\n" + string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                    $"{NpcBounty.CorporationTaxRefType}: [{terms!.CorporationId}, {tax:0.########}]")
+                : reward.Reason;
+            if (reward.Amount - tax > 0)
+            {
+                await economyWallets.AdjustAsync(connection, transaction, characterId, reward.Amount - tax, reward.CounterpartyId,
+                    reward.RefTypeId, memberReason, paidAt, reward.OperationKey, cancellationToken);
+            }
+
+            if (tax > 0 && terms is { IsNpc: false, CorporationId: > 0 })
+            {
+                await economyWallets.AdjustAsync(connection, transaction, new WalletAccount(terms.CorporationId), tax, characterId, 59885,
+                    "Corporation tax on agent mission rewards", paidAt, reward.OperationKey + ":corp-tax",
+                    reward.OperationKey + ":corp-tax", cancellationToken);
+            }
+        }
     }
 
 
@@ -1159,9 +1207,12 @@ internal sealed class SpaceMissionDungeonHost(
     Func<long, int, bool> isPilotInSystem,
     Func<long, int, long, CancellationToken, Task<string?>> startDungeon,
     Func<long, decimal, long, int, string, string, CancellationToken, Task> creditIsk,
-    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity, string? Tag)>, long, long, CancellationToken, Task<bool>> completeMission,
+    Func<long, long, DateTimeOffset, string, IReadOnlyList<MissionStandingGain>, IReadOnlyList<(int TypeId, long Quantity, string? Tag)>, long, long,
+        CancellationToken, long, long, IReadOnlyList<MissionWalletReward>?, Task<bool>> completeMission,
     Func<long, int, long, long, CancellationToken, Task> grantItem,
     Func<long, int, CancellationToken, Task<long>> heldQuantity,
+    Func<long, long, int, long, CancellationToken, Task<long>> courierDeliveryQuantity,
+    Func<long, long> activeShipIdOf,
     Func<long, long, int, long, bool, long, CancellationToken, Task> grantCargo,
     Func<long, long, int, CancellationToken, Task> takeCargo) : IMissionDungeonHost
 {
@@ -1175,14 +1226,21 @@ internal sealed class SpaceMissionDungeonHost(
 
     public Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
         IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume,
-        long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken) =>
-        completeMission(characterId, agentId, now, reference, standings, consume, loyaltyPoints, issuerCorporationId, cancellationToken);
+        long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken,
+        long deliveryStationId = 0, long activeShipId = 0, IReadOnlyList<MissionWalletReward>? walletRewards = null) =>
+        completeMission(characterId, agentId, now, reference, standings, consume, loyaltyPoints, issuerCorporationId,
+            cancellationToken, deliveryStationId, activeShipId, walletRewards);
 
     public Task GrantObjectiveItemAsync(long characterId, int typeId, long quantity, long stationId, CancellationToken cancellationToken) =>
         grantItem(characterId, typeId, quantity, stationId, cancellationToken);
 
     public Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) =>
         heldQuantity(characterId, typeId, cancellationToken);
+
+    public Task<long> CourierDeliveryQuantityAsync(long characterId, long missionId, int typeId, long stationId,
+        CancellationToken cancellationToken) => courierDeliveryQuantity(characterId, missionId, typeId, stationId, cancellationToken);
+
+    public long ActiveShipIdOf(long characterId) => activeShipIdOf(characterId);
 
     public Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken) =>
         grantCargo(characterId, missionId, typeId, quantity, singleton, stationId, cancellationToken);

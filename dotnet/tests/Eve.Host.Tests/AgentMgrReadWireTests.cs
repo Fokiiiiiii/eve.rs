@@ -419,7 +419,7 @@ public partial class HostServerTests
 
         Assert.True(Eve.Host.CharacterServicesComposition.HasCourierCargo(
             [
-                Stack(10, dropoffStationId, ItemFlags.Hangar, 1, 587),
+                Stack(activeShipId, dropoffStationId, ItemFlags.Hangar, 1, 587),
                 Stack(4, activeShipId, ItemFlags.Cargo, 1),
                 Stack(5, activeShipId, ItemFlags.Cargo, required - 1),
             ],

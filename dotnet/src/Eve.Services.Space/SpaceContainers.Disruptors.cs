@@ -47,10 +47,15 @@ public sealed partial class SpaceContainers
     /// <summary>The group of the player control towers (SDE 365; the Amarr Control Tower is 12235).</summary>
     private const int ControlTowerGroup = 365;
 
+    private const int AnchorDropForStructuresEffectId = 1022;
+
     /// <summary>
     /// in space until it is removed. It has no fuel or modules yet: the placing, anchoring and removal are all it does.
     /// </summary>
     internal const string ControlTowerKind = "control_tower";
+
+    /// <summary>A POS structure attached to a control tower and managed through posMgr.</summary>
+    internal const string StarbaseModuleKind = "starbase_module";
 
     /// <summary>A control tower's record never ends by time (its removal is the host's, see <see cref="UnanchorControlTowerAsync"/>).</summary>
     private const long NeverExpires = long.MaxValue;
@@ -143,10 +148,13 @@ public sealed partial class SpaceContainers
             return null;
         }
         await _statics.EnsureTypesAsync([item.TypeId], cancellationToken);
-        if (_statics.Type(item.TypeId) is not { } type || type.GroupId is not (MobileWarpDisruptorGroup or MobileCynoInhibitorGroup or MobileCynoBeaconGroup or MobileObservatoryGroup or ControlTowerGroup or AnalysisBeaconRules.Group))
+        if (_statics.Type(item.TypeId) is not { } type)
         {
             return null;
         }
+        var starbaseModule = type.CategoryId == StarbaseCategoryId && type.GroupId != ControlTowerGroup && type.EffectIds.Contains(AnchorDropForStructuresEffectId);
+        if (type.GroupId is not (MobileWarpDisruptorGroup or MobileCynoInhibitorGroup or MobileCynoBeaconGroup or MobileObservatoryGroup or ControlTowerGroup or AnalysisBeaconRules.Group) && !starbaseModule)
+            return null;
         if (_space.IsInAbyssalRun(session))
         {
             if (type.GroupId == AnalysisBeaconRules.Group)
@@ -157,6 +165,8 @@ public sealed partial class SpaceContainers
                 throw Refuse("Mobile Observatories cannot be deployed in Abyssal space.");
             if (type.GroupId == ControlTowerGroup)
                 throw Refuse("Control Towers cannot be deployed in Abyssal space.");
+            if (starbaseModule)
+                throw Refuse("Starbase structures cannot be deployed in Abyssal space.");
         }
         if (type.GroupId == AnalysisBeaconRules.Group)
         {
@@ -174,7 +184,7 @@ public sealed partial class SpaceContainers
         var system = (int)(session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0);
         if (system <= 0 || !_space.IsInSpace(session))
         {
-            throw Refuse("A mobile deployable is dropped from a ship in space.");
+            throw Refuse("A deployable is dropped from a ship in space.");
         }
         if (item.OwnerId != character || item.LocationId != shipId || item.Flag != CargoFlag)
         {
@@ -190,8 +200,8 @@ public sealed partial class SpaceContainers
         {
             throw Refuse("Mobile Warp Disruptors cannot be activated in empire space.");
         }
-        var range = inhibitor ? InhibitorRangeMeters : beacon || observatory || tower ? 0 : type.Attributes.GetValueOrDefault(WarpScrambleRangeAttribute);
-        if (!inhibitor && !beacon && !observatory && !tower && range <= 0)
+        var range = inhibitor ? InhibitorRangeMeters : beacon || observatory || tower || starbaseModule ? 0 : type.Attributes.GetValueOrDefault(WarpScrambleRangeAttribute);
+        if (!inhibitor && !beacon && !observatory && !tower && !starbaseModule && range <= 0)
         {
             throw Refuse("That mobile warp disruptor has no warp disruption range.");
         }
@@ -257,7 +267,9 @@ public sealed partial class SpaceContainers
 
         var corporation = (int)(session.GetInt("corpid") ?? 0);
         var alliance = (int)(session.GetInt("allianceid") ?? 0);
-        var deployedOwnerId = tower && corporation > 0 ? corporation : character;
+        if (starbaseModule && corporation <= 0)
+            throw Refuse("A starbase structure requires a corporation owner.");
+        var deployedOwnerId = (tower || starbaseModule) && corporation > 0 ? corporation : character;
         var dropped = await _ships.DropDisruptorAsync(character, shipId, itemId, system, cancellationToken, deployedOwnerId)
             ?? throw Refuse("That item is no longer in your ship's cargo hold.");
         var (deployable, changes) = dropped;
@@ -273,13 +285,13 @@ public sealed partial class SpaceContainers
             : beacon
                 ? (long)BeaconActivationDelay(item.TypeId).TotalMilliseconds
                 : (long)Math.Max(0, type.Attributes.GetValueOrDefault(AnchoringDelayAttribute));
-        var activateAt = tower ? NeverAnchored : now + anchoringDelayMs;
+        var activateAt = tower || starbaseModule ? NeverAnchored : now + anchoringDelayMs;
         var lifetime = inhibitor ? InhibitorLifetime : observatory ? ObservatoryLifetime : beacon ? BeaconLifetime(item.TypeId) : LifetimeOf(item.TypeId);
-        var expiresAt = tower ? NeverExpires : now + (long)lifetime.TotalMilliseconds;
+        var expiresAt = tower || starbaseModule ? NeverExpires : now + (long)lifetime.TotalMilliseconds;
         await _deployed.SaveAsync(new DeployedRecord(
-            deployable.Id, inhibitor ? InhibitorKind : beacon ? BeaconKind : observatory ? ObservatoryKind : tower ? ControlTowerKind : DisruptorKind, system, type.Name, item.TypeId, type.GroupId, position, radius, deployable.OwnerId, corporation,
+            deployable.Id, inhibitor ? InhibitorKind : beacon ? BeaconKind : observatory ? ObservatoryKind : tower ? ControlTowerKind : starbaseModule ? StarbaseModuleKind : DisruptorKind, system, type.Name, item.TypeId, type.GroupId, position, radius, deployable.OwnerId, corporation,
             alliance, shipId, expiresAt, activateAt, range), cancellationToken);
-        if (tower)
+        if (tower || starbaseModule)
             await _deployed.SetTowerStateAsync(deployable.Id, TowerUnanchored, cancellationToken);
         if (inhibitor)
         {
@@ -302,12 +314,18 @@ public sealed partial class SpaceContainers
                 deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, false, deployable.OwnerId, corporation, alliance, shipId));
             SetControlTowerSlimState(deployable.Id, StructureUnanchored, null);
         }
+        else if (starbaseModule)
+        {
+            _sim.PlaceControlTower(new SimPlaceControlTower(
+                deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, false, deployable.OwnerId, corporation, alliance, shipId));
+            SetControlTowerSlimState(deployable.Id, StructureUnanchored, null);
+        }
         else
         {
             _sim.PlaceDisruptor(new SimPlaceDisruptor(
                 deployable.Id, system, type.Name, item.TypeId, type.GroupId, position, radius, range, anchoringDelayMs <= 0, character, corporation, alliance, shipId));
         }
-        if (anchoringDelayMs > 0 && !tower)
+        if (anchoringDelayMs > 0 && !tower && !starbaseModule)
         {
             await _scheduler.ScheduleAsync(new JobSpec(AnchorJob, activateAt)
             {
@@ -457,7 +475,7 @@ public sealed partial class SpaceContainers
     /// </summary>
     public async Task AnchorAsync(long deployableId, CancellationToken cancellationToken = default)
     {
-        if (_deployed is null || await _deployed.GetAsync(deployableId, cancellationToken) is not { Kind: DisruptorKind or InhibitorKind or BeaconKind or ObservatoryKind or ControlTowerKind } record)
+        if (_deployed is null || await _deployed.GetAsync(deployableId, cancellationToken) is not { Kind: DisruptorKind or InhibitorKind or BeaconKind or ObservatoryKind or ControlTowerKind or StarbaseModuleKind } record)
         {
             return;
         }
@@ -468,13 +486,14 @@ public sealed partial class SpaceContainers
             await _deployed.SaveAsync(record with { ActivateAtMs = NeverLit }, cancellationToken);
             return;
         }
-        if (record.Kind == ControlTowerKind)
+        if (record.Kind is ControlTowerKind or StarbaseModuleKind)
         {
             var towerState = await _deployed.TowerStateAsync(deployableId, cancellationToken);
             if (towerState != TowerAnchoring || record.ActivateAtMs == NeverAnchored || record.ActivateAtMs > _nowUnixMs())
                 return;
             await _deployed.SetTowerStateAsync(deployableId, TowerOffline, cancellationToken);
             SetControlTowerSlimState(deployableId, StructureAnchored, null);
+            return;
         }
         _sim.SetDisruptorActive(deployableId, true);
         if (record.Kind == ObservatoryKind && _scheduler is not null)

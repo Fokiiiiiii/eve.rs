@@ -399,6 +399,7 @@ fn a_control_tower_is_in_space_unanchored_until_the_host_anchors_it_and_stops_no
     scene.place_control_tower(tower(system, a, true), t);
     let role = |scene: &Scene| scene.deployables[&tower_id].role.clone();
     assert_eq!(role(&scene), Role::ControlTower { active: false }, "given once: the first placement stands");
+    assert_eq!(category_of(&role(&scene)), 23, "the control tower ball is categoryStarbase");
 
     scene.set_disruptor_active(990_000_000_300, true);
     assert_eq!(role(&scene), Role::ControlTower { active: true });

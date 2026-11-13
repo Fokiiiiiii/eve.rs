@@ -9,6 +9,7 @@ public enum SpaceItemKind
     LaunchedShip = 1,
     ActiveShip = 2,
     MoonChunk = 3,
+    MaintenanceBayLaunchedShip = 4,
 }
 
 /// <summary>A durable space item: its pose and ownership live here, while its inventory item and contents stay in the inventory store.</summary>

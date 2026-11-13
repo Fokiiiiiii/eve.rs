@@ -277,6 +277,17 @@ public sealed partial class ShipService(
         return Py.Tuple(new PyList(launched), new PyList(new List<PyValue>()));
     }
 
+    /// <summary><c>LaunchFromContainer(sourceID, itemID)</c>: launches an assembled ship from a visible, accessible maintenance bay or POS array.</summary>
+    [Method("LaunchFromContainer")]
+    public async ValueTask<PyValue> LaunchFromContainer(ServiceCall call)
+    {
+        if (containers is null || !_binding.Owns(call) || IdOf(call.Arg(0)) is not { } sourceId ||
+            IdOf(call.Arg(1)) is not { } itemId || sourceId <= 0 || itemId <= 0)
+            return None;
+        await containers.LaunchFromContainerAsync(call.Session, sourceId, itemId, call.Cancellation);
+        return None;
+    }
+
     /// <summary><c>ScoopDrone(droneIDs)</c>: drones that nobody commands are taken into the drone bay. Answers a dictionary of the drones that could not be.</summary>
     [Method("ScoopDrone")]
     public async ValueTask<PyValue> ScoopDrone(ServiceCall call) =>

@@ -16,10 +16,7 @@ public class ShipCoverageTests
         "LaunchFromShip", "LeaveShip", "ResetDirtTimestamp", "SafeLogoff", "ScoopDrone", "Undock",
     ];
 
-    private static readonly string[] Open =
-    [
-        "LaunchFromContainer",
-    ];
+    private static readonly string[] Open = [];
 
     [Fact]
     public void Every_ship_call_is_answered_or_listed_as_open()
@@ -27,5 +24,13 @@ public class ShipCoverageTests
         IService ship = new ShipService(null!, () => 0);
         var missing = ClientCalls.Where(method => !ship.HasMethod(method)).ToArray();
         Assert.Equal(Open.Order(), missing.Order());
+    }
+
+    [Fact]
+    public void Launch_from_container_is_a_registered_ship_call()
+    {
+        IService ship = new ShipService(null!, () => 0);
+
+        Assert.True(ship.HasMethod("LaunchFromContainer"));
     }
 }

@@ -212,7 +212,7 @@ internal static class UserSvcCompatibility
     private const string CRowsetName = "carbon.common.script.sys.crowset.CRowset";
     private static readonly (string Name, int Type)[] Columns =
     [
-        ("tokenID", 0x03), ("massTokenID", 0x03), ("typeID", 0x03), ("quantity", 0x03),
+        ("tokenID", (int)DbType.I8), ("massTokenID", (int)DbType.I8), ("typeID", 0x03), ("quantity", 0x03),
         ("blueprintRuns", 0x03), ("blueprintMaterialLevel", 0x03), ("blueprintProductivityLevel", 0x03),
         ("label", 0x82), ("description", 0x82), ("dateTime", 0x40), ("expireDateTime", 0x40),
         ("availableDateTime", 0x40), ("stationID", 0x14), ("soulbound", 0x03),

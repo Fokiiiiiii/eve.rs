@@ -69,6 +69,11 @@ public class MissionDungeonRuntimeTests
         public Task<long> HeldQuantityAsync(long characterId, int typeId, CancellationToken cancellationToken) =>
             Task.FromResult(Held.GetValueOrDefault(typeId));
 
+        public Task<long> CourierDeliveryQuantityAsync(long characterId, long missionId, int typeId, long stationId,
+            CancellationToken cancellationToken) => Task.FromResult(Held.GetValueOrDefault(typeId));
+
+        public long ActiveShipIdOf(long characterId) => 0;
+
         public List<(long Character, int TypeId, long Quantity, bool Singleton, long Station)> Cargo { get; } = [];
 
         public Task GrantCargoAsync(long characterId, long missionId, int typeId, long quantity, bool singleton, long stationId, CancellationToken cancellationToken)
@@ -88,7 +93,9 @@ public class MissionDungeonRuntimeTests
         }
 
         public async Task<bool> CompleteMissionAsync(long characterId, long agentId, DateTimeOffset now, string reference,
-            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, long loyaltyPoints, long issuerCorporationId, CancellationToken cancellationToken)
+            IReadOnlyList<MissionStandingGain> standings, IReadOnlyList<(int TypeId, long Quantity, string? Tag)> consume, long loyaltyPoints,
+            long issuerCorporationId, CancellationToken cancellationToken, long deliveryStationId = 0, long activeShipId = 0,
+            IReadOnlyList<MissionWalletReward>? walletRewards = null)
         {
             if (Store is null) return false;
             if (consume.Any(need => Held.GetValueOrDefault(need.TypeId) < need.Quantity)) return false;
@@ -105,6 +112,8 @@ public class MissionDungeonRuntimeTests
                 Held[typeId] -= quantity;
                 Consumed.Add((characterId, typeId, quantity));
             }
+            foreach (var reward in walletRewards ?? [])
+                Credits.Add((characterId, reward.Amount, reward.CounterpartyId, reward.RefTypeId, reward.OperationKey));
             foreach (var gain in standings) Standings.Add((characterId, gain.EntityId, gain.Amount));
             return true;
         }

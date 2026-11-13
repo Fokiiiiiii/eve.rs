@@ -452,12 +452,13 @@ public sealed partial class CorporationStore
         return command;
     }
 
-    private async Task<T> WriteAsync<T>(Func<NpgsqlConnection,NpgsqlTransaction,Task<T>> action, CancellationToken token)
+    private async Task<T> WriteAsync<T>(Func<NpgsqlConnection,NpgsqlTransaction,Task<T>> action, CancellationToken token,
+        IsolationLevel isolationLevel = IsolationLevel.Serializable)
     {
         for (var attempt = 0; ; attempt++)
         {
             await using var connection = await _source.OpenConnectionAsync(token);
-            await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.Serializable,token);
+            await using var transaction = await connection.BeginTransactionAsync(isolationLevel,token);
             var lockChanges = new List<ItemLockChange>();
             PendingItemLockChanges.Value = lockChanges;
             try

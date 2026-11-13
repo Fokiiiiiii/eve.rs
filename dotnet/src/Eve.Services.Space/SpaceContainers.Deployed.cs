@@ -116,9 +116,9 @@ public sealed partial class SpaceContainers
                         _sim.PlaceDeadspacePocketAsync(new SimPlaceDeadspacePocket(record.DeployableId, record.SolarSystemId, record.Name, record.Position, record.Radius)));
                     continue;
                 }
-                if (record.Kind == ControlTowerKind)
+                if (record.Kind is ControlTowerKind or StarbaseModuleKind)
                 {
-                    // anchored when its record says so; its anchoring job is durable and outlives the restart
+                    // POS structures share the persistent ball and state presentation; their association remains in the deployed row.
                     _sim.PlaceControlTower(new SimPlaceControlTower(
                         record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.ActivateAtMs <= now,
                         record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));

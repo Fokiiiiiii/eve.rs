@@ -495,8 +495,173 @@ public class ControlTowerHostTests
         Assert.Equal("unanchoring", await rig.Deployed.TowerStateAsync(tower));
     }
 
+    [PgFact]
+    public async Task PosMgr_anchors_POS_modules_and_roundtrips_module_permissions_and_production_links_over_host_wire()
+    {
+        await using var rig = await Rig.CreateAsync();
+        int siloTypeId;
+        int materialTypeId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await using var siloCommand = new NpgsqlCommand(
+                "SELECT key FROM sde.\"types\" WHERE (doc->>'groupID')::int = 404 AND doc->>'published' = 'true' ORDER BY key LIMIT 1", connection);
+            siloTypeId = int.Parse((string)(await siloCommand.ExecuteScalarAsync())!, System.Globalization.CultureInfo.InvariantCulture);
+            await using var materialCommand = new NpgsqlCommand(
+                "SELECT key FROM sde.\"types\" WHERE (doc->>'groupID')::int = 427 AND doc->>'published' = 'true' ORDER BY key LIMIT 1", connection);
+            materialTypeId = int.Parse((string)(await materialCommand.ExecuteScalarAsync())!, System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        rig.Containers.CharacterSessions = rig.CharacterSessions;
+        int moonHarvesterTypeId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await using var harvesterCommand = new NpgsqlCommand(
+                "SELECT key FROM sde.\"types\" WHERE (doc->>'groupID')::int = 416 AND doc->>'published' = 'true' ORDER BY key LIMIT 1", connection);
+            moonHarvesterTypeId = int.Parse((string)(await harvesterCommand.ExecuteScalarAsync())!, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower, siloTypeId, siloTypeId, moonHarvesterTypeId], LowSecSystem);
+        var (tower, sourceSilo, destinationSilo, moonHarvester) = (items[0], items[1], items[2], items[3]);
+        Assert.Equal(tower, await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None));
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+
+        var towerRecord = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(tower));
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var host = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+        await using var concurrentHost = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+        async Task<PyValue> Call(string method, params PyValue[] args) => await host.CallAsync(method, args);
+
+        // The production UI manages modules attached by the starbase anchoring flow.
+        // This must create authoritative space state before posMgr accepts module IDs.
+        Assert.Equal(sourceSilo, await rig.Containers.LaunchFromShipAsync(session, sourceSilo, CancellationToken.None));
+        Assert.Equal(destinationSilo, await rig.Containers.LaunchFromShipAsync(session, destinationSilo, CancellationToken.None));
+        var sourcePosition = new[] { towerRecord.Position[0] + 10_000, towerRecord.Position[1], towerRecord.Position[2] };
+        var destinationPosition = new[] { towerRecord.Position[0] + 20_000, towerRecord.Position[1], towerRecord.Position[2] };
+        rig.Sim.PositionAnswers[sourceSilo] = sourcePosition;
+        rig.Sim.PositionAnswers[destinationSilo] = destinationPosition;
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = sourcePosition;
+        await Call("AnchorStructure", new PyLong(sourceSilo), new PyTuple(sourcePosition.Select(value => (PyValue)new PyReal(value)).ToArray()));
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = destinationPosition;
+        await Call("AnchorStructure", new PyLong(destinationSilo), new PyTuple(destinationPosition.Select(value => (PyValue)new PyReal(value)).ToArray()));
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+
+        Assert.Equal(moonHarvester, await rig.Containers.LaunchFromShipAsync(session, moonHarvester, CancellationToken.None));
+        var harvesterPosition = new[] { towerRecord.Position[0] + 30_000, towerRecord.Position[1], towerRecord.Position[2] };
+        rig.Sim.PositionAnswers[moonHarvester] = harvesterPosition;
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = harvesterPosition;
+        await Call("AnchorStructure", new PyLong(moonHarvester), new PyTuple(harvesterPosition.Select(value => (PyValue)new PyReal(value)).ToArray()));
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+
+        // V24 can clear a moon harvester provision even when no historical abundance profile exists.
+        await Call("ChangeStructureProvisionType", new PyLong(tower), new PyLong(moonHarvester), PyNone.Instance);
+        using (var clearedProvision = System.Text.Json.JsonDocument.Parse(await ReadConfigurationAsync(rig, tower)))
+            Assert.False(clearedProvision.RootElement.GetProperty("provisionTypes").TryGetProperty(moonHarvester.ToString(), out _));
+
+        var beforeInvalidProvision = await ReadConfigurationAsync(rig, tower);
+        var invalidProvision = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(
+            "ChangeStructureProvisionType", new PyLong(tower), new PyLong(sourceSilo), new PyInt(moonHarvesterTypeId)));
+        Assert.Equal("CustomNotify", invalidProvision.Error.UserErrorMessage);
+        Assert.Equal(beforeInvalidProvision, await ReadConfigurationAsync(rig, tower));
+
+        await Task.WhenAll(
+            host.CallAsync("ChangeStructureProvisionType", new PyLong(tower), new PyLong(sourceSilo), new PyInt(materialTypeId)),
+            concurrentHost.CallAsync("ChangeStructureProvisionType", new PyLong(tower), new PyLong(destinationSilo), new PyInt(materialTypeId)));
+        // A retried request is idempotent and preserves the other module's committed provision.
+        await Call("ChangeStructureProvisionType", new PyLong(tower), new PyLong(sourceSilo), new PyInt(materialTypeId));
+        using (var concurrentProvisions = System.Text.Json.JsonDocument.Parse(await ReadConfigurationAsync(rig, tower)))
+        {
+            var provisions = concurrentProvisions.RootElement.GetProperty("provisionTypes");
+            Assert.Equal(materialTypeId, provisions.GetProperty(sourceSilo.ToString()).GetInt32());
+            Assert.Equal(materialTypeId, provisions.GetProperty(destinationSilo.ToString()).GetInt32());
+        }
+        var deployFlags = Py.Dict(("anchor", new PyInt(1)), ("unanchor", new PyInt(1)),
+            ("online", new PyInt(1)), ("offline", new PyInt(1)));
+        var usageFlags = Py.Rowset(["structureID", "viewput", "viewputtake", "use"],
+        [
+            Py.List(new PyLong(tower), new PyInt(1), new PyInt(0), new PyInt(0)),
+            Py.List(new PyLong(sourceSilo), new PyInt(2), new PyInt(1), new PyInt(1)),
+            Py.List(new PyLong(destinationSilo), new PyInt(1), new PyInt(2), new PyInt(3)),
+        ]);
+        var duplicateUsageFlags = Py.Rowset(["structureID", "viewput", "viewputtake", "use"],
+        [
+            Py.List(new PyLong(sourceSilo), new PyInt(2), new PyInt(1), new PyInt(1)),
+            Py.List(new PyLong(sourceSilo), new PyInt(1), new PyInt(0), new PyInt(0)),
+        ]);
+        var duplicatePermissions = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(
+            "SetStarbasePermissions", new PyLong(tower), deployFlags, duplicateUsageFlags));
+        Assert.Equal("CustomNotify", duplicatePermissions.Error.UserErrorMessage);
+        var unassociatedUsageFlags = Py.Rowset(["structureID", "viewput", "viewputtake", "use"],
+            [Py.List(new PyLong(tower + 100), new PyInt(1), new PyInt(0), new PyInt(0))]);
+        var beforeUnassociatedPermissions = await ReadConfigurationAsync(rig, tower);
+        var unassociatedPermissions = await Assert.ThrowsAsync<MachoWrappedException>(() => Call(
+            "SetStarbasePermissions", new PyLong(tower), deployFlags, unassociatedUsageFlags));
+        Assert.Equal("CustomNotify", unassociatedPermissions.Error.UserErrorMessage);
+        Assert.Equal(beforeUnassociatedPermissions, await ReadConfigurationAsync(rig, tower));
+        await Call("SetStarbasePermissions", new PyLong(tower), deployFlags, usageFlags);
+        var permissions = Assert.IsType<PyTuple>(await Call("GetStarbasePermissions", new PyLong(tower)));
+        var permissionFields = Assert.IsType<PyDict>(Assert.IsType<PyObject>(permissions.Items[1]).Args);
+        var rows = Assert.IsType<PyList>(Field(permissionFields, "lines"));
+        Assert.Equal(new[] { tower, sourceSilo, destinationSilo, moonHarvester }, rows.Items
+            .Select(row => Events.Number(Assert.IsType<PyList>(row).Items[0])).ToArray());
+        Assert.Equal(new long[][]
+        {
+            [tower, 1, 0, 0], [sourceSilo, 2, 1, 1], [destinationSilo, 1, 2, 3], [moonHarvester, 3, 0, 0],
+        }, rows.Items.Select(row => Assert.IsType<PyList>(row).Items.Select(Events.Number).ToArray()).ToArray());
+
+        var beforeInvalidLink = await ReadConfigurationAsync(rig, tower);
+        var mismatchedLink = await Assert.ThrowsAsync<MachoWrappedException>(() => Call("LinkResourceForTower", new PyLong(tower), new PyList
+        ([Py.List(new PyLong(sourceSilo), new PyLong(destinationSilo), new PyInt(moonHarvesterTypeId))])));
+        Assert.Equal("CustomNotify", mismatchedLink.Error.UserErrorMessage);
+        Assert.Equal(beforeInvalidLink, await ReadConfigurationAsync(rig, tower));
+        var cycleError = await Assert.ThrowsAsync<MachoWrappedException>(() => Call("LinkResourceForTower", new PyLong(tower), new PyList
+        ([Py.List(new PyLong(sourceSilo), new PyLong(destinationSilo), new PyInt(materialTypeId)),
+            Py.List(new PyLong(destinationSilo), new PyLong(sourceSilo), new PyInt(materialTypeId))])));
+        Assert.Equal("CustomNotify", cycleError.Error.UserErrorMessage);
+        host.Notifications.Clear();
+        Assert.Equal(PyBool.True, await Call("LinkResourceForTower", new PyLong(tower), new PyList
+        ([Py.List(new PyLong(sourceSilo), new PyLong(destinationSilo), new PyInt(materialTypeId))])));
+        var notification = Assert.Single(host.Notifications, notice => notice.Dest.BroadcastId == "OnMoonProcessChange");
+        Assert.Equal("clientID", notification.Dest.IdType);
+        var notificationArguments = NotificationArguments(notification);
+        Assert.Equal(tower, Events.Number(notificationArguments[0]));
+        Assert.Empty(Assert.IsType<PyList>(notificationArguments[1]).Items);
+        using var persisted = System.Text.Json.JsonDocument.Parse(await ReadConfigurationAsync(rig, tower));
+        Assert.Equal(materialTypeId, persisted.RootElement.GetProperty("provisionTypes").GetProperty(sourceSilo.ToString()).GetInt32());
+        Assert.Equal(1, persisted.RootElement.GetProperty("links").GetArrayLength());
+        Assert.Equal(sourceSilo, persisted.RootElement.GetProperty("links")[0].GetProperty("fromItemId").GetInt64());
+        Assert.Equal(tower, (await rig.Deployed.GetAsync(sourceSilo))!.ControlTowerId);
+        Assert.Equal(tower, (await rig.Deployed.GetAsync(destinationSilo))!.ControlTowerId);
+        Assert.Equal(tower, (await rig.Deployed.GetAsync(moonHarvester))!.ControlTowerId);
+
+        rig.Sim.Heard.Clear();
+        await rig.Containers.RestoreDeployedAsync((int)LowSecSystem);
+        var restoredModules = rig.Sim.Heard.OfType<SimPlaceControlTower>().Where(ball =>
+            ball.DeployableId == sourceSilo || ball.DeployableId == destinationSilo || ball.DeployableId == moonHarvester).ToArray();
+        Assert.Equal(3, restoredModules.Length);
+        Assert.All(restoredModules, ball => Assert.True(ball.Active));
+        AssertControlTowerSlimState(rig, sourceSilo, 1, null);
+        AssertControlTowerSlimState(rig, destinationSilo, 1, null);
+        AssertControlTowerSlimState(rig, moonHarvester, 1, null);
+    }
+
     private static PyValue? Field(PyDict fields, string name) => fields.Entries
         .Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
+
+    private static IReadOnlyList<PyValue> NotificationArguments(MachoPacket packet)
+    {
+        var envelope = Assert.IsType<PyTuple>(packet.Payload).Items[0];
+        var buffer = Assert.IsType<PyBuffer>(Assert.IsType<PyTuple>(envelope).Items[1]);
+        var decoded = Assert.IsType<PyTuple>(MarshalCodec.DecodeExact(buffer.Value));
+        var eventCall = Assert.IsType<PyTuple>(decoded.Items[1]);
+        return Assert.IsType<PyTuple>(eventCall.Items[1]).Items;
+    }
 
     private static async Task<string> ReadConfigurationAsync(Rig rig, long tower)
     {

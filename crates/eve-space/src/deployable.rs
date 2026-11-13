@@ -99,6 +99,8 @@ const BEACON_CATEGORY: i32 = 2;
 const CYNO_FIELD_CATEGORY: i32 = 2;
 /// The category of a deployable (EVE.js `CATEGORY_DEPLOYABLE`, 22): a mobile warp disruptor's category.
 const DEPLOYABLE_CATEGORY: i32 = 22;
+/// The category of POS control towers and starbase structures (SDE category 23).
+const STARBASE_CATEGORY: i32 = 23;
 /// The category of an acceleration gate's ball (EVE.js's acceleration gate record: type 17831, group 366, category 2).
 const ACCELERATION_GATE_CATEGORY: i32 = 2;
 /// The category of a capture point's ball (the SDE group 922, "Capture Point", is category 11).
@@ -237,6 +239,7 @@ fn category_of(role: &Role) -> i32 {
         Role::AccelerationGate => ACCELERATION_GATE_CATEGORY,
         Role::CapturePoint => CAPTURE_POINT_CATEGORY,
         Role::BattlefieldScoreboard => BATTLEFIELD_SCOREBOARD_CATEGORY,
+        Role::ControlTower { .. } => STARBASE_CATEGORY,
         _ => CHARGE_CATEGORY,
     }
 }

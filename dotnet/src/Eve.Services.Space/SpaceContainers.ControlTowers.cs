@@ -186,6 +186,11 @@ public sealed partial class SpaceContainers
     /// </summary>
     public async Task AnchorControlTowerAsync(ClientSession session, long towerId, IReadOnlyList<double> requestedPosition, CancellationToken cancellationToken = default)
     {
+        if (_deployed is not null && await _deployed.GetAsync(towerId, cancellationToken) is { Kind: StarbaseModuleKind })
+        {
+            await AnchorStarbaseModuleAsync(session, towerId, requestedPosition, cancellationToken);
+            return;
+        }
         _ = requestedPosition;
         if (_deployed is null || _scheduler is null || _source is null)
             throw Refuse("Control tower anchoring is not available on this server.");
@@ -257,6 +262,98 @@ public sealed partial class SpaceContainers
         _sim.PlaceControlTower(new SimPlaceControlTower(record.DeployableId, record.SolarSystemId, record.Name, record.TypeId,
             record.GroupId, anchorPosition, record.Radius, false, record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
         SetControlTowerSlimState(towerId, StructureAnchored, startedAtMs);
+    }
+
+    private async Task AnchorStarbaseModuleAsync(ClientSession session, long moduleId, IReadOnlyList<double> requestedPosition,
+        CancellationToken cancellationToken)
+    {
+        if (_deployed is null || _scheduler is null || _source is null || requestedPosition.Count != 3 || requestedPosition.Any(value => !double.IsFinite(value)))
+            throw Refuse("Starbase structure anchoring is not available on this server.");
+        if (session.CharacterId is not { } characterId || session.GetInt("shipid") is not > 0 || !_space.IsInSpace(session))
+            throw Refuse("A starbase structure can only be anchored by a pilot in space.");
+
+        var now = _nowUnixMs();
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (await _deployed.LockAndGetAsync(connection, transaction, moduleId, cancellationToken) is not { Kind: StarbaseModuleKind } module)
+            throw Refuse("That starbase structure is not in space.");
+        var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, cancellationToken);
+        if (state is TowerAnchoring or TowerOffline or TowerOnline or TowerOnlining)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return;
+        }
+        if (state != TowerUnanchored)
+            throw Refuse("That starbase structure is not fully unanchored.");
+
+        await _statics.EnsureTypesAsync([module.TypeId], cancellationToken);
+        var moduleType = _statics.Type(module.TypeId)
+            ?? throw new InvalidOperationException($"SDE type {module.TypeId} for starbase structure {moduleId} is missing.");
+        if (await _ships.MissingSkillAsync(characterId, new Dictionary<int, double> { [182] = AnchoringSkillTypeId, [277] = 1 }, cancellationToken) is not null)
+            throw Refuse("Anchoring skill I is required to anchor a starbase structure.");
+
+        var candidates = new List<(DeployedRecord Tower, double Distance)>();
+        foreach (var candidate in await _deployed.InSystemAsync(module.SolarSystemId, cancellationToken))
+        {
+            if (candidate.Kind != ControlTowerKind || candidate.CorporationId != module.CorporationId ||
+                candidate.OwnerId != module.OwnerId || candidate.ActivateAtMs == NeverAnchored || candidate.ActivateAtMs > now)
+                continue;
+            var towerState = await _deployed.TowerStateAsync(candidate.DeployableId, cancellationToken);
+            if (towerState is TowerUnanchored or TowerAnchoring or TowerUnanchoring)
+                continue;
+            var distance = Distance(requestedPosition, candidate.Position[0], candidate.Position[1], candidate.Position[2]);
+            candidates.Add((candidate, distance));
+        }
+        var maximumDistanceAttribute = _statics.AttributeId("maxStructureDistance") ?? 650;
+        DeployedRecord? associatedTower = null;
+        foreach (var candidate in candidates.OrderBy(entry => entry.Distance).ThenBy(entry => entry.Tower.DeployableId))
+        {
+            await _statics.EnsureTypesAsync([candidate.Tower.TypeId], cancellationToken);
+            var towerType = _statics.Type(candidate.Tower.TypeId);
+            var maximumDistance = towerType?.Attributes.GetValueOrDefault(maximumDistanceAttribute) ?? 300_000;
+            if (maximumDistance <= 0 || candidate.Distance > maximumDistance)
+                continue;
+            associatedTower = await _deployed.LockAndGetAsync(connection, transaction, candidate.Tower.DeployableId, cancellationToken);
+            if (associatedTower is not { Kind: ControlTowerKind })
+                continue;
+            await RequireControlTowerAccessAsync(session, associatedTower, requireAnchoringSkill: false, cancellationToken,
+                requireInteractionDistance: false, requireConfigurationRole: false, operation: "anchor", connection: connection, transaction: transaction);
+            break;
+        }
+        if (associatedTower is null)
+            throw Refuse("A starbase structure must be anchored within range of its corporation's anchored control tower.");
+
+        if (await _space.PositionOfAsync(session, moduleId, cancellationToken) is not { } modulePosition ||
+            await _space.PositionOfAsync(session, session.GetInt("shipid")!.Value, cancellationToken) is not { } shipPosition ||
+            modulePosition.SolarSystemId != module.SolarSystemId || shipPosition.SolarSystemId != module.SolarSystemId ||
+            Math.Max(0, Distance([modulePosition.X, modulePosition.Y, modulePosition.Z], shipPosition.X, shipPosition.Y, shipPosition.Z) -
+                Math.Max(0, shipPosition.Radius ?? 0) - module.Radius) > 2_500)
+            throw Refuse("The starbase structure is too far away to anchor.");
+
+        var startedAtMs = now;
+        var delayAttribute = _statics.AttributeId("anchoringDelay") ?? 556;
+        var completionMs = checked(startedAtMs + (long)Math.Max(0, moduleType.Attributes.GetValueOrDefault(delayAttribute)));
+        var position = requestedPosition.ToArray();
+        await _deployed.SaveAsync(connection, transaction, module with
+        {
+            Position = position,
+            ActivateAtMs = completionMs,
+            ControlTowerId = associatedTower.DeployableId,
+        }, cancellationToken);
+        await _deployed.SetTowerStateAsync(connection, transaction, moduleId, TowerAnchoring, startedAtMs, cancellationToken);
+        await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(AnchorJob, completionMs)
+        {
+            Key = $"deployable:{moduleId}",
+            Payload = new DisruptorAnchorDue(moduleId),
+            OnDuplicate = OnDuplicate.Replace,
+        }, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        _scheduler.Wake();
+
+        _sim.RemoveDeployed(moduleId);
+        _sim.PlaceControlTower(new SimPlaceControlTower(module.DeployableId, module.SolarSystemId, module.Name, module.TypeId,
+            module.GroupId, position, module.Radius, false, module.OwnerId, module.CorporationId, module.AllianceId, module.ShipId));
+        SetControlTowerSlimState(moduleId, StructureAnchored, startedAtMs);
     }
 
     /// <summary>Routes dogmaIM's onlineForStructures effect on a control tower to its persisted POS transition.</summary>

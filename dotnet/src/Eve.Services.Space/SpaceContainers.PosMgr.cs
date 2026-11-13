@@ -160,9 +160,10 @@ public sealed partial class SpaceContainers
         var deployFlags = configuration.DeployFlags;
         var deploy = new PyDict([.. DeployFlagNames.Select(key => new KeyValuePair<PyValue, PyValue>(new PyStr(key),
             new PyInt(deployFlags.GetValueOrDefault(key))))]);
-        var usage = configuration.UsageFlags.Count == 0
-            ? [new TowerUsage(tower.DeployableId)]
-            : configuration.UsageFlags;
+        var savedUsage = configuration.UsageFlags.ToDictionary(row => row.StructureId);
+        var structures = new[] { tower.DeployableId }
+            .Concat(_deployed is null ? [] : (await _deployed.ByControlTowerAsync(tower.DeployableId, call.Cancellation).ConfigureAwait(false)).Select(module => module.DeployableId));
+        var usage = structures.Select(id => savedUsage.GetValueOrDefault(id) ?? new TowerUsage(id)).ToArray();
         var rows = usage.OrderBy(row => row.StructureId).Select(row => (PyValue)Py.List(WireId(row.StructureId),
             new PyInt(row.ViewPut), new PyInt(row.ViewPutTake), new PyInt(row.Use)));
         return Py.Tuple(deploy, Py.Rowset(["structureID", "viewput", "viewputtake", "use"], rows));
@@ -179,11 +180,17 @@ public sealed partial class SpaceContainers
             deploy[key] = (int)value;
         }
         var usageInput = ReadUsageRows(call.Arg(2));
-        await UpdateTowerConfigurationAsync(call, ReadPositiveId(call.Arg(0)), (record, configuration) =>
+        var towerId = ReadPositiveId(call.Arg(0));
+        await UpdateTowerConfigurationAsync(call, towerId, async (record, configuration, connection, transaction, cancellationToken) =>
         {
+            var moduleIds = _deployed is null ? new HashSet<long>() :
+                (await _deployed.ByControlTowerAsync(connection, transaction, record.DeployableId, cancellationToken).ConfigureAwait(false))
+                    .Select(module => module.DeployableId).ToHashSet();
+            var seen = new HashSet<long>();
             foreach (var row in usageInput)
             {
-                if (row.StructureId != record.DeployableId || row.ViewPut is < 0 or > 3 || row.ViewPutTake is < 0 or > 3 || row.Use is < 0 or > 3)
+                if (row.StructureId != record.DeployableId && !moduleIds.Contains(row.StructureId) ||
+                    !seen.Add(row.StructureId) || row.ViewPut is < 0 or > 3 || row.ViewPutTake is < 0 or > 3 || row.Use is < 0 or > 3)
                     throw SettingsInvalid();
             }
             return configuration with { DeployFlags = deploy,
@@ -227,25 +234,88 @@ public sealed partial class SpaceContainers
 
     private async Task<PyValue> ChangeProvisionTypeAsync(ServiceCall call)
     {
-        _ = await ReadTowerConfigurationAsync(call, ReadPositiveId(call.Arg(0)), true).ConfigureAwait(false);
-        // The current Host has no authoritative POS module-to-tower attachment model. Refuse rather than bind a silo from the same solar system by guess.
-        throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("This control tower has no verified starbase structure association.")));
+        var towerId = ReadPositiveId(call.Arg(0));
+        var moduleId = ReadPositiveId(call.Arg(1));
+        long? chosen = call.Arg(2) is PyNone ? null : ReadPositiveId(call.Arg(2));
+        var tower = await UpdateTowerConfigurationAsync(call, towerId, async (towerRecord, configuration, connection, transaction, cancellationToken) =>
+        {
+            var module = await RequireAssociatedModuleAsync(call, towerRecord, moduleId, connection, transaction).ConfigureAwait(false);
+            if (module.GroupId == MoonHarvesterGroupId && chosen is not null)
+                throw LegacyMoonAuthorityUnavailable();
+            if (module.GroupId == ReactorGroupId)
+                throw LegacyReactionAuthorityUnavailable();
+            if (module.GroupId is not (SiloGroupId or MoonHarvesterGroupId) || chosen is <= 0 && call.Arg(2) is not PyNone)
+                throw ProductionProvisionInvalid();
+            if (chosen is { } typeId)
+            {
+                if (typeId > int.MaxValue) throw ProductionProvisionInvalid();
+                var productTypeId = (int)typeId;
+                await _statics.EnsureTypesAsync([productTypeId], cancellationToken).ConfigureAwait(false);
+                var productType = _statics.Type(productTypeId);
+                if (productType is null || module.GroupId == SiloGroupId && !CanSiloStoreType(module.TypeId, productType))
+                    throw ProductionProvisionInvalid();
+            }
+            var contents = await _items.InContainerAsync(connection, transaction, moduleId, cancellationToken).ConfigureAwait(false);
+            if (contents.Any(item => chosen != item.TypeId))
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The structure contains items that do not match the selected provision type.")));
+            var provisions = new Dictionary<long, int?>(configuration.ProvisionTypes);
+            if (chosen is { } type) provisions[moduleId] = checked((int)type);
+            else provisions.Remove(moduleId);
+            return configuration with
+            {
+                ProvisionTypes = provisions,
+                Links = [.. configuration.Links.Where(link => link.FromItemId != moduleId && link.ToItemId != moduleId)],
+            };
+        }).ConfigureAwait(false);
+        NotifyMoonProcessChange(call.Session, tower, new PyList([]));
+        return PyNone.Instance;
     }
 
     private async Task<PyValue> LinkResourcesAsync(ServiceCall call)
     {
-        var (tower, _) = await ReadTowerConfigurationAsync(call, ReadPositiveId(call.Arg(0)), true).ConfigureAwait(false);
+        var towerId = ReadPositiveId(call.Arg(0));
         if (call.Arg(1) is not (PyList or PyTuple)) throw SettingsInvalid();
         var requested = Sequence(call.Arg(1)).Select(row => Sequence(row)).ToArray();
         if (requested.Length > 1_024) throw SettingsInvalid();
         if (requested.Any(row => row.Count != 3 || row.Any(value => !TryInteger(value, out var parsed) || parsed <= 0)))
             throw SettingsInvalid();
-        if (requested.Length != 0)
+        var tower = await UpdateTowerConfigurationAsync(call, towerId, async (towerRecord, configuration, connection, transaction, cancellationToken) =>
         {
-            // No POS module association or historical reaction authority is present in the current state owner.
-            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("This control tower has no verified starbase production graph.")));
-        }
-        await UpdateTowerConfigurationAsync(call, tower.DeployableId, (_, configuration) => configuration with { Links = [] }).ConfigureAwait(false);
+            var modules = _deployed is null ? [] : await _deployed.ByControlTowerAsync(connection, transaction,
+                towerRecord.DeployableId, cancellationToken).ConfigureAwait(false);
+            var modulesById = modules.ToDictionary(module => module.DeployableId);
+            var links = new List<TowerLink>();
+            var outgoing = new HashSet<(long ModuleId, int TypeId)>();
+            var incoming = new HashSet<(long ModuleId, int TypeId)>();
+            var graph = new Dictionary<long, List<long>>();
+            foreach (var row in requested)
+            {
+                var fromId = ReadPositiveId(row[0]);
+                var toId = ReadPositiveId(row[1]);
+                var requestedTypeId = ReadPositiveId(row[2]);
+                if (requestedTypeId > int.MaxValue) throw ProductionLinkInvalid();
+                var typeId = (int)requestedTypeId;
+                if (fromId == toId || !modulesById.TryGetValue(fromId, out var from) || !modulesById.TryGetValue(toId, out var to))
+                    throw ProductionLinkInvalid();
+                if (from.GroupId is MoonHarvesterGroupId or ReactorGroupId || to.GroupId is MoonHarvesterGroupId or ReactorGroupId)
+                    throw from.GroupId == MoonHarvesterGroupId || to.GroupId == MoonHarvesterGroupId
+                        ? LegacyMoonAuthorityUnavailable()
+                        : LegacyReactionAuthorityUnavailable();
+                if (from.GroupId != SiloGroupId || to.GroupId != SiloGroupId ||
+                    configuration.ProvisionTypes.GetValueOrDefault(fromId) != typeId || configuration.ProvisionTypes.GetValueOrDefault(toId) != typeId)
+                    throw ProductionLinkTypeMismatch();
+                if (!outgoing.Add((fromId, typeId)) || !incoming.Add((toId, typeId)))
+                    throw ProductionLinkDuplicate();
+                links.Add(new TowerLink(fromId, toId, typeId));
+                if (!graph.TryGetValue(fromId, out var next)) graph[fromId] = next = [];
+                next.Add(toId);
+            }
+            if (HasLinkCycle(graph)) throw ProductionLinkCycle();
+            links.Sort((left, right) => left.FromItemId != right.FromItemId
+                ? left.FromItemId.CompareTo(right.FromItemId)
+                : left.TypeId.CompareTo(right.TypeId));
+            return configuration with { Links = links };
+        }).ConfigureAwait(false);
         NotifyMoonProcessChange(call.Session, tower, new PyList([]));
         return PyBool.True;
     }
@@ -301,8 +371,14 @@ public sealed partial class SpaceContainers
         return (record, Normalize(configuration));
     }
 
-    private async Task UpdateTowerConfigurationAsync(ServiceCall call, long towerId,
-        Func<DeployedRecord, PosMgrTowerConfiguration, PosMgrTowerConfiguration> update)
+    private Task<DeployedRecord> UpdateTowerConfigurationAsync(ServiceCall call, long towerId,
+        Func<DeployedRecord, PosMgrTowerConfiguration, PosMgrTowerConfiguration> update) =>
+        UpdateTowerConfigurationAsync(call, towerId,
+            (record, configuration, _, _, _) => Task.FromResult(update(record, configuration)));
+
+    private async Task<DeployedRecord> UpdateTowerConfigurationAsync(ServiceCall call, long towerId,
+        Func<DeployedRecord, PosMgrTowerConfiguration, NpgsqlConnection, NpgsqlTransaction, CancellationToken,
+            Task<PosMgrTowerConfiguration>> update)
     {
         if (_deployed is null || _source is null || towerId <= 0) throw TowerNotFound();
         await using var connection = await _source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
@@ -313,11 +389,58 @@ public sealed partial class SpaceContainers
         var raw = await _deployed.TowerConfigurationAsync(connection, transaction, towerId, call.Cancellation).ConfigureAwait(false);
         var current = Normalize(raw is null ? new PosMgrTowerConfiguration() :
             JsonSerializer.Deserialize<PosMgrTowerConfiguration>(raw, PosMgrJson) ?? new PosMgrTowerConfiguration());
-        var next = Normalize(update(record, current));
+        var next = Normalize(await update(record, current, connection, transaction, call.Cancellation).ConfigureAwait(false));
         var json = JsonSerializer.Serialize(next, PosMgrJson);
         if (!await _deployed.SetTowerConfigurationAsync(connection, transaction, towerId, json, call.Cancellation).ConfigureAwait(false))
             throw TowerNotFound();
         await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
+        return record;
+    }
+
+    private async Task<DeployedRecord> RequireAssociatedModuleAsync(ServiceCall call, DeployedRecord tower, long moduleId,
+        NpgsqlConnection connection, NpgsqlTransaction transaction, bool requireOffline = true)
+    {
+        if (_deployed is null || moduleId <= 0 ||
+            await _deployed.LockAndGetAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false) is not { Kind: StarbaseModuleKind } module ||
+            module.ControlTowerId != tower.DeployableId || module.OwnerId != tower.OwnerId || module.CorporationId != tower.CorporationId ||
+            module.SolarSystemId != tower.SolarSystemId || module.ActivateAtMs == NeverAnchored || module.ActivateAtMs > _nowUnixMs())
+            throw ProductionStructureInvalid();
+        var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
+        if (requireOffline && state != TowerOffline)
+            throw ProductionMustBeOffline();
+        if (!requireOffline && state is not (TowerOffline or TowerOnline or TowerOnlining))
+            throw ProductionStructureInvalid();
+        return module;
+    }
+
+    private bool CanSiloStoreType(int siloTypeId, TypeDef materialType)
+    {
+        var siloType = _statics.Type(siloTypeId);
+        if (siloType is null) return false;
+        var cargoGroupAttribute = _statics.AttributeId("cargoGroup") ?? 629;
+        var cargoGroup2Attribute = _statics.AttributeId("cargoGroup2") ?? 1846;
+        var cargoGroup = siloType.Attributes.GetValueOrDefault(cargoGroupAttribute);
+        var cargoGroup2 = siloType.Attributes.GetValueOrDefault(cargoGroup2Attribute);
+        var allowed = cargoGroup > 0
+            ? new[] { cargoGroup, cargoGroup2 }.Where(group => group > 0)
+            : new double[] { 427, 429, 428, 422, 18 };
+        return allowed.Contains(materialType.GroupId);
+    }
+
+    private static bool HasLinkCycle(IReadOnlyDictionary<long, List<long>> graph)
+    {
+        var visiting = new HashSet<long>();
+        var visited = new HashSet<long>();
+        bool Visit(long node)
+        {
+            if (visiting.Contains(node)) return true;
+            if (!visited.Add(node)) return false;
+            visiting.Add(node);
+            if (graph.TryGetValue(node, out var next) && next.Any(Visit)) return true;
+            visiting.Remove(node);
+            return false;
+        }
+        return graph.Keys.Any(Visit);
     }
 
     private static PosMgrTowerConfiguration Normalize(PosMgrTowerConfiguration source) => source with
@@ -446,6 +569,24 @@ public sealed partial class SpaceContainers
         ("notify", new PyStr("No production links are configured for this control tower. No cycle was run.")));
     private static MachoWrappedException ProcessInfoUnavailable() => MachoErrors.ThrowUserError("CustomNotify",
         ("notify", new PyStr("The historical production-info RPC payload is unavailable in this client build. Use /pos production status <towerID> for server diagnostics.")));
+    private static MachoWrappedException ProductionStructureInvalid() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("Production links must connect valid structures belonging to this control tower.")));
+    private static MachoWrappedException ProductionMustBeOffline() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("Offline this starbase production structure before changing its material type.")));
+    private static MachoWrappedException ProductionProvisionInvalid() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("This material cannot be stored in that silo.")));
+    private static MachoWrappedException LegacyMoonAuthorityUnavailable() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("No verified historical POS moon-material abundance is available for this moon. Harvesting cannot be configured.")));
+    private static MachoWrappedException LegacyReactionAuthorityUnavailable() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("Legacy POS reaction recipes are not available in the pinned data. This reactor cannot be configured.")));
+    private static MachoWrappedException ProductionLinkInvalid() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("Production links must connect valid structures belonging to this control tower.")));
+    private static MachoWrappedException ProductionLinkTypeMismatch() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("Both linked silos must be configured for the same material.")));
+    private static MachoWrappedException ProductionLinkDuplicate() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("A material may have only one source and one destination at each production connection.")));
+    private static MachoWrappedException ProductionLinkCycle() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("Production links cannot form a circular chain.")));
     private static MachoWrappedException NotAvailable() => MachoErrors.ThrowUserError("CustomNotify",
         ("notify", new PyStr("POS management is not available on this server.")));
 }

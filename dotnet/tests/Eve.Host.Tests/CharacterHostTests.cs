@@ -4112,12 +4112,15 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public string CharactersSchema => _schemas["EVE_CHARACTERS_SCHEMA"];
         public string SkillsSchema => _schemas["EVE_SKILLS_SCHEMA"];
         public string InventorySchema => _schemas["EVE_INVENTORY_SCHEMA"];
+        public string IndustrySchema => _schemas["EVE_INDUSTRY_SCHEMA"];
+        public string MarketSchema => _schemas["EVE_MARKET_SCHEMA"];
         public string IdentitySchema => _schemas["EVE_IDENTITY_SCHEMA"];
         public string WalletSchema => _schemas["EVE_WALLET_SCHEMA"];
         public string CrimewatchSchema => _schemas["EVE_CRIMEWATCH_SCHEMA"];
         public string CorporationsSchema => _schemas["EVE_CORPORATIONS_SCHEMA"];
         public string FactionWarfareSchema => _schemas["EVE_FACTIONWARFARE_SCHEMA"];
         public string GameStoreSchema => _schemas["EVE_GAMESTORE_SCHEMA"];
+        public string RelationsSchema => _schemas["EVE_RELATIONS_SCHEMA"];
         public string SchedulerSchema => _schemas["EVE_SCHEDULER_SCHEMA"];
         public string StructuresSchema => _schemas["EVE_STRUCTURES_SCHEMA"];
         public string SkinrSchema => _schemas["EVE_SKINR_SCHEMA"];
@@ -4218,8 +4221,9 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             await command.ExecuteNonQueryAsync();
         }
 
-        public async Task<long> AddCorporationOfficeAsync(long corporationId)
+        public async Task<long> AddCorporationOfficeAsync(long corporationId, long? stationId = null)
         {
+            var officeStationId = stationId ?? Station;
             var itemStore = new PgItemStore(Source, InventorySchema);
             long officeFolderId;
             await using (var connection = await Source.OpenConnectionAsync())
@@ -4227,11 +4231,11 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             {
                 officeFolderId = await itemStore.CreateAsync(connection, transaction,
                     new NewItem(TypeId: Eve.Corporations.CorporationOfficeStore.OfficeFolderTypeId,
-                        OwnerId: corporationId, LocationId: Station, Flag: 4, Singleton: true));
+                        OwnerId: corporationId, LocationId: officeStationId, Flag: 4, Singleton: true));
                 await transaction.CommitAsync();
             }
 
-            var station = (await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(Source))).All.Single(row => row.Id == Station);
+            var station = (await StationCatalog.LoadAsync(new Eve.Sde.SdeReader(Source))).All.Single(row => row.Id == officeStationId);
             var rentedAt = NowUnixMs;
             await using (var connection = await Source.OpenConnectionAsync())
             await using (var command = new NpgsqlCommand(
@@ -4241,7 +4245,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
             {
                 command.Parameters.Add(new NpgsqlParameter { Value = officeFolderId });
                 command.Parameters.Add(new NpgsqlParameter { Value = corporationId });
-                command.Parameters.Add(new NpgsqlParameter { Value = Station });
+                command.Parameters.Add(new NpgsqlParameter { Value = officeStationId });
                 command.Parameters.Add(new NpgsqlParameter { Value = station.SolarSystemId });
                 command.Parameters.Add(new NpgsqlParameter { Value = rentedAt });
                 command.Parameters.Add(new NpgsqlParameter { Value = rentedAt + Eve.Corporations.CorporationOfficeStore.RentalCycleMs });

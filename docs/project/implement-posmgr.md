@@ -64,12 +64,14 @@ Verified in this worktree:
 - Release build of `dotnet/tests/Eve.Services.Core.Tests/Eve.Services.Core.Tests.csproj` with `-warnaserror` — succeeded with 0 warnings and 0 errors after restoring its missing NuGet assets.
 - The complete `Eve.Host.Tests.HostServerTests` class on `eve_p3`, including its POS Host-wire/orbital cases — 484 passed, 0 failed, 0 skipped.
 - The complete `Eve.Services.Space.Tests.ControlTowerHostTests` class on `eve_p3` — 6 passed, 0 failed, 0 skipped.
-- `Eve.Services.Core.Tests.PosMgrServiceTests` — 5 passed, 0 failed, 0 skipped.
+- `Eve.Services.Core.Tests.PosMgrServiceTests` and `TargetedParityRpcTests` — 8 passed, 0 failed, 0 skipped.
 - Planet launch-placement, launch-quantity, and owner-concurrency Host cases that instantiate and register `PlanetMgrService` — 3 passed, 0 failed, 0 skipped. An initial filter used source filenames and matched no tests; the corrected filter ran the three named cases.
 - Direct EveJS `GetConsumptionFactor` invocation — returned `1.0`.
 - The first full Host test attempt stopped on a missing `sde_mission.skinrComponentPointValues` table in `eve_p3`. The missing schema was copied locally from the checked `eve_p4` mission SDE build 3405148 (`sde_mission._build`); the subsequent full Host test class passed. The `sde` schema in `eve_p3` is the V24.01 static build 3396210.
-- The latest checked main CI run was run 1764 at `8a40fe4e5cfb`; the workflow and Required CI gate succeeded. Its advisory latest-stable Rust clippy job failed, as it did in the preceding successful main runs.
-- No graphical V24 client was launched. The six commits from `origin/main` were merged without conflicts at merge commit `66d810c1f`; the push and its CI run are not checked yet.
+- Revalidation on 2026-11-13: Release builds of `Eve.Host`, `Eve.Host.Tests`, `Eve.Services.Space.Tests`, and `Eve.Services.Core.Tests` all succeeded with 0 warnings and 0 errors. The initial `--no-restore` build could not start because this checkout had no NuGet assets; restoring the four projects resolved that setup issue.
+- Revalidation on `eve_p3`: `HostServerTests` — 484 passed; `ControlTowerHostTests` — 6 passed; `PosMgrServiceTests` plus `TargetedParityRpcTests` — 8 passed. All had 0 failed and 0 skipped.
+- The POS implementation was already present on `main` at `362b4a0b5e36ad5dabacc8557d28627d2abac7b9`. CI run 1765 (`43397873007`) completed successfully and its Required CI gate passed. The separate latest-stable Rust clippy advisory job failed on `clippy::needless_bool` at `crates/eve-behaviors/src/actions/group.rs:419`, outside this POS change.
+- No graphical V24 client was launched, and no full EveJS POS end-to-end scenario was run. EveJS code paths and the direct `GetConsumptionFactor` handler were checked; the remaining limitations above reflect unavailable legacy POS module and recipe authority, not verified graphical-client behavior.
 
 ## Tooling note
 

@@ -93,32 +93,49 @@ public sealed class HackingGame
 
     public IReadOnlyList<HackingEvent> ClickTile(Coord coord)
     {
+        if (!Board.Tiles.TryGetValue(coord, out var tile))
+            return Ack();
+
+        var revealedDefense = !tile.Hidden
+            && tile.Type == HackingWire.TypeDefenseSoftware
+            && tile.Coherence > 0;
         if (Outcome != HackingOutcome.Active
-            || !Board.Tiles.TryGetValue(coord, out var tile)
-            || !tile.Hidden
-            || !Explorable(coord)
-            || (tile.Type == HackingWire.TypeUtilityElementTile && FreeSlot() < 0))
+            || (!revealedDefense && !Explorable(coord)))
             return Ack();
 
         var events = new List<HackingEvent>();
-        tile.Hidden = false;
-        events.Add(new HackingEvent(HackingWire.EventTileFlipped, TileView(tile)));
-        switch (tile.Type)
+        if (tile.Hidden)
         {
-            case HackingWire.TypeSegment:
+            tile.Hidden = false;
+            events.Add(new HackingEvent(HackingWire.EventTileFlipped, TileView(tile)));
+            if (tile.Type == HackingWire.TypeSegment)
                 events.Add(new HackingEvent(HackingWire.EventDistanceIndicator, Dict(
                     ("coord", coord),
                     ("distanceIndicator", DistanceToResource(coord)))));
-                break;
+            Finish(events, turn: true);
+            return events;
+        }
+
+        switch (tile.Type)
+        {
+            case HackingWire.TypeSegment:
+                return Ack();
             case HackingWire.TypeDataCache:
                 OpenCache(tile, events);
                 break;
             case HackingWire.TypeUtilityElementTile:
+                if (FreeSlot() < 0)
+                    return Ack();
                 PickUp(tile, events);
                 break;
-            default:
+            case HackingWire.TypeCore:
+            case HackingWire.TypeDefenseSoftware:
+                if (tile.Coherence <= 0)
+                    return Ack();
                 Strike(tile, events);
                 break;
+            default:
+                return Ack();
         }
         Finish(events, turn: true);
         return events;

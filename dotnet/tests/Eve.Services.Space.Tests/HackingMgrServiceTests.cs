@@ -268,6 +268,8 @@ public sealed class HackingMgrServiceTests
         store.Set(CharacterId, new HackingWindow(new HackingGame(attempt, board), Data, 0, session));
 
         await service.CallAsync(Call("ClickedOnTile", session, Tile(0, 3)));
+        Assert.Equal(new[] { HackingWire.EventTileFlipped }, EventIds(Assert.Single(Events.Of(session))));
+        await service.CallAsync(Call("ClickedOnTile", session, Tile(0, 3)));
 
         Assert.Contains(HackingWire.EventGameWon, EventIds(Assert.Single(Events.Of(session))));
         Assert.Null(store.Get(CharacterId));
@@ -294,6 +296,8 @@ public sealed class HackingMgrServiceTests
         Assert.Equal(new[] { HackingWire.EventAck }, EventIds(Assert.Single(Events.Of(replacement))));
         Assert.Empty(site.Ended);
 
+        await service.CallAsync(Call("ClickedOnTile", originalSession, Tile(0, 3)));
+        Assert.Equal(new[] { HackingWire.EventTileFlipped }, EventIds(Assert.Single(Events.Of(originalSession))));
         await service.CallAsync(Call("ClickedOnTile", originalSession, Tile(0, 3)));
 
         Assert.Null(store.Get(CharacterId));
@@ -354,6 +358,9 @@ public sealed class HackingMgrServiceTests
         core.Coherence = core.Strength = 10;
         var attempt = new HackingAttempt(ContainerId, 22329, HackingWire.GameTypeHacking, 1, 40, 20, 3, 1);
         store.Set(CharacterId, new HackingWindow(new HackingGame(attempt, board), Data, 0, session));
+
+        await service.CallAsync(Call("ClickedOnTile", session, Tile(0, 3)));
+        Assert.Equal(new[] { HackingWire.EventTileFlipped }, EventIds(Assert.Single(Events.Of(session))));
         site.FailNextEnd = true;
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>

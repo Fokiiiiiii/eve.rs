@@ -65,6 +65,9 @@ internal sealed partial class CharacterServicesComposition
                 readState: ReadMoonExtractionsAsync,
                 mutationBackend: call => structureMoon.CallAsync(call),
                 readAccess: structureMoon.ValidateReadAccessAsync),
+            new Eve.Services.Space.AutoMoonMiningRpcService(
+                ReadAutoMoonMiningDetailsAsync,
+                ReadAutoMoonMiningCycleOutputAsync),
             new Eve.Services.Space.StructureTravelRpcService(
                 "structureJumpBridgeMgr",
                 jumpBridgeDestination: structureDirectoryReadModel.GetJbStructureDestinationAsync,

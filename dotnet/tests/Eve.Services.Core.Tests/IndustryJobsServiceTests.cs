@@ -285,7 +285,7 @@ public sealed class IndustryJobsServiceTests
         Assert.Equal(34, request.Job.BlueprintTypeId);
         Assert.True(request.Job.BlueprintCopy);
         Assert.Equal(new IndustryJobLocation(60002, 5), request.Job.InputLocation);
-        Assert.Equal(new IndustryJobLocation(60003, 6), request.Job.OutputLocation);
+        Assert.Equal(new IndustryJobLocation(60003, 6, 70001), request.Job.OutputLocation);
         Assert.Equal(3, request.Job.Runs);
         Assert.Equal(3, request.Job.LicensedRuns);
         Assert.Equal(new IndustryJobWallet(1001, 1000), request.Job.Wallet);

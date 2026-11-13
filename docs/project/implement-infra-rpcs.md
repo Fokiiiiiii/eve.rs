@@ -8,6 +8,23 @@ Three client RPCs are implemented and have focused Host integration coverage: `m
 
 ## Existing eve.rs registrations and transport
 
+### Current registration snapshot
+
+The Host composition in this checkout registers the following services and exports:
+
+| Service | Registration and current exports | State owner / notes |
+| --- | --- | --- |
+| `machoNet` | `HostComposition.BuildAsync` registers `MachoNetService` (`dotnet/src/Eve.Host/Hosting/HostComposition.cs:568`). Its exports are `GetTime`, `GetInitVals`, `GetServiceInfo`, `GetConnectedClusterName`, `GetClusterGameStatisticsForClient`, `GetGlobalConfig`, `GetGlobalConfigValue`, `SetGlobalConfigValue`, `GetServerStatus`, and `GetNodeID` (`dotnet/src/Eve.Host/MachoNetService.cs:80-181`). | `HostMachoNetInfo` reads the registered service map, current config, and live character sessions (`dotnet/src/Eve.Host/Hosting/HostMachoNetInfo.cs:39-66`). Global-config writes use `GlobalConfigStore` and the connected-session/cluster-config callbacks wired at registration. `GetServerStatus` is exported but its session-count response remains a separate open item in `docs/project/TODO.md`; it is outside these 27 rows. |
+| `cache` | `CoreServices.Create` includes `CacheService` (`dotnet/src/Eve.Services.Core/CoreServices.cs:98-100`); it exports `GetServerVersionAndBuild` (`dotnet/src/Eve.Services.Core/CoreCompatibilityServiceAdapters.cs:98-110`). | Returns the configured server boot version/build; no mutation or notification. Invalid arguments are rejected. |
+| `authentication` | `CoreServices.Create` registers the provided `AuthenticationRpcService` or its default (`dotnet/src/Eve.Services.Core/CoreServices.cs:126`); exports are `AccruedTime`, `AmUnderage`, and `SetLanguageID` (`dotnet/src/Eve.Services.Core/LoginSupportRpcServices.cs:7-59`). | Host composition wires accrued-time reads to `PgAccruedTimeStore` and age checks to `PgAccountDirectory` when configured (`dotnet/src/Eve.Host/Hosting/HostComposition.cs:449-461`). `SetLanguageID` updates the live session. Login itself is the HostLink `AuthRequest` flow, not an `authentication.Login` RPC; there is no client `Logout` RPC. |
+| `i2` | Added to the character-enabled inventory service list (`dotnet/src/Eve.Host/Rpc/InventoryRpc.cs:60`) and registered with the other character services (`dotnet/src/Eve.Host/Hosting/HostComposition.cs:517-519`). It exports `MachoResolveObject`, `MachoBindObject`, `IsPrimed`, and `GetItem` (`dotnet/src/Eve.Services.Inventory/I2Service.cs:20-73`). | Reads persisted item trees from `PgItemStore` and type group/category data from the pinned SDE; it owns no duplicate store and performs no writes. |
+| `DB2` | No Host service is registered. | The four audited `CallProc` rows are server-internal database callers; no client-facing `CallProc` route was added. |
+| `externalQueueMgr` | No Host service is registered. | The audited `PublishProxyEvent` calls are proxy startup registration, not player RPCs. |
+
+The Rust `eve-net` front forwards raw client marshal packets over HostLink; it does not dispatch a service by name. After HostLink has opened the session, `HostServer` passes packets to `PacketDispatcher`, which decodes Macho calls and resolves them in `ServiceRegistry` (`dotnet/src/Eve.Host/HostServer.cs:755-756`; `dotnet/src/Eve.Services/PacketDispatcher.cs:120-183,216-255`). Bound `i2` Moniker calls use the same dispatcher and bound-object registry. This follows the transport boundary in ADR 0002; there is no separate `machoNet` transport handler for these RPC rows.
+
+### Pre-implementation baseline
+
 Before this change, `CoreServices.Create` registered `cache` and `authentication` (`dotnet/src/Eve.Services.Core/CoreServices.cs:98-100,126`). The `cache` service only exported `GetServerVersionAndBuild`, returning `(boot_version, boot_build)` (`dotnet/src/Eve.Services.Core/CoreCompatibilityServiceAdapters.cs:98-110`). `authentication` exported `AccruedTime`, `AmUnderage`, and `SetLanguageID`; it had no `Logout` method (`dotnet/src/Eve.Services.Core/LoginSupportRpcServices.cs:7-59`). There was no `DB2`, `i2`, or `externalQueueMgr` service registration.
 
 The Host registered `machoNet` from `HostComposition` using `MachoNetService` (`dotnet/src/Eve.Host/Hosting/HostComposition.cs:543-569`). Before this change it exported `GetTime`, `GetInitVals`, `GetServiceInfo`, `GetClusterGameStatisticsForClient`, `GetGlobalConfig`, `GetGlobalConfigValue`, `SetGlobalConfigValue`, `GetServerStatus`, and `GetNodeID` (`dotnet/src/Eve.Host/MachoNetService.cs:64-177`). It did not export any of the target methods.
@@ -57,5 +74,7 @@ These distinctions update the earlier DB2 note: the four DB2 rows are now `CLIEN
 ## Verification boundary
 
 Verified here: V24 source callsites and arguments above; EveJS source matches/misses above; actual Host composition registration; marshal round-trip and dispatcher responses; persisted item reads through a Host shutdown/restart; focused DB-backed tests on `eve_p5` with pinned SDE data.
+
+Recheck on 2026-11-13: `dotnet build dotnet/src/Eve.Host/Eve.Host.csproj -c Release -warnaserror` succeeded with 0 warnings, and `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p5 dotnet test dotnet/tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release --filter FullyQualifiedName~InfrastructureRpcHostTests` passed (2 passed, 0 failed, 0 skipped). `eve_p5` already existed. The first no-restore build attempt could not run because the worktree had no restored `project.assets.json`; the succeeding build restored dependencies first.
 
 Not verified here: behavior against the graphical V24 client, production cluster preferences or deployment-specific `EVE_CLUSTER_NAME`, or any of the `CLIENT-DEAD` server-only internal call flows. EveJS has no i2 implementation to execute as a direct comparison.

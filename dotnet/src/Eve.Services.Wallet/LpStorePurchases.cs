@@ -187,29 +187,30 @@ public sealed class LpStorePurchases
                     request.CharacterId, ItemFlags.Hangar, requiredByType.Keys.ToArray(), cancellationToken);
                 foreach (var (typeId, quantityNeeded) in requiredByType.OrderBy(pair => pair.Key))
                 {
-                    var remaining = quantityNeeded;
-                    foreach (var stack in stacks.Where(stack => stack.TypeId == typeId).OrderBy(stack => stack.Id))
+                    // The V24.01 LP store counts the largest non-singleton hangar stack for a type
+                    // (lpStoreSvc.GetInvenoryItemQuantity), never the sum of separate stacks.
+                    var stack = stacks
+                        .Where(candidate => candidate.TypeId == typeId && !candidate.Singleton && candidate.Quantity > 0)
+                        .OrderByDescending(candidate => candidate.Quantity)
+                        .ThenBy(candidate => candidate.Id)
+                        .FirstOrDefault();
+                    if (stack is null || stack.Quantity < quantityNeeded)
+                        throw Refused("INSUFFICIENT_REQUIRED_ITEMS");
+
+                    var available = stack.Quantity;
+                    var type = await _itemTypes(stack.TypeId, cancellationToken);
+                    if (available == quantityNeeded)
                     {
-                        if (remaining == 0) break;
-                        var available = stack.Quantity > 0 ? stack.Quantity : stack.Singleton ? 1 : 0;
-                        if (available <= 0) continue;
-                        var used = Math.Min(remaining, available);
-                        var type = await _itemTypes(stack.TypeId, cancellationToken);
-                        if (used == available)
-                        {
-                            await _items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
-                            changes.Add(Change(stack.Id, stack.TypeId, type, stack.OwnerId, JunkLocation, stack.Flag, available,
-                                stack.Singleton, stack.LocationId, available, removed: true));
-                        }
-                        else
-                        {
-                            await _items.SetQuantityAsync(connection, transaction, stack.Id, available - used, cancellationToken);
-                            changes.Add(Change(stack.Id, stack.TypeId, type, stack.OwnerId, stack.LocationId, stack.Flag, available - used,
-                                stack.Singleton, stack.LocationId, available));
-                        }
-                        remaining -= used;
+                        await _items.DeleteAsync(connection, transaction, stack.Id, cancellationToken);
+                        changes.Add(Change(stack.Id, stack.TypeId, type, stack.OwnerId, JunkLocation, stack.Flag, available,
+                            stack.Singleton, stack.LocationId, available, removed: true));
                     }
-                    if (remaining > 0) throw Refused("INSUFFICIENT_REQUIRED_ITEMS");
+                    else
+                    {
+                        await _items.SetQuantityAsync(connection, transaction, stack.Id, available - quantityNeeded, cancellationToken);
+                        changes.Add(Change(stack.Id, stack.TypeId, type, stack.OwnerId, stack.LocationId, stack.Flag, available - quantityNeeded,
+                            stack.Singleton, stack.LocationId, available));
+                    }
                 }
             }
 

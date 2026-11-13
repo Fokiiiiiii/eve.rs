@@ -47,6 +47,12 @@ public class WeaponHostTests
             rig.Space.ModuleAggression = async (request, moduleId, token) =>
                 await crimewatch.RecordModuleAggressionAsync(request, moduleId, token);
             rig.Space.ModuleCombatActivityEnded = crimewatch.EndModuleCombatActivityAsync;
+            var heartbeatHandled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            rig.Space.ModuleCombatActivityUpdated = async (characterId, moduleId, token) =>
+            {
+                await crimewatch.RefreshModuleCombatActivityAsync(characterId, moduleId, token);
+                heartbeatHandled.TrySetResult();
+            };
 
             Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(
                 session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
@@ -70,6 +76,11 @@ public class WeaponHostTests
             var created = attackerNotes.ToList().FindIndex(note => note.Name == "OnCrimewatchEngagementCreated");
             var stopped = attackerNotes.ToList().FindIndex(note => note.Name == "OnCrimewatchEngagementStopTimeout");
             Assert.True(created >= 0 && stopped > created, string.Join(",", attackerNotes.Select(note => note.Name)));
+
+            rig.Now += 30_000;
+            rig.Sim.Deliver(new SimModuleActivityRefresh((ulong)session.SessionId, gun));
+            await heartbeatHandled.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.Null((await crimewatch.ClientTimersOfAsync(attacker.CharacterId)).Weapons.ExpiresAtMs);
 
             rig.Sim.Deliver(new SimModuleEnded((ulong)session.SessionId, gun, SimModuleEndReasons.Done));
             await Rig.UntilAsync(() => Events.Of(session, clear: false)
@@ -101,6 +112,151 @@ public class WeaponHostTests
             Assert.Equal([new PyInt(303), new PyLong(Eve.Services.Py.FileTimeFromUnixMs(
                 rig.Now + Eve.Crimewatch.CombatState.FlagDurationMs))],
                 Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(stoppedCriminal.Items[0]).Items[3]).Items);
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Leaving_a_space_session_closes_active_module_combat_activities()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var attacker = await rig.NewCharacterAsync("Space Tester", 1);
+        var victim = await rig.NewCharacterAsync("Space Victim", 2);
+        var session = await InSpaceAsync(rig, attacker, 1);
+        var other = await InSpaceAsync(rig, victim, 2);
+        var gun = await GunOfAsync(rig, attacker);
+        var systemId = session.GetInt("solarsystemid")!.Value;
+        var schema = "cw_leave_" + Guid.NewGuid().ToString("N")[..12];
+        await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(rig.Source, schema);
+        try
+        {
+            using var timers = new Eve.Scheduler.LocalTimers(delay: static (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+            using var crimewatch = new Eve.Services.Crimewatch.CrimewatchRuntime(
+                new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema), rig.CharacterSessions, () => rig.Now,
+                new EmptyCrimewatchPersistence(), localTimers: timers);
+            var store = new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema);
+            var service = new Eve.Services.Crimewatch.CrimewatchService(store, crimewatch, () => rig.Now);
+            await store.UpdateAsync(victim.CharacterId,
+                state => state.FlagAsSuspect(rig.Now) with { SolarSystemId = systemId }, rig.Now);
+            rig.Space.WeaponTargetContextOf = (_, _, _) => Task.FromResult(
+                new WeaponTargetContext(AttackerIsPlayer: true, TargetIsPlayerProperty: true, TargetIsSuspect: true));
+            rig.Space.ModuleAggression = async (request, moduleId, token) =>
+                await crimewatch.RecordModuleAggressionAsync(request, moduleId, token);
+            rig.Space.ModuleCombatActivityEnded = crimewatch.EndModuleCombatActivityAsync;
+
+            Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(
+                session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
+            Assert.Null((await crimewatch.ClientTimersOfAsync(attacker.CharacterId)).Weapons.ExpiresAtMs);
+
+            await rig.Space.OnCharacterLeavingAsync(session, attacker.CharacterId, CancellationToken.None);
+
+            Assert.Equal(rig.Now + Eve.Crimewatch.CombatState.WeaponsDurationMs,
+                (await crimewatch.ClientTimersOfAsync(attacker.CharacterId)).Weapons.ExpiresAtMs);
+            Assert.Equal(rig.Now + Eve.Crimewatch.CombatState.WeaponsDurationMs,
+                (await store.StateOfAsync(attacker.CharacterId)).WeaponsUntilMs);
+            Assert.Equal(rig.Now + Eve.Crimewatch.CombatState.PvpDurationMs,
+                (await store.StateOfAsync(victim.CharacterId)).PvpUntilMs);
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Closing_a_space_session_closes_and_persists_active_module_combat_activities()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var attacker = await rig.NewCharacterAsync("Space Tester", 1);
+        var victim = await rig.NewCharacterAsync("Space Victim", 2);
+        var session = await InSpaceAsync(rig, attacker, 1);
+        var other = await InSpaceAsync(rig, victim, 2);
+        var gun = await GunOfAsync(rig, attacker);
+        var systemId = session.GetInt("solarsystemid")!.Value;
+        var schema = "cw_disconnect_" + Guid.NewGuid().ToString("N")[..12];
+        await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(rig.Source, schema);
+        try
+        {
+            using var timers = new Eve.Scheduler.LocalTimers(delay: static (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+            using var crimewatch = new Eve.Services.Crimewatch.CrimewatchRuntime(
+                new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema), rig.CharacterSessions, () => rig.Now,
+                new EmptyCrimewatchPersistence(), localTimers: timers);
+            var store = new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema);
+            await store.UpdateAsync(victim.CharacterId,
+                state => state.FlagAsSuspect(rig.Now) with { SolarSystemId = systemId }, rig.Now);
+            rig.Space.WeaponTargetContextOf = (_, _, _) => Task.FromResult(
+                new WeaponTargetContext(AttackerIsPlayer: true, TargetIsPlayerProperty: true, TargetIsSuspect: true));
+            rig.Space.ModuleAggression = async (request, moduleId, token) =>
+                await crimewatch.RecordModuleAggressionAsync(request, moduleId, token);
+            rig.Space.ModuleCombatActivityEnded = crimewatch.EndModuleCombatActivityAsync;
+
+            Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(
+                session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
+            Assert.Null((await crimewatch.ClientTimersOfAsync(attacker.CharacterId)).Weapons.ExpiresAtMs);
+
+            session.Close();
+            await rig.Space.QuiesceAsync();
+
+            Assert.Equal(rig.Now + Eve.Crimewatch.CombatState.WeaponsDurationMs,
+                (await crimewatch.ClientTimersOfAsync(attacker.CharacterId)).Weapons.ExpiresAtMs);
+            Assert.Equal(rig.Now + Eve.Crimewatch.CombatState.WeaponsDurationMs,
+                (await store.StateOfAsync(attacker.CharacterId)).WeaponsUntilMs);
+            Assert.Equal(rig.Now + Eve.Crimewatch.CombatState.PvpDurationMs,
+                (await store.StateOfAsync(victim.CharacterId)).PvpUntilMs);
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Destroying_a_ship_closes_its_active_module_combat_activities()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var attacker = await rig.NewCharacterAsync("Space Tester", 1);
+        var victim = await rig.NewCharacterAsync("Space Victim", 2);
+        var session = await InSpaceAsync(rig, attacker, 1);
+        var other = await InSpaceAsync(rig, victim, 2);
+        var gun = await GunOfAsync(rig, attacker);
+        var systemId = session.GetInt("solarsystemid")!.Value;
+        var schema = "cw_death_" + Guid.NewGuid().ToString("N")[..12];
+        await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(rig.Source, schema);
+        try
+        {
+            using var timers = new Eve.Scheduler.LocalTimers(delay: static (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+            using var crimewatch = new Eve.Services.Crimewatch.CrimewatchRuntime(
+                new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema), rig.CharacterSessions, () => rig.Now,
+                new EmptyCrimewatchPersistence(), localTimers: timers);
+            var store = new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema);
+            await store.UpdateAsync(victim.CharacterId,
+                state => state.FlagAsSuspect(rig.Now) with { SolarSystemId = systemId }, rig.Now);
+            rig.Space.WeaponTargetContextOf = (_, _, _) => Task.FromResult(
+                new WeaponTargetContext(AttackerIsPlayer: true, TargetIsPlayerProperty: true, TargetIsSuspect: true));
+            rig.Space.ModuleAggression = async (request, moduleId, token) =>
+                await crimewatch.RecordModuleAggressionAsync(request, moduleId, token);
+            rig.Space.ModuleCombatActivityEnded = crimewatch.EndModuleCombatActivityAsync;
+
+            Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(
+                session, gun, "targetAttack", other.GetInt("shipid")!.Value, 1000, CancellationToken.None));
+            Assert.Null((await crimewatch.ClientTimersOfAsync(attacker.CharacterId)).Weapons.ExpiresAtMs);
+
+            rig.Sim.Say(new SimDestroyed((ulong)session.SessionId, attacker.ShipId, 0,
+                [0.0, 0.0, 0.0], [0.0, 0.0, 1.0], 47, 0));
+            await rig.Space.QuiesceAsync();
+
+            Assert.Equal(rig.Now + Eve.Crimewatch.CombatState.WeaponsDurationMs,
+                (await crimewatch.ClientTimersOfAsync(attacker.CharacterId)).Weapons.ExpiresAtMs);
+            Assert.Equal(rig.Now + Eve.Crimewatch.CombatState.WeaponsDurationMs,
+                (await store.StateOfAsync(attacker.CharacterId)).WeaponsUntilMs);
+            Assert.Equal(rig.Now + Eve.Crimewatch.CombatState.PvpDurationMs,
+                (await store.StateOfAsync(victim.CharacterId)).PvpUntilMs);
         }
         finally
         {

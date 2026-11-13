@@ -1582,6 +1582,22 @@ fn web(module: i64, percent: f64) -> Effect {
     holding(module, Remote::Web { percent }, "webify")
 }
 
+#[test]
+fn a_running_offensive_effect_refreshes_its_combat_activity_without_ending() {
+    let (mut scene, t) = reaching(5_000.0);
+    assert!(accepted(&scene.activate(A, web(MODULE, -60.0), t)));
+
+    let (out, after) = poll_until(&mut scene, t, 31.0);
+
+    assert!(
+        out.iter()
+            .any(|message| matches!(message, Out::ModuleActivityRefresh { session: A, module_id: MODULE })),
+        "{out:?}"
+    );
+    assert!(scene.pilots[&A].modules.running.iter().any(|run| run.effect.module_id == MODULE));
+    assert!(after >= t + 31 * SECOND);
+}
+
 fn speed_of(scene: &Scene, who: SessionId) -> f64 {
     scene.pilots[&who].ship.spec.max_velocity
 }

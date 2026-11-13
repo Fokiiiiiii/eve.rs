@@ -25,6 +25,8 @@ public static partial class SimCodec
         public const byte ShipChanged = 8;
         public const byte CrimewatchFlagActive = 140;
         public const byte EmpireSentryOffense = 161;
+        /// <summary>The simulation confirms an active offensive module effect (protocol 97).</summary>
+        public const byte ModuleActivityRefresh = 162;
         public const byte Notify = 9;
         public const byte ServiceNotify = 125;
         public const byte GetSceneBody = 126;

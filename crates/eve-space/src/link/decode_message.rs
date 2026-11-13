@@ -2547,6 +2547,9 @@ impl Message {
                 }
                 Message::ModuleEnded { session_id, module_id, reason }
             }
+            kind::MODULE_ACTIVITY_REFRESH => {
+                Message::ModuleActivityRefresh { session_id: r.u64()?, module_id: r.i64()? }
+            }
             kind::ECM_BURST => {
                 let (session_id, ship_id) = (r.u64()?, r.i64()?);
                 let count = r.u32()? as usize;

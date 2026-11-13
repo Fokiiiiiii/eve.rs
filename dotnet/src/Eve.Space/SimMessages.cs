@@ -1164,6 +1164,9 @@ public static class SimModuleEndReasons
 /// </summary>
 public sealed record SimModuleEnded(ulong SessionId, long ModuleId, byte Reason) : SimMessage;
 
+/// <summary>The simulation confirms that an offensive module effect remains active, bounding stale Crimewatch activity if its end event is lost.</summary>
+public sealed record SimModuleActivityRefresh(ulong SessionId, long ModuleId) : SimMessage;
+
 public sealed record SimDroneWorkResult(
     ulong SessionId, long DroneId, long TargetId, ulong CycleId, bool Accepted, string Reason, long UnitsRemaining, long DeliveredUnits, bool Complete) : SimMessage;
 

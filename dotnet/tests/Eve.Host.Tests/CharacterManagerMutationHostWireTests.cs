@@ -1,9 +1,9 @@
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Corporations;
 using Eve.Services;
 using Eve.Services.Inventory;
-using Eve.Corporations;
 using Eve.Skills;
 using Eve.Wallet;
 
@@ -11,6 +11,111 @@ namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    [PgFact]
+    public async Task Corporation_role_stasis_blocks_forced_kick_but_allows_voluntary_move_and_invitation_acceptance_through_host()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var founderA = await rig.CreateCharacterAsync();
+        var founderB = await rig.CreateCharacterAsync();
+        var leaver = await rig.CreateCharacterAsync();
+        var transferee = await rig.CreateCharacterAsync();
+        foreach (var founder in new[] { founderA, founderB })
+        {
+            await rig.FundAsync(founder, 3_000_000_000m);
+            await rig.SetSkillLevelAsync(founder, 3363, 1);
+        }
+        var wallets = new PgWalletStore(rig.Source, rig.WalletSchema);
+        var store = new CorporationStore(rig.Source, rig.Characters, wallets,
+            new WalletTransactions(rig.Source, rig.WalletSchema), new PgSkillStore(rig.Source, rig.SkillsSchema),
+            () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), rig.CorporationsSchema);
+        var corporationA = await store.CreateAsync(founderA,
+            new NewCorporation("Stasis Source", "STAS", "", "", 0), $"host-stasis-source:{Guid.NewGuid():N}");
+        var corporationB = await store.CreateAsync(founderB,
+            new NewCorporation("Stasis Destination", "STDT", "", "", 0), $"host-stasis-destination:{Guid.NewGuid():N}");
+
+        async Task Join(long characterId, Corporation corporation, long inviter)
+        {
+            var invitation = await store.CreateInvitationAsync(characterId, corporation.Id, inviter);
+            await store.RespondWithOutcomeAsync(characterId, invitation.ApplicationId, 2, "", "");
+        }
+
+        await Join(leaver, corporationA, founderA);
+        await Join(transferee, corporationA, founderA);
+        foreach (var characterId in new[] { leaver, transferee })
+        {
+            var member = (await store.MemberAsync(characterId))!;
+            var withRole = member with { Masks = member.Masks with { Roles = CorporationRoles.PersonnelManager } };
+            await store.UpdateMemberAsync(founderA, withRole);
+            await store.UpdateMemberAsync(founderA, withRole with { Masks = new RoleMasks() });
+            Assert.True((await store.MemberAsync(characterId))!.StasisUntilMs > DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        }
+        var transferInvitation = await store.CreateInvitationAsync(transferee, corporationB.Id, founderB);
+
+        var memberSessions = new[] { leaver, transferee, founderA };
+        var nextSession = 0;
+        var service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("corpRegistry"));
+        Start(configure: registry => registry.Register(service), sessionOpened: session =>
+        {
+            var characterId = memberSessions[Interlocked.Increment(ref nextSession) - 1];
+            session.CharacterId = characterId;
+            session.Set("charid", new PyLong(characterId));
+            session.Set("corpid", new PyLong(corporationA.Id));
+            session.Set("corporationID", new PyLong(corporationA.Id));
+            rig.Sessions.Enter(characterId, session);
+        });
+
+        async Task<(TestFront Front, SessionOpen Open)> ConnectCharacterAsync()
+        {
+            var front = await Handshaken(await ConnectAsync());
+            var open = Open();
+            await front.SendAsync(open);
+            _ = await front.ReceiveAsync();
+            return (front, open);
+        }
+
+        var leaverWire = await ConnectCharacterAsync();
+        var transfereeWire = await ConnectCharacterAsync();
+        var founderWire = await ConnectCharacterAsync();
+        var callId = 1U;
+        List<int> lastCallPacketTypes = [];
+        async Task<PyValue?> Call((TestFront Front, SessionOpen Open) wire, string method, params PyValue[] args)
+        {
+            await wire.Front.SendAsync(new Packet(wire.Open.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(wire.Open, callId++, "corpRegistry", method, Py.Tuple(args), ClientKwargs()))));
+            lastCallPacketTypes = [];
+            while (true)
+            {
+                var send = Assert.IsType<Send>(await wire.Front.ReceiveAsync());
+                var decoded = MarshalCodec.Decode(send.Payload);
+                var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(decoded));
+                lastCallPacketTypes.Add(packet.Type);
+                if (packet.Type is MachoMessage.Notification or MachoMessage.SessionChangeNotification or MachoMessage.SessionInitialStateNotification)
+                    continue;
+                if (packet.Type == MachoMessage.ErrorResponse)
+                    throw new Xunit.Sdk.XunitException(System.Text.Encoding.ASCII.GetString(send.Payload.Span));
+                Assert.Equal(MachoMessage.CallRsp, packet.Type);
+                return Result(decoded);
+            }
+        }
+
+        Assert.Equal(new PyInt(0), await Call(founderWire, "CanBeKickedOut", new PyLong(transferee)));
+        Assert.Same(PyNone.Instance, await Call(founderWire, "KickOutMember", new PyLong(transferee)));
+        Assert.Equal(corporationA.Id, (await rig.Characters.GetAsync(transferee))!.CorporationId);
+
+        var canLeave = Assert.IsType<PyTuple>(await Call(leaverWire, "CanLeaveCurrentCorporation"));
+        Assert.Equal(new PyInt(1), canLeave.Items[0]);
+        _ = await Call(leaverWire, "KickOutMember", new PyLong(leaver));
+        Assert.Contains(MachoMessage.SessionChangeNotification, lastCallPacketTypes);
+        Assert.NotEqual(corporationA.Id, (await rig.Characters.GetAsync(leaver))!.CorporationId);
+
+        Assert.Same(PyNone.Instance, await Call(transfereeWire, "UpdateApplicationOffer",
+            new PyLong(transferInvitation.ApplicationId), new PyLong(transferee), new PyLong(corporationB.Id),
+            new PyStr(""), new PyInt(2), new PyStr("")));
+        Assert.Contains(MachoMessage.SessionChangeNotification, lastCallPacketTypes);
+        Assert.Equal(corporationB.Id, (await rig.Characters.GetAsync(transferee))!.CorporationId);
+        Assert.Equal(corporationB.Id, rig.Sessions.Of(transferee)?.GetInt("corpid"));
+    }
+
     [PgFact]
     public async Task Corporation_contact_labels_preserve_optional_fields_and_notify_after_host_mutations()
     {
@@ -56,12 +161,16 @@ public partial class HostServerTests
         }
 
         var labelId = Number(await Call("CreateLabel", new PyStr("Operations"), PyNone.Instance));
+        var secondLabelId = Number(await Call("CreateLabel", new PyStr("Leadership"), PyNone.Instance));
+        var thirdLabelId = Number(await Call("CreateLabel", new PyStr("Logistics"), PyNone.Instance));
+        Assert.Equal([1L, 2L, 4L], new[] { labelId, secondLabelId, thirdLabelId });
         var labels = Assert.IsType<PyDict>(await Call("GetLabels"));
-        Assert.Same(PyNone.Instance, Field(Assert.IsType<PyObject>(labels.Entries.Single().Value), "color"));
+        Assert.Equal(3, labels.Entries.Count);
+        Assert.Same(PyNone.Instance, Field(Assert.IsType<PyObject>(labels.Entries.Single(entry => Number(entry.Key) == labelId).Value), "color"));
         Assert.Same(PyNone.Instance, await Call("EditLabel", new PyLong(labelId), PyNone.Instance, new PyInt(12)));
         Assert.Same(PyNone.Instance, await Call("EditLabel", new PyLong(labelId), new PyWString("Operations Team"), PyNone.Instance));
         labels = Assert.IsType<PyDict>(await Call("GetLabels"));
-        var label = Assert.IsType<PyObject>(labels.Entries.Single().Value);
+        var label = Assert.IsType<PyObject>(labels.Entries.Single(entry => Number(entry.Key) == labelId).Value);
         Assert.Equal("Operations Team", T(Field(label, "name")));
         Assert.Equal(12, Number(Field(label, "color")));
 
@@ -74,14 +183,16 @@ public partial class HostServerTests
         Assert.Equal(contactId, Number(addedRow.Items[0]));
         Assert.Equal(0, Number(addedRow.Items[1]));
         Assert.Same(PyNone.Instance, addedRow.Items[2]);
-        Assert.Same(PyNone.Instance, await Call("AssignLabels", new PyList([new PyLong(contactId)]), new PyLong(labelId)));
-        await AssertContactUpdate(labelId);
-        Assert.Same(PyNone.Instance, await Call("RemoveLabels", new PyList([new PyLong(contactId)]), new PyLong(labelId)));
+        Assert.Same(PyNone.Instance, await Call("AssignLabels", new PyList([new PyLong(contactId)]), new PyLong(thirdLabelId)));
+        await AssertContactUpdate(thirdLabelId);
+        Assert.Same(PyNone.Instance, await Call("RemoveLabels", new PyList([new PyLong(contactId)]), new PyLong(thirdLabelId)));
         await AssertContactUpdate(0);
-        Assert.Same(PyNone.Instance, await Call("AssignLabels", new PyList([new PyLong(contactId)]), new PyLong(labelId)));
-        await AssertContactUpdate(labelId);
+        Assert.Same(PyNone.Instance, await Call("AssignLabels", new PyList([new PyLong(contactId)]), new PyLong(thirdLabelId)));
+        await AssertContactUpdate(thirdLabelId);
+        Assert.Same(PyNone.Instance, await Call("DeleteLabel", new PyLong(thirdLabelId)));
+        await AssertContactUpdate(0);
         Assert.Same(PyNone.Instance, await Call("DeleteLabel", new PyLong(labelId)));
-        await AssertContactUpdate(0);
+        Assert.Same(PyNone.Instance, await Call("DeleteLabel", new PyLong(secondLabelId)));
 
         await rig.RestartAsync();
         service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("corpRegistry"));
@@ -146,27 +257,33 @@ public partial class HostServerTests
         }
 
         var labelId = Number(await Call("CreateLabel", new PyStr("Operations"), PyNone.Instance));
+        var secondLabelId = Number(await Call("CreateLabel", new PyStr("Leadership"), PyNone.Instance));
+        var thirdLabelId = Number(await Call("CreateLabel", new PyStr("Logistics"), PyNone.Instance));
+        Assert.Equal([1L, 2L, 4L], new[] { labelId, secondLabelId, thirdLabelId });
         var labels = Assert.IsType<PyDict>(await Call("GetLabels"));
-        Assert.Same(PyNone.Instance, Field(Assert.IsType<PyObject>(labels.Entries.Single().Value), "color"));
+        Assert.Equal(3, labels.Entries.Count);
+        Assert.Same(PyNone.Instance, Field(Assert.IsType<PyObject>(labels.Entries.Single(entry => Number(entry.Key) == labelId).Value), "color"));
         Assert.Same(PyNone.Instance, await Call("EditLabel", new PyLong(labelId), PyNone.Instance, new PyInt(12)));
         Assert.Same(PyNone.Instance, await Call("EditLabel", new PyLong(labelId), new PyStr("Operations Team"), PyNone.Instance));
         labels = Assert.IsType<PyDict>(await Call("GetLabels"));
-        var label = Assert.IsType<PyObject>(labels.Entries.Single().Value);
+        var label = Assert.IsType<PyObject>(labels.Entries.Single(entry => Number(entry.Key) == labelId).Value);
         Assert.Equal("Operations Team", T(Field(label, "name")));
         Assert.Equal(12, Number(Field(label, "color")));
 
         var contactId = 90_400_001L;
         Assert.Same(PyNone.Instance, await Call("AddAllianceContact", new PyLong(contactId), new PyInt(0)));
         _ = ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
-        var labelMask = 1L << ((int)labelId - 1);
+        var labelMask = thirdLabelId;
         Assert.Same(PyNone.Instance, await Call("AssignLabels", new PyList([new PyLong(contactId)]), new PyLong(labelMask)));
         await AssertContactUpdate(labelMask);
         Assert.Same(PyNone.Instance, await Call("RemoveLabels", new PyList([new PyLong(contactId)]), new PyLong(labelMask)));
         await AssertContactUpdate(0);
         Assert.Same(PyNone.Instance, await Call("AssignLabels", new PyList([new PyLong(contactId)]), new PyLong(labelMask)));
         await AssertContactUpdate(labelMask);
-        Assert.Same(PyNone.Instance, await Call("DeleteLabel", new PyLong(labelId)));
+        Assert.Same(PyNone.Instance, await Call("DeleteLabel", new PyLong(thirdLabelId)));
         await AssertContactUpdate(0);
+        Assert.Same(PyNone.Instance, await Call("DeleteLabel", new PyLong(labelId)));
+        Assert.Same(PyNone.Instance, await Call("DeleteLabel", new PyLong(secondLabelId)));
 
         await rig.RestartAsync();
         service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("allianceRegistry"));

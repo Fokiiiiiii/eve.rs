@@ -5993,6 +5993,13 @@
    "hex": "12000000354f2c3859955c0600fdb6089b1509000002"
   },
   {
+   "name": "offensive module effect is still active",
+   "kind": "ModuleActivityRefresh",
+   "sessionId": "1790646377000015",
+   "moduleId": "9988400002813",
+   "hex": "11000000a24f2c3859955c0600fdb6089b15090000"
+  },
+  {
    "name": "activate a mining laser",
    "kind": "Activate",
    "sessionId": "1790646377000015",

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using Eve.Macho;
 using Eve.Marshal;
@@ -266,7 +267,10 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
             checked((int)Math.Min(Positive(call.Session.Get("corpAccountKey")), int.MaxValue)));
         var callId = Positive(call.CallId);
         if (actor.CharacterId <= 0 || callId <= 0) throw InvalidIndustryJob();
-        return new IndustryJobOperationContext(actor, $"industry:{actor.CharacterId}:{call.Method}:{callId}");
+        var request = MarshalCodec.Encode(Py.Tuple(new PyStr(call.Method), new PyTuple(call.Args)));
+        var fingerprint = Convert.ToHexString(SHA256.HashData(request));
+        return new IndustryJobOperationContext(actor,
+            $"industry:{call.Session.SessionId}:{actor.CharacterId}:{call.Method}:{callId}:{fingerprint}");
     }
 
     private static IndustryJobInstallSubmission InstallSubmission(PyValue payload, IndustryJobActor actor)

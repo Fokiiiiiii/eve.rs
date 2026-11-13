@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Eve.Crimewatch;
 using Eve.Data;
 using Eve.Host;
@@ -462,6 +463,146 @@ public partial class HostServerTests
         {
             runtime.Dispose();
             timerService.Dispose();
+            await using var drop = dataSource.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
+    [PgFact]
+    public async Task Registered_crimewatch_expires_a_lost_module_end_from_its_last_update_and_persists_finite_timers()
+    {
+        const long characterId = 90000111;
+        const long targetId = 90000112;
+        const long moduleId = 90000113;
+        const long nowStart = 1_800_000_000_000;
+        const long systemId = 30000142;
+        const long targetShipId = 90000114;
+        var now = nowStart;
+        long ReadClock() => Interlocked.Read(ref now);
+        void SetClock(long value) => Interlocked.Exchange(ref now, value);
+        var schema = "cw_lost_" + Guid.NewGuid().ToString("N")[..10];
+        var delays = new ConcurrentQueue<(TimeSpan After, TaskCompletionSource Done)>();
+        using var delayReady = new SemaphoreSlim(0);
+        Task Delay(TimeSpan after, CancellationToken token)
+        {
+            if (after != TimeSpan.FromSeconds(1))
+                return Task.Delay(Timeout.InfiniteTimeSpan, token);
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            token.Register(() => done.TrySetCanceled(token));
+            delays.Enqueue((after, done));
+            delayReady.Release();
+            return done.Task;
+        }
+        async Task<(TimeSpan After, TaskCompletionSource Done)> NextLiveDelayAsync()
+        {
+            while (true)
+            {
+                await delayReady.WaitAsync(TimeSpan.FromSeconds(5));
+                if (!delays.TryDequeue(out var next)) continue;
+                // LocalTimers creates the replacement wait before it cancels the previous entry.
+                // Let Set finish so a superseded wait cannot be mistaken for the live refresh.
+                await Task.Delay(1);
+                if (!next.Done.Task.IsCanceled) return next;
+            }
+        }
+
+        await using var dataSource = CrimewatchTestDataSource();
+        await PgCrimewatchStore.MigrateAsync(dataSource, schema);
+        var store = new PgCrimewatchStore(dataSource, schema);
+        var sessions = new Eve.Services.CharacterSessions();
+        using var timerService = new Eve.Scheduler.LocalTimers(delay: Delay);
+        using var runtime = new CrimewatchRuntime(store, sessions, ReadClock,
+            new CrimewatchWireEngagementPersistence(), localTimers: timerService);
+        try
+        {
+            await store.UpdateAsync(targetId,
+                state => state.FlagAsSuspect(nowStart) with { SolarSystemId = systemId }, nowStart);
+            var service = new CrimewatchService(store, runtime, () => now);
+            Start(strictRpc: true,
+                configure: registry => registry.Register(service),
+                sessionOpened: session =>
+                {
+                    session.CharacterId = characterId;
+                    session.Set("charid", new PyLong(characterId));
+                    session.Set("solarsystemid", new PyLong(systemId));
+                    sessions.Enter(characterId, session);
+                });
+
+            var front = await Handshaken(await ConnectAsync());
+            var open = Open();
+            await front.SendAsync(open);
+            _ = await front.ReceiveAsync();
+            var kwargs = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyStr("machoVersion"), new PyInt(1))]);
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+                Packets.CallWithKwargs(open, 1, "crimewatch", "MachoBindObject",
+                    new PyTuple([new PyTuple([new PyInt(systemId), new PyInt(1)]), PyNone.Instance]), kwargs))));
+            var bind = MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload);
+            var binding = Assert.IsType<PyTuple>(Result(bind));
+            var oid = BoundObjects.ExtractName(Assert.IsType<PySubStruct>(binding.Items[0]))!;
+
+            await runtime.RecordModuleAggressionAsync(
+                new AggressionRequest(characterId, targetId, targetShipId, systemId, 0.9,
+                    Eve.Universe.SecurityClass.HighSec, TargetIsCapsule: false),
+                moduleId);
+            for (var index = 0; index < 5; index++)
+            {
+                var notification = Assert.IsType<MachoPacket>(MachoPacket.Decode(
+                    MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+                Assert.Equal(MachoMessage.Notification, notification.Type);
+            }
+            var active = Assert.IsType<PyTuple>(await HostBoundRpcAsync(
+                front, open, 2, oid, "GetClientStates", new PyTuple([]), kwargs));
+            var activeTimers = Assert.IsType<PyTuple>(active.Items[0]);
+            Assert.Equal([new PyInt(101), PyNone.Instance], Assert.IsType<PyTuple>(activeTimers.Items[0]).Items);
+            Assert.Equal([new PyInt(201), PyNone.Instance], Assert.IsType<PyTuple>(activeTimers.Items[1]).Items);
+
+            var firstRefresh = await NextLiveDelayAsync();
+            Assert.Equal(TimeSpan.FromSeconds(1), firstRefresh.After);
+            SetClock(nowStart + CombatState.WeaponsDurationMs / 2);
+            await runtime.RefreshModuleCombatActivityAsync(characterId, moduleId);
+            SetClock(nowStart + CombatState.WeaponsDurationMs + 1);
+            Assert.True(firstRefresh.Done.TrySetResult());
+
+            var secondRefresh = await NextLiveDelayAsync();
+            Assert.Equal(TimeSpan.FromSeconds(1), secondRefresh.After);
+            var stillActive = await runtime.ClientTimersOfAsync(characterId);
+            Assert.Equal(new TimerView(101, null), stillActive.Weapons);
+            Assert.Equal(new TimerView(201, null), stillActive.Pvp);
+            SetClock(nowStart + CombatState.WeaponsDurationMs + CombatState.WeaponsDurationMs / 2 + 1);
+            Assert.True(secondRefresh.Done.TrySetResult());
+
+            CombatTimers timers = await runtime.ClientTimersOfAsync(characterId);
+            var waitUntil = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+            while (timers.Weapons.ExpiresAtMs is null && DateTime.UtcNow < waitUntil)
+            {
+                await Task.Delay(10);
+                timers = await runtime.ClientTimersOfAsync(characterId);
+            }
+            Assert.Equal(new TimerView(102, now + CombatState.WeaponsDurationMs), timers.Weapons);
+            Assert.Equal(new TimerView(202, now + CombatState.PvpDurationMs), timers.Pvp);
+            Assert.Equal(now + CombatState.WeaponsDurationMs, (await store.StateOfAsync(characterId)).WeaponsUntilMs);
+
+            static MachoPacket DecodeNotification(Send message) =>
+                Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(message.Payload)));
+            var stoppedNames = new List<string>();
+            for (var index = 0; index < 3; index++)
+            {
+                var notification = DecodeNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+                Assert.Equal(MachoMessage.Notification, notification.Type);
+                stoppedNames.Add(notification.Dest.BroadcastId!);
+            }
+            Assert.Equal(["OnCrimewatchEngagementStartTimeout", "OnWeaponsTimerUpdate", "OnPvpTimerUpdate"], stoppedNames);
+
+            var stopped = Assert.IsType<PyTuple>(await HostBoundRpcAsync(
+                front, open, 3, oid, "GetClientStates", new PyTuple([]), kwargs));
+            var stoppedTimers = Assert.IsType<PyTuple>(stopped.Items[0]);
+            Assert.Equal([new PyInt(102), new PyLong(Eve.Services.Py.FileTimeFromUnixMs(now + CombatState.WeaponsDurationMs))],
+                Assert.IsType<PyTuple>(stoppedTimers.Items[0]).Items);
+            Assert.Equal([new PyInt(202), new PyLong(Eve.Services.Py.FileTimeFromUnixMs(now + CombatState.PvpDurationMs))],
+                Assert.IsType<PyTuple>(stoppedTimers.Items[1]).Items);
+        }
+        finally
+        {
             await using var drop = dataSource.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
             await drop.ExecuteNonQueryAsync();
         }

@@ -422,6 +422,9 @@ impl Sim {
             Out::ModuleEnded { session, module_id, reason } => {
                 Message::ModuleEnded { session_id: session, module_id, reason }
             }
+            Out::ModuleActivityRefresh { session, module_id } => {
+                Message::ModuleActivityRefresh { session_id: session, module_id }
+            }
             Out::TargetRefused { session, command, reason, target_type, desired_range, actual_distance } => {
                 Message::TargetRefused {
                     session_id: session,

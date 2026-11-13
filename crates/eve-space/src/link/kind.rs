@@ -18,6 +18,8 @@ pub const REMOVE_MOON_CHUNK: u8 = 159;
 pub const SET_STRUCTURE_MOON_MINING_STATE: u8 = 160;
 /// The Host reports an applied local illegal attack so Empire sentries can respond (protocol 95).
 pub const EMPIRE_SENTRY_OFFENSE: u8 = 161;
+/// The simulation confirms a still-running offensive module effect for bounded Crimewatch activity (protocol 97).
+pub const MODULE_ACTIVITY_REFRESH: u8 = 162;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

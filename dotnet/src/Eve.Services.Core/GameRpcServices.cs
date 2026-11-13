@@ -115,7 +115,8 @@ public sealed partial class ContractProxyService(
     Func<long, long, CancellationToken, ValueTask<decimal>>? readBrokerFeeAdjustment = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? hasContractManagerRole = null,
     Func<long, CancellationToken, ValueTask<(long CorporationId, long AllianceId)>>? readCurrentOrganizationIds = null,
-    Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null)
+    Func<long, long, CancellationToken, ValueTask<bool>>? isCharacterInCurrentCorporation = null,
+    Func<long, long, int, CancellationToken, ValueTask<bool>>? canTakeCorporateWalletDivision = null)
 {
     public IContractInventoryReader? Inventory { get; set; }
 
@@ -171,7 +172,6 @@ public sealed partial class ContractProxyService(
     private const int AccountingSkill = 16622;
     private const int BrokerRelationsSkill = 3446;
     private const int HangarFlag = 4;
-    private const int CorporationDivisionFirstFlag = 115;
     private const int CorporationWalletBase = 1000;
     private const int PersonalWalletKey = 1000;
 
@@ -188,6 +188,19 @@ public sealed partial class ContractProxyService(
             throw MachoErrors.ThrowUserError("ConIllegalType");
         if (info.ForCorp && !await HasContractManagerRoleAsync(call, issuerId, corporationId))
             throw MachoErrors.ThrowUserError("ConNotContractManager");
+        var walletAccountKey = PersonalWalletKey;
+        if (info.ForCorp)
+        {
+            var selectedWalletAccountKey = call.Session.GetInt("corpAccountKey")
+                ?? call.Session.GetInt("corpaccountkey")
+                ?? call.Session.GetInt("accountKey")
+                ?? CorporationWalletBase;
+            if (selectedWalletAccountKey is < CorporationWalletBase or > CorporationWalletBase + 6 ||
+                canTakeCorporateWalletDivision is null ||
+                !await canTakeCorporateWalletDivision(issuerId, corporationId, (int)selectedWalletAccountKey, call.Cancellation))
+                throw MachoErrors.ThrowUserError("ConNotContractManager");
+            walletAccountKey = (int)selectedWalletAccountKey;
+        }
         if (call.Session.GetInt("stationid") != info.StartStationId)
             throw MachoErrors.ThrowUserError("ConNotInStation");
 
@@ -225,7 +238,7 @@ public sealed partial class ContractProxyService(
             BrokerFee: fees.BrokerFee,
             Deposit: fees.Deposit,
             SalesTax: info.ContractType is 2 or 3 ? 0m : fees.SalesTax,
-            WalletAccountKey: info.ForCorp ? CorporationWalletBase + (info.StartStationDivision - CorporationDivisionFirstFlag) : PersonalWalletKey,
+            WalletAccountKey: walletAccountKey,
             Title: info.Title,
             Description: info.Description,
             Items: info.ItemList,

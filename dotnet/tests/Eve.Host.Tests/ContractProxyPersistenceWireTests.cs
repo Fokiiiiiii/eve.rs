@@ -254,17 +254,21 @@ public partial class HostServerTests
             var open = Open();
             await front.SendAsync(open);
             _ = await front.ReceiveAsync();
-            PyValue Creation(long assignedToId, long quantity, string title) =>
+            PyValue Creation(long assignedToId, long quantity, string title, decimal reward = 0,
+                bool includeOfferedItem = true, decimal price = 10_000_000) =>
                 new PyObject(new PyStr("contracts.contractStruct.ContractStruct"), new PyTuple([
                     new PyInt(1), PyBool.False, new PyInt(assignedToId), new PyInt(1440), new PyInt(0),
-                    new PyInt(3001), new PyInt(0), new PyInt(10_000_000), new PyInt(0), new PyInt(0),
+                    new PyInt(3001), new PyInt(0), new PyLong(decimal.ToInt64(price)), new PyLong(decimal.ToInt64(reward)), new PyInt(0),
                     new PyStr(title), new PyStr(""),
-                    new PyList([new PyTuple([new PyInt(offeredItemId), new PyInt(quantity)])]),
+                    includeOfferedItem
+                        ? new PyList([new PyTuple([new PyInt(offeredItemId), new PyInt(quantity)])])
+                        : new PyList([]),
                     new PyInt(4), new PyList([]), PyBool.False, PyBool.False]));
 
-            async Task<Send> SendCreate(uint callId, long assignedToId, long quantity, string title)
+            async Task<Send> SendCreate(uint callId, long assignedToId, long quantity, string title,
+                decimal reward = 0, bool includeOfferedItem = true, decimal price = 10_000_000)
             {
-                var creation = Creation(assignedToId,quantity,title);
+                var creation = Creation(assignedToId,quantity,title,reward,includeOfferedItem,price);
                 await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
                     open, callId, "contractProxy", "CreateContract", new PyTuple([creation]),
                     Eve.Services.Py.Dict(("machoVersion", new PyInt(1)), ("confirm", PyNone.Instance))))));
@@ -279,9 +283,10 @@ public partial class HostServerTests
                 }
             }
 
-            async Task<long> Create(uint callId, long assignedToId, long quantity, string title)
+            async Task<long> Create(uint callId, long assignedToId, long quantity, string title,
+                decimal reward = 0, bool includeOfferedItem = true, decimal price = 10_000_000)
             {
-                var send = await SendCreate(callId,assignedToId,quantity,title);
+                var send = await SendCreate(callId,assignedToId,quantity,title,reward,includeOfferedItem,price);
                 var response = MarshalCodec.Decode(send.Payload);
                 var state = Assert.IsType<PyTuple>(Assert.IsType<PyObject>(response).Args);
                 Assert.Equal(new PyInt(7), state.Items[0]);
@@ -291,6 +296,8 @@ public partial class HostServerTests
 
             var publicContractId = await Create(1, 0, 2, "public contract");
             var privateContractId = await Create(2, 43, 1, "private contract");
+            var rewardOnlyContractId = await Create(3, 43, 0, "private reward only", 20_000,
+                includeOfferedItem: false, price: 0);
             async Task<(short Availability, long Assignee, decimal Price, decimal BrokerFee, decimal SalesTax, decimal Deposit)> Terms(long contractId)
             {
                 await using var state = source.CreateCommand($"SELECT availability, assignee_id, price_isk, creation_fee_isk, sales_tax_isk, deposit_isk FROM {contractsSchema}.contract_records WHERE contract_id=$1");
@@ -301,6 +308,7 @@ public partial class HostServerTests
             }
             Assert.Equal(((short)0, 0L, 10_000_000m, 40_000m, 100_000m, 100_000m), await Terms(publicContractId));
             Assert.Equal(((short)1, 43L, 10_000_000m, 10_000m, 0m, 0m), await Terms(privateContractId));
+            Assert.Equal(((short)1, 43L, 0m, 10_000m, 0m, 0m), await Terms(rewardOnlyContractId));
 
             await using (var state = source.CreateCommand($"SELECT status, title, reward_escrow FROM {contractsSchema}.contract_records WHERE contract_id=$1"))
             {
@@ -311,7 +319,14 @@ public partial class HostServerTests
                 Assert.Equal("public contract", reader.GetString(1));
                 Assert.Equal(0m, reader.GetDecimal(2));
             }
-            Assert.Equal(750_000m, await wallets.AccountBalanceAsync(new WalletAccount(42), CancellationToken.None));
+            await using (var rewardOnly = source.CreateCommand($"SELECT reward_isk, reward_escrow FROM {contractsSchema}.contract_records WHERE contract_id=$1"))
+            {
+                rewardOnly.Parameters.AddWithValue(rewardOnlyContractId);
+                await using var reader = await rewardOnly.ExecuteReaderAsync();
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal((20_000m, 20_000m), (reader.GetDecimal(0), reader.GetDecimal(1)));
+            }
+            Assert.Equal(720_000m, await wallets.AccountBalanceAsync(new WalletAccount(42), CancellationToken.None));
             await using (var escrowItems = source.CreateCommand($"SELECT contract_id, item_id, quantity FROM {contractsSchema}.contract_items ORDER BY contract_id"))
             await using (var reader = await escrowItems.ExecuteReaderAsync())
             {
@@ -327,10 +342,15 @@ public partial class HostServerTests
                 Assert.Equal(1, reader.GetInt64(2));
                 Assert.False(await reader.ReadAsync());
             }
+            await using (var rewardOnlyItems = source.CreateCommand($"SELECT count(*) FROM {contractsSchema}.contract_items WHERE contract_id=$1"))
+            {
+                rewardOnlyItems.Parameters.AddWithValue(rewardOnlyContractId);
+                Assert.Equal(0L, (long)(await rewardOnlyItems.ExecuteScalarAsync())!);
+            }
             await using (var expiry = source.CreateCommand($"SELECT count(*) FROM {schedulerSchema}.jobs WHERE kind=$1"))
             {
                 expiry.Parameters.AddWithValue(ContractExpiryJobs.JobKind);
-                Assert.Equal(2L, (long)(await expiry.ExecuteScalarAsync())!);
+                Assert.Equal(3L, (long)(await expiry.ExecuteScalarAsync())!);
             }
             await using var notice = source.CreateCommand($"SELECT payload->>'name' FROM {eventsSchema}.outbox WHERE topic=$1 ORDER BY id");
             notice.Parameters.AddWithValue(ContractNotifications.Topic);
@@ -338,6 +358,10 @@ public partial class HostServerTests
             {
                 Assert.True(await reader.ReadAsync());
                 Assert.Equal("OnContractCreated", reader.GetString(0));
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal("OnContractCreated", reader.GetString(0));
+                Assert.True(await reader.ReadAsync());
+                Assert.Equal("OnContractAssigned", reader.GetString(0));
                 Assert.True(await reader.ReadAsync());
                 Assert.Equal("OnContractCreated", reader.GetString(0));
                 Assert.True(await reader.ReadAsync());
@@ -353,7 +377,7 @@ public partial class HostServerTests
                 Assert.Equal(1, await balance.ExecuteNonQueryAsync());
                 await transaction.CommitAsync();
             }
-            var insufficient = await SendCreate(3, 43, 1, "private contract without funds");
+            var insufficient = await SendCreate(4, 43, 1, "private contract without funds");
             Assert.Equal("CustomInfo", UserErrorKey(insufficient));
             Assert.Contains(
                 "Contract reward escrow and broker fee requires 10000.00 ISK, but the wallet does not have enough funds.",
@@ -364,16 +388,16 @@ public partial class HostServerTests
             Assert.Equal((42L, 3001L, ItemFlags.Hangar, 1L),
                 (remainingItem.OwnerId, remainingItem.LocationId, remainingItem.Flag, remainingItem.Quantity));
             await using (var state = source.CreateCommand($"SELECT count(*) FROM {contractsSchema}.contract_records"))
-                Assert.Equal(2L, (long)(await state.ExecuteScalarAsync())!);
+                Assert.Equal(3L, (long)(await state.ExecuteScalarAsync())!);
             await using (var expiry = source.CreateCommand($"SELECT count(*) FROM {schedulerSchema}.jobs WHERE kind=$1"))
             {
                 expiry.Parameters.AddWithValue(ContractExpiryJobs.JobKind);
-                Assert.Equal(2L, (long)(await expiry.ExecuteScalarAsync())!);
+                Assert.Equal(3L, (long)(await expiry.ExecuteScalarAsync())!);
             }
             await using var finalNotice = source.CreateCommand(
                 $"SELECT count(*) FROM {eventsSchema}.outbox WHERE topic=$1");
             finalNotice.Parameters.AddWithValue(ContractNotifications.Topic);
-            Assert.Equal(3L, (long)(await finalNotice.ExecuteScalarAsync())!);
+            Assert.Equal(5L, (long)(await finalNotice.ExecuteScalarAsync())!);
         }
         finally
         {

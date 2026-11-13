@@ -237,6 +237,28 @@ public class CorporationTests
         Assert.False(CorporationRoles.HasHangarAccess(null, corporation.StationId, 115, take: false));
     }
 
+    [Fact]
+    public void Ceo_and_director_reach_the_corporation_delivery_hangar_and_plain_members_do_not()
+    {
+        var corporation = new Corporation(
+            98000000, "Corp", "CORP", 1, 1, null, 10, 100, 0, 0, "", "", 20, false, false, 0,
+            JsonSerializer.SerializeToElement(new { }));
+        var ceo = new Member(1, corporation.Id, 0, "", new RoleMasks(), 30, 0, false, 1000);
+        var director = new Member(2, corporation.Id, 0, "", new RoleMasks(CorporationRoles.Director), 30, 0, false, 1000);
+        var plain = new Member(3, corporation.Id, 0, "", new RoleMasks(), 30, 0, false, 1000);
+        var corporationWithCeo = corporation with { CeoId = 1 };
+
+        foreach (var member in new[] { ceo, director })
+        {
+            var roles = CorporationRoles.Session(corporationWithCeo, member, 60000001, []);
+            Assert.True(CorporationRoles.HasHangarAccess(roles, 60000001, 62, take: true));
+            Assert.True(CorporationRoles.HasHangarAccess(roles, 60000001, 62, take: false));
+        }
+        var plainRoles = CorporationRoles.Session(corporationWithCeo, plain, 60000001, []);
+        Assert.False(CorporationRoles.HasHangarAccess(plainRoles, 60000001, 62, take: true));
+        Assert.False(CorporationRoles.HasHangarAccess(plainRoles, 60000001, 62, take: false));
+    }
+
     [PgFact]
     public async Task Corporation_membership_projects_affiliation_without_an_alliance_zero_sentinel()
     {

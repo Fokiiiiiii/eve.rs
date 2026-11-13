@@ -86,12 +86,13 @@ public static class CorporationRoles
     {
         if (roles is null)
             return false;
-        if (flag == 62)
-            return (roles.AtAll & (take ? DeliveriesHangarTake : DeliveriesHangarQuery)) != 0;
-        if (flag is < 115 or > 121) return false;
         var scoped = stationId == roles.HqId
             ? roles.AtHq
             : stationId == roles.BaseId ? roles.AtBase : roles.AtOther;
+        // The delivery hangar roles are Locational bits (Administrative leaves them out), so a Director or CEO holds them through the location masks, not through AtAll.
+        if (flag == 62)
+            return ((roles.AtAll | scoped) & (take ? DeliveriesHangarTake : DeliveriesHangarQuery)) != 0;
+        if (flag is < 115 or > 121) return false;
         // EVE hangar division 1..7: Query uses role bits 20..26; Take uses 13..19.
         var roleBit = flag - (take ? 102 : 95);
         return (scoped & (1L << roleBit)) != 0;

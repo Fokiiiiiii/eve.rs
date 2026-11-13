@@ -5,6 +5,7 @@ using Eve.Identity;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
+using Eve.Services.Wallet;
 using Eve.Scheduler;
 using Eve.Wallet;
 using Npgsql;
@@ -25,6 +26,25 @@ public sealed class RafflePersistenceTests
         public void Send(PyValue packet) => throw new InvalidOperationException("closed sink");
     }
 
+    private static PyTuple NotificationArguments(MachoPacket packet)
+    {
+        var frame = Assert.IsType<PyTuple>(packet.Payload);
+        var envelope = Assert.IsType<PyTuple>(Assert.Single(frame.Items));
+        var inner = Assert.IsType<PyTuple>(MarshalCodec.Decode(Assert.IsType<PyBuffer>(envelope.Items[1]).Value));
+        var body = Assert.IsType<PyTuple>(inner.Items[1]);
+        return Assert.IsType<PyTuple>(body.Items[1]);
+    }
+
+    private static long Number(PyValue value) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => throw new Xunit.Sdk.XunitException($"Expected integer wire value; got {value.GetType().Name}.")
+    };
+
+    private static PyValue Field(PyValue value, string name) => Assert.IsType<PyDict>(Assert.IsType<PyObject>(value).Args).Entries
+        .Single(pair => JsSemantics.StringValue(pair.Key) == name).Value;
+
     [Fact]
     public async Task Migration_create_sellout_award_and_expiry_preserve_custody_and_money()
     {
@@ -33,6 +53,7 @@ public sealed class RafflePersistenceTests
         var wallet = "rf_w_" + suffix;
         var identity = "rf_a_" + suffix;
         var raffle = "rf_r_" + suffix;
+        var concurrentRaffle = "rf_rc_" + suffix;
         var schedulerSchema = "rf_s_" + suffix;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         try
@@ -48,6 +69,8 @@ public sealed class RafflePersistenceTests
             var store = new RaffleProxyStore(source, items, wallets, schema: raffle, identitySchema: identity);
             await store.MigrateAsync();
             await store.MigrateAsync();
+            var concurrentStore = new RaffleProxyStore(source, items, wallets, schema: concurrentRaffle, identitySchema: identity);
+            await concurrentStore.MigrateAsync();
             const long seller = 90000101, buyer = 90000102, rival = 90000103, poor = 90000104, station = 60003760;
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             var schedulerNow = now;
@@ -87,6 +110,50 @@ public sealed class RafflePersistenceTests
                     ("ticket_count", new PyInt(8)), ("ticket_price", new PyInt(125)));
                 return (await store.CreateRaffleAsync(Call(seller, data), now, 3_500_000), prize);
             }
+            var concurrentPrize = await Give(587, 1);
+            var concurrentToken = await Give(52568, 2);
+            var concurrentData = Py.KeyVal(("item_id", new PyLong(concurrentPrize)), ("type_id", new PyInt(587)),
+                ("location_id", new PyLong(station)), ("token_id", new PyLong(concurrentToken)),
+                ("token_location_id", new PyLong(station)), ("ticket_count", new PyInt(8)), ("ticket_price", new PyInt(125)));
+            var concurrentId = await concurrentStore.CreateRaffleAsync(Call(seller, concurrentData), now, 3_500_000);
+            await using (var locker = await source.OpenConnectionAsync())
+            await using (var lockTransaction = await locker.BeginTransactionAsync())
+            {
+                await using (var lockRow = new NpgsqlCommand(
+                    $"SELECT raffle_id FROM {concurrentRaffle}.raffle_records WHERE raffle_id=$1 FOR UPDATE", locker, lockTransaction))
+                {
+                    lockRow.Parameters.AddWithValue(concurrentId);
+                    Assert.Equal(concurrentId, (long)(await lockRow.ExecuteScalarAsync())!);
+                }
+                var concurrentExpiries = Task.WhenAll(
+                    concurrentStore.ExpireDueAsync(now + 4L * 24 * 60 * 60 * 1000),
+                    concurrentStore.ExpireDueAsync(now + 4L * 24 * 60 * 60 * 1000));
+                var bothWaitingForLock = false;
+                for (var attempt = 0; attempt < 500; attempt++)
+                {
+                    await using var blocked = source.CreateCommand($"""
+                        SELECT count(*) FROM pg_stat_activity
+                        WHERE datname=current_database() AND wait_event_type='Lock'
+                          AND query LIKE '%FROM {concurrentRaffle}.raffle_records%'
+                          AND query LIKE '%FOR UPDATE%'
+                        """);
+                    if ((long)(await blocked.ExecuteScalarAsync())! >= 2)
+                    {
+                        bothWaitingForLock = true;
+                        break;
+                    }
+                    await Task.Delay(10);
+                }
+                Assert.True(bothWaitingForLock, "Both expiry transactions must reach the locked raffle row before release.");
+                await lockTransaction.CommitAsync();
+                await concurrentExpiries;
+            }
+            await using (var command = source.CreateCommand($"SELECT status FROM {concurrentRaffle}.raffle_records WHERE raffle_id=$1"))
+            {
+                command.Parameters.AddWithValue(concurrentId);
+                Assert.Equal((short)9, (short)(await command.ExecuteScalarAsync())!);
+            }
+            Assert.Equal(ItemFlags.Hangar, (await items.GetAsync(concurrentPrize))!.Flag);
             // Published module type 2048 is a normal category 7 item, supported by HyperNet.
             var (moduleRaffle, modulePrize) = await Create(2048);
             Assert.True(moduleRaffle > 0);
@@ -121,7 +188,6 @@ public sealed class RafflePersistenceTests
                 Assert.Equal(ItemFlags.Hangar, (await items.GetAsync(invalidPrize))!.Flag);
                 Assert.Equal(2, (await items.GetAsync(freshToken))!.Quantity);
             }
-            await AssertInvalidPrize(await Give(2048, 2), 2048);
             long parent;
             await using (var connection = await source.OpenConnectionAsync())
             await using (var tx = await connection.BeginTransactionAsync())
@@ -185,6 +251,17 @@ public sealed class RafflePersistenceTests
             var ownerStats = await store.InvokeAsync("GetCreatedParticipated", Call(seller), default);
             Assert.Equal(new PyInt(1), Field(ownerStats, "finished_undelivered"));
             Assert.Equal(new PyInt(2), Field(ownerStats, "created_running"));
+            var stackPrize = await Give(2048, 2);
+            var stackToken = await Give(52568, 2);
+            var stackData = Py.KeyVal(("item_id", new PyLong(stackPrize)), ("type_id", new PyInt(2048)),
+                ("location_id", new PyLong(station)), ("token_id", new PyLong(stackToken)),
+                ("token_location_id", new PyLong(station)), ("ticket_count", new PyInt(8)),
+                ("ticket_price", new PyInt(125)));
+            var stackRaffle = await store.CreateRaffleAsync(Call(seller, stackData), now, 3_500_000);
+            Assert.True(stackRaffle > 0);
+            Assert.Equal(ItemFlags.RaffleEscrow, (await items.GetAsync(stackPrize))!.Flag);
+            Assert.Equal(2L, (await items.GetAsync(stackPrize))!.Quantity);
+            Assert.Equal(1L, (await items.GetAsync(stackToken))!.Quantity);
             var history = Assert.IsType<PyTuple>(await store.InvokeAsync("GetMyRaffleHistory", Call(buyer), default));
             var historyRow = Assert.Single(Assert.IsType<PyList>(history.Items[0]).Items);
             Assert.Equal(new PyLong(id), Field(historyRow, "raffle_id"));
@@ -221,6 +298,11 @@ public sealed class RafflePersistenceTests
             var buyerSink = new Sink();
             var ownerSession = new ClientSession(ownerSink) { UserId = login.AccountId, CharacterId = seller, SessionId = 701 };
             var buyerSession = new ClientSession(buyerSink) { UserId = login.AccountId, CharacterId = paidBy, SessionId = 702 };
+            var characterSessions = new CharacterSessions();
+            characterSessions.Enter(seller, ownerSession);
+            characterSessions.Enter(paidBy, buyerSession);
+            restartedStore.SetCharacterSessions(characterSessions);
+            using var walletAnnouncer = new WalletAnnouncer(wallets, characterSessions);
             var closedSession = new ClientSession(new ClosedSink()) { UserId = login.AccountId, CharacterId = seller, SessionId = 700 };
             foreach (var subscriber in new[] { closedSession, ownerSession, buyerSession })
                 await restartedStore.InvokeAsync("SubscribeToRaffle", new ServiceCall
@@ -229,23 +311,44 @@ public sealed class RafflePersistenceTests
                 }, default);
             await restartedStore.ScheduleExistingAsync();
             Assert.True(await restartedScheduler.RunDueAsync() > 0);
-            foreach (var sink in new[] { ownerSink, buyerSink })
-            {
-                var notification = Assert.IsType<MachoPacket>(MachoPacket.Decode(Assert.Single(sink.Packets)));
-                Assert.Equal(MachoMessage.Notification, notification.Type);
-                Assert.Equal("OnRaffleFinishedServer", notification.Dest.BroadcastId);
-                var frame = Assert.IsType<PyTuple>(notification.Payload);
-                var envelope = Assert.IsType<PyTuple>(Assert.Single(frame.Items));
-                var buffer = Assert.IsType<PyBuffer>(envelope.Items[1]);
-                var inner = Assert.IsType<PyTuple>(MarshalCodec.Decode(buffer.Value));
-                var body = Assert.IsType<PyTuple>(inner.Items[1]);
-                var arguments = Assert.IsType<PyTuple>(body.Items[1]);
-                Assert.Equal(new PyLong(expiredId), arguments.Items[0]);
-                Assert.Same(PyNone.Instance, arguments.Items[1]);
-            }
+            var ownerNotifications = ownerSink.Packets.Select(packet => Assert.IsType<MachoPacket>(MachoPacket.Decode(packet))).ToArray();
+            Assert.All(ownerNotifications, notification => Assert.Equal(MachoMessage.Notification, notification.Type));
+            var ownerItemNotice = Assert.Single(ownerNotifications, notification =>
+                notification.Dest.BroadcastId == "OnItemChange" &&
+                Number(Assert.IsType<PyPackedRow>(NotificationArguments(notification).Items[0]).Values[0]) == expiredPrize);
+            var restoredRow = Assert.IsType<PyPackedRow>(NotificationArguments(ownerItemNotice).Items[0]);
+            Assert.Equal(InventoryWire.Id(expiredPrize), restoredRow.Values[0]);
+            Assert.Equal(new PyInt(ItemFlags.Hangar), restoredRow.Values[4]);
+            Assert.Equal(new PyDict([new(new PyInt(4), new PyInt(ItemFlags.RaffleEscrow))]),
+                Assert.IsType<PyDict>(NotificationArguments(ownerItemNotice).Items[1]));
+            Assert.Equal("clientID", ownerItemNotice.Dest.IdType);
+            var expiredRaffleNotices = ownerNotifications.Where(notification =>
+                (notification.Dest.BroadcastId is "OnRaffleUpdatedServer" or "OnRaffleFinishedServer") &&
+                Number(NotificationArguments(notification).Items[0]) == expiredId).ToArray();
+            Assert.Equal(["OnRaffleUpdatedServer", "OnRaffleFinishedServer"],
+                expiredRaffleNotices.Select(notification => notification.Dest.BroadcastId));
+            Assert.Equal("clientID", expiredRaffleNotices[0].Dest.IdType);
+            Assert.Equal("charid", expiredRaffleNotices[1].Dest.IdType);
+            Assert.True(Array.IndexOf(ownerNotifications, ownerItemNotice) < Array.IndexOf(ownerNotifications, expiredRaffleNotices[0]));
+            Assert.Equal(new PyInt(9), Field(NotificationArguments(expiredRaffleNotices[0]).Items[1], "raffle_status"));
+            var finishedArguments = NotificationArguments(expiredRaffleNotices[1]);
+            Assert.Equal(new PyLong(expiredId), finishedArguments.Items[0]);
+            Assert.Same(PyNone.Instance, finishedArguments.Items[1]);
+
+            var buyerNotifications = buyerSink.Packets.Select(packet => Assert.IsType<MachoPacket>(MachoPacket.Decode(packet))).ToArray();
+            Assert.Equal(["OnAccountChange", "OnRaffleUpdatedServer", "OnRaffleFinishedServer"],
+                buyerNotifications.Select(notification => notification.Dest.BroadcastId));
+            Assert.All(buyerNotifications, notification => Assert.Equal(MachoMessage.Notification, notification.Type));
+            Assert.Equal("clientID", buyerNotifications[0].Dest.IdType);
+            Assert.Equal("clientID", buyerNotifications[1].Dest.IdType);
+            Assert.Equal("charid", buyerNotifications[2].Dest.IdType);
+            var refundedBalance = NotificationArguments(buyerNotifications[0]);
+            Assert.Equal("cash", JsSemantics.StringValue(refundedBalance.Items[0]));
+            Assert.Equal(new PyInt(paidBy), refundedBalance.Items[1]);
+            Assert.Equal(new PyReal((double)paidBefore), refundedBalance.Items[2]);
             Assert.Equal(0, await restartedScheduler.RunDueAsync());
-            Assert.Single(ownerSink.Packets);
-            Assert.Single(buyerSink.Packets);
+            Assert.Equal(ownerNotifications.Length, ownerSink.Packets.Count);
+            Assert.Equal(3, buyerSink.Packets.Count);
             var returned = await items.GetAsync(expiredPrize);
             Assert.NotNull(returned);
             Assert.Equal(seller, returned.OwnerId);
@@ -278,7 +381,81 @@ public sealed class RafflePersistenceTests
         }
         finally
         {
-            foreach (var schema in new[] { raffle, schedulerSchema, inventory, wallet, identity })
+            foreach (var schema in new[] { concurrentRaffle, raffle, schedulerSchema, inventory, wallet, identity })
+            {
+                await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+                await command.ExecuteNonQueryAsync();
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Expiry_job_processes_its_raffle_when_more_than_one_sweep_batch_is_due()
+    {
+        var suffix = Guid.NewGuid().ToString("N")[..12];
+        var inventory = "rf_batch_i_" + suffix;
+        var wallet = "rf_batch_w_" + suffix;
+        var raffle = "rf_batch_r_" + suffix;
+        var schedulerSchema = "rf_batch_s_" + suffix;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        try
+        {
+            await PgItemStore.MigrateAsync(source, inventory);
+            await PgWalletStore.MigrateAsync(source, wallet);
+            var items = new PgItemStore(source, inventory);
+            var store = new RaffleProxyStore(source, items, new WalletTransactions(source, wallet), schema: raffle);
+            await store.MigrateAsync();
+            await DurableScheduler.MigrateAsync(source, schedulerSchema);
+
+            const long owner = 90000401, station = 60003760;
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            await using var scheduler = new DurableScheduler(source, () => now,
+                new SchedulerOptions { Concurrency = 1 }, schedulerSchema);
+            store.RegisterScheduler(scheduler);
+
+            var raffleIds = new List<long>();
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                for (var index = 0; index <= 100; index++)
+                {
+                    var itemId = await items.CreateAsync(connection, transaction,
+                        new NewItem(587, owner, station, ItemFlags.Hangar, 1));
+                    await items.PutInRaffleEscrowAsync(connection, transaction, itemId, owner, station);
+                    await using var insert = new NpgsqlCommand($"""
+                        INSERT INTO {raffle}.raffle_records
+                            (owner_id,item_id,type_id,location_id,ticket_count,ticket_price,created_at_ms,expires_at_ms,status)
+                        VALUES ($1,$2,587,$3,8,125,$4,$5,6) RETURNING raffle_id
+                        """, connection, transaction);
+                    insert.Parameters.AddWithValue(owner);
+                    insert.Parameters.AddWithValue(itemId);
+                    insert.Parameters.AddWithValue(station);
+                    insert.Parameters.AddWithValue(now - 4L * 24 * 60 * 60 * 1000);
+                    insert.Parameters.AddWithValue(now - 1);
+                    raffleIds.Add((long)(await insert.ExecuteScalarAsync())!);
+                }
+                await transaction.CommitAsync();
+            }
+
+            var target = raffleIds[^1];
+            await scheduler.ScheduleAsync(new JobSpec("raffles.expire", now)
+            {
+                Key = target.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                Payload = new { raffleId = target },
+            });
+            Assert.Equal(1, await scheduler.RunDueAsync());
+
+            await using var statuses = source.CreateCommand($"SELECT raffle_id,status FROM {raffle}.raffle_records WHERE raffle_id=ANY($1)");
+            statuses.Parameters.AddWithValue(raffleIds.ToArray());
+            var statusById = new Dictionary<long, short>();
+            await using var reader = await statuses.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) statusById.Add(reader.GetInt64(0), reader.GetInt16(1));
+            Assert.Equal((short)9, statusById[target]);
+            Assert.Equal((short)6, statusById[raffleIds[0]]);
+        }
+        finally
+        {
+            foreach (var schema in new[] { raffle, schedulerSchema, inventory, wallet })
             {
                 await using var command = source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
                 await command.ExecuteNonQueryAsync();

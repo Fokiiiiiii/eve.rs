@@ -9,17 +9,26 @@ using Eve.Scheduler;
 
 namespace Eve.Host.Persistence;
 
-public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items, WalletTransactions wallets, long plexPrice = 3_500_000, string schema = "raffle", string sdeSchema = Eve.Sde.SdeReader.DefaultSchema, string identitySchema = Eve.Identity.PgAccountDirectory.DefaultSchema)
+public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items, WalletTransactions wallets, long plexPrice = 3_500_000, string schema = "raffle", string sdeSchema = Eve.Sde.SdeReader.DefaultSchema, string identitySchema = Eve.Identity.PgAccountDirectory.DefaultSchema, Func<long>? now = null)
 {
     private const long SystemOwnerId = 1;
     private const int WalletAdjustmentRefType = 3; // EVEJS walletState default: GM_CASH_TRANSFER
     private const decimal TaxRate = 0.05m;
     private readonly long _plexPrice = plexPrice;
+    private readonly Func<long> _now = now ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+    private CharacterSessions? _characterSessions;
     private Func<ServiceCall, CancellationToken, ValueTask<double?>>? _plexPriceProvider;
+    private Func<bool>? _hyperNetKillSwitchProvider;
+
+    public void SetCharacterSessions(CharacterSessions sessions) =>
+        _characterSessions = sessions ?? throw new ArgumentNullException(nameof(sessions));
 
     // Called by composition once the live global-config store is available.
     public void SetPlexPriceProvider(Func<ServiceCall, CancellationToken, ValueTask<double?>> provider) =>
         _plexPriceProvider = provider ?? throw new ArgumentNullException(nameof(provider));
+
+    public void SetHyperNetKillSwitchProvider(Func<bool> provider) =>
+        _hyperNetKillSwitchProvider = provider ?? throw new ArgumentNullException(nameof(provider));
     private readonly string _schema = Regex.IsMatch(schema, "^[a-z_][a-z0-9_]{0,62}$")
         ? schema : throw new ArgumentException("not a usable schema name", nameof(schema));
     private readonly string _sdeSchema = Regex.IsMatch(sdeSchema, "^[a-z_][a-z0-9_]{0,62}$")
@@ -39,7 +48,15 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
     {
         _scheduler = scheduler;
         scheduler.Register(ExpiryJobKind, async (job, cancellationToken) =>
-            await ExpireDueAsync(job.NowMs, cancellationToken));
+        {
+            var payload = job.Payload<ExpiryPayload>()
+                ?? throw new InvalidDataException("A raffle expiry job has no payload.");
+            if (payload.RaffleId <= 0) throw new InvalidDataException("A raffle expiry job has an invalid raffle id.");
+            var expired = await ExpireRaffleAsync(job.Connection, job.Transaction, payload.RaffleId,
+                job.NowMs, cancellationToken);
+            if (expired is not null)
+                job.AfterCommit(ct => NotifyExpiredRaffleAsync(expired, ct));
+        });
     }
 
     public async Task ScheduleExistingAsync(CancellationToken cancellationToken = default)
@@ -159,46 +176,76 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
         {
             await using var connection = await source.OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-            long ownerId, itemId, locationId;
-            int ticketCount;
-            decimal ticketPrice;
-            long expiresAt;
-            await using (var command = new NpgsqlCommand($"SELECT owner_id,item_id,location_id,ticket_count,ticket_price,expires_at_ms FROM {_schema}.raffle_records WHERE raffle_id=$1 AND status=6 FOR UPDATE", connection, transaction))
-            {
-                command.Parameters.AddWithValue(raffleId);
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-                if (!await reader.ReadAsync(cancellationToken)) { await transaction.RollbackAsync(cancellationToken); continue; }
-                ownerId=reader.GetInt64(0); itemId=reader.GetInt64(1); locationId=reader.GetInt64(2);
-                ticketCount=reader.GetInt32(3); ticketPrice=reader.GetDecimal(4); expiresAt=reader.GetInt64(5);
-            }
-            if (expiresAt > nowUnixMs) { await transaction.RollbackAsync(cancellationToken); continue; }
-            var owners = new List<(long Owner, long Count)>();
-            await using (var command = new NpgsqlCommand($"SELECT owner_id,count(*) FROM {_schema}.raffle_tickets WHERE raffle_id=$1 GROUP BY owner_id ORDER BY owner_id", connection, transaction))
-            {
-                command.Parameters.AddWithValue(raffleId);
-                await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-                while (await reader.ReadAsync(cancellationToken)) owners.Add((reader.GetInt64(0), reader.GetInt64(1)));
-            }
-            foreach (var (ticketOwner, count) in owners)
-                await wallets.AdjustAsync(connection, transaction, ticketOwner, ticketPrice * count, ownerId,
-                    WalletAdjustmentRefType, $"HyperNet raffle refund {raffleId}", nowUnixMs,
-                    $"raffle:{raffleId}:refund:{ticketOwner}", cancellationToken, raffleId);
-            var escrowedItem = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken);
-            if (escrowedItem is not { Flag: ItemFlags.RaffleEscrow, OwnerId: var escrowOwner } || escrowOwner != ownerId || escrowedItem.LocationId != locationId)
-                throw new InvalidOperationException("raffles.FailureToDeliverItemError");
-            await items.ReleaseRaffleEscrowAsync(connection, transaction, itemId, ownerId, locationId, ownerId, locationId, cancellationToken);
-            await using (var update = new NpgsqlCommand($"UPDATE {_schema}.raffle_records SET status=9,winning_ticket=NULL,ended_at_ms=$2,pending_isk=0 WHERE raffle_id=$1 AND status=6", connection, transaction))
-            {
-                update.Parameters.AddWithValue(raffleId); update.Parameters.AddWithValue(nowUnixMs);
-                await update.ExecuteNonQueryAsync(cancellationToken);
-            }
-            var recipients = Interested(raffleId, null);
+            var expired = await ExpireRaffleAsync(connection, transaction, raffleId, nowUnixMs, cancellationToken);
+            if (expired is null) { await transaction.RollbackAsync(cancellationToken); continue; }
             await transaction.CommitAsync(cancellationToken);
-            foreach (var session in recipients)
-            {
-                try { session.SendNotification("OnRaffleFinishedServer", "clientID", new PyValue[] { new PyLong(raffleId), PyNone.Instance }); }
-                catch (Exception) { Console.Error.WriteLine($"raffle {raffleId} expiry notification failed for session {session.SessionId}"); }
-            }
+            await NotifyExpiredRaffleAsync(expired, cancellationToken);
+        }
+    }
+
+    private sealed record ExpiredRaffle(long RaffleId, long OwnerId, ItemRow RestoredItem,
+        IReadOnlyList<WalletBalanceChange> WalletChanges);
+
+    private async Task<ExpiredRaffle?> ExpireRaffleAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long raffleId, long nowUnixMs, CancellationToken cancellationToken)
+    {
+        long ownerId, itemId, locationId;
+        int groupId, categoryId;
+        decimal ticketPrice;
+        await using (var command = new NpgsqlCommand($"""
+            SELECT owner_id,item_id,location_id,ticket_price,group_id,category_id
+            FROM {_schema}.raffle_records
+            WHERE raffle_id=$1 AND status=6 AND expires_at_ms <= $2
+            FOR UPDATE
+            """, connection, transaction))
+        {
+            command.Parameters.AddWithValue(raffleId);
+            command.Parameters.AddWithValue(nowUnixMs);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            if (!await reader.ReadAsync(cancellationToken)) return null;
+            ownerId=reader.GetInt64(0); itemId=reader.GetInt64(1); locationId=reader.GetInt64(2);
+            ticketPrice=reader.GetDecimal(3); groupId=reader.GetInt32(4); categoryId=reader.GetInt32(5);
+        }
+        var owners = new List<(long Owner, long Count)>();
+        await using (var command = new NpgsqlCommand($"SELECT owner_id,count(*) FROM {_schema}.raffle_tickets WHERE raffle_id=$1 GROUP BY owner_id ORDER BY owner_id", connection, transaction))
+        {
+            command.Parameters.AddWithValue(raffleId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken)) owners.Add((reader.GetInt64(0), reader.GetInt64(1)));
+        }
+        var walletChanges = new List<WalletBalanceChange>();
+        foreach (var (ticketOwner, count) in owners)
+        {
+            var balance = await wallets.AdjustAsync(connection, transaction, ticketOwner, ticketPrice * count, ownerId,
+                WalletAdjustmentRefType, $"HyperNet raffle refund {raffleId}", nowUnixMs,
+                $"raffle:{raffleId}:refund:{ticketOwner}", cancellationToken, raffleId);
+            walletChanges.Add(new WalletBalanceChange(ticketOwner, 1000, balance));
+        }
+        var escrowedItem = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken);
+        if (escrowedItem is not { Flag: ItemFlags.RaffleEscrow, OwnerId: var escrowOwner } || escrowOwner != ownerId || escrowedItem.LocationId != locationId)
+            throw new InvalidOperationException("raffles.FailureToDeliverItemError");
+        var restoredItem = await items.ReleaseRaffleEscrowAsync(connection, transaction, itemId, ownerId, locationId, ownerId, locationId, cancellationToken);
+        var restoredRow = InventoryRow(restoredItem, groupId, categoryId);
+        await using (var update = new NpgsqlCommand($"UPDATE {_schema}.raffle_records SET status=9,winning_ticket=NULL,ended_at_ms=$2,pending_isk=0 WHERE raffle_id=$1 AND status=6", connection, transaction))
+        {
+            update.Parameters.AddWithValue(raffleId); update.Parameters.AddWithValue(nowUnixMs);
+            if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
+                throw new InvalidOperationException("RAFFLE_EXPIRY_CONFLICT");
+        }
+        return new ExpiredRaffle(raffleId, ownerId, restoredRow, walletChanges);
+    }
+
+    private async Task NotifyExpiredRaffleAsync(ExpiredRaffle expired, CancellationToken cancellationToken)
+    {
+        foreach (var change in expired.WalletChanges) AnnounceWalletChangeSafely(expired.RaffleId, change);
+        NotifyItemChangeForCharacterSafely(expired.OwnerId, null, expired.RaffleId, expired.RestoredItem,
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(4), new PyInt(ItemFlags.RaffleEscrow))]));
+        var raffleData = await ReadRaffleWireAsync(expired.RaffleId, cancellationToken);
+        var recipients = await InterestedAsync(expired.RaffleId, null, cancellationToken);
+        foreach (var session in recipients)
+        {
+            NotifySafely(session, expired.RaffleId, "OnRaffleUpdatedServer", new PyValue[] { new PyLong(expired.RaffleId), raffleData });
+            NotifySafely(session, expired.RaffleId, "OnRaffleFinishedServer", new PyValue[] { new PyLong(expired.RaffleId), PyNone.Instance }, "charid");
         }
     }
 
@@ -208,15 +255,17 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         long ownerId, itemId, locationId;
+        int groupId, categoryId;
         int? winningTicket;
         short status;
-        await using (var command = new NpgsqlCommand($"SELECT owner_id,item_id,location_id,winning_ticket,status FROM {_schema}.raffle_records WHERE raffle_id=$1 FOR UPDATE", connection, transaction))
+        await using (var command = new NpgsqlCommand($"SELECT owner_id,item_id,location_id,winning_ticket,status,group_id,category_id FROM {_schema}.raffle_records WHERE raffle_id=$1 FOR UPDATE", connection, transaction))
         {
             command.Parameters.AddWithValue(raffleId);
             await using var reader = await command.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken)) throw new InvalidOperationException("raffles.FailureToDeliverItemError");
             ownerId=reader.GetInt64(0); itemId=reader.GetInt64(1); locationId=reader.GetInt64(2);
             winningTicket=reader.IsDBNull(3)?null:reader.GetInt32(3); status=reader.GetInt16(4);
+            groupId=reader.GetInt32(5); categoryId=reader.GetInt32(6);
         }
         if (status != 7 || winnerId <= 0 || winningTicket is null)
             throw new InvalidOperationException("raffles.FailureToDeliverItemError");
@@ -229,13 +278,21 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
         var prize = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken);
         if (prize is null || prize.OwnerId != ownerId || prize.LocationId != locationId || prize.Flag != ItemFlags.RaffleEscrow)
             throw new InvalidOperationException("raffles.FailureToDeliverItemError");
-        await items.ReleaseRaffleEscrowAsync(connection, transaction, itemId, ownerId, locationId, winnerId, locationId, cancellationToken);
+        var awardedItem = await items.ReleaseRaffleEscrowAsync(connection, transaction, itemId, ownerId, locationId, winnerId, locationId, cancellationToken);
+        var row = InventoryRow(awardedItem, groupId, categoryId);
         await using (var update = new NpgsqlCommand($"UPDATE {_schema}.raffle_records SET status=8 WHERE raffle_id=$1 AND status=7", connection, transaction))
         {
             update.Parameters.AddWithValue(raffleId);
             if (await update.ExecuteNonQueryAsync(cancellationToken) != 1) throw new InvalidOperationException("raffles.FailureToDeliverItemError");
         }
         await transaction.CommitAsync(cancellationToken);
+        var oldValues = new PyDict([
+            new(new PyInt(2), new PyInt(ownerId)),
+            new(new PyInt(4), new PyInt(ItemFlags.RaffleEscrow)),
+        ]);
+        NotifyItemChangeForCharacterSafely(winnerId, call.Session, raffleId, row, oldValues);
+        if (ownerId != winnerId)
+            NotifyItemChangeForCharacterSafely(ownerId, null, raffleId, row, oldValues);
     }
 
     public async Task<long> CreateRaffleAsync(ServiceCall call, long nowUnixMs, double plexPrice,
@@ -243,28 +300,32 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
     {
         var ownerId = call.Session.CharacterId ?? 0;
         var stationId = call.Session.DockedLocationId ?? 0;
-        if (ownerId <= 0 || stationId <= 0) throw new InvalidOperationException("raffles.ItemNotAvailableError");
+        if (ownerId <= 0) throw new InvalidOperationException("ItemOwnerError");
+        if (stationId <= 0) throw new InvalidOperationException("ItemLocationError");
         var data = call.Arg(0);
         var requestedOwner = ReadField(data, "owner_id");
-        if (requestedOwner is not null && Integer(requestedOwner) != ownerId)
-            throw new InvalidOperationException("raffles.ItemNotAvailableError");
-        var tokenId = Integer(ReadField(data, "token_id") ?? PyNone.Instance);
-        var tokenLocationId = Integer(ReadField(data, "token_location_id") ?? PyNone.Instance);
-        var itemId = Integer(ReadField(data, "item_id") ?? PyNone.Instance);
-        var typeId = checked((int)Integer(ReadField(data, "type_id") ?? PyNone.Instance));
-        var locationId = Integer(ReadField(data, "location_id") ?? PyNone.Instance);
-        var ticketCount = checked((int)Integer(ReadField(data, "ticket_count") ?? PyNone.Instance));
-        var ticketPrice = DecimalValue(ReadField(data, "ticket_price") ?? PyNone.Instance);
+        if (requestedOwner is not null && CreationInteger(requestedOwner, "ItemOwnerError") != ownerId)
+            throw new InvalidOperationException("ItemOwnerError");
+        var tokenId = CreationInteger(ReadField(data, "token_id"), "TokenPaymentError");
+        var tokenLocationId = CreationInteger(ReadField(data, "token_location_id"), "TokenLocationError");
+        var itemId = CreationInteger(ReadField(data, "item_id"), "ItemEscrowError");
+        var typeId = checked((int)CreationInteger(ReadField(data, "type_id"), "ItemTypeError"));
+        var locationId = CreationInteger(ReadField(data, "location_id"), "ItemLocationError");
+        var ticketCount = checked((int)CreationInteger(ReadField(data, "ticket_count"), "TicketCountError"));
+        decimal ticketPrice;
+        try { ticketPrice = DecimalValue(ReadField(data, "ticket_price") ?? PyNone.Instance); }
+        catch (InvalidOperationException) { throw new InvalidOperationException("TicketPriceError"); }
         var restrictionValue = ReadField(data, "restriction_id");
-        int? restrictionId = restrictionValue is null or PyNone ? null : checked((int)Integer(restrictionValue));
+        int? restrictionId = restrictionValue is null or PyNone ? null : checked((int)CreationInteger(restrictionValue, "UnknownError"));
         if (restrictionId != 1) restrictionId = null;
-        if (locationId != stationId || tokenLocationId != stationId || !new[] { 8, 16, 48, 512 }.Contains(ticketCount) ||
-            ticketPrice <= 0 || decimal.Round(ticketPrice, 2) != ticketPrice)
-            throw new InvalidOperationException("raffles.ItemNotAvailableError");
+        if (locationId != stationId) throw new InvalidOperationException("ItemLocationError");
+        if (tokenLocationId != stationId) throw new InvalidOperationException("TokenLocationError");
+        if (!new[] { 8, 16, 48, 512 }.Contains(ticketCount)) throw new InvalidOperationException("TicketCountError");
+        if (ticketPrice <= 0 || decimal.Round(ticketPrice, 2) != ticketPrice) throw new InvalidOperationException("TicketPriceError");
         var total = ticketPrice * ticketCount;
         if (total < 1_000m || total > 10_000_000_000_000m)
-            throw new InvalidOperationException("raffles.InvalidPriceError");
-        if (plexPrice == 0) throw new InvalidOperationException("raffles.InvalidPriceError");
+            throw new InvalidOperationException("TicketPriceError");
+        if (!double.IsFinite(plexPrice) || plexPrice == 0) throw new InvalidOperationException("TicketPriceError");
         // Client util.py enables true division and evaluates total / tokenPrice * fee left to right.
         double tokenPrice = Math.Max(1d, plexPrice / 10d);
         var requiredTokens = Math.Max(1L, (long)Math.Truncate((double)total / tokenPrice * 0.05d));
@@ -284,23 +345,30 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
             station.Parameters.AddWithValue(stationId.ToString(System.Globalization.CultureInfo.InvariantCulture));
             await using var reader = await station.ExecuteReaderAsync(cancellationToken);
             if (!await reader.ReadAsync(cancellationToken) || reader.IsDBNull(0) || reader.IsDBNull(1))
-                throw new InvalidOperationException("raffles.ItemNotAvailableError");
+                throw new InvalidOperationException("ItemLocationError");
             solarSystemId = reader.GetInt64(0);
             // Client tests faction 500026. Pinned Pochven documents can omit factionID;
             // the existing universe authority identifies Pochven by region 10000070.
             if (reader.GetInt64(1) == 10000070 || (!reader.IsDBNull(2) && reader.GetInt64(2) == 500026))
-                throw new InvalidOperationException("raffles.ItemNotAvailableError");
+                throw new InvalidOperationException("ItemTriglavianSystemError");
         }
         if (ReadField(data, "solar_system_id") is { } declaredSystem && declaredSystem is not PyNone && Integer(declaredSystem) != solarSystemId)
-            throw new InvalidOperationException("raffles.ItemNotAvailableError");
+            throw new InvalidOperationException("ItemLocationError");
         var prize = await items.LockAndGetAsync(connection, transaction, itemId, cancellationToken);
         var tokens = await items.LockAndGetAsync(connection, transaction, tokenId, cancellationToken);
-        if (prize is null || tokens is null || prize.OwnerId != ownerId || tokens.OwnerId != ownerId ||
-            prize.TypeId != typeId || tokens.TypeId != 52568 || prize.LocationId != stationId ||
-            tokens.LocationId != stationId || prize.Flag != ItemFlags.Hangar || tokens.Flag != ItemFlags.Hangar ||
-            tokens.Singleton || tokens.Quantity < requiredTokens)
-            throw new InvalidOperationException("raffles.ItemNotAvailableError");
-        if (prize.Id == tokens.Id) throw new InvalidOperationException("raffles.ItemNotAvailableError");
+        if (prize is null) throw new InvalidOperationException("ItemEscrowError");
+        if (tokens is null) throw new InvalidOperationException("TokenPaymentError");
+        if (prize.TypeId != typeId) throw new InvalidOperationException("TypeMismatchError");
+        if (tokens.TypeId != 52568) throw new InvalidOperationException("TokenTypeError");
+        if (prize.OwnerId != ownerId) throw new InvalidOperationException("ItemOwnerError");
+        if (tokens.OwnerId != ownerId) throw new InvalidOperationException("TokenOwnerError");
+        if (prize.Id == tokens.Id || prize.TypeId == 52568) throw new InvalidOperationException("ItemTypeError");
+        if (prize.LocationId != stationId || locationId != stationId) throw new InvalidOperationException("ItemLocationError");
+        if (tokens.LocationId != stationId || tokenLocationId != stationId) throw new InvalidOperationException("TokenLocationError");
+        if (prize.Flag != ItemFlags.Hangar || (call.Session.GetInt("shipid") is { } activeShip && activeShip == prize.Id))
+            throw new InvalidOperationException("ItemInventoryError");
+        if (tokens.Flag != ItemFlags.Hangar || tokens.Singleton) throw new InvalidOperationException("TokenInventoryError");
+        if (tokens.Quantity < requiredTokens) throw new InvalidOperationException("TokenAmountError");
         int groupId, categoryId, metaGroupId;
         bool dynamicType;
         await using (var typeCommand = new NpgsqlCommand($"""
@@ -313,18 +381,33 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
         {
             typeCommand.Parameters.AddWithValue(typeId);
             await using var typeReader = await typeCommand.ExecuteReaderAsync(cancellationToken);
-            if (!await typeReader.ReadAsync(cancellationToken)) throw new InvalidOperationException("raffles.ItemNotAvailableError");
+            if (!await typeReader.ReadAsync(cancellationToken)) throw new InvalidOperationException("ItemTypeError");
             groupId=typeReader.GetInt32(0); categoryId=typeReader.GetInt32(1); metaGroupId=typeReader.GetInt32(2); dynamicType=typeReader.GetBoolean(3);
         }
+        int tokenGroupId, tokenCategoryId;
+        await using (var typeCommand = new NpgsqlCommand($"""
+            SELECT (t.doc->>'groupID')::integer, (g.doc->>'categoryID')::integer
+            FROM {_sdeSchema}.types t
+            JOIN {_sdeSchema}.groups g ON (g.doc->>'_key')::integer=(t.doc->>'groupID')::integer
+            WHERE (t.doc->>'_key')::integer=$1
+            """, connection, transaction))
+        {
+            typeCommand.Parameters.AddWithValue(tokens.TypeId);
+            await using var typeReader = await typeCommand.ExecuteReaderAsync(cancellationToken);
+            if (!await typeReader.ReadAsync(cancellationToken)) throw new InvalidOperationException("TokenTypeError");
+            tokenGroupId = typeReader.GetInt32(0); tokenCategoryId = typeReader.GetInt32(1);
+        }
         var lists = await RaffleTypeListsAsync(connection, transaction, cancellationToken);
-        if (prize.Quantity != 1 || IsInTypeList(lists[36], typeId, groupId, categoryId) ||
-            IsInTypeList(lists[142], typeId, groupId, categoryId) || IsInTypeList(lists[133], typeId, groupId, categoryId) ||
-            (prize.Singleton && !dynamicType && !IsInTypeList(lists[134], typeId, groupId, categoryId)) ||
-            (await items.LockContainerAsync(connection, transaction, prize.Id, cancellationToken)).Count != 0)
-            throw new InvalidOperationException("raffles.ItemNotAvailableError");
+        if (IsInTypeList(lists[36], typeId, groupId, categoryId) ||
+            IsInTypeList(lists[142], typeId, groupId, categoryId) || IsInTypeList(lists[133], typeId, groupId, categoryId))
+            throw new InvalidOperationException("ItemTypeError");
+        if (prize.Singleton && !dynamicType && !IsInTypeList(lists[134], typeId, groupId, categoryId))
+            throw new InvalidOperationException("ItemSingletonError");
+        if ((await items.LockContainerAsync(connection, transaction, prize.Id, cancellationToken)).Count != 0)
+            throw new InvalidOperationException("ItemEscrowError");
         var isCopy = prize.BlueprintCopy;
         var expiryMs = checked(nowUnixMs + 3L * 24 * 60 * 60 * 1000);
-        await items.PutInRaffleEscrowAsync(connection, transaction, prize.Id, ownerId, stationId, cancellationToken);
+        var escrowedPrize = await items.PutInRaffleEscrowAsync(connection, transaction, prize.Id, ownerId, stationId, cancellationToken);
         var remainingTokens = tokens.Quantity - requiredTokens;
         if (remainingTokens == 0) await items.DeleteAsync(connection, transaction, tokenId, cancellationToken);
         else await items.SetQuantityAsync(connection, transaction, tokenId, remainingTokens, cancellationToken);
@@ -347,6 +430,12 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
         if (_scheduler is { } scheduler)
             await ScheduleExpiryAsync(connection, transaction, scheduler, raffleId, expiryMs, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        var prizeRow = InventoryRow(escrowedPrize, groupId, categoryId);
+        NotifyItemChangeForCharacterSafely(ownerId, call.Session, raffleId, prizeRow,
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(4), new PyInt(ItemFlags.Hangar))]));
+        var tokenRow = InventoryRow(tokens with { Quantity = remainingTokens }, tokenGroupId, tokenCategoryId);
+        NotifyItemChangeForCharacterSafely(ownerId, call.Session, raffleId, tokenRow,
+            new PyDict([new KeyValuePair<PyValue, PyValue>(new PyInt(9), new PyInt(tokens.Quantity))]));
         return raffleId;
     }
 
@@ -394,6 +483,17 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
         return dictionary?.Entries.FirstOrDefault(pair => TextKey(pair.Key) == name).Value;
     }
 
+    private static long CreationInteger(PyValue? value, string reason) => value switch
+    {
+        PyInt number => number.Value,
+        PyLong number => number.Value,
+        _ => throw new InvalidOperationException(reason),
+    };
+
+    private static MachoWrappedException WrappedRaffleError(string className, string message) =>
+        new(MachoErrors.Wrapped(className, [new PyStr(message)],
+            [new KeyValuePair<PyValue, PyValue>(new PyStr("msg"), new PyStr(message))]));
+
     private static string? TextKey(PyValue value) => value switch
     {
         PyStr text => text.Value,
@@ -418,28 +518,59 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
     public async ValueTask<PyValue> InvokeAsync(string operation, ServiceCall call, CancellationToken cancellationToken)
     {
         try { return await InvokeCoreAsync(operation, call, cancellationToken); }
-        catch (InsufficientFundsException) { throw MachoErrors.ThrowUserError("NotEnoughISKError"); }
-        catch (InvalidOperationException error) when (error.Message is "raffles.ItemNotAvailableError" or
-            "raffles.InvalidPriceError" or "raffles.TicketUnavailableError" or
+        catch (InsufficientFundsException)
+        {
+            throw WrappedRaffleError("raffles.NotEnoughISKError", "NotEnoughISKError");
+        }
+        catch (InvalidOperationException error) when (operation == "CreateRaffle")
+        {
+            var reason = error.Message is "ItemOwnerError" or "ItemLocationError" or "ItemEscrowError" or
+                "ItemTypeError" or "ItemInventoryError" or "ItemSingletonError" or "ItemTriglavianSystemError" or
+                "TokenPaymentError" or "TokenTypeError" or "TokenAmountError" or "TokenOwnerError" or
+                "TokenLocationError" or "TokenInventoryError" or "TypeMismatchError" or "TicketCountError" or
+                "TicketPriceError" or "UnknownError"
+                    ? error.Message
+                    : error.Message switch
+                    {
+                        "raffles.InvalidPriceError" => "TicketPriceError",
+                        "raffles.ItemNotAvailableError" => "ItemEscrowError",
+                        _ => "UnknownError",
+                    };
+            throw WrappedRaffleError("raffles.CreateError", reason);
+        }
+        catch (InvalidOperationException error) when (error.Message is "raffles.TicketUnavailableError" or
             "raffles.FailureToDeliverItemError" or "RAFFLE_NOT_FOUND")
         {
-            throw MachoErrors.ThrowUserError(error.Message);
+            var (className, message) = error.Message switch
+            {
+                "raffles.TicketUnavailableError" => ("raffles.TicketUnavailableError", "TicketUnavailableError"),
+                "raffles.FailureToDeliverItemError" => ("raffles.FailureToDeliverItemError", "FailureToDeliverItemError"),
+                _ => ("raffles.RaffleNotFoundError", "RaffleNotFoundError"),
+            };
+            throw WrappedRaffleError(className, message);
         }
     }
 
     private async ValueTask<PyValue> InvokeCoreAsync(string operation, ServiceCall call, CancellationToken cancellationToken)
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var userId = call.Session.UserId;
-        var accountBanned = userId is { } authenticatedUserId
-            ? await IsAccountBannedAsync(authenticatedUserId, cancellationToken)
-            : null;
-        if (operation == "AmIBanned") return accountBanned is null or true ? PyBool.True : PyBool.False;
+        if (_hyperNetKillSwitchProvider?.Invoke() == true)
+            throw new MachoWrappedException(MachoErrors.Wrapped("raffles.RafflesError", [new PyStr("HyperNetDisabled")],
+                [new KeyValuePair<PyValue, PyValue>(new PyStr("msg"), new PyStr("HyperNetDisabled"))]));
+        if (operation == "AmIBanned")
+        {
+            var accountBanned = userId is { } accountId &&
+                await IsAccountBannedAsync(accountId, cancellationToken) is true;
+            return accountBanned ? PyBool.True : PyBool.False;
+        }
         if (operation is "CreateRaffle" or "BuyTicket" or "BuyRandomTickets" or "AwardItem")
         {
+            if (userId is not { } authenticatedUserId) throw MachoErrors.ThrowUserError("ACCOUNT_REQUIRED");
+            var accountBanned = await IsAccountBannedAsync(authenticatedUserId, cancellationToken);
             if (accountBanned is null) throw MachoErrors.ThrowUserError("ACCOUNT_REQUIRED");
             if (accountBanned.Value) throw MachoErrors.ThrowUserError("ACCESS_DENIED");
         }
+        var now = _now();
         await ExpireDueAsync(now, cancellationToken);
         if (operation == "CreateRaffle")
         {
@@ -448,7 +579,12 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
             if (effectivePrice is null or 0) throw new InvalidOperationException("raffles.InvalidPriceError");
             var id = await CreateRaffleAsync(call, now, effectivePrice.Value, cancellationToken);
             var created = await ReadRaffleWireAsync(id, cancellationToken);
-            NotifySafely(call.Session, id, "OnRaffleCreatedServer", new PyValue[] { new PyLong(id), created });
+            var recipients = CharacterRecipients(call.Session.CharacterId ?? 0, call.Session);
+            call.Session.AfterResponse(() =>
+            {
+                foreach (var session in recipients)
+                    NotifySafely(session, id, "OnRaffleCreatedServer", new PyValue[] { new PyLong(id), created });
+            });
             return new PyLong(id);
         }
         if (operation is "BuyTicket" or "BuyRandomTickets")
@@ -463,14 +599,15 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
             var data = await ReadRaffleWireAsync(raffleId, cancellationToken);
             if (purchase.WasNew)
             {
-                var recipients = Interested(raffleId, call.Session);
+                foreach (var change in purchase.WalletChanges) AnnounceWalletChangeSafely(raffleId, change);
+                var recipients = await InterestedAsync(raffleId, call.Session, cancellationToken);
                 var ticketUpdate = new PyDict([new KeyValuePair<PyValue, PyValue>(new PyLong(raffleId), new PyInt(purchase.SoldTicketCount))]);
-                foreach (var session in recipients) NotifySafely(session, raffleId, "OnTicketsUpdatedServer", ticketUpdate);
+                foreach (var session in recipients) NotifySafely(session, raffleId, "OnTicketsUpdatedServer", ticketUpdate, "charid");
                 foreach (var session in recipients) NotifySafely(session, raffleId, "OnRaffleUpdatedServer", new PyValue[] { new PyLong(raffleId), data });
                 if (purchase.WinningTicket is { } winning)
                 {
                     var winner = await ReadTicketWireAsync(raffleId, winning, cancellationToken);
-                    foreach (var session in recipients) NotifySafely(session, raffleId, "OnRaffleFinishedServer", new PyValue[] { new PyLong(raffleId), winner });
+                    foreach (var session in recipients) NotifySafely(session, raffleId, "OnRaffleFinishedServer", new PyValue[] { new PyLong(raffleId), winner }, "charid");
                 }
             }
             return data;
@@ -480,14 +617,14 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
             var raffleId = Integer(call.Arg(0));
             await AwardItemAsync(call, raffleId, cancellationToken);
             var data = await ReadRaffleWireAsync(raffleId, cancellationToken);
-            foreach (var session in Interested(raffleId, call.Session))
+            foreach (var session in await InterestedAsync(raffleId, call.Session, cancellationToken))
                 NotifySafely(session, raffleId, "OnRaffleUpdatedServer", new PyValue[] { new PyLong(raffleId), data });
             return PyNone.Instance;
         }
         if (operation == "GetRaffle") return await ReadRaffleWireAsync(Integer(call.Arg(0)), cancellationToken);
         if (operation == "GetMyRaffleHistory") return await ReadMyHistoryAsync(call, cancellationToken);
         if (operation == "GetMyActiveTickets") return await ReadMyActiveTicketsAsync(call, now, cancellationToken);
-        if (operation == "GetCreatedParticipated") return await ReadCharacterStatisticsAsync(call.Session.CharacterId ?? 0, cancellationToken);
+        if (operation == "GetCreatedParticipated") return await ReadCharacterStatisticsAsync(call.Session.CharacterId ?? 0, now, cancellationToken);
         if (operation == "GetActiveHistoricPrices") return await ReadTypeStatisticsAsync(checked((int)Integer(call.Arg(0))), now, cancellationToken);
         if (operation == "Grab") return await ReadBrowseAsync(call, false, now, cancellationToken);
         if (operation == "FilteredGrab") return await ReadBrowseAsync(call, true, now, cancellationToken);
@@ -512,20 +649,45 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
             if (_raffleSubscribers.TryGetValue(raffleId, out var subscribers)) subscribers.TryRemove(call.Session.SessionId, out _);
             return PyNone.Instance;
         }
-        if (operation == "AmIBanned") return PyBool.False;
         throw new InvalidOperationException($"raffleProxy.{operation} is not available");
     }
 
-    private static void NotifySafely(ClientSession session, long raffleId, string eventName, PyValue value)
+    private static void NotifySafely(ClientSession session, long raffleId, string eventName, PyValue value, string idType = "clientID")
     {
-        try { session.SendNotification(eventName, "clientID", value); }
+        try { session.SendNotification(eventName, idType, value); }
         catch (Exception) { Console.Error.WriteLine($"raffle {raffleId} notification failed for session {session.SessionId}"); }
     }
 
-    private static void NotifySafely(ClientSession session, long raffleId, string eventName, PyValue[] values)
+    private static void NotifySafely(ClientSession session, long raffleId, string eventName, PyValue[] values, string idType = "clientID")
     {
-        try { session.SendNotification(eventName, "clientID", values); }
+        try { session.SendNotification(eventName, idType, values); }
         catch (Exception) { Console.Error.WriteLine($"raffle {raffleId} notification failed for session {session.SessionId}"); }
+    }
+
+    private static void NotifyItemChangeSafely(ClientSession session, long raffleId, ItemRow item, PyDict oldValues)
+    {
+        try { session.SendNotification("OnItemChange", "clientID", InventoryWire.PackedRow(item), oldValues, PyNone.Instance); }
+        catch (Exception) { Console.Error.WriteLine($"raffle {raffleId} inventory notification failed for session {session.SessionId}"); }
+    }
+
+    private void NotifyItemChangeForCharacterSafely(long characterId, ClientSession? include, long raffleId, ItemRow item, PyDict oldValues)
+    {
+        foreach (var session in CharacterRecipients(characterId, include))
+            NotifyItemChangeSafely(session, raffleId, item, oldValues);
+    }
+
+    private void AnnounceWalletChangeSafely(long raffleId, WalletBalanceChange change)
+    {
+        try { wallets.AnnounceCommitted(change); }
+        catch (Exception) { Console.Error.WriteLine($"raffle {raffleId} wallet notification failed for character {change.OwnerId}"); }
+    }
+
+    private IReadOnlyList<ClientSession> CharacterRecipients(long characterId, ClientSession? include)
+    {
+        var recipients = new Dictionary<long, ClientSession>();
+        if (include is not null) recipients[include.SessionId] = include;
+        if (_characterSessions?.Of(characterId) is { } session) recipients[session.SessionId] = session;
+        return recipients.Values.ToArray();
     }
 
     private void ForgetSubscriber(ClientSession session)
@@ -536,15 +698,31 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
             ((ICollection<KeyValuePair<long, ClientSession>>)subscribers).Remove(new(session.SessionId, session));
     }
 
-    private IReadOnlyList<ClientSession> Interested(long raffleId, ClientSession? include)
+    private async Task<IReadOnlyList<ClientSession>> InterestedAsync(long raffleId, ClientSession? include, CancellationToken cancellationToken)
     {
         var recipients = new Dictionary<long, ClientSession>();
         if (include is not null) recipients[include.SessionId] = include;
         foreach (var pair in _ticketSubscribers) recipients[pair.Key] = pair.Value;
         if (_raffleSubscribers.TryGetValue(raffleId, out var raffleSessions))
             foreach (var pair in raffleSessions) recipients[pair.Key] = pair.Value;
+        if (_characterSessions is { } sessions)
+        {
+            await using var connection = await source.OpenConnectionAsync(cancellationToken);
+            await using var command = new NpgsqlCommand($"""
+                SELECT owner_id FROM {_schema}.raffle_records WHERE raffle_id=$1
+                UNION
+                SELECT owner_id FROM {_schema}.raffle_tickets WHERE raffle_id=$1
+                """, connection);
+            command.Parameters.AddWithValue(raffleId);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+                if (sessions.Of(reader.GetInt64(0)) is { } session) recipients[session.SessionId] = session;
+        }
         return recipients.Values.ToArray();
     }
+
+    private static ItemRow InventoryRow(Item item, int groupId, int categoryId) =>
+        new(item.Id, item.TypeId, item.OwnerId, item.LocationId, item.Flag, item.Quantity, groupId, categoryId);
 
     private async Task<PyValue> ReadTicketWireAsync(long raffleId, int ticketNumber, CancellationToken cancellationToken)
     {
@@ -663,7 +841,7 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
         return Py.List(rows.ToArray());
     }
 
-    private async Task<PyValue> ReadCharacterStatisticsAsync(long ownerId, CancellationToken cancellationToken)
+    private async Task<PyValue> ReadCharacterStatisticsAsync(long ownerId, long nowUnixMs, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand($"""
@@ -676,7 +854,7 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
               count(*) FILTER (WHERE r.owner_id=$1 AND r.status=6 AND r.expires_at_ms>$2)
             FROM {_schema}.raffle_records r
             """, connection);
-        command.Parameters.AddWithValue(ownerId); command.Parameters.AddWithValue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        command.Parameters.AddWithValue(ownerId); command.Parameters.AddWithValue(nowUnixMs);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         if (!await reader.ReadAsync(cancellationToken)) return Py.KeyVal();
         return Py.KeyVal(("raffles_participated", new PyInt(reader.GetInt32(0))),
@@ -702,7 +880,7 @@ public sealed class RaffleProxyStore(NpgsqlDataSource source, PgItemStore items,
             ("active_max", Stat(active.OrderDescending().ToList())), ("active_average", Stat(active, true)));
     }
 
-private async Task<bool?> IsAccountBannedAsync(long userId, CancellationToken cancellationToken)
+    private async Task<bool?> IsAccountBannedAsync(long userId, CancellationToken cancellationToken)
     {
         if (userId <= 0) return null;
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
@@ -732,7 +910,9 @@ private async Task<bool?> IsAccountBannedAsync(long userId, CancellationToken ca
         await using (var connection = await source.OpenConnectionAsync(cancellationToken))
         await using (var command = new NpgsqlCommand($"""
             SELECT raffle_id FROM {_schema}.raffle_records
-            WHERE status=6 AND expires_at_ms>$1 AND (restriction_id IS NULL OR owner_id=$2)
+            WHERE status=6 AND expires_at_ms>$1
+              AND (restriction_id IS NULL OR owner_id=$2 OR EXISTS (
+                  SELECT 1 FROM {_schema}.raffle_tickets t WHERE t.raffle_id=raffle_records.raffle_id AND t.owner_id=$2))
               AND ($3=0 OR type_id=$3) AND ($4=0 OR group_id=$4) AND ($5=0 OR category_id=$5)
               AND ($6=0 OR solar_system_id=$6) AND ($7=0 OR meta_group_id=$7)
               AND ($8=0 OR (category_id=9 AND (($8=1 AND is_copy=FALSE) OR ($8=2 AND is_copy=TRUE))))
@@ -778,9 +958,20 @@ private async Task<bool?> IsAccountBannedAsync(long userId, CancellationToken ca
         long nowUnixMs, string? operationKey, CancellationToken cancellationToken)
     {
         if (ticketCount < 0) throw new InvalidOperationException("raffles.TicketUnavailableError");
-        if (ticketCount == 0) return new PurchaseResult(raffleId, -1, 0, 0, null, false);
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (ticketCount == 0)
+        {
+            await using (var active = new NpgsqlCommand($"SELECT 1 FROM {_schema}.raffle_records WHERE raffle_id=$1 AND status=6 AND expires_at_ms>$2 FOR UPDATE", connection, transaction))
+            {
+                active.Parameters.AddWithValue(raffleId); active.Parameters.AddWithValue(nowUnixMs);
+                if (await active.ExecuteScalarAsync(cancellationToken) is null)
+                    throw new InvalidOperationException("raffles.TicketUnavailableError");
+            }
+            var noOp = await BuyTicketsCoreAsync(connection, transaction, raffleId, buyerId, [], nowUnixMs, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return noOp;
+        }
         if (operationKey is not null)
         {
             await using (var gate = new NpgsqlCommand("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", connection, transaction))
@@ -887,7 +1078,7 @@ private async Task<bool?> IsAccountBannedAsync(long userId, CancellationToken ca
         }
         if (newTickets.Count == 0)
         {
-            return new PurchaseResult(raffleId, requested.FirstOrDefault(-1), soldCount, pendingIsk, winningTicket, false);
+            return new PurchaseResult(raffleId, requested.FirstOrDefault(-1), soldCount, pendingIsk, winningTicket, false, []);
         }
         if (status != 6 || expiresAt <= nowUnixMs || soldCount + newTickets.Count > ticketCount)
             throw new InvalidOperationException("raffles.TicketUnavailableError");
@@ -895,9 +1086,11 @@ private async Task<bool?> IsAccountBannedAsync(long userId, CancellationToken ca
         var ticketHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
             System.Text.Encoding.UTF8.GetBytes(string.Join(',', newTickets))));
         var purchaseKey = $"raffle:{raffleId}:purchase:{buyerId}:{ticketHash}";
-        await wallets.AdjustAsync(connection, transaction, buyerId, -amount, ownerId,
+        var walletChanges = new List<WalletBalanceChange>();
+        var buyerBalance = await wallets.AdjustAsync(connection, transaction, buyerId, -amount, ownerId,
             WalletAdjustmentRefType, $"HyperNet ticket purchase {raffleId}", nowUnixMs, purchaseKey,
             cancellationToken, raffleId);
+        walletChanges.Add(new WalletBalanceChange(buyerId, 1000, buyerBalance));
         foreach (var number in newTickets)
         {
             await using var insert = new NpgsqlCommand($"INSERT INTO {_schema}.raffle_tickets(raffle_id,ticket_number,owner_id,purchased_at_ms) VALUES($1,$2,$3,$4)", connection, transaction);
@@ -919,17 +1112,21 @@ private async Task<bool?> IsAccountBannedAsync(long userId, CancellationToken ca
             var tax = decimal.Round(gross * TaxRate, 2, MidpointRounding.AwayFromZero);
             var payout = gross - tax;
             if (payout > 0)
-                await wallets.AdjustAsync(connection, transaction, ownerId, payout, SystemOwnerId,
+            {
+                var sellerBalance = await wallets.AdjustAsync(connection, transaction, ownerId, payout, SystemOwnerId,
                     WalletAdjustmentRefType, $"HyperNet raffle payout {raffleId}", nowUnixMs,
                     $"raffle:{raffleId}:seller-payout", cancellationToken, raffleId);
+                walletChanges.Add(new WalletBalanceChange(ownerId, 1000, sellerBalance));
+            }
             pendingIsk = 0;
             await using var settle = new NpgsqlCommand($"UPDATE {_schema}.raffle_records SET status=7,winning_ticket=$2,ended_at_ms=$3,pending_isk=0 WHERE raffle_id=$1 AND status=6", connection, transaction);
             settle.Parameters.AddWithValue(raffleId); settle.Parameters.AddWithValue(winningTicket.Value); settle.Parameters.AddWithValue(nowUnixMs);
             if (await settle.ExecuteNonQueryAsync(cancellationToken) != 1) throw new InvalidOperationException("RAFFLE_SETTLEMENT_CONFLICT");
         }
-        return new PurchaseResult(raffleId, newTickets[0], soldCount, pendingIsk, winningTicket, true);
+        return new PurchaseResult(raffleId, newTickets[0], soldCount, pendingIsk, winningTicket, true, walletChanges);
     }
 
 }
 
-public sealed record PurchaseResult(long RaffleId, int TicketNumber, int SoldTicketCount, decimal PendingIsk, int? WinningTicket, bool WasNew);
+public sealed record PurchaseResult(long RaffleId, int TicketNumber, int SoldTicketCount, decimal PendingIsk, int? WinningTicket, bool WasNew,
+    IReadOnlyList<WalletBalanceChange> WalletChanges);

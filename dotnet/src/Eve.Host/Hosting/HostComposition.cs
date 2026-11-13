@@ -100,6 +100,8 @@ internal static class HostComposition
         Eve.Host.Persistence.PersistenceInGameReportStore? inGameReportStore = null;
         Eve.Host.Persistence.PgAccruedTimeStore? accruedTimeStore = null;
         Eve.Host.Persistence.RaffleProxyStore? raffleProxyStore = null;
+        WalletTransactions? raffleWalletTransactions = null;
+        WalletAnnouncer? raffleWalletAnnouncer = null;
         Eve.Host.Xmpp.XmppMotdStore? xmppMotdStore = null;
         Eve.Host.Xmpp.XmppPlayerChannelStore? xmppPlayerChannelStore = null;
         Eve.Host.ProjectDiscovery.ScientificReplayComposition? scientificReplay = null;
@@ -121,9 +123,9 @@ internal static class HostComposition
             contractReadModel = new Eve.Host.Persistence.PersistenceContractReadModel(source, contractSchema,
                 Eve.Sde.SdeReader.DefaultSchema, inventorySchema);
             var contractItems = new PgItemStore(source, inventorySchema);
-            var contractWallets = new WalletTransactions(source, Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema));
+            var contractWallets = raffleWalletTransactions = new WalletTransactions(source, Env("EVE_WALLET_SCHEMA", PgWalletStore.DefaultSchema));
             raffleProxyStore = new Eve.Host.Persistence.RaffleProxyStore(source, contractItems, contractWallets, options.HyperNetPlexPriceOverride, Env("EVE_RAFFLE_SCHEMA", "raffle"), Eve.Sde.SdeReader.DefaultSchema,
-                Env("EVE_IDENTITY_SCHEMA", Eve.Identity.PgAccountDirectory.DefaultSchema));
+                Env("EVE_IDENTITY_SCHEMA", Eve.Identity.PgAccountDirectory.DefaultSchema), clock);
             await raffleProxyStore.MigrateAsync();
             var contractSkills = new PgSkillStore(source, Env("EVE_SKILLS_SCHEMA", PgSkillStore.DefaultSchema));
             var contractCharacters = characterStore = new Eve.Characters.PgCharacterStore(source,
@@ -163,11 +165,11 @@ internal static class HostComposition
             await PgGlobalConfigPersistence.MigrateAsync(source, configSchema);
             globalConfigPersistence = new PgGlobalConfigPersistence(source, configSchema);
             foundations = await Foundations.CreateAsync(source, clock, Env, message => Console.Error.WriteLine($"eve-host: {message}"));
-              if (raffleProxyStore is { } raffleStore)
-              {
-                  raffleStore.RegisterScheduler(foundations.Scheduler);
-                  await raffleStore.ScheduleExistingAsync();
-              }
+            if (raffleProxyStore is { } raffleStore)
+            {
+                raffleStore.RegisterScheduler(foundations.Scheduler);
+                await raffleStore.ScheduleExistingAsync();
+            }
             var contractExpiryJobs = new Eve.Host.Persistence.ContractExpiryJobs(source, contractItems, contractWallets,
                 foundations.Scheduler, contractSchema, foundations.Events);
             contractExpiryJobs.Register();
@@ -178,6 +180,12 @@ internal static class HostComposition
             (characterServices, space, simulation, crimewatch, calendarStore, calendarAudience, calendarCspaBilling, gameRpcCallbacks, keeperRpcCallbacks, characterSessions, onlineStatusNotifications, contractBrokerFeeAdjustment, hasContractManagerRole, canManageCalendarGroupEvent, readCurrentCalendarGroups, readDynamicBounty) = await CharacterServicesComposition.CharacterServicesAsync(source, directory, online, clock, foundations, legacy.Store, legacy.Owner, legacy.Cache,
                 options.NewCharacterExperienceMode, new AccountOmegaStore(directory), connected, notices, hooks => characterEntryHooks = hooks,
                 containers => tournamentContainers = containers, ships => tournamentShips = ships, clusterOptions: options);
+            if (characterSessions is not null && raffleProxyStore is { } composedRaffleStore)
+            {
+                composedRaffleStore.SetCharacterSessions(characterSessions);
+                if (raffleWalletTransactions is { } raffleWallets)
+                    raffleWalletAnnouncer = new WalletAnnouncer(raffleWallets, characterSessions);
+            }
             if (characterSessions is not null)
                 new Eve.Host.Persistence.ContractNotifications(characterSessions).Subscribe(foundations.Events);
             // the public gateway's skill plans: the tables are the skills module's (migration 0009, applied with its store)
@@ -494,9 +502,9 @@ internal static class HostComposition
             calendarSessions: characterSessions,
             canManageCalendarGroupEvent: canManageCalendarGroupEvent,
             readCurrentCalendarGroups: readCurrentCalendarGroups,
-              contractBrokerFeeAdjustment: contractBrokerFeeAdjustment,
-              hasContractManagerRole: hasContractManagerRole,
-              localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", "")),
+            contractBrokerFeeAdjustment: contractBrokerFeeAdjustment,
+            hasContractManagerRole: hasContractManagerRole,
+            localizationTextChanges: HostConfiguration.ParseLocalizationTextChanges(Env("EVE_LOCALIZATION_TEXT_CHANGES", "")),
             calendarCspaBilling: calendarCspaBilling))
         {
             registry.Register(service);
@@ -530,6 +538,10 @@ internal static class HostComposition
         // machoNet's configuration: the settings, with the administrator's writes on top (saved in PostgreSQL when it is configured)
         var config = await GlobalConfigStore.OpenAsync(GlobalConfig.Build(options), globalConfigPersistence);
         if (raffleProxyStore is not null)
+        {
+            raffleProxyStore.SetHyperNetKillSwitchProvider(() =>
+                Eve.Macho.JsSemantics.Truthy(config.Current().Entries.FirstOrDefault(entry =>
+                    Eve.Macho.JsSemantics.StringValue(entry.Key) == "HyperNetKillSwitch").Value));
             raffleProxyStore.SetPlexPriceProvider((call, ct) =>
             {
                 ct.ThrowIfCancellationRequested();
@@ -545,6 +557,7 @@ internal static class HostComposition
                 };
                 return ValueTask.FromResult<double?>(price == 0 ? Eve.Services.AdvertisedPlexPrice.Get(call.Session) : price);
             });
+        }
         HostServer? server = null;
         var info = new HostMachoNetInfo(registry, config.Current, characterSessions);
         registry.Register(new MachoNetService(info, now, GlobalConfigWrites.Create(config, connected, () => server?.PublishClusterConfig())));
@@ -646,7 +659,7 @@ internal static class HostComposition
             accounts,
             () => MarshalCodec.Encode(config.Current()));
 
-        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway, dataSource, xmppListener, xmppCertificate, scientificReplay, discoveryHttp, onlineStatusNotifications, connected);
+        return new HostRuntime(server, registry, legacy, foundations, space, crimewatch, simulation, characterSessions, publicGateway, dataSource, xmppListener, xmppCertificate, scientificReplay, discoveryHttp, onlineStatusNotifications, connected, raffleWalletAnnouncer);
         }
         catch
         {
@@ -660,6 +673,7 @@ internal static class HostComposition
             if (scientificReplay is not null) await Cleanup(scientificReplay.DisposeAsync);
             await Cleanup(() => { discoveryHttp?.Dispose(); return ValueTask.CompletedTask; });
             if (onlineStatusNotifications is not null) await Cleanup(onlineStatusNotifications.DisposeAsync);
+            raffleWalletAnnouncer?.Dispose();
             if (legacy is not null) await Cleanup(legacy.DisposeAsync);
             if (foundations is not null) await Cleanup(foundations.DisposeAsync);
             await Cleanup(() => { space?.Dispose(); return ValueTask.CompletedTask; });

@@ -1511,6 +1511,9 @@ fn message_of(case: &Value) -> Message {
             module_id: wide(case, "moduleId"),
             reason: number("reason") as u8,
         },
+        "ModuleActivityRefresh" => {
+            Message::ModuleActivityRefresh { session_id: session_id(), module_id: wide(case, "moduleId") }
+        }
         "Targets" => Message::Targets {
             session_id: session_id(),
             command: number("command") as u8,

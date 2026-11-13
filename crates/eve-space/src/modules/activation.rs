@@ -675,6 +675,7 @@ impl Scene {
             activation_nonce: next_work_cycle_id(),
             cycle_id: next_work_cycle_id(),
             cycle_start: now,
+            combat_activity_heartbeat_at: now + COMBAT_ACTIVITY_HEARTBEAT_TICKS,
             cycles: 1,
             strike_done: 0,
             doomsday_hit: false,
@@ -1318,6 +1319,7 @@ impl Scene {
         let Some(pilot) = self.pilots.get(&session) else { return -1 };
         match kind {
             Moment::CycleEnd(index)
+            | Moment::CombatActivityHeartbeat(index)
             | Moment::WorkResend(index)
             | Moment::StructureDamageResend(index)
             | Moment::WorkStop(index)
@@ -1337,6 +1339,7 @@ impl Scene {
     pub(super) fn stalled(&mut self, session: SessionId, kind: Moment, at: i64) -> Option<Vec<Out>> {
         let module_id = match kind {
             Moment::CycleEnd(index)
+            | Moment::CombatActivityHeartbeat(index)
             | Moment::WorkResend(index)
             | Moment::StructureDamageResend(index)
             | Moment::WorkStop(index)
@@ -1372,6 +1375,9 @@ impl Scene {
             consider(start.sent_at + WORK_RESEND_TICKS, Moment::StartResend(index));
         }
         for (index, run) in pilot.modules.running.iter().enumerate() {
+            if run.effect.offensive() {
+                consider(run.combat_activity_heartbeat_at, Moment::CombatActivityHeartbeat(index));
+            }
             if let Some(pending) = run.pending_structure_damage.as_ref() {
                 let lease_is_current = self.controlled_structure_id(session) == Some(pending.structure_id)
                     && self.control_lease_generation(session, pending.structure_id)
@@ -1444,6 +1450,7 @@ impl Scene {
             Moment::Charge => self.tell_charge(session, at),
             Moment::Shield => self.tell_shield(session, at),
             Moment::CycleEnd(index) => self.end_cycle(session, index, at),
+            Moment::CombatActivityHeartbeat(index) => self.combat_activity_heartbeat(session, index, at),
             Moment::WorkResend(index) => self.resend_work_cycle(session, index, at),
             Moment::StructureDamageResend(index) => {
                 self.resend_structure_damage_candidates(session, index, at)
@@ -1454,6 +1461,18 @@ impl Scene {
             Moment::DoomsdayHit(index) => self.doomsday_hit(session, index, at),
             Moment::ReachCheck(index) => self.reach_check(session, index, at),
         }
+    }
+
+    fn combat_activity_heartbeat(&mut self, session: SessionId, index: usize, at: i64) -> Vec<Out> {
+        let Some(run) = self.pilots.get_mut(&session).and_then(|pilot| pilot.modules.running.get_mut(index))
+        else {
+            return Vec::new();
+        };
+        if !run.effect.offensive() {
+            return Vec::new();
+        }
+        run.combat_activity_heartbeat_at = at + COMBAT_ACTIVITY_HEARTBEAT_TICKS;
+        vec![Out::ModuleActivityRefresh { session, module_id: run.effect.module_id }]
     }
 
     /// The charge is told: now, and a tenth of a second before; the next time is half a second on while the charge is below the capacity.

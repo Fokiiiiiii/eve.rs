@@ -96,6 +96,7 @@ public sealed partial class SpaceSessions
             if (pilot is not null)
             {
                 pilot.End();
+                await EndActiveModuleCombatActivitiesAsync(pilot).ConfigureAwait(false);
                 await _charges.CloseAsync((ulong)pilot.Session.SessionId).ConfigureAwait(false);
                 await CancelRepairsAsync(pilot, CancellationToken.None).ConfigureAwait(false);
             }

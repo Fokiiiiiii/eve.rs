@@ -47,7 +47,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 96;
+pub const PROTOCOL_VERSION: u16 = 97;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -1607,6 +1607,11 @@ pub enum Message {
         module_id: i64,
         reason: u8,
     },
+    /// A running offensive effect is still active; periodic from the simulation to bound stale Crimewatch activity if its end event is lost.
+    ModuleActivityRefresh {
+        session_id: u64,
+        module_id: i64,
+    },
     /// An ECM burst reached ships on the simulation's account: the ship that runs it, and each ship it reached (a cloaked ship is not reached) with whether its
     /// roll jammed it. The host records the attack on each pilot reached (EVE.js `executeJammerBurstCycle`: aggression before the roll).
     EcmBurst {
@@ -1818,6 +1823,7 @@ impl Message {
             Self::ModuleWorkCycle { .. } => kind::MODULE_WORK_CYCLE,
             Self::ModuleWorkResult { .. } => kind::MODULE_WORK_RESULT,
             Self::ModuleEnded { .. } => kind::MODULE_ENDED,
+            Self::ModuleActivityRefresh { .. } => kind::MODULE_ACTIVITY_REFRESH,
             Self::EcmBurst { .. } => kind::ECM_BURST,
             Self::Measured { .. } => kind::MEASURED,
             Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,

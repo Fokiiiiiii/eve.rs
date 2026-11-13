@@ -1275,6 +1275,13 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 case SimEcmBurst burst when _pilots.TryGetValue(burst.SessionId, out var burster) && burster.ShipId == burst.ShipId:
                     Background(() => RecordEcmBurstAsync(burster, burst.Reached));
                     break;
+                case SimModuleActivityRefresh refresh when _pilots.TryGetValue(refresh.SessionId, out var activePilot)
+                    && activePilot.ActiveModules.ContainsKey(refresh.ModuleId):
+                    if (ModuleCombatActivityUpdated is { } updateCombatActivity)
+                    {
+                        Background(() => updateCombatActivity(activePilot.CharacterId, refresh.ModuleId, CancellationToken.None));
+                    }
+                    break;
                 // an effect the simulation ended on its own account (the cycles done, the capacitor short, the target gone): the module is taken out of the
                 // numbers the ship is sent with, and the ship is sent again so the simulation drops the module's modifiers (FP-C1)
                 case SimModuleEnded ended when _pilots.TryGetValue(ended.SessionId, out var endedPilot):
@@ -1536,6 +1543,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         _targeting.TryRemove(id, out _); // not disposed: an order may still be waiting on it
         if (!_pilots.TryRemove(id, out var pilot))
             return;
+        await EndActiveModuleCombatActivitiesAsync(pilot).ConfigureAwait(false);
         try { await CancelShipSelfDestructAsync(pilot.ShipId, CancellationToken.None); }
         catch (Exception error) { _log?.Invoke($"self-destruct cleanup on disconnect failed: {error.Message}"); }
 

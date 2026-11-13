@@ -17,7 +17,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "Destroyed": 21, "Spawn": 22, "SpawnReply": 23, "Destroy": 24, "Respawn": 25, "PlaceWreck": 26, "ChargeSpent": 27,
          "PlaceContainer": 28, "ContainerPlaced": 29, "ChangeWreck": 30, "RemoveWreck": 31, "Measured": 32,
          "AdjustCharge": 33, "ChargeAdjusted": 34, "Arrived": 35, "LaunchDrone": 36, "DroneCommand": 37, "DroneResults": 38,
-         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66,
+         "DroneScooped": 39, "DroneReleased": 40, "ModuleWorkCycle": 51, "ModuleWorkResult": 52, "ModuleEnded": 53, "LaunchFighter": 54, "FighterOrder": 55, "FighterResults": 56, "FighterLanded": 57, "FighterReleased": 58, "FighterGotoPoint": 59, "FighterSize": 60, "UpdateEffect": 61, "BuffState": 62, "Deployed": 63, "RemoveDeployed": 64, "PlaceProbe": 65, "RemoveProbe": 66, "ModuleActivityRefresh": 162,
          "EcmBurst": 67, "PlaceDisruptor": 68, "SetDisruptorActive": 69, "PlaceInhibitor": 70, "ScanTargets": 71, "DirectionalTargets": 72,
          "PlaceCynoBeacon": 73, "PlaceStructure": 74, "RemoveStructure": 75, "SetStructureState": 76, "StructureDamaged": 77,
          "PlaceAnalysisBeacon": 78, "SetAnalysisBeaconState": 79, "TetherPolicy": 80, "TetherChanged": 81,
@@ -577,6 +577,8 @@ def build(m):
                      + bytes([1 if m["complete"] else 0]))
     if k == "ModuleEnded":
         return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]) + bytes([m["reason"]]))
+    if k == "ModuleActivityRefresh":
+        return frame(k, u64(m["sessionId"]) + i64(m["moduleId"]))
     if k == "HelloAck":
         return frame(k, struct.pack("<HI", m["version"], m["pollHz"]))
     if k == "ServiceNotify":
@@ -1651,6 +1653,8 @@ valid = [
      "moduleId": "9988400002813", "reason": 1},
     {"name": "module ended when its target is lost", "kind": "ModuleEnded", "sessionId": "1790646377000015",
      "moduleId": "9988400002813", "reason": 2},
+    {"name": "offensive module effect is still active", "kind": "ModuleActivityRefresh", "sessionId": "1790646377000015",
+     "moduleId": "9988400002813"},
     {"name": "activate a mining laser", "kind": "Activate", "sessionId": "1790646377000015",
      "effect": {"moduleId": "9988400002813", "moduleType": 17912, "effectId": 4025, "fx": "effects.MiningLaser",
                 "durationMs": 2000.0, "capacitorNeed": 5.0, "repeat": 1000, "targetId": "1000000000001",

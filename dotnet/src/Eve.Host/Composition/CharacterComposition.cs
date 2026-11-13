@@ -192,15 +192,17 @@ internal sealed partial class CharacterServicesComposition
     {
         var tutorial = await ProjectDiscoveryTutorials.ReadAsync(characterId, cancellationToken);
         var xp = await ProjectDiscoveryTutorials.ReadExperienceAsync(characterId, cancellationToken);
+        var analysisKredits = await ProjectDiscoveryTutorials.ReadAnalysisKreditsAsync(characterId, cancellationToken);
         var rank = Math.Floor((1 + Math.Sqrt(1 + xp / 12.5)) / 2);
-        return tutorial is null && xp == 0 ? null : new ProjectDiscoveryPlayerState(Rank: rank, Experience: xp, FinishedTutorial: tutorial?.Finished ?? false, TutorialLevel: tutorial?.Level ?? 0);
+        return tutorial is null && xp == 0 && analysisKredits == 0 ? null : new ProjectDiscoveryPlayerState(Rank: rank, Experience: xp, AnalysisKredits: analysisKredits, FinishedTutorial: tutorial?.Finished ?? false, TutorialLevel: tutorial?.Level ?? 0);
     }
 
     private async ValueTask<ProjectDiscoveryPlayerState?> TransitionProjectDiscoveryTutorialAsync(long characterId, string action, CancellationToken cancellationToken)
     {
         var tutorial = await ProjectDiscoveryTutorials.TransitionAsync(characterId, action, now(), cancellationToken);
         var xp = await ProjectDiscoveryTutorials.ReadExperienceAsync(characterId, cancellationToken);
-        return new ProjectDiscoveryPlayerState(Rank: Math.Floor((1 + Math.Sqrt(1 + xp / 12.5)) / 2), Experience: xp, FinishedTutorial: tutorial.Finished, TutorialLevel: tutorial.Level);
+        var analysisKredits = await ProjectDiscoveryTutorials.ReadAnalysisKreditsAsync(characterId, cancellationToken);
+        return new ProjectDiscoveryPlayerState(Rank: Math.Floor((1 + Math.Sqrt(1 + xp / 12.5)) / 2), Experience: xp, AnalysisKredits: analysisKredits, FinishedTutorial: tutorial.Finished, TutorialLevel: tutorial.Level);
     }
 
     private ValueTask FixProjectDiscoveryTaskIdAsync(long characterId, long? taskId, CancellationToken cancellationToken) =>
@@ -256,7 +258,7 @@ internal sealed partial class CharacterServicesComposition
         {
             if (Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") != "disabled" && !(Env("EVE_PROJECT_DISCOVERY_MODE", "scientific-replay") == "remote" && Env("EVE_PROJECT_DISCOVERY_REMOTE_PROTOCOL", "covid") == "subcellular"))
                 throw new InvalidOperationException("A Subcellular catalog requires a disabled or Subcellular remote provider.");
-            trainingCatalog = await Eve.Host.ProjectDiscovery.SubcellTrainingCatalog.LoadAsync(source, characterSchema, catalogPath);
+            trainingCatalog = await Eve.Host.ProjectDiscovery.SubcellTrainingCatalog.LoadAsync(source, characterSchema, catalogPath, now: now);
         }
         long? tutorialRewardXp = null;
         var rewardPolicy = Env("EVE_PROJECT_DISCOVERY_TUTORIAL_REWARD_POLICY", "disabled");

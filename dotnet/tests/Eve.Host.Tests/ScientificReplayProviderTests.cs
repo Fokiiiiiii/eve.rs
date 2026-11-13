@@ -25,17 +25,33 @@ public sealed class ScientificReplayProviderTests
         try
         {
             await Assert.ThrowsAsync<InvalidDataException>(() => ScientificReplayProvider.CreateAsync(source, options with { CohortSha256 = new string('0', 64) }, schema));
-            var provider = await ScientificReplayProvider.CreateAsync(source, options, schema);
+            long fixedNow = new DateTimeOffset(2024, 6, 1, 23, 59, 0, TimeSpan.Zero).ToUnixTimeMilliseconds();
+            var provider = await ScientificReplayProvider.CreateAsync(source, options, schema, now: () => fixedNow);
             Assert.Single(await provider.MigrateAsync()); Assert.Empty(await provider.MigrateAsync());
-            await using (var setupBonus = source.CreateCommand($"CREATE TABLE {schema}.project_discovery_bonus_days(character_id bigint,day date,used integer,PRIMARY KEY(character_id,day)); CREATE TABLE {schema}.project_discovery_bonus_receipts(character_id bigint,assignment text,day date,experience bigint,PRIMARY KEY(character_id,assignment)); CREATE TABLE {schema}.project_discovery_progress(character_id bigint PRIMARY KEY,experience bigint NOT NULL)")) await setupBonus.ExecuteNonQueryAsync();
+            var clockedPlayer = new ClientSession { CharacterId = 1003, UserId = 2003 };
+            await provider.GetTaskAsync(clockedPlayer);
+            await using (var issuedTime = source.CreateCommand($"SELECT issued_ms FROM {schema}.scientific_assignments WHERE actor=1003"))
+                Assert.Equal(fixedNow, (long)(await issuedTime.ExecuteScalarAsync())!);
+            await using (var usedBonus = source.CreateCommand($"INSERT INTO {schema}.scientific_reward_days(actor,day,used) VALUES(1003,'2024-06-01',3)"))
+                await usedBonus.ExecuteNonQueryAsync();
+            Assert.Equal(7, await provider.ReadBonusSamplesAsync(1003, "get_remaining_bonus_samples", default));
+            await using (var setupBonus = source.CreateCommand($"""
+                CREATE TABLE {schema}.project_discovery_bonus_days(character_id bigint,day date,used integer,PRIMARY KEY(character_id,day));
+                CREATE TABLE {schema}.project_discovery_bonus_receipts(character_id bigint,assignment text,day date,experience bigint,PRIMARY KEY(character_id,assignment));
+                CREATE TABLE {schema}.project_discovery_progress(character_id bigint PRIMARY KEY,experience bigint NOT NULL,analysis_kredits bigint NOT NULL DEFAULT 0);
+                CREATE TABLE {schema}.project_discovery_tutorials(character_id bigint PRIMARY KEY,finished boolean NOT NULL DEFAULT false,tutorial_level integer NOT NULL DEFAULT 0,updated_ms bigint NOT NULL DEFAULT 0);
+                """)) await setupBonus.ExecuteNonQueryAsync();
             var bonus = new ProjectDiscoveryBonusPolicy(source, schema, 1, 75, 0);
-            options = options with { Bonus = bonus }; provider = await ScientificReplayProvider.CreateAsync(source, options, schema);
+            var progress = new Eve.Characters.ProjectDiscoveryTutorialStore(source, schema);
+            options = options with { Bonus = bonus }; provider = await ScientificReplayProvider.CreateAsync(source, options, schema, progress: progress);
             var alice = new ClientSession { CharacterId = 1001, UserId = 2001 };
             var bob = new ClientSession { CharacterId = 1002, UserId = 2002 };
             var task = await provider.GetTaskAsync(alice);
             Assert.Equal(options.AssetUri!.AbsoluteUri, task.GetProperty("assets").GetProperty("url").GetString());
             Assert.Equal(530, task.GetProperty("assets").GetProperty("dimensions")[0].GetInt32());
-            Assert.False(task.TryGetProperty("taskID", out _));
+            string taskId = Assert.IsType<string>(task.GetProperty("taskID").GetString());
+            Assert.Equal("mcgill-polyseg", task.GetProperty("projectID").GetString());
+            Assert.True(task.GetProperty("isTrainingSet").GetBoolean());
             Assert.Equal(task.GetRawText(), (await provider.GetTaskAsync(alice)).GetRawText());
             await Assert.ThrowsAsync<DiscoveryAssignmentException>(() => provider.GetTaskAsync(new ClientSession { CharacterId = 1001, UserId = 9999 }));
             using var timing = JsonDocument.Parse("{\"t\":12,\"tPolygons\":[]}");
@@ -46,10 +62,17 @@ public sealed class ScientificReplayProviderTests
             var result = JsonSerializer.SerializeToElement(new { skip = false, polygons = vertices });
             await Assert.ThrowsAsync<DiscoveryAssignmentException>(() => provider.SubmitAsync(bob, "call", result, timing.RootElement));
             var response = await provider.SubmitAsync(alice, "call", result, timing.RootElement);
-            Assert.InRange(Math.Abs(response.GetProperty("player").GetProperty("score").GetDouble() - 0.99115), 0, 1e-10);
-            Assert.Equal(75, response.GetProperty("XP_Reward").GetInt32()); Assert.True(response.GetProperty("gotBonusXP").GetBoolean()); Assert.False(response.TryGetProperty("ISK_Reward", out _)); Assert.False(response.TryGetProperty("isSolved", out _));
+            Assert.Equal(.99, response.GetProperty("player").GetProperty("score").GetDouble());
+            Assert.InRange(Math.Abs(response.GetProperty("score").GetDouble() - 0.99115), 0, 1e-10);
+            Assert.Equal(75, response.GetProperty("XP_Reward").GetInt32()); Assert.True(response.GetProperty("gotBonusXP").GetBoolean());
+            Assert.Equal(0, response.GetProperty("ISK_Reward").GetInt32());
+            Assert.Equal(5, response.GetProperty("AK_Reward").GetInt32());
+            Assert.Equal(75, response.GetProperty("playerState").GetProperty("experience").GetInt64());
+            Assert.True(response.GetProperty("isSolved").GetBoolean());
+            Assert.Equal(taskId, response.GetProperty("task").GetProperty("taskID").GetString());
+            Assert.Equal(1, response.GetProperty("classificationCount").GetInt32());
             // Delivery port is not scientific task identity.
-            provider = await ScientificReplayProvider.CreateAsync(source, options with { AssetUri = new Uri("http://127.0.0.1:12346/projectdiscovery/covid-analysis50-science.png") }, schema);
+            provider = await ScientificReplayProvider.CreateAsync(source, options with { AssetUri = new Uri("http://127.0.0.1:12346/projectdiscovery/covid-analysis50-science.png") }, schema, progress: progress);
             Assert.Equal(response.GetProperty("player").GetProperty("score").GetDouble(), (await provider.SubmitAsync(alice, "call", result, timing.RootElement)).GetProperty("player").GetProperty("score").GetDouble());
             using var changedTime = JsonDocument.Parse("{\"t\":13}");
             await Assert.ThrowsAsync<DiscoveryAssignmentException>(() => provider.SubmitAsync(alice, "call", result, changedTime.RootElement));
@@ -61,7 +84,7 @@ public sealed class ScientificReplayProviderTests
             Assert.True(skipped.GetProperty("skipped").GetBoolean()); Assert.False(skipped.TryGetProperty("player", out _));
             Assert.Equal(1, await bonus.ReadAsync(1002, "get_remaining_bonus_samples", default));
             Assert.Equal(0, await bonus.ReadAsync(1001, "get_remaining_bonus_samples", default));
-            provider = await ScientificReplayProvider.CreateAsync(source, options, schema);
+            provider = await ScientificReplayProvider.CreateAsync(source, options, schema, progress: progress);
             Assert.True((await provider.SubmitAsync(bob, "skip", skip.RootElement, timing.RootElement)).GetProperty("skipped").GetBoolean());
             await Assert.ThrowsAsync<DiscoveryAssignmentException>(() => provider.SubmitAsync(bob, "skip", result, timing.RootElement));
             await Assert.ThrowsAsync<ScientificReplayExhaustedException>(() => provider.GetTaskAsync(bob));

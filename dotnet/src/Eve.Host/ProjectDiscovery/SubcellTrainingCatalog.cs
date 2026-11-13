@@ -17,9 +17,12 @@ internal sealed class SubcellTrainingCatalog
     public int ProjectId { get; }
     private readonly NpgsqlDataSource source;
     private readonly string schema;
-    private SubcellTrainingCatalog(NpgsqlDataSource source, string schema, Dictionary<long, JsonElement> tasks, string revision, int projectId)
-    { this.source = source; this.schema = schema; this.tasks = tasks; this.revision = revision; ProjectId = projectId; }
-    public static async Task<SubcellTrainingCatalog> LoadAsync(NpgsqlDataSource source, string schema, string path, CancellationToken ct = default)
+    private readonly Func<long> now;
+    private SubcellTrainingCatalog(NpgsqlDataSource source, string schema, Dictionary<long, JsonElement> tasks, string revision,
+        int projectId, Func<long> now)
+    { this.source = source; this.schema = schema; this.tasks = tasks; this.revision = revision; ProjectId = projectId; this.now = now; }
+    public static async Task<SubcellTrainingCatalog> LoadAsync(NpgsqlDataSource source, string schema, string path,
+        CancellationToken ct = default, Func<long>? now = null)
     {
         var bytes = await File.ReadAllBytesAsync(path, ct);
         if (bytes.Length > 4 * 1024 * 1024) throw new InvalidDataException("Training catalog too large.");
@@ -45,7 +48,8 @@ internal sealed class SubcellTrainingCatalog
                 if (category.ValueKind != JsonValueKind.Number || !category.TryGetInt32(out var n) || n is < 9 or > 35 || !categories.Add(n)) throw new InvalidDataException("Invalid training solution.");
             if (!values.TryAdd(id, task.Clone())) throw new InvalidDataException("Duplicate training task number.");
         }
-        return new(source, schema, values, Convert.ToHexStringLower(SHA256.HashData(bytes)), projectId);
+        return new(source, schema, values, Convert.ToHexStringLower(SHA256.HashData(bytes)), projectId,
+            now ?? (() => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
     }
     public async ValueTask<PyValue> IssueAsync(ServiceCall call)
     {
@@ -70,7 +74,7 @@ internal sealed class SubcellTrainingCatalog
         count.Parameters.AddWithValue(actor); count.Parameters.AddWithValue(level); count.Parameters.AddWithValue(revision); count.Parameters.AddWithValue(account);
         if ((long)(await count.ExecuteScalarAsync(ct))! < Required[level]) throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TRAINING_UNAVAILABLE");
         await using var update = new NpgsqlCommand($"UPDATE {schema}.project_discovery_tutorials SET tutorial_level=$2+1,finished=($2=7),participation_steps=participation_steps+1,updated_ms=$3 WHERE character_id=$1 AND NOT participation_skipped", conn, tx);
-        update.Parameters.AddWithValue(actor); update.Parameters.AddWithValue(level); update.Parameters.AddWithValue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        update.Parameters.AddWithValue(actor); update.Parameters.AddWithValue(level); update.Parameters.AddWithValue(now());
         if (await update.ExecuteNonQueryAsync(ct) != 1) throw MachoErrors.ThrowUserError("PROJECT_DISCOVERY_TRAINING_UNAVAILABLE");
         await tx.CommitAsync(ct);
     }
@@ -81,7 +85,7 @@ internal sealed class SubcellTrainingCatalog
         await using var delete = new NpgsqlCommand($"DELETE FROM {schema}.project_discovery_training_issuances WHERE character_id=$1", conn, tx);
         delete.Parameters.AddWithValue(actor); await delete.ExecuteNonQueryAsync(ct);
         await using var update = new NpgsqlCommand($"UPDATE {schema}.project_discovery_tutorials SET finished=false,tutorial_level=0,participation_steps=0,participation_skipped=false,updated_ms=$2 WHERE character_id=$1", conn, tx);
-        update.Parameters.AddWithValue(actor); update.Parameters.AddWithValue(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()); await update.ExecuteNonQueryAsync(ct);
+        update.Parameters.AddWithValue(actor); update.Parameters.AddWithValue(now()); await update.ExecuteNonQueryAsync(ct);
         await tx.CommitAsync(ct);
     }
     private async Task EnsureTutorialAsync(NpgsqlConnection conn, NpgsqlTransaction tx, long actor, CancellationToken ct)

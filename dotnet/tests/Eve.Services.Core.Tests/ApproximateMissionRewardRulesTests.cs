@@ -14,6 +14,15 @@ public sealed class ApproximateMissionRewardRulesTests
     }
 
     [Fact]
+    public void Mission_isk_reads_the_negotiation_skill_not_the_connections_skill()
+    {
+        Assert.Equal(3356, ApproximateMissionRewardRules.NegotiationSkillTypeId);
+        Assert.Equal(ResearchRules.NegotiationSkillTypeId, ApproximateMissionRewardRules.NegotiationSkillTypeId);
+        Assert.NotEqual(AgentAccessRule.ConnectionsSkill, ApproximateMissionRewardRules.NegotiationSkillTypeId);
+    }
+
+
+    [Fact]
     public void Mission_lp_uses_configured_security_division_and_security_connections_factors()
     {
         Assert.Equal(1_625.472m, ApproximateMissionRewardRules.LoyaltyPoints(1_000m, 0.5m, 0.2m, 2));

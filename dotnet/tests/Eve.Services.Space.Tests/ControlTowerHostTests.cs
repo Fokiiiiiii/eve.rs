@@ -7,6 +7,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
+using Eve.Services.Inventory;
 using Eve.Ships;
 using Eve.Space;
 using Eve.Structures;
@@ -51,10 +52,11 @@ public class ControlTowerHostTests
         public List<MachoPacket> Notifications { get; } = [];
 
         public static async Task<PosMgrHostWire> StartAsync(PosMgrService service, ClientSession sourceSession,
-            Func<long> nowUnixMs)
+            Func<long> nowUnixMs, params IService[] additionalServices)
         {
             var registry = new ServiceRegistry();
             registry.Register(service);
+            foreach (var extra in additionalServices) registry.Register(extra);
             ClientSession? hostSession = null;
             var dispatcher = new PacketDispatcher(registry, nowUnixMs);
             var server = new HostServer(new HostOptions
@@ -90,10 +92,13 @@ public class ControlTowerHostTests
         }
 
         public async Task<PyValue> CallAsync(string method, params PyValue[] args)
+            => await CallServiceAsync("posMgr", method, args);
+
+        public async Task<PyValue> CallServiceAsync(string service, string method, params PyValue[] args)
         {
             var body = MarshalCodec.Encode(Py.Tuple(new PyInt(1), new PyStr(method), new PyTuple(args), PyNone.Instance));
             var source = Py.Tuple(new PyInt(2), new PyLong((long)Open.ClientId), new PyInt(checked((int)++_callId)), PyNone.Instance);
-            var destination = Py.Tuple(new PyInt(8), new PyStr("posMgr"), PyNone.Instance);
+            var destination = Py.Tuple(new PyInt(8), new PyStr(service), PyNone.Instance);
             var payload = Py.Tuple(Py.Tuple(new PyInt(0), new PySubStream(body)));
             PyValue[] head =
             [
@@ -108,6 +113,44 @@ public class ControlTowerHostTests
                 if (message is not Send response) continue;
                 var macho = MachoPacket.Decode(MarshalCodec.Decode(response.Payload))
                     ?? throw new InvalidOperationException("Host returned a non-Macho packet for posMgr.");
+                if (macho.Type == MachoMessage.Notification)
+                {
+                    Notifications.Add(macho);
+                    continue;
+                }
+                if (macho.Type == MachoMessage.ErrorResponse)
+                {
+                    var error = Assert.IsType<PyTuple>(macho.Payload);
+                    var errorCode = checked((int)Assert.IsType<PyInt>(error.Items[1]).Value);
+                    var wrapped = Assert.IsType<PyTuple>(error.Items[2]).Items[0];
+                    var errorPayload = wrapped is PySubStream substream ? substream.Decoded ?? PyNone.Instance : wrapped;
+                    throw new MachoWrappedException(new MachoError(errorCode, errorPayload));
+                }
+                Assert.Equal(MachoMessage.CallRsp, macho.Type);
+                var result = Assert.IsType<PyTuple>(macho.Payload).Items[0];
+                return result is PySubStream substreamResult ? substreamResult.Decoded ?? PyNone.Instance : result;
+            }
+        }
+
+        public async Task<PyValue> BoundCallAsync(string oid, string method, params PyValue[] args)
+        {
+            var body = MarshalCodec.Encode(Py.Tuple(new PyStr(oid), new PyStr(method), new PyTuple(args), PyNone.Instance));
+            var source = Py.Tuple(new PyInt(2), new PyLong((long)Open.ClientId), new PyInt(checked((int)++_callId)), PyNone.Instance);
+            var destination = Py.Tuple(new PyInt(8), PyNone.Instance, PyNone.Instance);
+            var payload = Py.Tuple(Py.Tuple(new PyInt(0), new PySubStream(body)));
+            PyValue[] head =
+            [
+                new PyInt(MachoMessage.CallReq), source, destination, new PyInt(Open.UserId), payload, PyNone.Instance,
+            ];
+            var packet = new PyObject(new PyStr("carbon.common.script.net.machoNetPacket.CallReq"),
+                new PyTuple([.. head, .. Enumerable.Repeat<PyValue>(PyNone.Instance, 14 - head.Length)]));
+            await SendAsync(new Packet(Open.SessionId, MarshalCodec.Encode(packet)));
+            while (true)
+            {
+                var message = await ReceiveAsync();
+                if (message is not Send response) continue;
+                var macho = MachoPacket.Decode(MarshalCodec.Decode(response.Payload))
+                    ?? throw new InvalidOperationException("Host returned a non-Macho packet for a bound inventory call.");
                 if (macho.Type == MachoMessage.Notification)
                 {
                     Notifications.Add(macho);
@@ -653,6 +696,127 @@ public class ControlTowerHostTests
 
     private static PyValue? Field(PyDict fields, string name) => fields.Entries
         .Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
+
+    private static string BoundOid(PyValue value)
+    {
+        var substruct = Assert.IsType<PySubStruct>(value);
+        var fields = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(substruct.Value).Decoded);
+        return JsSemantics.StringValue(fields.Items[0]) ?? throw new Xunit.Sdk.XunitException("The bound inventory has no object ID.");
+    }
+
+    [PgFact]
+    public async Task PosMgr_saved_usage_permissions_control_POS_inventory_over_registered_host_wire()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.Containers.CharacterSessions = rig.CharacterSessions;
+        int siloTypeId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            await using var typeCommand = new NpgsqlCommand(
+                "SELECT key FROM sde.\"types\" WHERE (doc->>'groupID')::int = 404 AND doc->>'published' = 'true' ORDER BY key LIMIT 1", connection);
+            siloTypeId = int.Parse((string)(await typeCommand.ExecuteScalarAsync())!, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower, siloTypeId], LowSecSystem);
+        var (tower, silo) = (items[0], items[1]);
+        Assert.Equal(tower, await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None));
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        var towerRecord = (await rig.Deployed.GetAsync(tower))!;
+
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var host = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now, rig.Inventory);
+        async Task<PyValue> PosCall(string method, params PyValue[] args) => await host.CallAsync(method, args);
+
+        Assert.Equal(silo, await rig.Containers.LaunchFromShipAsync(session, silo, CancellationToken.None));
+        var modulePosition = new[] { towerRecord.Position[0] + 10_000, towerRecord.Position[1], towerRecord.Position[2] };
+        rig.Sim.PositionAnswers[silo] = modulePosition;
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = modulePosition;
+        await PosCall("AnchorStructure", new PyLong(silo), new PyTuple(modulePosition.Select(value => (PyValue)new PyReal(value)).ToArray()));
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        await rig.Deployed.SetTowerStateAsync(tower, "online");
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(silo));
+
+        await PosCall("ChangeStructureProvisionType", new PyLong(tower), new PyLong(silo), new PyInt(34));
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.CreateAsync(connection, transaction, new Eve.Inventory.NewItem(34, TestCorporation, silo, 0, 3));
+            var cargo = new Eve.Inventory.NewItem(34, session.CharacterId!.Value, session.GetInt("shipid")!.Value,
+                CharacterShips.CargoFlag, 2);
+            await rig.Items.CreateAsync(connection, transaction, cargo);
+            var wrongProvisionCargo = new Eve.Inventory.NewItem(35, session.CharacterId!.Value, session.GetInt("shipid")!.Value,
+                CharacterShips.CargoFlag, 1);
+            await rig.Items.CreateAsync(connection, transaction, wrongProvisionCargo);
+            await transaction.CommitAsync();
+        }
+
+        var deployFlags = Py.Dict(("anchor", new PyInt(0)), ("unanchor", new PyInt(0)),
+            ("online", new PyInt(0)), ("offline", new PyInt(0)));
+        var usageFlags = Py.Rowset(["structureID", "viewput", "viewputtake", "use"],
+            [Py.List(new PyLong(silo), new PyInt(1), new PyInt(0), new PyInt(0))]);
+        await PosCall("SetStarbasePermissions", new PyLong(tower), deployFlags, usageFlags);
+
+        host.Session.Set("isCEO", PyBool.False);
+        host.Session.Set("corprole", new PyLong(0));
+        await rig.Deployed.SetTowerStateAsync(silo, "online");
+        var onlineSilo = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            host.CallServiceAsync("invbroker", "GetInventoryFromId", new PyLong(silo)));
+        Assert.Equal("STARBASE_PRODUCTION_MUST_BE_OFFLINE", onlineSilo.Error.UserErrorMessage);
+        await rig.Deployed.SetTowerStateAsync(silo, "offline");
+        var siloInventory = BoundOid(await host.CallServiceAsync("invbroker", "GetInventoryFromId", new PyLong(silo)));
+        var shipInventory = BoundOid(await host.CallServiceAsync("invbroker", "GetInventoryFromId", new PyLong(session.GetInt("shipid")!.Value)));
+        var siloContents = Assert.IsType<PyObject>(await host.BoundCallAsync(siloInventory, "GetContainerContents"));
+        var siloLines = Assert.IsType<PyList>(Field(Assert.IsType<PyDict>(siloContents.Args), "lines"));
+        Assert.Single(siloLines.Items);
+
+        var cargoItem = Assert.Single(await rig.Items.InContainerAsync(session.GetInt("shipid")!.Value), item => item.TypeId == 34);
+        host.Notifications.Clear();
+        Assert.Equal(cargoItem.Id, Events.Number(await host.BoundCallAsync(siloInventory, "Add",
+            new PyLong(cargoItem.Id), new PyLong(session.GetInt("shipid")!.Value))));
+        var deposited = (await rig.Items.GetAsync(cargoItem.Id))!;
+        Assert.Equal(silo, deposited.LocationId);
+        Assert.Equal(session.CharacterId, deposited.OwnerId);
+        Assert.Equal("OnItemChange", Assert.Single(host.Notifications).Dest.BroadcastId);
+
+        var wrongProvisionStack = Assert.Single(await rig.Items.InContainerAsync(session.GetInt("shipid")!.Value), item => item.TypeId == 35);
+        host.Notifications.Clear();
+        var invalidDeposit = await Assert.ThrowsAsync<MachoWrappedException>(() => host.BoundCallAsync(siloInventory, "Add",
+            new PyLong(wrongProvisionStack.Id), new PyLong(session.GetInt("shipid")!.Value)));
+        Assert.Equal("STARBASE_PRODUCTION_PROVISION_INVALID", invalidDeposit.Error.UserErrorMessage);
+        Assert.Equal(session.GetInt("shipid"), (await rig.Items.GetAsync(wrongProvisionStack.Id))!.LocationId);
+        Assert.Empty(host.Notifications);
+
+        var storedCargo = Assert.Single(await rig.Items.InContainerAsync(silo), item => item.Id == cargoItem.Id);
+        host.Notifications.Clear();
+        var prohibitedTake = await Assert.ThrowsAsync<MachoWrappedException>(() => host.BoundCallAsync(shipInventory, "Add",
+            new PyLong(storedCargo.Id), new PyLong(silo)));
+        Assert.Equal("STARBASE_PRODUCTION_ACCESS_DENIED", prohibitedTake.Error.UserErrorMessage);
+        var prohibitedMultiTake = await Assert.ThrowsAsync<MachoWrappedException>(() => host.BoundCallAsync(shipInventory, "MultiAdd",
+            new PyList([new PyLong(storedCargo.Id)]), new PyLong(silo)));
+        Assert.Equal("STARBASE_PRODUCTION_ACCESS_DENIED", prohibitedMultiTake.Error.UserErrorMessage);
+        Assert.Equal(2, (await rig.Items.GetAsync(cargoItem.Id))!.Quantity);
+        Assert.Empty(host.Notifications);
+
+        host.Session.Set("isCEO", PyBool.True);
+        var caretakerTakeFlags = Py.Rowset(["structureID", "viewput", "viewputtake", "use"],
+            [Py.List(new PyLong(silo), new PyInt(1), new PyInt(3), new PyInt(0))]);
+        await PosCall("SetStarbasePermissions", new PyLong(tower), deployFlags, caretakerTakeFlags);
+        host.Session.Set("isCEO", PyBool.False);
+        host.Session.Set("corprole", new PyLong(288_230_376_151_711_744L));
+        Assert.Equal(cargoItem.Id, Events.Number(await host.BoundCallAsync(shipInventory, "Add",
+            new PyLong(storedCargo.Id), new PyLong(silo))));
+        var taken = (await rig.Items.GetAsync(cargoItem.Id))!;
+        Assert.Equal(session.GetInt("shipid"), taken.LocationId);
+        Assert.Equal(session.CharacterId, taken.OwnerId);
+        Assert.Equal(2, taken.Quantity);
+        Assert.Equal(new[] { "OnItemsChanged", "OnClientEvent_MoveFromCargoToHangar" },
+            host.Notifications.Select(notification => notification.Dest.BroadcastId).ToArray());
+    }
 
     private static IReadOnlyList<PyValue> NotificationArguments(MachoPacket packet)
     {

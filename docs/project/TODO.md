@@ -2137,9 +2137,11 @@ Existing exact-name TODO evidence (same owner/work): [existing row](../../docs/p
 
 [GetESPTunnelingAddressByNodeID (EJS-0437)](../../docs/project/service-response-audit/evejs-only-responses.md:688); [GetTunnelsByType (EJS-0438)](../../docs/project/service-response-audit/evejs-only-responses.md:689).
 
-#### Named group: tourneyMgr (2 exits)
+#### Named group: tourneyMgr (2 exits; client-visible Host flow verified)
 
 [BanShip (EJS-0439)](../../docs/project/service-response-audit/evejs-only-responses.md:690); [ExecuteMemberChange (EJS-0440)](../../docs/project/service-response-audit/evejs-only-responses.md:691).
+
+V24.01 callers and registered Host/PostgreSQL behavior are recorded in [the tourneyMgr implementation audit](implement-tourneymgr.md); both exits now have focused end-to-end regression coverage in `TournamentMatchActionTests`.
 
 #### Named group: tutorialSvc (14 exits)
 

@@ -36,3 +36,9 @@ The existing eve.rs docking hook still initiates turn-in on docking. EveJS's ins
 - The V24.01 client source and EveJS 261108.1 implementation were inspected. EveJS was not executed; its checked-out server package does not define a test script for these flows.
 - A native V24.01 graphical-client run was not performed. Headless Host tests do not establish graphical-client acceptance.
 - Post-push CI is monitored separately; this record makes no claim about that run.
+
+## CI follow-up (2026-11-13)
+
+Run 1769 exposed a fixture error in `HostServerTests.Courier_mission_hasCargo_counts_only_active_ship_cargo_or_dropoff_hangar`. Its successful ship-cargo case put the type-587 ship row at the delivery station with item ID `10`, while the active ship ID was `500001`. `HasCourierCargo` correctly counts cargo aboard the active ship only when that ship row is in the destination hangar. The fixture now uses the active ship ID; the assertion and production behavior are unchanged.
+
+After that correction, the focused regression passed **1/1, 0 skipped**. The full `HostServerTests` class passed **487/487, 0 skipped**. On `eve_p5`, the four registered-Host economy regressions passed **4/4, 0 skipped**, and the related Core slice passed **43/43, 0 skipped**. This verifies the local fix only; the rerun of main CI is still pending.

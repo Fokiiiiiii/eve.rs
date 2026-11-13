@@ -13,7 +13,8 @@ public sealed record ProjectDiscoveryPlayerState(
 
 public sealed record ProjectDiscoveryRewardGrant(bool Granted, decimal? WalletBalance, long? ItemId = null, long? ItemLocation = null);
 
-public sealed record ProjectDiscoveryPlayerStatistics(string Message, int Code, string ProjectId, double? Score = null);
+public sealed record ProjectDiscoveryPlayerStatistics(string Message, int Code, string ProjectId, double? Score = null,
+    string? LocalMode = null, int? Submissions = null, int? Correct = null, double? AverageScore = null);
 
 public sealed record ProjectDiscoveryRpcCallbacks(
     Func<long, CancellationToken, ValueTask<ProjectDiscoveryPlayerState?>>? ReadPlayerStateAsync = null,
@@ -79,6 +80,7 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
             "fix_task_id" => call.Kwargs is PyNone && call.Args.Count == 1,
             "post_classification" => (call.Kwargs is PyNone or PyDict { Entries.Count: 0 } && call.Args.Count is 2 or 3 or 4) ||
                 (call.Args.Count == 3 && call.Kwargs is PyDict { Entries.Count: 1 } remark && JsSemantics.StringValue(remark.Entries[0].Key) == "remark" && remark.Entries[0].Value is PyBool),
+            "get_new_task" => HasValidTaskArguments(call),
             "new_training_task" => call.Kwargs is PyNone && call.Args.Count == 1 && call.Arg(0) is PyInt or PyLong,
             "get_player_statistics" => HasValidStatisticsArguments(call),
             "get_total_needed_xp" => call.Kwargs is PyNone && call.Args.Count == 1 && call.Arg(0) is PyInt or PyLong or PyReal,
@@ -112,7 +114,11 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
                     ProjectDiscoveryPlayerState? state = null;
                     try { state = await ReadStateAsync(characterId, call.Cancellation); }
                     catch (Exception error) { Console.Error.WriteLine($"Project Discovery state notification read failed: {error.GetType().Name}"); }
-                    if (state is not null) call.Session.AfterResponse(() => SafeNotify(() => call.Session.SendNotification("OnPlayerStateUpdated", "charid", PlayerStateValue(state))));
+                    call.Session.AfterResponse(() =>
+                    {
+                        if (state is not null) SafeNotify(() => call.Session.SendNotification("OnPlayerStateUpdated", "clientID", PlayerStateValue(state)));
+                        SafeNotify(() => call.Session.SendNotification("OnAnalysisKreditsChange", "charid"));
+                    });
                 }
                 return response;
             }
@@ -150,7 +156,8 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
                     {
                         if (reward.WalletBalance is { } balance) SafeNotify(() => _callbacks.AnnounceRewardWallet?.Invoke(characterId, balance));
                         if (reward.ItemId is { } item && reward.ItemLocation is { } location) SafeNotify(() => _callbacks.AnnounceRewardItem?.Invoke(call.Session, item, location));
-                        if (state is not null) SafeNotify(() => call.Session.SendNotification("OnPlayerStateUpdated", "charid", PlayerStateValue(state)));
+                        if (state is not null) SafeNotify(() => call.Session.SendNotification("OnPlayerStateUpdated", "clientID", PlayerStateValue(state)));
+                        SafeNotify(() => call.Session.SendNotification("OnAnalysisKreditsChange", "charid"));
                     });
                 }
                 return reward.Granted ? PyBool.True : PyBool.False;
@@ -194,7 +201,26 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
                     PlayerNotInDatabaseErrorCode,
                     ActiveProjectId);
                 if (statistics.Score is { } score)
-                    return new PyDict([Pair("project", new PyDict([Pair("score", new PyReal(score))]))]);
+                {
+                    var project = new PyDict([Pair("score", new PyReal(score))]);
+                    var entries = new List<KeyValuePair<PyValue, PyValue>>
+                    {
+                        Pair("project", project),
+                        Pair("projects", new PyList([project])),
+                    };
+                    if (statistics.LocalMode is { } localMode)
+                    {
+                        entries.Insert(0, Pair("localMode", new PyStr(localMode)));
+                        entries.Insert(1, Pair("projectID", new PyStr(statistics.ProjectId)));
+                        entries.Add(Pair("local", new PyDict(
+                        [
+                            Pair("submissions", new PyInt(statistics.Submissions.GetValueOrDefault())),
+                            Pair("correct", new PyInt(statistics.Correct.GetValueOrDefault())),
+                            Pair("averageScore", new PyReal(statistics.AverageScore.GetValueOrDefault())),
+                        ])));
+                    }
+                    return new PyDict(entries);
+                }
                 return new PyDict(
                 [
                     Pair("message", new PyStr(statistics.Message)),
@@ -224,7 +250,7 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
                 var state = await TransitionTutorialAsync(call, "skip");
                 call.Session.AfterResponse(() =>
                 {
-                    call.Session.SendNotification("OnPlayerStateUpdated", "charid", PlayerStateValue(state));
+                    call.Session.SendNotification("OnPlayerStateUpdated", "clientID", PlayerStateValue(state));
                     call.Session.SendNotification("OnAnalysisKreditsChange", "charid");
                 });
                 return PlayerStateValue(state);
@@ -254,6 +280,30 @@ public sealed class ProjectDiscoveryService(ProjectDiscoveryRpcCallbacks? callba
             1 when call.Kwargs is PyNone => call.Arg(0) is PyBool,
             _ => false,
         };
+
+    private static bool HasValidTaskArguments(ServiceCall call)
+    {
+        if (call.Args.Count != 0) return false;
+        if (call.Kwargs is PyNone or PyDict { Entries.Count: 0 }) return true;
+        if (call.Kwargs is not PyDict { Entries.Count: 2 } kwargs) return false;
+        string? code = null;
+        bool isTutorial = false;
+        foreach (var (key, value) in kwargs.Entries)
+        {
+            switch (JsSemantics.StringValue(key))
+            {
+                case "original_code" when value is PyStr or PyWString or PyBytes:
+                    code = JsSemantics.StringValue(value);
+                    break;
+                case "is_tutorial_task" when value is PyBool flag:
+                    isTutorial = flag.Value;
+                    break;
+                default:
+                    return false;
+            }
+        }
+        return !string.IsNullOrWhiteSpace(code) && isTutorial;
+    }
 
     private async ValueTask<ProjectDiscoveryPlayerState> ReadStateAsync(long characterId, CancellationToken cancellationToken)
     {

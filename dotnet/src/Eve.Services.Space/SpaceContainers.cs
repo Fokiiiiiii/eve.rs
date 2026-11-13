@@ -52,6 +52,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     private readonly CharacterShips _ships;
     private readonly PgItemStore _items;
     private readonly PgSpaceItemStore _spaceItems;
+    private readonly PgShipConfigurationStore? _shipConfigurations;
     private readonly PgWorkCycleLedger _cycles;
     private readonly PgDeployedStore? _deployed;
     private readonly Dictionary<string, Func<DeployedRecord, Task>> _deployedExpiry;
@@ -79,6 +80,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     {
         (_sim, _ships, _items, _spaceItems, _cycles, _events, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, spaceItems, cycles, events, statics, space, nowUnixMs, log);
         (_deployed, _scheduler, _source) = (deployed, scheduler, source);
+        _shipConfigurations = source is null ? null : new PgShipConfigurationStore(source, spaceItems.Schema);
         _deployedExpiry = new() { [CynoFieldKind] = ExpireCynoFieldAsync, [DisruptorKind] = ExpireDisruptorAsync, [InhibitorKind] = ExpireDisruptorAsync, [BeaconKind] = ExpireBeaconAsync, [ObservatoryKind] = ExpireDisruptorAsync };
         // what the simulation held is gone with it; a scene that is made gets what lies in its system, and a wreck the host puts in space is kept
         _sim.Received += OnReceived;
@@ -702,10 +704,19 @@ private void OnReceived(SimMessage message)
                     }
                     if (type is not null && _statics.CategoryName(type.CategoryId) == "Ship")
                     {
-                        if (item.Kind == SpaceItemKind.LaunchedShip)
+                        if (item.Kind is SpaceItemKind.LaunchedShip or SpaceItemKind.MaintenanceBayLaunchedShip)
                         {
+                            if (item.Kind == SpaceItemKind.MaintenanceBayLaunchedShip &&
+                                await _ships.CharacterAsync(stored.OwnerId) is { ShipId: var activeShipId, SolarSystemId: var activeSystem } &&
+                                activeShipId == stored.Id && activeSystem == system)
+                            {
+                                // The character entry hook restores this hull as its active ship.
+                                _placed.TryRemove(item.ItemId, out _);
+                                continue;
+                            }
                             if (!await _space.PlaceLaunchedShipAsync(
-                                    stored.Id, stored.OwnerId, system, type, item.Position, item.Direction, CancellationToken.None))
+                                    stored.Id, stored.OwnerId, system, type, item.Position, item.Direction, CancellationToken.None,
+                                    boardable: item.Kind == SpaceItemKind.MaintenanceBayLaunchedShip))
                                 _placed.TryRemove(item.ItemId, out _);
                             continue;
                         }

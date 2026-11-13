@@ -13,7 +13,8 @@ public sealed partial class SpaceSessions
         TypeDef type,
         IReadOnlyList<double> position,
         IReadOnlyList<double> direction,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool boardable = false)
     {
         if (itemId <= 0 || ownerId <= 0 || solarSystemId <= 0 ||
             position.Count < 3 || direction.Count < 3 ||
@@ -43,6 +44,16 @@ public sealed partial class SpaceSessions
             return false;
         }
         _spawned[itemId] = new SpawnedNpc(sessionId, solarSystemId, type.TypeId);
+        if (boardable && await _ships.CharacterAsync(ownerId, cancellationToken) is { } owner)
+        {
+            _ejectedShips[itemId] = new EjectedShip(
+                ownerId,
+                owner.CorporationId,
+                type.TypeId,
+                solarSystemId,
+                OwnerAllianceId: owner.AllianceId ?? 0,
+                OwnerWarFactionId: owner.FactionId ?? 0);
+        }
         return true;
     }
 }

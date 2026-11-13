@@ -2,6 +2,8 @@ using Eve.Host;
 using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Sde;
+using Eve.Skills;
 using Eve.Services;
 using Eve.Services.Core;
 using Npgsql;
@@ -429,6 +431,108 @@ public sealed class IndustryFacilityHostFlowTests
     }
 
     [PgFact]
+    public async Task Reused_call_id_after_reconnect_installs_a_distinct_job_while_same_session_retry_replays()
+    {
+        await using var fixture = await CreateAsync();
+        await fixture.Rig.FundAsync(fixture.CharacterId, 1_000_000m);
+        var massProduction = (await SkillCatalog.LoadAsync(new SdeReader(fixture.Rig.Source))).Get(3387);
+        Assert.NotNull(massProduction);
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await new PgSkillStore(fixture.Rig.Source, fixture.Rig.SkillsSchema).GrantAsync(connection, transaction,
+                fixture.CharacterId, [new CharacterSkill(massProduction.TypeId, 1, SkillPoints.ForTraining(massProduction.Rank, 1))]);
+            await transaction.CommitAsync();
+        }
+        var inventory = new PgItemStore(fixture.Rig.Source, fixture.Rig.InventorySchema);
+        long firstBlueprintId;
+        long secondBlueprintId;
+        long materialId;
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            firstBlueprintId = await inventory.CreateAsync(connection, transaction,
+                new NewItem(BlueprintTypeId, fixture.CharacterId, StructureId, 4, Singleton: true));
+            secondBlueprintId = await inventory.CreateAsync(connection, transaction,
+                new NewItem(BlueprintTypeId, fixture.CharacterId, StructureId, 4, Singleton: true));
+            materialId = await inventory.CreateAsync(connection, transaction,
+                new NewItem(38, fixture.CharacterId, StructureId, 4, Quantity: 172));
+            await transaction.CommitAsync();
+        }
+
+        PyValue InstallRequest(long blueprintId) => Py.KeyVal(
+            ("activityID", new PyInt(IndustryRules.Manufacturing)),
+            ("blueprintID", new PyLong(blueprintId)),
+            ("blueprintTypeID", new PyInt(BlueprintTypeId)),
+            ("facilityID", new PyLong(StructureId)),
+            ("solarSystemID", new PyLong(SolarSystemId)),
+            ("characterID", new PyLong(fixture.CharacterId)),
+            ("corporationID", new PyLong(CorporationId)),
+            ("runs", new PyInt(1)),
+            ("cost", new PyReal(0)),
+            ("tax", new PyReal(0)),
+            ("time", new PyReal(0)),
+            ("materials", new PyDict([new(new PyInt(38), new PyInt(86))])),
+            ("inputLocation", IndustryLocation(StructureId, (int)StructureTypeId,
+                fixture.CharacterId, 4, SolarSystemId)),
+            ("outputLocation", IndustryLocation(StructureId, (int)StructureTypeId,
+                fixture.CharacterId, 4, SolarSystemId)),
+            ("licensedRuns", new PyInt(0)),
+            ("productTypeID", new PyInt(165)),
+            ("account", Py.Tuple(new PyLong(fixture.CharacterId), new PyInt(1000))));
+
+        string? dispatchProblem = null;
+        Exception? dispatchException = null;
+        var firstResponse = await SendAsync(fixture, "industryManager", "InstallJob", [InstallRequest(firstBlueprintId)],
+            (message, error) =>
+            {
+                dispatchProblem = message;
+                dispatchException = error;
+            });
+        var firstPacket = MachoPacket.Decode(firstResponse);
+        var firstError = firstPacket?.Type == MachoMessage.ErrorResponse
+            ? new Eve.Services.MachoError(MachoErrorType.WrappedException,
+                Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(firstPacket.Payload).Items[2]).Items[0]).Decoded!).UserErrorMessage
+            : "";
+        Assert.True(firstPacket?.Type == MachoMessage.CallRsp,
+            $"InstallJob returned {firstPacket?.TypeName} ({firstError}; {dispatchProblem}; {dispatchException}).");
+        var firstJobId = Assert.IsType<PyInt>(ResponseValue(firstResponse)).Value;
+        await fixture.Rig.Events.PumpAsync();
+        AssertIndustryJobNotification(fixture.Capture, firstJobId, fixture.CharacterId,
+            fixture.CharacterId, firstBlueprintId, 1);
+
+        var sameSessionRetry = await SendAsync(fixture, "industryManager", "InstallJob", [InstallRequest(firstBlueprintId)]);
+        Assert.Equal(MachoMessage.CallRsp, MachoPacket.Decode(sameSessionRetry)?.Type);
+        Assert.Equal(new PyInt(firstJobId), ResponseValue(sameSessionRetry));
+        Assert.Equal(86L, (await inventory.GetAsync(materialId))!.Quantity);
+
+        var reconnected = await RebindAsync(fixture, fixture.Session.SessionId + 100_000);
+        dispatchProblem = null;
+        dispatchException = null;
+        var secondResponse = await SendAsync(reconnected, "industryManager", "InstallJob", [InstallRequest(secondBlueprintId)],
+            (message, error) =>
+            {
+                dispatchProblem = message;
+                dispatchException = error;
+            });
+        var secondPacket = MachoPacket.Decode(secondResponse);
+        var secondError = secondPacket?.Type == MachoMessage.ErrorResponse
+            ? new Eve.Services.MachoError(MachoErrorType.WrappedException,
+                Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(secondPacket.Payload).Items[2]).Items[0]).Decoded!).UserErrorMessage
+            : "";
+        Assert.True(secondPacket?.Type == MachoMessage.CallRsp,
+            $"Reconnected InstallJob returned {secondPacket?.TypeName} ({secondError}; {dispatchProblem}; {dispatchException}).");
+        var secondJobId = Assert.IsType<PyInt>(ResponseValue(secondResponse)).Value;
+        Assert.NotEqual(firstJobId, secondJobId);
+        await fixture.Rig.Events.PumpAsync();
+        AssertIndustryJobNotification(reconnected.Capture, secondJobId, fixture.CharacterId,
+            fixture.CharacterId, secondBlueprintId, 1);
+        Assert.Null(await inventory.GetAsync(materialId));
+        Assert.Equal(2L, await ScalarLongAsync(fixture.Rig.Source,
+            $"SELECT count(*) FROM {fixture.Rig.IndustrySchema}.jobs WHERE status = 1"));
+    }
+
+    [PgFact]
     public async Task Facility_tax_update_is_committed_notified_and_read_by_the_next_facility_request()
     {
         await using var fixture = await CreateAsync();
@@ -670,22 +774,22 @@ public sealed class IndustryFacilityHostFlowTests
         await command.ExecuteNonQueryAsync();
     }
 
-    private static async Task<Fixture> RebindAsync(Fixture old)
+    private static Task<Fixture> RebindAsync(Fixture old, long? sessionId = null)
     {
         var capture = new Capture();
-        var session = Session(capture, old.CharacterId, role: 1024);
+        var session = Session(capture, old.CharacterId, role: 1024, sessionId: sessionId);
         session.Set("regionid", new PyLong(RegionId));
         session.Set("solarsystemid2", new PyLong(SolarSystemId));
         old.Rig.Sessions.Enter(old.CharacterId, session);
-        return new Fixture(old.Rig, old.CharacterId, capture, session, ownsRig: false);
+        return Task.FromResult(new Fixture(old.Rig, old.CharacterId, capture, session, ownsRig: false));
     }
 
-    private static ClientSession Session(Capture capture, long characterId, long role)
+    private static ClientSession Session(Capture capture, long characterId, long role, long? sessionId = null)
     {
         var session = new ClientSession(capture)
         {
             UserId = 7,
-            SessionId = characterId,
+            SessionId = sessionId ?? characterId,
             ClientId = characterId,
             CharacterId = characterId,
         };
@@ -715,10 +819,11 @@ public sealed class IndustryFacilityHostFlowTests
     private static async Task<PyValue> SendAsync(Fixture fixture, string method, params PyValue[] args) =>
         await SendAsync(fixture, "facilityManager", method, args);
 
-    private static async Task<PyValue> SendAsync(Fixture fixture, string service, string method, PyValue[] args)
+    private static async Task<PyValue> SendAsync(Fixture fixture, string service, string method, PyValue[] args,
+        Action<string, Exception?>? onProblem = null)
     {
         fixture.Capture.Packets.Clear();
-        var dispatcher = new PacketDispatcher(fixture.Rig.Registry);
+        var dispatcher = new PacketDispatcher(fixture.Rig.Registry) { OnProblem = onProblem };
         Assert.True(await dispatcher.DispatchAsync(Request(
             service, method, args, fixture.Session.SessionId, fixture.Session.ClientId,
             fixture.Session.UserId.GetValueOrDefault()), fixture.Session));

@@ -6,6 +6,7 @@ using Eve.Host;
 using Eve.Host.Persistence;
 using Eve.Identity;
 using Eve.Dogma;
+using Eve.Macho;
 using Eve.Fitting;
 using Eve.GameStore;
 using System.Text.Json;
@@ -443,6 +444,17 @@ internal static class HostComposition
             amUnderage: async (call, ct) =>
                 identityAccounts is not null && call.Session.UserId is { } accountId
                     && await identityAccounts.IsUnderageAsync(checked((uint)accountId), ct));
+        PosMgrOperationCallback? posMgrOperation = space is null ? null : async call =>
+        {
+            if (call.Method is "AnchorOrbital" or "UnanchorOrbital" or "OnlineOrbital")
+            {
+                var planets = CharacterServicesComposition.SingleRegisteredService<Eve.Services.Planets.PlanetMgrService>(characterServices);
+                return await planets.PosMgrOrbitalOperationAsync(call).ConfigureAwait(false);
+            }
+            if (space.PosMgrControlTowerOperation is { } controlTowerOperation)
+                return await controlTowerOperation(call).ConfigureAwait(false);
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("POS management is not available on this server.")));
+        };
         foreach (var service in CoreServices.Create(
             omegaAccounts, now, calendarStore, calendarAudience,
             authentication: authentication,
@@ -471,6 +483,7 @@ internal static class HostComposition
             anchorControlTower: space is null ? null : (session, itemId, position, cancellationToken) => space.ControlTowerAnchor is { } anchor
                 ? new ValueTask(anchor(session, itemId, position, cancellationToken))
                 : throw new InvalidOperationException("the control towers are not wired on this server"),
+            posMgrOperation: posMgrOperation,
             contractReadModel: contractReadModel,
             contractWriteModel: contractWriteModel,
             contractInventoryReader: characterServices.Count > 0

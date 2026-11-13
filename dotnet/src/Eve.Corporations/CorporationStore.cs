@@ -423,6 +423,15 @@ public sealed partial class CorporationStore
                     );
                     CREATE INDEX character_bills_debtor ON character_bills(debtor_character_id,due_filetime,bill_id);
                 """),
+                new Migration("020_alliance_contact_label_masks", """
+                    ALTER TABLE alliance_contact_labels DROP CONSTRAINT alliance_contact_labels_label_id_check;
+                    ALTER TABLE alliance_contact_labels ALTER COLUMN label_id TYPE bigint;
+                    UPDATE alliance_contact_labels SET label_id = -label_id;
+                    UPDATE alliance_contact_labels
+                    SET label_id = 1::bigint << ((-label_id - 1)::integer);
+                    ALTER TABLE alliance_contact_labels ADD CONSTRAINT alliance_contact_labels_label_id_mask_check
+                        CHECK (label_id BETWEEN 1 AND 4611686018427387904 AND (label_id & (label_id - 1)) = 0);
+                """),
     ];
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>
         Migrations.ApplyAsync(source, schema, MigrationSet(), cancellationToken);

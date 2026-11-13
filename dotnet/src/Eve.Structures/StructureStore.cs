@@ -264,6 +264,33 @@ public sealed partial class StructureStore
     public async Task SetDescriptionAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, string description, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.structures SET bio = $2, version = version + 1 WHERE structure_id = $1"), cancellationToken, structureId, description);
 
+    /// <summary>Persists the legacy industry-facility tax settings on the authoritative structure record.</summary>
+    public async Task<bool> SetIndustryTaxSettingsAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long structureId,
+        long ownerCorporationId,
+        JsonObject settings,
+        CancellationToken cancellationToken = default)
+    {
+        var record = await GetAsync(connection, transaction, structureId, true, cancellationToken);
+        if (record is null || record.Snapshot.DestroyedMs > 0 ||
+            record.OwnerCorporationId != ownerCorporationId || ownerCorporationId <= 0)
+            return false;
+
+        var doc = (JsonObject)record.Doc.DeepClone();
+        doc["industryTaxSettings"] = settings.DeepClone();
+        var corporationRate = settings["taxCorporation"];
+        doc["industryTaxRate"] = corporationRate is JsonValue taxValue && taxValue.TryGetValue<decimal>(out var rate)
+            ? Math.Max(0m, rate)
+            : 0m;
+        return await Sql.ExecuteAsync(connection, transaction, Q("""
+            UPDATE {schema}.structures
+               SET doc = $2::text::jsonb, version = version + 1
+             WHERE structure_id = $1 AND owner_corporation_id = $3 AND destroyed_ms = 0
+            """), cancellationToken, structureId, doc.ToJsonString(), ownerCorporationId) == 1;
+    }
+
     /// <summary>Renames a structure that is not gone (EVE.js <c>renameStructureByID</c>: the name is the one the directory and the ball show).</summary>
     public async Task SetNameAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long structureId, string name, CancellationToken cancellationToken = default) =>
         await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.structures SET name = $2, version = version + 1 WHERE structure_id = $1 AND destroyed_ms = 0"), cancellationToken, structureId, name);

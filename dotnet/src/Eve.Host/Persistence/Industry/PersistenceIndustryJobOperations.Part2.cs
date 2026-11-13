@@ -41,7 +41,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     public sealed record IndustryFacility(
         long FacilityId, long SolarSystemId, long OwnerId, decimal TaxRate, double TimeMultiplier, bool IsOnline,
         double? ResearchTimeMultiplier = null, IReadOnlySet<int>? StationServices = null, IReadOnlySet<int>? Activities = null,
-        IReadOnlyList<IndustryBonus>? Bonuses = null)
+        IReadOnlyList<IndustryBonus>? Bonuses = null, IReadOnlyDictionary<int, decimal>? ServiceTaxRates = null)
     {
         /// <summary>The facility's rig and role bonuses (null for none): the client's facility modifiers.</summary>
         public IReadOnlyList<IndustryBonus> ModifierBonuses => Bonuses ?? [];
@@ -144,6 +144,19 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         return job;
     }
 
+    private static Eve.Services.Core.IndustryJobLocation? ResolveRequestedIndustryLocation(
+        IReadOnlyList<Eve.Services.Core.IndustryJobLocation> authorizedLocations,
+        Eve.Services.Core.IndustryJobLocation requested) =>
+        authorizedLocations.FirstOrDefault(location =>
+            location.CanView &&
+            location.LocationId == requested.LocationId &&
+            location.FlagId == requested.FlagId &&
+            (requested.OwnerId <= 0 || location.OwnerId == requested.OwnerId) &&
+            (requested.InventoryLocationId <= 0 ||
+                location.EffectiveInventoryLocationId == requested.InventoryLocationId) &&
+            (requested.InventoryFlagId < 0 ||
+                location.EffectiveInventoryFlagId == requested.InventoryFlagId));
+
     private async ValueTask<long> InstallOnceAsync(
         Eve.Services.Core.IndustryJobInstallRequest request,
         string fingerprint,
@@ -152,10 +165,6 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var job = request.Job;
         var actor = request.Context.Actor;
         await ValidateActorAsync(actor, job.OwnerId, job.Wallet, job.StationId, job.ActivityId, cancellationToken);
-        // A corporation's outputs go to the facility's deliveries or a corporation hangar division (the client's output list).
-        if (job.OwnerId != actor.CharacterId &&
-            (job.OutputLocation.LocationId != job.FacilityId || !IR.IsCorporationOutputFlag(job.OutputLocation.FlagId)))
-            throw InvalidJob();
         var facility = await _resolveFacility(
             job.FacilityId, job.StationId, job.SolarSystemId, actor.CharacterId, cancellationToken);
         if (facility is null || !facility.IsOnline || facility.FacilityId != job.FacilityId ||
@@ -178,6 +187,13 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var (productCategory, productGroup) = job.ActivityId is ManufacturingActivity or ReactionActivity && products.Count > 0
             ? await ReadProductContextAsync(products[0].TypeId, cancellationToken)
             : ((int?)null, (int?)null);
+        var taxRate = facility.TaxRate;
+        if (facility.ServiceTaxRates is { } serviceTaxRates)
+        {
+            var serviceId = StructureServiceForActivity(job.ActivityId, productGroup);
+            if (serviceId <= 0 || !serviceTaxRates.TryGetValue(serviceId, out taxRate))
+                throw InvalidJob();
+        }
         var bonuses = facility.ModifierBonuses;
         var materialBonus = IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Material, job.ActivityId, productCategory, productGroup);
         var timeBonus = IndustryBonuses.Multiplier(bonuses, IndustryBonusKind.Time, job.ActivityId, productCategory, productGroup);
@@ -197,8 +213,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var blueprint = await _items.LockAndGetAsync(connection, transaction, job.BlueprintId, cancellationToken);
         // The blueprint's own location and copy flag are authoritative; a client value of zero means the client did not send it.
         if (blueprint is null || blueprint.OwnerId != job.OwnerId || blueprint.TypeId != job.BlueprintTypeId ||
-            job.BlueprintLocationId > 0 && blueprint.LocationId != job.BlueprintLocationId ||
-            job.BlueprintLocationFlagId > 0 && blueprint.Flag != job.BlueprintLocationFlagId ||
+            _resolveIndustryLocations is null && job.BlueprintLocationId > 0 && blueprint.LocationId != job.BlueprintLocationId ||
+            _resolveIndustryLocations is null && job.BlueprintLocationFlagId > 0 && blueprint.Flag != job.BlueprintLocationFlagId ||
             !blueprint.Singleton || blueprint.BlueprintLocked)
             throw InvalidJob();
         if (blueprint.BlueprintCopy &&
@@ -221,12 +237,46 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
                 throw InvalidJob();
         }
         var requiredMaterials = RequiredMaterials(job, blueprint, recipe, materialBonus);
-        // NPC station personal inventories expose only the station hangar for this facility.
-        if (job.OwnerId == actor.CharacterId && _stations.Get(job.FacilityId) is not null &&
-            (!IR.IsPersonalStationLocation(job.FacilityId, blueprint.LocationId, blueprint.Flag) ||
-             !IR.IsPersonalStationLocation(job.FacilityId, job.OutputLocation.LocationId, job.OutputLocation.FlagId) ||
-             (requiredMaterials.Count > 0 && !IR.IsPersonalStationLocation(job.FacilityId, job.InputLocation.LocationId, job.InputLocation.FlagId))))
-            throw InvalidJob();
+        if (_resolveIndustryLocations is not null)
+        {
+            var locations = await _resolveIndustryLocations(
+                job.FacilityId, job.OwnerId, actor.CharacterId, cancellationToken);
+            var blueprintLocation = locations.FirstOrDefault(location =>
+                location.OwnerId == blueprint.OwnerId && location.CanView &&
+                location.EffectiveInventoryLocationId == blueprint.LocationId &&
+                location.EffectiveInventoryFlagId == blueprint.Flag);
+            if (blueprintLocation is null ||
+                job.BlueprintLocationId > 0 && job.BlueprintLocationId != blueprintLocation.LocationId ||
+                job.BlueprintLocationFlagId > 0 && job.BlueprintLocationFlagId != blueprintLocation.FlagId)
+                throw InvalidJob();
+
+            var inputLocation = ResolveRequestedIndustryLocation(locations, job.InputLocation);
+            var outputLocation = ResolveRequestedIndustryLocation(locations, job.OutputLocation);
+            if (inputLocation is null || (requiredMaterials.Count > 0 && !inputLocation.CanTake) ||
+                inputLocation.FlagId == IR.CorporationDeliveriesFlag || outputLocation is null)
+                throw InvalidJob();
+
+            // Capability and storage fields from the request are untrusted. Continue with the provider's canonical locations.
+            job = job with
+            {
+                BlueprintLocationId = blueprintLocation.LocationId,
+                BlueprintLocationFlagId = blueprintLocation.FlagId,
+                InputLocation = inputLocation,
+                OutputLocation = outputLocation,
+            };
+        }
+        else
+        {
+            // Direct persistence tests without Host's facility-location provider retain station/corporation guards.
+            if (job.OwnerId != actor.CharacterId &&
+                (job.OutputLocation.LocationId != job.FacilityId || !IR.IsCorporationOutputFlag(job.OutputLocation.FlagId)))
+                throw InvalidJob();
+            if (job.OwnerId == actor.CharacterId && _stations.Get(job.FacilityId) is not null &&
+                (!IR.IsPersonalStationLocation(job.FacilityId, blueprint.LocationId, blueprint.Flag) ||
+                 !IR.IsPersonalStationLocation(job.FacilityId, job.OutputLocation.LocationId, job.OutputLocation.FlagId) ||
+                 (requiredMaterials.Count > 0 && !IR.IsPersonalStationLocation(job.FacilityId, job.InputLocation.LocationId, job.InputLocation.FlagId))))
+                throw InvalidJob();
+        }
 
         var skillLevels = new Dictionary<int, int>();
         foreach (var requirement in recipe.Skills)
@@ -251,7 +301,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         // The blueprint's own job cost multiplier (dogma 1954) applies to every activity (the client's BLUEPRINT_MODIFIERS).
         var blueprintCostMultiplier = await ReadTypeAttributeAsync(job.BlueprintTypeId, JobCostMultiplierAttribute, cancellationToken) ?? 1d;
         var cost = IR.Total(IR.CostParts(
-            baseCost, (double)costIndex * costBonus * blueprintCostMultiplier, (double)facility.TaxRate, highSecurity, job.ActivityId,
+            baseCost, (double)costIndex * costBonus * blueprintCostMultiplier, (double)taxRate, highSecurity, job.ActivityId,
             alphaClone: job.IsAlphaClone));
 
         var probability = 1d;
@@ -281,7 +331,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         var now = _nowUnixMs();
         var startFileTime = FileTime(now);
         var endFileTime = FileTime(checked(now + (long)duration * 1000));
-        var snapshot = ActivitySnapshot(job, blueprint, recipe, requiredMaterials, products, cost, duration, facility, invention);
+        var snapshot = ActivitySnapshot(job, blueprint, recipe, requiredMaterials, products, cost, duration,
+            facility with { TaxRate = taxRate }, invention);
         var snapshotJson = snapshot.ToJsonString();
         Eve.Wallet.WalletSettlement? settlement = null;
         if (cost > 0)
@@ -313,7 +364,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             """, connection, transaction);
         Add(insert,
             request.Context.OperationId, fingerprint, job.ActivityId, blueprint.Id, blueprint.TypeId,
-            blueprint.BlueprintCopy, blueprint.LocationId, blueprint.Flag, job.FacilityId, job.OwnerId,
+            blueprint.BlueprintCopy, job.BlueprintLocationId, job.BlueprintLocationFlagId, job.FacilityId, job.OwnerId,
             actor.CharacterId, job.SolarSystemId, job.StationId,
             job.InputLocation.LocationId, job.InputLocation.FlagId,
             job.OutputLocation.LocationId, job.OutputLocation.FlagId,
@@ -381,6 +432,23 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             return (null, groupId);
         return (category.GetInt32(), groupId);
     }
+
+    /// <summary>The exact Upwell service that accepts a product/activity and supplies its profile tax setting.</summary>
+    private static int StructureServiceForActivity(int activityId, int? productGroup) => activityId switch
+    {
+        ManufacturingActivity when productGroup is 659 or 30 => Eve.Structures.StructureServiceIds.ManufacturingSupercapital,
+        ManufacturingActivity when productGroup is 1538 or 547 or 485 or 883 or 4594 => Eve.Structures.StructureServiceIds.ManufacturingCapital,
+        ManufacturingActivity => Eve.Structures.StructureServiceIds.ManufacturingBasic,
+        ReactionActivity when productGroup is 712 or 4096 => Eve.Structures.StructureServiceIds.ReactionsBiochemical,
+        ReactionActivity when productGroup == 974 => Eve.Structures.StructureServiceIds.ReactionsHybrid,
+        ReactionActivity when productGroup is 428 or 429 or 4932 => Eve.Structures.StructureServiceIds.ReactionsComposite,
+        ReactionActivity => Eve.Structures.StructureServiceIds.Reactions,
+        TimeResearchActivity => Eve.Structures.StructureServiceIds.LaboratoryResearchTime,
+        MaterialResearchActivity => Eve.Structures.StructureServiceIds.LaboratoryResearchMaterial,
+        CopyingActivity => Eve.Structures.StructureServiceIds.LaboratoryCopying,
+        InventionActivity => Eve.Structures.StructureServiceIds.LaboratoryInvention,
+        _ => 0,
+    };
 
     /// <summary>
     /// The decryptor of an invention: its probability multiplier (dogma 1112), the extra runs (1124) and the ME

@@ -16,7 +16,22 @@ namespace Eve.Services.Core;
 /// <summary>The authenticated session facts needed by the industry domain; never copied from the job payload.</summary>
 public sealed record IndustryJobActor(long CharacterId, long CorporationId, long CorporationRoles, int CorporationAccountKey);
 
-public sealed record IndustryJobLocation(long LocationId, int FlagId);
+/// <summary>
+/// A client-visible industry location and its backing inventory location. Some corporation locations present a facility or office
+/// as <see cref="LocationId"/> while their items live under <see cref="InventoryLocationId"/>.
+/// </summary>
+public sealed record IndustryJobLocation(
+    long LocationId,
+    int FlagId,
+    long InventoryLocationId = 0,
+    long OwnerId = 0,
+    bool CanView = false,
+    bool CanTake = false,
+    int InventoryFlagId = -1)
+{
+    public long EffectiveInventoryLocationId => InventoryLocationId > 0 ? InventoryLocationId : LocationId;
+    public int EffectiveInventoryFlagId => InventoryFlagId >= 0 ? InventoryFlagId : FlagId;
+}
 
 public sealed record IndustryJobWallet(long OwnerId, int AccountKey);
 
@@ -275,7 +290,8 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
         var corporate = ownerId != actor.CharacterId;
         var output = Location(payload, "outputLocation", "outputLocationID", "outputFlagID",
             corporate ? RequiredLong(payload, "facilityID") : input.LocationId,
-            corporate ? IndustryRules.CorporationDeliveriesFlag : input.FlagId);
+            corporate ? IndustryRules.CorporationDeliveriesFlag : input.FlagId,
+            corporate ? RequiredLong(payload, "facilityID") : input.InventoryLocationId);
         var wallet = Wallet(payload, ownerId, actor);
 
         return new IndustryJobInstallSubmission(
@@ -324,7 +340,8 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
         string idName,
         string flagName,
         long defaultId,
-        int defaultFlag)
+        int defaultFlag,
+        long defaultInventoryLocationId = 0)
     {
         var nested = WireField(payload, nestedName);
         var locationId = OptionalPositiveField(payload, idName)
@@ -333,7 +350,10 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
         var flagId = OptionalIntField(payload, flagName)
             ?? OptionalIntField(nested, "flagID")
             ?? defaultFlag;
-        return new IndustryJobLocation(locationId, flagId);
+        var inventoryLocationId = OptionalPositiveField(nested, "inventoryLocationID") ?? defaultInventoryLocationId;
+        var ownerId = OptionalPositiveField(nested, "ownerID") ?? 0;
+        var inventoryFlagId = OptionalIntField(nested, "inventoryFlagID") ?? -1;
+        return new IndustryJobLocation(locationId, flagId, inventoryLocationId, ownerId, InventoryFlagId: inventoryFlagId);
     }
 
     private static IndustryJobWallet Wallet(PyValue payload, long ownerId, IndustryJobActor actor)

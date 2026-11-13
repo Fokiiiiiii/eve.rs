@@ -105,9 +105,13 @@ public sealed class HackingGameTests
         var game = Blank(coherence: 40, strength: 20);
         var wall = Put(game, East, HackingWire.TypeDefenseSoftware, HackingWire.SubtypeDsFirewall, 60, 10);
 
+        Assert.Equal(new[] { Flipped }, Ids(game.ClickTile(East)));
+        Assert.Equal(60, wall.Coherence);
+        Assert.Equal(40, game.VirusCoherence);
+
         var events = game.ClickTile(East);
 
-        Assert.Equal(new[] { Flipped, Attack, Attack }, Ids(events));
+        Assert.Equal(new[] { Attack, Attack }, Ids(events));
         Assert.Equal(40, wall.Coherence);
         Assert.Equal(30, game.VirusCoherence);
         Assert.True(wall.Blocked);
@@ -119,6 +123,7 @@ public sealed class HackingGameTests
         var game = Blank(coherence: 400, strength: 20);
         Put(game, East, HackingWire.TypeDefenseSoftware, HackingWire.SubtypeDsFirewall, 60, 10);
         game.ClickTile(East);
+        game.ClickTile(East);
 
         Assert.Equal(new[] { Ack }, Ids(game.ClickTile(Far)));
     }
@@ -129,9 +134,10 @@ public sealed class HackingGameTests
         var game = Blank(coherence: 40, strength: 20);
         var wall = Put(game, East, HackingWire.TypeDefenseSoftware, HackingWire.SubtypeDsFirewall, 10, 10);
 
+        Assert.Equal(new[] { Flipped }, Ids(game.ClickTile(East)));
         var events = game.ClickTile(East);
 
-        Assert.Equal(new[] { Flipped, Attack, Killed }, Ids(events));
+        Assert.Equal(new[] { Attack, Killed }, Ids(events));
         Assert.Equal(HackingWire.TypeSegment, wall.Type);
         Assert.False(wall.Blocked);
         Assert.Equal(new[] { Flipped, Distance }, Ids(game.ClickTile(Far)));
@@ -143,9 +149,10 @@ public sealed class HackingGameTests
         var game = Blank(coherence: 40, strength: 20);
         Put(game, East, HackingWire.TypeDefenseSoftware, HackingWire.SubtypeDsAntiVirus, 100, 40);
 
+        Assert.Equal(new[] { Flipped }, Ids(game.ClickTile(East)));
         var events = game.ClickTile(East);
 
-        Assert.Equal(new[] { Flipped, Attack, Attack, Killed, GameLost }, Ids(events));
+        Assert.Equal(new[] { Attack, Attack, Killed, GameLost }, Ids(events));
         Assert.Equal(HackingOutcome.Lost, game.Outcome);
         Assert.Equal(new[] { Ack }, Ids(game.ClickTile(Down)));
     }
@@ -156,9 +163,10 @@ public sealed class HackingGameTests
         var game = Blank(coherence: 40, strength: 20);
         var core = Put(game, East, HackingWire.TypeCore, HackingWire.SubtypeCoreLow, 10, 10);
 
+        Assert.Equal(new[] { Flipped }, Ids(game.ClickTile(East)));
         var events = game.ClickTile(East);
 
-        Assert.Equal(new[] { Flipped, Attack, Killed, GameWon }, Ids(events));
+        Assert.Equal(new[] { Attack, Killed, GameWon }, Ids(events));
         Assert.Equal(HackingOutcome.Won, game.Outcome);
         Assert.False(core.Hidden);
         Assert.Equal(40, game.VirusCoherence);
@@ -170,10 +178,14 @@ public sealed class HackingGameTests
         var game = Blank(coherence: 40, strength: 20);
         var node = Put(game, East, HackingWire.TypeDefenseSoftware, HackingWire.SubtypeDsRestorationNode, 30, 10);
 
+        var reveal = game.ClickTile(East);
+        Assert.Equal(new[] { Flipped, Healed }, Ids(reveal));
+        Assert.Equal(50, node.Coherence);
+
         var events = game.ClickTile(East);
 
-        Assert.Equal(new[] { Flipped, Attack, Attack, Healed }, Ids(events));
-        Assert.Equal(30, node.Coherence);
+        Assert.Equal(new[] { Attack, Attack, Healed }, Ids(events));
+        Assert.Equal(50, node.Coherence);
         Assert.Equal(20, Only(events, Healed).Data["healingAmount"]);
     }
 
@@ -204,11 +216,14 @@ public sealed class HackingGameTests
         game.Slots[0] = new UtilityItem(1, HackingWire.SubtypeUePolymorphicShield);
         game.UseOnVirus(0);
 
-        Assert.Equal(new[] { Flipped, Attack, ShieldHit }, Ids(game.ClickTile(Left)));
-        Assert.Equal(new[] { Flipped, Attack, ShieldHit, UeRemoved }, Ids(game.ClickTile(Down)));
+        Assert.Equal(new[] { Flipped }, Ids(game.ClickTile(Left)));
+        Assert.Equal(new[] { Attack, ShieldHit }, Ids(game.ClickTile(Left)));
+        Assert.Equal(new[] { Flipped }, Ids(game.ClickTile(Down)));
+        Assert.Equal(new[] { Attack, ShieldHit, UeRemoved }, Ids(game.ClickTile(Down)));
         Assert.Equal(40, game.VirusCoherence);
         Assert.Null(game.Slots[0]);
-        Assert.Equal(new[] { Flipped, Attack, Attack }, Ids(game.ClickTile(East)));
+        Assert.Equal(new[] { Flipped }, Ids(game.ClickTile(East)));
+        Assert.Equal(new[] { Attack, Attack }, Ids(game.ClickTile(East)));
         Assert.Equal(30, game.VirusCoherence);
     }
 
@@ -260,9 +275,10 @@ public sealed class HackingGameTests
         var game = Blank();
         Put(game, East, HackingWire.TypeUtilityElementTile, HackingWire.SubtypeUeSelfRepair);
 
+        Assert.Equal(new[] { Flipped }, Ids(game.ClickTile(East)));
         var events = game.ClickTile(East);
 
-        Assert.Equal(new[] { Flipped, PickedUp }, Ids(events));
+        Assert.Equal(new[] { PickedUp }, Ids(events));
         Assert.Equal(HackingWire.SubtypeUeSelfRepair, game.Slots[0]!.Subtype);
     }
 
@@ -272,8 +288,9 @@ public sealed class HackingGameTests
         var game = Blank(slots: 0);
         var tile = Put(game, East, HackingWire.TypeUtilityElementTile, HackingWire.SubtypeUeSelfRepair);
 
+        Assert.Equal(new[] { Flipped }, Ids(game.ClickTile(East)));
+        Assert.False(tile.Hidden);
         Assert.Equal(new[] { Ack }, Ids(game.ClickTile(East)));
-        Assert.True(tile.Hidden);
     }
 
     [Fact]
@@ -283,9 +300,10 @@ public sealed class HackingGameTests
         var cache = Put(game, East, HackingWire.TypeDataCache);
         cache.Contents = (HackingWire.TypeDefenseSoftware, HackingWire.SubtypeDsFirewall);
 
+        Assert.Equal(new[] { Flipped }, Ids(game.ClickTile(East)));
         var events = game.ClickTile(East);
 
-        Assert.Equal(new[] { Flipped, CacheOpen }, Ids(events));
+        Assert.Equal(new[] { CacheOpen }, Ids(events));
         Assert.Equal(HackingWire.TypeDefenseSoftware, cache.Type);
         Assert.Equal((50, 20), (cache.Coherence, cache.Strength));
         Assert.True(cache.Blocked);
@@ -297,8 +315,9 @@ public sealed class HackingGameTests
         var game = Blank(coherence: 40, strength: 20);
         Put(game, East, HackingWire.TypeDefenseSoftware, HackingWire.SubtypeDsVirusSuppressor, 30, 10);
 
-        Assert.Equal(new[] { Flipped, Attack, Attack, Suppressor }, Ids(game.ClickTile(East)));
+        Assert.Equal(new[] { Flipped, Suppressor }, Ids(game.ClickTile(East)));
         Assert.Equal(10, game.VirusStrength);
+        Assert.Equal(new[] { Attack, Attack }, Ids(game.ClickTile(East)));
 
         game.Slots[0] = new UtilityItem(2, HackingWire.SubtypeUeSecondaryVector);
         Assert.Equal(new[] { UeInUse }, Ids(game.UseOnTarget(0, East)));

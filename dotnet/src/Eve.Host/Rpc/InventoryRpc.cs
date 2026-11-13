@@ -57,6 +57,7 @@ internal sealed partial class CharacterServicesComposition
 
         return
         [
+            new I2Service(items, itemTypes, now),
             inventoryBroker,
             new Eve.Services.Core.CrateService(new PersistenceCrateServiceBackend(source, items, itemTypes, skills, skillCatalog, mailCache, savedFittings)),
             new Eve.Host.ShipCosmeticsMgrRpcService(mailCache, mailCache, items, source, skinCosmeticsCatalog, now,

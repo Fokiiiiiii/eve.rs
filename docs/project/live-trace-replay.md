@@ -11,6 +11,9 @@ one-way, so the replayer does not expect a normal reply for them. Unsupported re
 replayed are reported as send issues. `mitm replay` exits nonzero for unexpected errors, missing replies, send issues,
 or shape differences.
 
+Reply-shape comparison follows the nested marshal structure, including `ObjectEx` record fields, `SubStruct`, and
+`Checksummed` wrappers; it compares field types and container shape while ignoring leaf values.
+
 ## Run it
 
 The live runner starts `eve-sim`, Eve.Host, and `eve-net` in the same order used by the live scenario tests. With the

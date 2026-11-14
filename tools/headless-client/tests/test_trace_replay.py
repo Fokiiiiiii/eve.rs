@@ -57,6 +57,21 @@ def test_reply_analysis_detects_error_timeout_and_recorded_success_shape_change(
     assert analyze_reply(request, recorded_success, None).kind == "missing"
 
 
+def test_reply_analysis_compares_nested_objectex_substruct_and_checksummed_shapes():
+    request = {"type": "CallReq", "service": "config", "method": "GetRecord"}
+    wrapped_results = [
+        ({"$objectex": {"$tuple": ["record"]}, "list": [1], "dict": []},
+         {"$objectex": {"$tuple": ["record"]}, "list": ["1"], "dict": []}),
+        ({"$substruct": {"$tuple": [1]}}, {"$substruct": {"$tuple": ["1"]}}),
+        ({"$checksummed": {"$tuple": [1]}}, {"$checksummed": {"$tuple": ["1"]}}),
+    ]
+
+    for recorded, actual in wrapped_results:
+        issue = analyze_reply(request, {"type": "CallRsp", "result": recorded},
+                              {"type": "CallRsp", "result": actual})
+        assert issue is not None and issue.kind == "shape", (recorded, actual)
+
+
 def test_report_renders_every_error_missing_reply_and_shape_difference():
     report = ReplayReport(requests=3, notifications=1, issues=[
         ReplayIssue("error", {"seq": 10, "call_id": 4, "service": "alert", "method": "First"}, {"code": 2}),

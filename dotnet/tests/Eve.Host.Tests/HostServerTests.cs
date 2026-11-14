@@ -4932,16 +4932,16 @@ private sealed class InSpaceInventory : Eve.Services.Ships.ISpaceContainers
         Assert.Equal(500_000_001L, welcomeMessage["senderID"]!.GetValue<long>());
         Assert.Equal("Fleet Ops", welcomeMessage["senderName"]!.GetValue<string>());
         Assert.Equal(500_000_001L, welcomeMessage["toListID"]!.GetValue<long>());
-        Assert.Equal(16, welcomeMessage["statusMask"]!.GetValue<int>());
-        Assert.Equal(16, committed["mail"]["mailboxes"]![recipientId.ToString(
-            System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["13"]!["statusMask"]!.GetValue<int>());
+        Assert.Equal(32, welcomeMessage["statusMask"]!.GetValue<long>());
+        Assert.Equal(32, committed["mail"]["mailboxes"]![recipientId.ToString(
+            System.Globalization.CultureInfo.InvariantCulture)]!["statuses"]!["13"]!["statusMask"]!.GetValue<long>());
         Assert.Equal(3, mailSentNotifications.Count);
         var sent = mailSentNotifications[^1];
         Assert.Equal(recipientId, sent.RecipientId);
         Assert.Equal(500_000_001L, Assert.IsType<Eve.Marshal.PyLong>(sent.Arguments[1]).Value);
         Assert.Empty(Assert.IsType<Eve.Marshal.PyList>(sent.Arguments[3]).Items);
         Assert.Equal(500_000_001L, Assert.IsType<Eve.Marshal.PyLong>(sent.Arguments[4]).Value);
-        Assert.Equal(16L, Assert.IsType<Eve.Marshal.PyLong>(sent.Arguments[7]).Value);
+        Assert.Equal(32L, Assert.IsType<Eve.Marshal.PyLong>(sent.Arguments[7]).Value);
         var notificationRowsAfterMail = committed["notifications"]["boxes"]![recipientId.ToString(
             System.Globalization.CultureInfo.InvariantCulture)]!["byID"]!.AsObject();
         Assert.Single(notificationRowsAfterMail);

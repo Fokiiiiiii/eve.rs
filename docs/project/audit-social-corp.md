@@ -21,6 +21,8 @@ V24 は `mailStatusMaskAutomated = 32` を定義する（`/home/user/eve-logic/e
 
 Host は welcome mailを永続化していたが、旧値16は draft bit であり automated bit ではなかった。登録済み Host RPC / PostgreSQL / restart test は修正前に期待32に対し16を返した。adapter は保存statusと `OnMailSent` statusを32に統一し、sender ID も mailing-list ID にする。テストは wire header、保存message、recipient status、restart 後の同期を検査する。
 
+push CI run 1803 は、この変更を反映しない既存 `HostServerTests.Mail_host_adapter_commits_mail_before_returning_id_without_a_server_mail_notification` の期待値16で失敗した。V24 / EveJS の32と保存値の `long` 型を確認した上で、テストを32 / `long` に更新した。これはassertionを弱める変更ではなく、MAIL-001のwire・保存契約に合わせた修正。
+
 ### MAIL-002 — 管理画面の “Send welcome mail to all” が通常のpilot送信として扱われていた — confirmed, fixed
 
 V24 の mailing-list config UI は “to all” checkbox が有効なら `SaveAndSendWelcomeMail` を呼び、proxy は `mailingListsMgr.SendWelcomeMail` に転送する（`/home/user/eve-logic/eve/client/script/ui/shared/neocom/evemailingListConfig.py:494-506`; `eve/client/script/ui/services/mail/mailingListsSvc.py:185-189`）。EveJS は list に保存したwelcome内容を全memberへ配信し、senderID / senderName / toListID を list の値にし、automated status 32、sender copyなしで送る（`/home/user/evejs-261108.1/server/src/services/mail/mailState.js:1753-1805`）。V24 は `OnMailSent` でこのidentity / bitを使って mailing-list sender名を表示する（`mailSvc.py:1119-1145`）。
@@ -73,11 +75,13 @@ Host service はactor、folder、access listsを含む呼び出しをstoreへ渡
 - `Eve.Host.Tests.AccessGroupBookmarkMgrHostWireTests`: 3 passed, 0 failed, 0 skipped。
 - Host + PostgreSQL focused scenarios: bookmark expiry / mailing-list join / manual broadcast 3 passed, 0 failed, 0 skipped。法人自己退社Host E2E 1 passed, 0 failed, 0 skipped。
 - 変更対象の Release / warnings-as-errors build (`Eve.Bookmarks`, `Eve.Services.Core`, `Eve.Services.Corporations`, `Eve.Host`, `Eve.Host.Tests`, `Eve.Corporations.Tests`): 各0 warning / 0 error。
+- CIで更新漏れが判明した `Mail_host_adapter_commits_mail_before_returning_id_without_a_server_mail_notification`: Release focused test 1 passed, 0 failed, 0 skipped。`Eve.Host.Tests` Release warnings-as-errors rebuild: 0 warning / 0 error。
 - EveJS 261108.1 isolated `mailState` direct execution: automated join and list broadcast assertions passed。
 
 ### 失敗・skip・未確認
 
 - `Eve.Host.Tests.CharacterHostTests` class全体を、開始時点から存在した無関係な未コミットSkill変更を含むdirty worktreeで実行した結果: 87 passed, 1 failed, 4 skipped。唯一の失敗は `Clone_jump_rebases_a_running_queue_when_implants_change_its_learning_rate` で、追加されたclone-jump notification assertionと実際の通知列が異なる（`CharacterHostTests.cs:537-584`）。このSkillコード・テストは今回のsocial/org差分に含めていない。今回追加・変更したbookmark/mail Host回帰は、この同じclassのfocused実行でpassした。
 - 4 skipは `RealAbyssalSimPgFact` のlive Rust simulation tests。`EVE_ABYSSAL_SIM_BINARY` と `EVE_ABYSSAL_SIM_SDE` が未設定のためskipされ、passとして数えていない。
+- push CI run 1803 は上記の古い welcome-mail mask assertionで `.NET (host tests 2/6)` が失敗した。期待値の修正をpushした後のCI rerunは未完了。
 - V24 graphical client、live packet trace、GUI上のmail sender display / bookmark expiry UIは今回起動していない。
 - 先行監査に記した未確認項目と全social/org permission edge matrixは、本記録によって閉じない。

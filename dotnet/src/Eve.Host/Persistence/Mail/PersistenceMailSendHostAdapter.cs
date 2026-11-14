@@ -101,7 +101,8 @@ public sealed class PersistenceMailSendHostAdapter(
             var messageKey = Key(messageId);
             var directRecipients = request.CharacterRecipientIds.Distinct().ToArray();
             var corpOrAllianceIds = request.CorporationOrAllianceRecipientIds?.Distinct().ToArray();
-            var mailSenderId = request.MailingListWelcomeRecipientId is not null && request.MailingListId is { } welcomeListId
+            var isAutomatedMail = request.MailingListWelcomeRecipientId is not null || request.MailingListWelcomeBroadcast;
+            var mailSenderId = isAutomatedMail && request.MailingListId is { } welcomeListId
                 ? welcomeListId : request.SenderCharacterId;
             var message = new JsonObject
             {
@@ -118,7 +119,7 @@ public sealed class PersistenceMailSendHostAdapter(
                 ["sentDate"] = sentFiletime,
                 ["replyToMessageID"] = OptionalLong(request.ReplyToMessageId),
                 ["forwardedFromMessageID"] = OptionalLong(request.ForwardedFromMessageId),
-                ["statusMask"] = request.MailingListWelcomeRecipientId is null ? 0 : 16,
+                ["statusMask"] = isAutomatedMail ? MailStatusMasks.Automated : 0,
                 ["labelMask"] = 0,
                 ["read"] = false,
                 ["trashed"] = false,
@@ -131,7 +132,7 @@ public sealed class PersistenceMailSendHostAdapter(
             {
                 statuses[(recipientId, messageId)] = new JsonObject
                 {
-                    ["statusMask"] = request.MailingListWelcomeRecipientId is null ? 0 : 16,
+                    ["statusMask"] = isAutomatedMail ? MailStatusMasks.Automated : 0,
                     ["labelMask"] = recipients.LabelMasksByCharacterId.GetValueOrDefault(recipientId, 1),
                 };
             }
@@ -198,7 +199,7 @@ public sealed class PersistenceMailSendHostAdapter(
                     sendMailSentNotification?.Invoke(recipientId,
                         Eve.Services.Core.MailSentNotification.Build(
                             request, messageId, sentFiletime,
-                            request.MailingListWelcomeRecipientId is null ? Number(recipientStatus["statusMask"]) : 16), session);
+                            isAutomatedMail ? MailStatusMasks.Automated : Number(recipientStatus["statusMask"])), session);
             if (request.SaveSenderCopy && request.SenderCharacterId > 0 &&
                 !recipients.CharacterIds.Contains(request.SenderCharacterId) &&
                 statuses.TryGetValue((request.SenderCharacterId, messageId), out var senderStatus))

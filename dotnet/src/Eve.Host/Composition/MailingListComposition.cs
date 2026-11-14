@@ -436,7 +436,9 @@ internal sealed partial class CharacterServicesComposition
                                     Title: title,
                                     Body: body,
                                     ReplyToMessageId: null,
-                                    ForwardedFromMessageId: null),
+                                    ForwardedFromMessageId: null,
+                                    SaveSenderCopy: false,
+                                    MailingListWelcomeBroadcast: true),
                                 session,
                                 cancellationToken);
                             return messageId is > 0

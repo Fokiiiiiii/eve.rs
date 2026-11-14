@@ -14,6 +14,8 @@ public class DogmaServiceTests
 
     private static long Id(PyValue value) => value switch { PyInt i => i.Value, PyLong l => l.Value, _ => throw new InvalidOperationException(value.ToString()) };
 
+    private static double Number(PyValue value) => value switch { PyInt i => i.Value, PyLong l => l.Value, PyReal r => r.Value, _ => throw new InvalidOperationException(value.ToString()) };
+
     private static PyDict Dict(PyValue value) => (PyDict)value;
 
     private static readonly PyValue[] Everything = [PyBool.True, PyBool.True, PyNone.Instance];
@@ -145,12 +147,17 @@ public class DogmaServiceTests
     {
         var (rig, character, session, oid) = await BoundAsync();
         await using var _ = rig;
-        var state = (PyTuple)Field(await rig.CallAsync(session, "GetAllInfo", oid, Everything), "shipState");
+        var info = await rig.CallAsync(session, "GetAllInfo", oid, Everything);
+        var shipInfo = Dict(Field(info, "shipInfo"));
+        var shipAttributes = Dict(Field(shipInfo.Entries.Single(entry => Id(entry.Key) == character.ShipId).Value, "attributes"));
+        PyValue ShipAttribute(int attributeId) => shipAttributes.Entries.Single(entry => Id(entry.Key) == attributeId).Value;
+        var state = (PyTuple)Field(info, "shipState");
         var rows = Dict(state.Items[0]).Entries;
         Assert.Equal([character.ShipId, character.CharacterId, character.ShipId + 1, character.ShipId + 2, character.ShipId + 3], rows.Select(e => Id(e.Key)));
-        // instanceID, online, damage, charge, skillPoints, armorDamage, shieldCharge, incapacitated
+        // The ship's state row carries the same condition amounts as its dogma attributes; the pilot and modules keep their own instance values.
         Assert.Equal(
-            [new PyLong(character.ShipId), PyBool.False, new PyReal(0), new PyReal(1), new PyInt(0), new PyReal(0), new PyReal(1), PyBool.False],
+            [new PyLong(character.ShipId), PyBool.False, new PyReal(Number(ShipAttribute(3))), new PyReal(Number(ShipAttribute(18))),
+                new PyInt(0), new PyReal(Number(ShipAttribute(266))), new PyReal(Number(ShipAttribute(264))), PyBool.False],
             ((PyPackedRow)rows[0].Value).Values);
         var pilot = ((PyPackedRow)rows[1].Value).Values;
         Assert.Equal((PyBool.True, new PyReal(0)), (pilot[1], pilot[3]));

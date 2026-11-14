@@ -30,6 +30,10 @@ public sealed partial class CharacterShips(
 
     private const int IsOnline = 2;
     private const int ChargeCategory = 8;
+    private const int CapacitorCapacityAttribute = 482;
+    private const int CapacitorChargeAttribute = 18;
+    private const double OnlineCapacitorChargePercent = 95;
+    private const double OnlineCapacitorRemainder = 0.33;
     private const double Tolerance = 1e-9;
 
     /// <summary>How fast the character learns as dogma shows it: its attributes times the server's training speed (the client works its estimates out from them).</summary>
@@ -673,7 +677,14 @@ public sealed partial class CharacterShips(
     }
 
     /// <summary>Switches a module fitted to the character's ship on or off.</summary>
-    public async Task<ShipOutcome> SetOnlineAsync(long characterId, long shipId, long moduleId, bool online, CancellationToken cancellationToken = default)
+    public async Task<ShipOutcome> SetOnlineAsync(
+        long characterId,
+        long shipId,
+        long moduleId,
+        bool online,
+        CancellationToken cancellationToken = default,
+        ShipCondition? inSpaceCondition = null,
+        long? inSpaceConditionRevision = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -690,6 +701,7 @@ public sealed partial class CharacterShips(
         }
         var events = new List<DogmaEvent>();
         var wasOnline = fitted.State >= ItemState.Online;
+        double? capacitorCapacityBefore = null;
         var cargoCapacityAttribute = CapacityAttributeOf(CargoFlag);
         var cargoCapacityBefore = cargoCapacityAttribute is { } capacityAttribute ? world.Get(shipId, capacityAttribute) : 0d;
         if (online && !wasOnline)
@@ -702,6 +714,27 @@ public sealed partial class CharacterShips(
             {
                 await NameTheSkillAsync(missing, cancellationToken);
                 return new ShipRefused(ShipRefusal.SkillRequired, missing, module.TypeId, snapshot.Ship.TypeId);
+            }
+            if (inSpaceCondition is { } condition)
+            {
+                var capacity = world.Get(shipId, CapacitorCapacityAttribute);
+                capacitorCapacityBefore = capacity;
+                var charge = capacity * condition.Charge;
+                var capacitorPercent = capacity > 0 && double.IsFinite(capacity) && double.IsFinite(charge)
+                    ? charge / capacity * 100
+                    : 0;
+                if (!double.IsFinite(capacitorPercent) || capacitorPercent < OnlineCapacitorChargePercent)
+                {
+                    return new ShipRefused(ShipRefusal.NotEnoughCapacitor, ModuleTypeId: module.TypeId, ShipTypeId: snapshot.Ship.TypeId)
+                    {
+                        CapacitorPercent = double.IsFinite(capacitorPercent) ? capacitorPercent : 0,
+                        RequiredCapacitorPercent = OnlineCapacitorChargePercent,
+                    };
+                }
+                if (capacity <= 0 || inSpaceConditionRevision is null)
+                {
+                    return new ShipRefused(ShipRefusal.ConditionChanged, ModuleTypeId: module.TypeId, ShipTypeId: snapshot.Ship.TypeId);
+                }
             }
             if (FittingRules.OnlineShortageFailure(world, shipId, moduleId) is { } shortage)
             {
@@ -739,6 +772,25 @@ public sealed partial class CharacterShips(
             return cargoRefusal;
         }
         var shipAfter = world.Attributes(shipId);
+        AttributeChanged? capacitorChange = null;
+        if (online && !wasOnline && inSpaceCondition is { } currentCondition && capacitorCapacityBefore is { } capacityBefore)
+        {
+            var capacityAfter = world.Get(shipId, CapacitorCapacityAttribute);
+            var chargeAfter = capacityBefore * OnlineCapacitorRemainder;
+            var afterCondition = currentCondition with
+            {
+                Charge = capacityAfter > 0 ? chargeAfter / capacityAfter : 0,
+                Incapacitated = snapshot.Condition.Incapacitated,
+            };
+            if (!await modules.TrySetShipConditionAsync(
+                connection, transaction, shipId, inSpaceConditionRevision!.Value, afterCondition, cancellationToken))
+            {
+                return new ShipRefused(ShipRefusal.ConditionChanged, ModuleTypeId: module.TypeId, ShipTypeId: snapshot.Ship.TypeId);
+            }
+            var beforeCharge = Math.Round(capacityBefore * currentCondition.Charge, 6, MidpointRounding.AwayFromZero);
+            var afterCharge = Math.Round(chargeAfter, 6, MidpointRounding.AwayFromZero);
+            capacitorChange = Changed(shipId, CapacitorChargeAttribute, beforeCharge, afterCharge);
+        }
         await modules.SetAsync(connection, transaction, moduleId, online ? ItemState.Online : ItemState.Offline, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
@@ -747,6 +799,10 @@ public sealed partial class CharacterShips(
             events.Add(switched);
         }
         events.AddRange(ShipChanges(shipId, shipBefore, shipAfter));
+        if (capacitorChange is not null)
+        {
+            events.Add(capacitorChange);
+        }
         events.Add(new EffectChanged(moduleId, BuiltInEffects.Online, Started: online));
         return new ShipChanged(moduleId, shipId, [], events);
     }

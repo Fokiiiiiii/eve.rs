@@ -47,6 +47,14 @@ public static class ShipErrors
                     ("type", new PyTuple([new PyInt(UeTypeId), new PyInt(refused.ModuleTypeId)])),
                     ("group", new PyTuple([new PyInt(UeGroupId), new PyInt(refused.GroupId)])),
                     ("maxGroupOnline", new PyInt(refused.MaxGroupOnline)));
+            case ShipRefusal.NotEnoughCapacitor:
+                return MachoErrors.ThrowUserError(
+                    "NotEnoughCapacitorForOnline",
+                    ("module", new PyInt(refused.ModuleTypeId)),
+                    ("have", Py.Number(refused.CapacitorPercent)),
+                    ("need", Py.Number(refused.RequiredCapacitorPercent)));
+            case ShipRefusal.ConditionChanged:
+                return MachoErrors.ThrowUserError("DeniedShipChanged");
             case ShipRefusal.NotEnoughCargoSpace:
                 return MachoErrors.ThrowUserError("NotEnoughCargoSpace", ("available", Py.Number(refused.Available)), ("volume", Py.Number(refused.Volume)));
             case ShipRefusal.NotEnoughDroneBaySpace:

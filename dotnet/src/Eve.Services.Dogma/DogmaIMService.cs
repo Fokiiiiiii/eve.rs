@@ -276,18 +276,37 @@ public sealed partial class DogmaIMService(
         {
             throw ModuleRefusals.Of(offlineRefusal, starting: false);
         }
-        switch (await ships.SetOnlineAsync(character, shipId, moduleId, online, call.Cancellation))
+        ShipCondition? inSpaceCondition = null;
+        long? inSpaceConditionRevision = null;
+        if (online && health is not null && call.Session.DockedLocationId is null
+            && call.Session.GetInt("structureid") is null
+            && call.Session.GetInt("shipid") == shipId
+            && call.Session.GetInt("solarsystemid") == bound.LocationId)
+        {
+            inSpaceConditionRevision = await ships.ShipConditionRevisionAsync(shipId, call.Cancellation);
+            if (await health.ConditionAsync(call.Session, call.Cancellation) is { } liveCondition)
+            {
+                inSpaceCondition = new ShipCondition(
+                    liveCondition.Damage, liveCondition.Charge, liveCondition.ShieldCharge, liveCondition.ArmorDamage, false);
+            }
+            else
+            {
+                inSpaceConditionRevision = null;
+            }
+        }
+        switch (await ships.SetOnlineAsync(
+            character, shipId, moduleId, online, call.Cancellation, inSpaceCondition, inSpaceConditionRevision))
         {
             case ShipChanged changed:
                 // what the module changed (its resonances, its numbers) reaches the simulation of a ship in space; nothing is sent when there is none
+                ShipNotifications.Send(call.Session, character, changed, item => DogmaInfo.RowOf(item, statics.Type(item.TypeId)), Py.FileTimeFromUnixMs(nowUnixMs()));
                 if (modules is not null)
                 {
                     await modules.RefreshShipAsync(call.Session, call.Cancellation);
                 }
-                ShipNotifications.Send(call.Session, character, changed, item => DogmaInfo.RowOf(item, statics.Type(item.TypeId)), Py.FileTimeFromUnixMs(nowUnixMs()));
                 return None;
             case ShipRefused refused:
-                if (!online && modules is not null)
+                if ((!online || refused.Reason == ShipRefusal.ConditionChanged) && modules is not null)
                 {
                     await modules.RefreshShipAsync(call.Session, call.Cancellation);
                 }

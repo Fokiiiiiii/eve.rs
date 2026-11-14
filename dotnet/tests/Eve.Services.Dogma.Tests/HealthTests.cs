@@ -82,17 +82,17 @@ public class HealthTests
         var whole = await rig.CallAsync(session, "GetAllInfo", oid, Everything);
         var (capacity, shield, armor, hull) = (Attribute(whole, shipId, 18), Attribute(whole, shipId, 263), Attribute(whole, shipId, 265), Attribute(whole, shipId, 9));
         Assert.Equal((0, capacity, shield, 0), (Attribute(whole, shipId, 3), Attribute(whole, shipId, 18), Attribute(whole, shipId, 264), Attribute(whole, shipId, 266)));
-        Assert.Equal((0.0, 1.0, 0.0, 1.0, false), State(whole, shipId).ToTuple5());
+        Assert.Equal((Attribute(whole, shipId, 3), capacity, Attribute(whole, shipId, 266), Attribute(whole, shipId, 264), false), State(whole, shipId));
 
         await rig.SlashAsync(session, "/dmg light");
         var light = await rig.CallAsync(session, "GetAllInfo", oid, Everything);
 
-        // the ship: its hull as a fraction, the capacitor, shield and armor in points
-        Assert.Equal(0.1, Attribute(light, shipId, 3));
+        // the ship: hull damage, capacitor, shield charge and armor damage in their dogma units
+        Assert.Equal(Math.Round(hull * 0.1, 6), Attribute(light, shipId, 3));
         Assert.Equal(Math.Round(capacity * 0.65, 6), Attribute(light, shipId, 18));
         Assert.Equal(Math.Round(shield * 0.7, 6), Attribute(light, shipId, 264));
         Assert.Equal(Math.Round(armor * 0.18, 6), Attribute(light, shipId, 266));
-        Assert.Equal((0.1, 0.65, 0.18, 0.7, false), State(light, shipId));
+        Assert.Equal((Attribute(light, shipId, 3), Attribute(light, shipId, 18), Attribute(light, shipId, 266), Attribute(light, shipId, 264), false), State(light, shipId));
         // a module: its hull in points of its own, its shield and armor as the fractions it keeps them as
         var moduleHull = Attribute(light, modules[0], 9);
         Assert.Equal(Math.Round(moduleHull * 0.08, 6), Attribute(light, modules[0], 3));
@@ -110,10 +110,14 @@ public class HealthTests
     {
         var (rig, _, session, oid, shipId, _) = await DockedAsync();
         await using var _ = rig;
+        var before = await rig.CallAsync(session, "GetAllInfo", oid, Everything);
+        var (hull, capacity, shield, armor) = (Attribute(before, shipId, 9), Attribute(before, shipId, 482), Attribute(before, shipId, 263), Attribute(before, shipId, 265));
         Assert.Equal("Applied medium test damage to your active ship and 3 fitted modules.", await rig.SlashAsync(session, "/dmg"));
-        Assert.Equal((0.2, 0.35, 0.35, 0.45, false), State(await rig.CallAsync(session, "GetAllInfo", oid, Everything), shipId));
+        var medium = await rig.CallAsync(session, "GetAllInfo", oid, Everything);
+        Assert.Equal((Math.Round(hull * 0.2, 6), Math.Round(capacity * 0.35, 6), Math.Round(armor * 0.35, 6), Math.Round(shield * 0.45, 6), false), State(medium, shipId));
         Assert.Equal("Applied heavy test damage to your active ship and 3 fitted modules.", await rig.SlashAsync(session, "/DMG Heavy"));
-        Assert.Equal((0.35, 0.18, 0.6, 0.22, false), State(await rig.CallAsync(session, "GetAllInfo", oid, Everything), shipId));
+        var heavy = await rig.CallAsync(session, "GetAllInfo", oid, Everything);
+        Assert.Equal((Math.Round(hull * 0.35, 6), Math.Round(capacity * 0.18, 6), Math.Round(armor * 0.6, 6), Math.Round(shield * 0.22, 6), false), State(heavy, shipId));
     }
 
     [PgFact]
@@ -156,7 +160,7 @@ public class HealthTests
                 (JsSemantics.StringValue(line.Items[0]), Id(line.Items[1]), Id(line.Items[2]), Id(line.Items[3]), Number(line.Items[5]), Number(line.Items[6])));
         }
         var healed = await rig.CallAsync(session, "GetAllInfo", oid, Everything);
-        Assert.Equal((0.0, 1.0, 0.0, 1.0, false), State(healed, shipId).ToTuple5());
+        Assert.Equal((Attribute(healed, shipId, 3), Attribute(healed, shipId, 18), Attribute(healed, shipId, 266), Attribute(healed, shipId, 264), false), State(healed, shipId));
         // a module that was mended has all of its shield (one nobody has touched has none)
         Assert.All(modules, m => Assert.Equal((0.0, 0.0, 0.0, 1.0, false), State(healed, m)));
         Assert.Equal(1.0, Attribute(healed, modules[0], 264));
@@ -229,7 +233,9 @@ public class HealthTests
 
         var info = await rig.CallAsync(flying, "GetAllInfo", oid, Everything);
 
-        Assert.Equal((0.35, 1.0, 0.5, 1.0), (Attribute(info, shipId, 3), State(info, shipId).Charge, State(info, shipId).ArmorDamage, State(info, shipId).ShieldCharge));
+        Assert.Equal((Math.Round(Attribute(info, shipId, 9) * 0.35, 6), Attribute(info, shipId, 18),
+            Math.Round(Attribute(info, shipId, 265) * 0.5, 6), Attribute(info, shipId, 263)),
+            (Attribute(info, shipId, 3), State(info, shipId).Charge, State(info, shipId).ArmorDamage, State(info, shipId).ShieldCharge));
         Assert.Equal(Attribute(whole, shipId, 263), Attribute(info, shipId, 264));
         Assert.Equal(Math.Round(Attribute(whole, shipId, 265) * 0.5, 6), Attribute(info, shipId, 266));
         // the capacitor holds all it can (the hangar's, damaged, held 65 of a hundred)

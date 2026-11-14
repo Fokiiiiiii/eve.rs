@@ -77,7 +77,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
         {
             attributes.TryAdd(load, s.World.Get(s.Ship.Id, load));
         }
-        attributes[Damage] = s.Condition.Damage;
+        attributes[Damage] = Round6(s.World.Get(s.Ship.Id, HullPoints) * s.Condition.Damage);
         var capacitor = s.World.Get(s.Ship.Id, CapacitorCapacity);
         if (capacitor > 0)
         {
@@ -173,12 +173,12 @@ public sealed class DogmaInfo(DogmaStatic statics)
         return DogmaWire.ItemInfo(0, invItem, new PyDict([]), DogmaWire.Attributes(attributes), now, key);
     }
 
-    private PyValue ShipInfo(ShipSnapshot s, long now, bool docked)
+    private PyValue ShipInfo(ShipSnapshot s, long now, bool docked, IReadOnlyDictionary<int, double> shipAttributes)
     {
         var entries = new List<KeyValuePair<PyValue, PyValue>>
         {
             new(InventoryWire.Id(s.Ship.Id), DogmaWire.ItemInfo(
-                s.Ship.Id, Row(RowOf(s.Ship, statics.Type(s.Ship.TypeId)), false), new PyDict([]), DogmaWire.Attributes(ShipAttributes(s)), now)),
+                s.Ship.Id, Row(RowOf(s.Ship, statics.Type(s.Ship.TypeId)), false), new PyDict([]), DogmaWire.Attributes(shipAttributes), now)),
         };
         entries.AddRange(s.Fitted.Select(m => new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(m.Id), ModuleInfo(s, m, now))));
         // a charge in a slot is known to the client by a key of its own, and, in a station, by its item too (in space the item is not told)
@@ -234,12 +234,17 @@ public sealed class DogmaInfo(DogmaStatic statics)
             new(new PyStr("line"), Py.Tuple(InventoryWire.Id(shipId), new PyInt(charge.Flag), new PyInt(charge.TypeId), InventoryWire.Id(charge.Quantity))),
         ]));
 
-    private PyValue ShipState(ShipSnapshot s, long now)
+    private PyValue ShipState(ShipSnapshot s, IReadOnlyDictionary<int, double> shipAttributes, long now)
     {
         var rows = new List<KeyValuePair<PyValue, PyValue>>
         {
             new(InventoryWire.Id(s.Ship.Id), DogmaWire.InstanceRow(
-                s.Ship.Id, damage: s.Condition.Damage, charge: s.Condition.Charge, armorDamage: s.Condition.ArmorDamage, shieldCharge: s.Condition.ShieldCharge, incapacitated: s.Condition.Incapacitated)),
+                s.Ship.Id,
+                damage: shipAttributes.GetValueOrDefault(Damage),
+                charge: shipAttributes.GetValueOrDefault(Charge),
+                armorDamage: shipAttributes.GetValueOrDefault(ArmorDamage),
+                shieldCharge: shipAttributes.GetValueOrDefault(ShieldCharge),
+                incapacitated: s.Condition.Incapacitated)),
             new(InventoryWire.Id(s.Character.Id), DogmaWire.InstanceRow(s.Character.Id, online: true, skillPoints: (int)s.TotalSkillPoints)),
         };
         rows.AddRange(s.Fitted.Select(m =>
@@ -266,6 +271,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
     /// </summary>
     public PyValue GetAllInfo(ShipSnapshot s, bool getCharInfo, bool getShipInfo, bool getStructureInfo, long fileTime, bool docked = true, Brain? brain = null)
     {
+        var shipAttributes = getShipInfo ? ShipAttributes(s) : null;
         var structureInfo = getStructureInfo && s.World.StructureId == s.Ship.Id
             ? new PyDict([new(InventoryWire.Id(s.Ship.Id), DogmaWire.ItemInfo(
                 s.Ship.Id, Row(RowOf(s.Ship, statics.Type(s.Ship.TypeId)), false), new PyDict([]),
@@ -283,9 +289,9 @@ public sealed class DogmaInfo(DogmaStatic statics)
             ("shipModifiedCharAttribs", getShipInfo ? CharacterInfo(s, ShipModifiedCharacterAttributes(s), fileTime) : PyNone.Instance),
             ("structureInfo", structureInfo),
             ("locationInfo", new PyDict([])),
-            ("shipInfo", getShipInfo ? ShipInfo(s, fileTime, docked) : new PyDict([])),
+            ("shipInfo", getShipInfo ? ShipInfo(s, fileTime, docked, shipAttributes!) : new PyDict([])),
             ("activeShipID", InventoryWire.Id(s.Ship.Id)),
-            ("shipState", getShipInfo ? ShipState(s, fileTime) : PyNone.Instance),
+            ("shipState", getShipInfo ? ShipState(s, shipAttributes!, fileTime) : PyNone.Instance),
             ("charInfo", includeCharacter
                 ? Py.Tuple(
                     new PyDict([new(InventoryWire.Id(s.Character.Id), CharacterInfo(s, CharacterAttributes(s), fileTime))]),

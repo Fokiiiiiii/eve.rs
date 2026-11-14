@@ -363,6 +363,7 @@ public partial class HostServerTests
         public ModuleResult? OfflineAnswer { get; set; } = ModuleResult.Done;
         public List<long> OfflineRequests { get; } = [];
         public List<string> Refreshes { get; } = [];
+        public Action<ClientSession>? OnRefresh { get; set; }
 
         public Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
         {
@@ -394,6 +395,7 @@ public partial class HostServerTests
         public Task RefreshShipAsync(ClientSession session, CancellationToken cancellationToken)
         {
             Refreshes.Add("refresh");
+            OnRefresh?.Invoke(session);
             return Task.CompletedTask;
         }
 

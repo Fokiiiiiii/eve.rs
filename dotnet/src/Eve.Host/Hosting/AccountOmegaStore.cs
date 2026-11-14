@@ -23,4 +23,11 @@ public sealed class AccountOmegaStore(IAccountSubscriptions subscriptions) : IOm
             ? Py.FileTimeFromUnixMs(endsAt.ToUnixTimeMilliseconds()).ToString(CultureInfo.InvariantCulture)
             : null;
     }
+
+    public IReadOnlyList<(long FromFileTime, long ExpiryFileTime)>? GetOmegaTrainingHistory(long accountId)
+    {
+        if (accountId <= 0 || accountId > uint.MaxValue)
+            return null;
+        return subscriptions.SubscriptionTrainingHistory((uint)accountId);
+    }
 }

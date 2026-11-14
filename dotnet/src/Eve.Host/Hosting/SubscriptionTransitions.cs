@@ -15,7 +15,7 @@ public static class SubscriptionTransitions
     public static void SetSubscriptionEnd(
         IAccountSubscriptions subscriptions, OmegaLicenses licenses, IEnumerable<ClientSession> openSessions, uint accountId, DateTimeOffset endsAt)
     {
-        subscriptions.SetSubscriptionEndsAt(accountId, endsAt);
+        subscriptions.SetSubscriptionEndsAt(accountId, endsAt, DateTimeOffset.FromFileTime(licenses.NowFileTime));
         Announce(openSessions, accountId, endsAt, licenses.NowFileTime);
     }
 

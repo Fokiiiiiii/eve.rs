@@ -1071,7 +1071,8 @@ public class SkillHandlerTests
 
         rig.Wait(TimeSpan.FromMinutes(2));
         Assert.Equal(new PyDict([]), await Ask("GetBoosters"));
-        Assert.Null(await rig.ItemStore.GetAsync(activeItem.Id));
+        Assert.Equal(activeItem, await rig.ItemStore.GetAsync(activeItem.Id));
+        Assert.Single(await rig.Store.ExpiredSkillBoostersAsync(characterId, Py.FileTimeFromUnixMs(rig.Now)));
         Assert.Null(await rig.Store.ActiveSkillBoosterAsync(
             characterId, activeItem.Id, Py.FileTimeFromUnixMs(rig.Now)));
     }
@@ -1796,7 +1797,7 @@ public class SkillHandlerTests
         Assert.Equal(queue.State.Running, after.State.Running);
         Assert.Equal(queue.State.ActiveStart, after.State.ActiveStart);
         Assert.Equal(queue.State.Entries.Select(e => (e.TypeId, e.ToLevel)), after.State.Entries.Select(e => (e.TypeId, e.ToLevel)));
-        Assert.Equal(queue.Queue, after.Queue);
+        AssertQueueProjectionEqual(queue.Queue, after.Queue);
     }
 
     [PgFact]
@@ -1849,7 +1850,24 @@ public class SkillHandlerTests
         Assert.Equal(queue.State.Running, after.State.Running);
         Assert.Equal(queue.State.ActiveStart, after.State.ActiveStart);
         Assert.Equal(queue.State.Entries.Select(e => (e.TypeId, e.ToLevel)), after.State.Entries.Select(e => (e.TypeId, e.ToLevel)));
-        Assert.Equal(queue.Queue, after.Queue);
+        AssertQueueProjectionEqual(queue.Queue, after.Queue);
         Assert.Equal(SkillPoints.ForTraining(queuedSkill.Rank, 1), (await rig.Store.ForCharacterAsync(character)).Single(s => s.TypeId == queuedSkillType).SkillPoints);
+    }
+
+    private static void AssertQueueProjectionEqual(IReadOnlyList<ProjectedEntry> expected, IReadOnlyList<ProjectedEntry> actual)
+    {
+        Assert.Equal(expected.Count, actual.Count);
+        for (var index = 0; index < expected.Count; index++)
+        {
+            Assert.Equal(expected[index].Position, actual[index].Position);
+            Assert.Equal(expected[index].TypeId, actual[index].TypeId);
+            Assert.Equal(expected[index].ToLevel, actual[index].ToLevel);
+            Assert.Equal(expected[index].StartPoints, actual[index].StartPoints);
+            Assert.Equal(expected[index].DestinationPoints, actual[index].DestinationPoints);
+            Assert.Equal(expected[index].Start, actual[index].Start);
+            Assert.Equal(expected[index].End, actual[index].End);
+            Assert.Equal(expected[index].PointsPerMinute, actual[index].PointsPerMinute);
+            Assert.Equal(expected[index].RateChanges ?? [], actual[index].RateChanges ?? []);
+        }
     }
 }

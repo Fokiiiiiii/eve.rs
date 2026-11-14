@@ -87,12 +87,78 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
         return endsAt;
     }
 
-    public void SetSubscriptionEndsAt(uint accountId, DateTimeOffset endsAt)
+    /// <summary>Sets a fixture/import's initial entitlement frame, with no claimed transition time.</summary>
+    public void SetSubscriptionEndsAt(uint accountId, DateTimeOffset endsAt) =>
+        SetInitialSubscriptionEndAsync(accountId, endsAt, CancellationToken.None).GetAwaiter().GetResult();
+
+    /// <summary>Changes subscription state at a known time and records that transition in the same account transaction.</summary>
+    public void SetSubscriptionEndsAt(uint accountId, DateTimeOffset endsAt, DateTimeOffset effectiveAt) =>
+        SetSubscriptionEndAtAsync(accountId, endsAt, effectiveAt, CancellationToken.None).GetAwaiter().GetResult();
+
+    private async Task SetInitialSubscriptionEndAsync(uint accountId, DateTimeOffset endsAt, CancellationToken cancellationToken)
     {
-        using var command = _source.CreateCommand($"UPDATE {Schema}.accounts SET subscription_end_at = $2 WHERE id = $1");
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        if (await TryLockAccountAsync(connection, transaction, accountId, cancellationToken) is null)
+            return;
+        await using (var update = new NpgsqlCommand($"UPDATE {Schema}.accounts SET subscription_end_at = $2 WHERE id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = checked((int)accountId) }, new() { Value = endsAt } },
+        })
+            await update.ExecuteNonQueryAsync(cancellationToken);
+        await using (var delete = new NpgsqlCommand($"DELETE FROM {Schema}.account_omega_training_history WHERE account_id = $1", connection, transaction)
+        {
+            Parameters = { new() { Value = checked((int)accountId) } },
+        })
+            await delete.ExecuteNonQueryAsync(cancellationToken);
+        await InsertSubscriptionHistoryFrameAsync(
+            connection, transaction, accountId, DateTimeOffset.FromFileTime(0), endsAt, cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task SetSubscriptionEndAtAsync(
+        uint accountId, DateTimeOffset endsAt, DateTimeOffset effectiveAt, CancellationToken cancellationToken)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        var previous = await TryLockAccountAsync(connection, transaction, accountId, cancellationToken);
+        if (previous is null)
+            return;
+        if (previous.Value != endsAt)
+        {
+            await using (var update = new NpgsqlCommand($"UPDATE {Schema}.accounts SET subscription_end_at = $2 WHERE id = $1", connection, transaction)
+            {
+                Parameters = { new() { Value = checked((int)accountId) }, new() { Value = endsAt } },
+            })
+                await update.ExecuteNonQueryAsync(cancellationToken);
+            await AppendSubscriptionHistoryAsync(
+                connection, transaction, accountId, previous.Value, endsAt, effectiveAt, cancellationToken);
+        }
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    /// <summary>The Omega training intervals with the current expiry, read in one statement snapshot.</summary>
+    public IReadOnlyList<(long FromFileTime, long ExpiryFileTime)> SubscriptionTrainingHistory(uint accountId)
+    {
+        using var command = _source.CreateCommand(
+            $"SELECT history.effective_at, history.expiry_at, account.subscription_end_at " +
+            $"FROM {Schema}.accounts AS account LEFT JOIN {Schema}.account_omega_training_history AS history " +
+            "ON history.account_id = account.id WHERE account.id = $1 ORDER BY history.effective_at NULLS LAST");
         command.Parameters.Add(new NpgsqlParameter { Value = checked((int)accountId) });
-        command.Parameters.Add(new NpgsqlParameter { Value = endsAt });
-        command.ExecuteNonQuery();
+        using var reader = command.ExecuteReader();
+        var result = new List<(long FromFileTime, long ExpiryFileTime)>();
+        DateTimeOffset? currentExpiry = null;
+        while (reader.Read())
+        {
+            currentExpiry = reader.GetFieldValue<DateTimeOffset>(2);
+            if (!reader.IsDBNull(0))
+            {
+                result.Add((reader.GetFieldValue<DateTimeOffset>(0).ToFileTime(), reader.GetFieldValue<DateTimeOffset>(1).ToFileTime()));
+            }
+        }
+        if (result.Count == 0 && currentExpiry is { } expiry)
+            result.Add((0, expiry.ToFileTime()));
+        return result;
     }
 
     /// <summary>The account's authoritative age gate state, or false for an unknown account.</summary>
@@ -138,6 +204,8 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
                 Parameters = { new() { Value = checked((int)accountId) }, new() { Value = endsAt } },
             };
             await update.ExecuteNonQueryAsync(cancellationToken);
+            await AppendSubscriptionHistoryAsync(
+                connection, transaction, accountId, stored, endsAt, now, cancellationToken);
         }
         return endsAt;
     }
@@ -216,18 +284,87 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
     private async Task<DateTimeOffset> LockAccountAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, uint accountId, CancellationToken cancellationToken)
     {
+        return await TryLockAccountAsync(connection, transaction, accountId, cancellationToken)
+            ?? throw new InvalidOperationException($"Account {accountId} does not exist.");
+    }
+
+    private async Task<DateTimeOffset?> TryLockAccountAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, uint accountId, CancellationToken cancellationToken)
+    {
         await using var command = new NpgsqlCommand(
             $"SELECT subscription_end_at FROM {Schema}.accounts WHERE id = $1 FOR UPDATE", connection, transaction)
         {
             Parameters = { new() { Value = checked((int)accountId) } },
         };
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
-        if (!await reader.ReadAsync(cancellationToken))
+        return await reader.ReadAsync(cancellationToken) ? reader.GetFieldValue<DateTimeOffset>(0) : null;
+    }
+
+    private async Task AppendSubscriptionHistoryAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, uint accountId,
+        DateTimeOffset previousExpiry, DateTimeOffset nextExpiry, DateTimeOffset effectiveAt,
+        CancellationToken cancellationToken)
+    {
+        var frames = new List<(DateTimeOffset EffectiveAt, DateTimeOffset ExpiryAt)>();
+        await using (var read = new NpgsqlCommand(
+            $"SELECT effective_at, expiry_at FROM {Schema}.account_omega_training_history WHERE account_id = $1 ORDER BY effective_at FOR UPDATE",
+            connection, transaction)
         {
-            throw new InvalidOperationException($"Account {accountId} does not exist.");
+            Parameters = { new() { Value = checked((int)accountId) } },
+        })
+        await using (var reader = await read.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await reader.ReadAsync(cancellationToken))
+                frames.Add((reader.GetFieldValue<DateTimeOffset>(0), reader.GetFieldValue<DateTimeOffset>(1)));
         }
-        // a typed read: ExecuteScalar returns timestamptz as DateTime, which is not the DateTimeOffset the rules use
-        return reader.GetFieldValue<DateTimeOffset>(0);
+
+        if (frames.Count == 0)
+        {
+            frames.Add((DateTimeOffset.FromFileTime(0), previousExpiry));
+            await InsertSubscriptionHistoryFrameAsync(
+                connection, transaction, accountId, frames[0].EffectiveAt, frames[0].ExpiryAt, cancellationToken);
+        }
+        var last = frames[^1];
+        if (last.ExpiryAt != previousExpiry || effectiveAt < last.EffectiveAt)
+            throw new InvalidOperationException($"The Omega training history for account {accountId} is not in step with its subscription.");
+
+        if (effectiveAt == last.EffectiveAt)
+        {
+            await using var update = new NpgsqlCommand(
+                $"UPDATE {Schema}.account_omega_training_history SET expiry_at = $3 WHERE account_id = $1 AND effective_at = $2",
+                connection, transaction)
+            {
+                Parameters =
+                {
+                    new() { Value = checked((int)accountId) },
+                    new() { Value = effectiveAt },
+                    new() { Value = nextExpiry },
+                },
+            };
+            await update.ExecuteNonQueryAsync(cancellationToken);
+            return;
+        }
+
+        await InsertSubscriptionHistoryFrameAsync(
+            connection, transaction, accountId, effectiveAt, nextExpiry, cancellationToken);
+    }
+
+    private async Task InsertSubscriptionHistoryFrameAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, uint accountId,
+        DateTimeOffset effectiveAt, DateTimeOffset expiryAt, CancellationToken cancellationToken)
+    {
+        await using var insert = new NpgsqlCommand(
+            $"INSERT INTO {Schema}.account_omega_training_history (account_id, effective_at, expiry_at) VALUES ($1, $2, $3)",
+            connection, transaction)
+        {
+            Parameters =
+            {
+                new() { Value = checked((int)accountId) },
+                new() { Value = effectiveAt },
+                new() { Value = expiryAt },
+            },
+        };
+        await insert.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async ValueTask<LoginResult> LoginAsync(LoginAttempt attempt, CancellationToken cancellationToken)

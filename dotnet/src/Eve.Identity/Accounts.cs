@@ -135,6 +135,13 @@ public interface IAccountSubscriptions
 
     /// <summary>Sets the stored end time. The next read, by any path, sees it.</summary>
     void SetSubscriptionEndsAt(uint accountId, DateTimeOffset endsAt);
+
+    /// <summary>Sets the initial stored entitlement frame (used by fixtures and imports that have no transition time).</summary>
+    void SetSubscriptionEndsAt(uint accountId, DateTimeOffset endsAt, DateTimeOffset effectiveAt) => SetSubscriptionEndsAt(accountId, endsAt);
+
+    /// <summary>The ordered Omega training entitlement history; legacy stores treat their current expiry as the initial frame.</summary>
+    IReadOnlyList<(long FromFileTime, long ExpiryFileTime)> SubscriptionTrainingHistory(uint accountId) =>
+        SubscriptionEndsAt(accountId) is { } endsAt ? [(0, endsAt.ToFileTime())] : [];
 }
 
 public sealed record AccountOptions
@@ -183,6 +190,9 @@ public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup
         public bool Banned { get; set; }
 
         public DateTimeOffset SubscriptionEndsAt { get; set; } = SubscriptionPolicy.NewAccountSubscriptionEnd;
+
+        public List<(long FromFileTime, long ExpiryFileTime)> SubscriptionTrainingHistory { get; } =
+            [(0, SubscriptionPolicy.NewAccountSubscriptionEnd.ToFileTime())];
     }
 
     /// <summary>The accounts themselves, shared by the views <see cref="WithOptions"/> makes.</summary>
@@ -234,8 +244,46 @@ public sealed class InMemoryAccountDirectory : IAccountDirectory, IAccountLookup
     {
         if (_store.Accounts.Values.FirstOrDefault(a => a.Id == accountId) is { } account)
         {
-            account.SubscriptionEndsAt = endsAt;
+            lock (account.SubscriptionTrainingHistory)
+            {
+                account.SubscriptionEndsAt = endsAt;
+                account.SubscriptionTrainingHistory.Clear();
+                account.SubscriptionTrainingHistory.Add((0, endsAt.ToFileTime()));
+            }
         }
+    }
+
+    public void SetSubscriptionEndsAt(uint accountId, DateTimeOffset endsAt, DateTimeOffset effectiveAt)
+    {
+        if (_store.Accounts.Values.FirstOrDefault(a => a.Id == accountId) is not { } account)
+            return;
+        lock (account.SubscriptionTrainingHistory)
+        {
+            var history = account.SubscriptionTrainingHistory;
+            var nextFrom = effectiveAt.ToFileTime();
+            if (history.Count == 0)
+                history.Add((0, account.SubscriptionEndsAt.ToFileTime()));
+            var last = history[^1];
+            if (last.ExpiryFileTime != account.SubscriptionEndsAt.ToFileTime() || nextFrom < last.FromFileTime)
+                throw new InvalidOperationException("The subscription training history is not in step with the account.");
+            if (account.SubscriptionEndsAt != endsAt)
+            {
+                if (last.FromFileTime == nextFrom)
+                    history[^1] = (nextFrom, endsAt.ToFileTime());
+                else
+                    history.Add((nextFrom, endsAt.ToFileTime()));
+                account.SubscriptionEndsAt = endsAt;
+            }
+        }
+    }
+
+    public IReadOnlyList<(long FromFileTime, long ExpiryFileTime)> SubscriptionTrainingHistory(uint accountId)
+    {
+        var account = _store.Accounts.Values.FirstOrDefault(a => a.Id == accountId);
+        if (account is null)
+            return [];
+        lock (account.SubscriptionTrainingHistory)
+            return [.. account.SubscriptionTrainingHistory];
     }
 
     public ValueTask<bool> LinkSsoIdentityAsync(uint accountId, VerifiedSsoIdentity identity, CancellationToken cancellationToken)

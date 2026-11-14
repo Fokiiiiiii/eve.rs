@@ -21,7 +21,23 @@ public sealed record QueueState(IReadOnlyList<QueueEntry> Entries, bool Active, 
 /// A line of the queue worked out: the points it starts and ends at and, when the queue runs, when. A line whose skill the character does not
 /// have is not listed (its position is).
 /// </summary>
-public sealed record ProjectedEntry(int Position, int TypeId, int ToLevel, long StartPoints, long DestinationPoints, long? Start, long? End, double PointsPerMinute);
+public sealed record TrainingRateChange(long AtFileTime, double PointsPerMinute);
+
+/// <summary>An account's Omega expiry from an effective FILETIME onward.</summary>
+public sealed record TrainingEntitlementFrame(long FromFileTime, long ExpiryFileTime);
+
+/// <summary>The points per minute at a time, and the times when the character's training rate can change.</summary>
+public sealed record TrainingRateSchedule(
+    Func<SkillType, long, double> PointsPerMinuteAt,
+    Func<long, long, IReadOnlyList<long>> BoundariesBetween)
+{
+    public static TrainingRateSchedule Constant(Func<SkillType, double> pointsPerMinute) =>
+        new((skill, _) => pointsPerMinute(skill), (_, _) => []);
+}
+
+public sealed record ProjectedEntry(
+    int Position, int TypeId, int ToLevel, long StartPoints, long DestinationPoints, long? Start, long? End,
+    double PointsPerMinute, IReadOnlyList<TrainingRateChange>? RateChanges = null);
 
 /// <summary>The queue worked out from a moment: its lines, when the last ends, and the skills as they will be when it has run.</summary>
 public sealed record Projection(IReadOnlyList<ProjectedEntry> Entries, long? EndTime, IReadOnlyDictionary<int, CharacterSkill> Skills);
@@ -83,21 +99,54 @@ public static class Training
     public static long DurationTicks(long remaining, double pointsPerMinute) =>
         remaining <= 0 || pointsPerMinute <= 0 ? 0 : (long)Math.Floor(remaining / pointsPerMinute * TicksPerMinute);
 
+    private static long DurationTicksFractional(double remaining, double pointsPerMinute) =>
+        remaining <= 0 || pointsPerMinute <= 0 ? 0 : (long)Math.Floor(remaining / pointsPerMinute * TicksPerMinute);
+
     /// <summary>The points a skill has at <paramref name="sample"/> while training from <paramref name="start"/> points (at <paramref name="startTime"/>) towards <paramref name="destination"/>.</summary>
     public static long PointsAt(long start, long destination, long startTime, long sample, double pointsPerMinute)
+        => PointsAt(start, destination, startTime, sample, pointsPerMinute, []);
+
+    /// <summary>The points at a sample when the rate changes at the supplied FILETIME boundaries.</summary>
+    public static long PointsAt(long start, long destination, long startTime, long sample, double pointsPerMinute,
+        IReadOnlyList<TrainingRateChange> rateChanges)
     {
         var from = Math.Max(0, start);
         var to = Math.Max(from, destination);
-        if (sample <= startTime || pointsPerMinute <= 0)
+        if (sample <= startTime)
         {
             return from;
         }
-        var gained = (long)Math.Floor((double)(sample - startTime) / TicksPerMinute * pointsPerMinute);
-        return Math.Max(from, Math.Min(to, from + Math.Max(0, gained)));
+        var points = (double)from;
+        var at = startTime;
+        var rate = pointsPerMinute;
+        foreach (var change in rateChanges.OrderBy(change => change.AtFileTime))
+        {
+            if (change.AtFileTime <= at || change.AtFileTime > sample)
+                continue;
+            points = AddSegment(points, at, change.AtFileTime, rate);
+            if (points >= to)
+                return to;
+            at = change.AtFileTime;
+            rate = change.PointsPerMinute;
+        }
+        points = AddSegment(points, at, sample, rate);
+        return Math.Min(to, Math.Max(from, (long)Math.Floor(points)));
+    }
+
+    private static double AddSegment(double points, long start, long end, double pointsPerMinute)
+    {
+        if (end <= start || pointsPerMinute <= 0)
+            return points;
+        return points + ((double)(end - start) / TicksPerMinute * pointsPerMinute);
     }
 
     /// <summary>The queue worked out. The lines run one after the other from the moment the running one began (or from <paramref name="now"/>).</summary>
-    public static Projection Project(QueueState state, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog, Func<SkillType, double> pointsPerMinute, long now)
+    public static Projection Project(QueueState state, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog,
+        Func<SkillType, double> pointsPerMinute, long now) =>
+        Project(state, skills, catalog, TrainingRateSchedule.Constant(pointsPerMinute), now);
+
+    public static Projection Project(QueueState state, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog,
+        TrainingRateSchedule rates, long now)
     {
         var projected = skills.ToDictionary(s => s.Key, s => s.Value);
         var entries = new List<ProjectedEntry>();
@@ -114,11 +163,14 @@ public static class Training
                 ? Math.Max(SkillPoints.ForTraining(type.Rank, entry.ToLevel - 1), skill.SkillPoints)
                 : SkillPoints.ForTraining(type.Rank, entry.ToLevel - 1);
             var destination = SkillPoints.ForTraining(type.Rank, entry.ToLevel);
-            var rate = pointsPerMinute(type);
-            var duration = running ? DurationTicks(destination - startPoints, rate) : 0;
             long? start = running ? nextStart : null;
-            long? end = running && start is { } begun ? begun + duration : null;
-            entries.Add(new ProjectedEntry(position, entry.TypeId, entry.ToLevel, startPoints, destination, start, end, rate));
+            var rate = rates.PointsPerMinuteAt(type, start ?? now);
+            var timing = running && start is { } begun
+                ? DurationAcrossBoundaries(type, destination - startPoints, begun, rates)
+                : (0L, rate, (IReadOnlyList<TrainingRateChange>)[]);
+            long? end = running && start is { } started ? started + timing.Item1 : null;
+            entries.Add(new ProjectedEntry(position, entry.TypeId, entry.ToLevel, startPoints, destination, start, end,
+                timing.Item2, timing.Item3));
             projected[entry.TypeId] = new CharacterSkill(entry.TypeId, SkillPoints.LevelAt(type.Rank, destination), destination);
             if (running)
             {
@@ -128,17 +180,52 @@ public static class Training
         return new Projection(entries, entries.Count > 0 ? entries[^1].End : null, projected);
     }
 
+    private static (long DurationTicks, double StartRate, IReadOnlyList<TrainingRateChange> RateChanges) DurationAcrossBoundaries(
+        SkillType type, long remaining, long start, TrainingRateSchedule rates)
+    {
+        var rate = rates.PointsPerMinuteAt(type, start);
+        if (remaining <= 0 || rate <= 0)
+            return (0, rate, []);
+
+        var cursor = start;
+        double pointsEarned = 0;
+        var changes = new List<TrainingRateChange>();
+        foreach (var boundary in rates.BoundariesBetween(start, long.MaxValue).Where(time => time > cursor).Distinct().Order())
+        {
+            var atBoundary = (double)(boundary - cursor) / TicksPerMinute * rate;
+            if (pointsEarned + atBoundary >= remaining)
+                return (cursor - start + DurationTicksFractional(remaining - pointsEarned, rate),
+                    rates.PointsPerMinuteAt(type, start), changes);
+
+            pointsEarned += atBoundary;
+            cursor = boundary;
+            rate = rates.PointsPerMinuteAt(type, boundary);
+            changes.Add(new TrainingRateChange(boundary, rate));
+        }
+        var remainingPoints = Math.Max(0, remaining - pointsEarned);
+        var remainingTicks = DurationTicksFractional(remainingPoints, rate);
+        return (cursor - start + remainingTicks, rates.PointsPerMinuteAt(type, start), changes);
+    }
+
     /// <summary>
     /// Whether a queue can be saved, given the skills the character has (as they are now, not as they will be): the first rule it breaks, or null.
     /// The lines are checked in order, each against what the lines before it will have trained.
     /// </summary>
-    public static QueueError? Validate(IReadOnlyList<QueueEntry> entries, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog, Func<SkillType, double> pointsPerMinute, long now, long freeSkillPoints = 0, bool isAlphaClone = false, int raceId = 0, long pointsAlreadyTrainedInCurrentLine = 0)
+    public static QueueError? Validate(IReadOnlyList<QueueEntry> entries, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog,
+        Func<SkillType, double> pointsPerMinute, long now, long freeSkillPoints = 0, bool isAlphaClone = false, int raceId = 0,
+        long pointsAlreadyTrainedInCurrentLine = 0) =>
+        Validate(entries, skills, catalog, TrainingRateSchedule.Constant(pointsPerMinute), now, freeSkillPoints, isAlphaClone, raceId,
+            pointsAlreadyTrainedInCurrentLine);
+
+    public static QueueError? Validate(IReadOnlyList<QueueEntry> entries, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog,
+        TrainingRateSchedule rates, long now, long freeSkillPoints = 0, bool isAlphaClone = false, int raceId = 0,
+        long pointsAlreadyTrainedInCurrentLine = 0)
     {
         if (entries.Count > MaxQueueLength)
         {
             return QueueError.TooManySkills;
         }
-        var whole = Project(new QueueState(entries, true, now), skills, catalog, pointsPerMinute, now);
+        var whole = Project(new QueueState(entries, true, now), skills, catalog, rates, now);
         if (whole.EndTime is { } end && end - now > MaxQueueTicks)
         {
             return QueueError.TooLong;
@@ -151,6 +238,7 @@ public static class Training
             {
                 return QueueError.SkillNotUploaded;
             }
+            var skill = skills[entry.TypeId];
             if (entry.ToLevel > SkillPoints.MaxLevel)
             {
                 return QueueError.PastMaximumLevel;
@@ -190,7 +278,12 @@ public static class Training
     /// What has finished by <paramref name="now"/>: lines whose end has passed become trained levels (the next line begins where the one before
     /// ended), lines whose skill is gone or already at the level are dropped.
     /// </summary>
-    public static Settlement Settle(QueueState state, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog, Func<SkillType, double> pointsPerMinute, long now, int maxFinished = int.MaxValue)
+    public static Settlement Settle(QueueState state, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog,
+        Func<SkillType, double> pointsPerMinute, long now, int maxFinished = int.MaxValue) =>
+        Settle(state, skills, catalog, TrainingRateSchedule.Constant(pointsPerMinute), now, maxFinished);
+
+    public static Settlement Settle(QueueState state, IReadOnlyDictionary<int, CharacterSkill> skills, SkillCatalog catalog,
+        TrainingRateSchedule rates, long now, int maxFinished = int.MaxValue)
     {
         var queue = state.Entries.ToList();
         var active = state.Active;
@@ -202,7 +295,7 @@ public static class Training
 
         while (queue.Count > 0)
         {
-            var projection = Project(new QueueState(queue, active, activeStart), current, catalog, pointsPerMinute, now);
+            var projection = Project(new QueueState(queue, active, activeStart), current, catalog, rates, now);
             if (projection.Entries.FirstOrDefault() is not { } line)
             {
                 break;
@@ -251,7 +344,9 @@ public static class Training
     /// <summary>The skill as it is at <paramref name="now"/> while it trains: the points gained so far kept in it, and the level they make.</summary>
     public static CharacterSkill Rebase(ProjectedEntry line, CharacterSkill skill, int rank, long now)
     {
-        var estimate = line is { Start: { } start, End: not null } ? PointsAt(line.StartPoints, line.DestinationPoints, start, now, line.PointsPerMinute) : line.StartPoints;
+        var estimate = line is { Start: { } start, End: not null }
+            ? PointsAt(line.StartPoints, line.DestinationPoints, start, now, line.PointsPerMinute, line.RateChanges ?? [])
+            : line.StartPoints;
         var points = Math.Max(line.StartPoints, Math.Min(line.DestinationPoints, estimate));
         return skill with { Level = SkillPoints.LevelAt(rank, points), SkillPoints = points };
     }

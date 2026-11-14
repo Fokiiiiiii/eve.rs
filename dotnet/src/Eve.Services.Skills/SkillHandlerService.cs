@@ -67,11 +67,11 @@ public static SkillAugmentationReader CreateAugmentationReader(
 
         var skills = await skillStore.ForCharacterAsync(connection, transaction, characterId, cancellationToken);
         await dogma.EnsureTypesAsync(inventory.Select(item => item.TypeId).Concat(skills.Select(skill => skill.TypeId)), cancellationToken);
-        var stored = await skillStore.ActiveSkillBoostersAsync(connection, transaction, characterId, nowFileTime, cancellationToken);
+        var stored = await skillStore.SkillBoostersAsync(connection, transaction, characterId, cancellationToken);
         var installedBoosters = inventory.Where(item => item.Flag == BoosterFlag).ToArray();
         var active = await MaterializeLegacyBoosterRowsAsync(
             skillStore, dogma, connection, transaction, characterId, nowMs, inventory, skills,
-            installedBoosters, stored, nextBoosterRoll, cancellationToken);
+            installedBoosters, stored, nowFileTime, nextBoosterRoll, cancellationToken);
         return (inventory, skills, active);
     }
 
@@ -89,7 +89,6 @@ public static SkillAugmentationReader CreateAugmentationReader(
             await skillStore.LockActiveSkillBoostersAsync(connection, transaction, characterId, ct);
             var nowMs = nowUnixMs();
             var nowFileTime = Py.FileTimeFromUnixMs(nowMs);
-            await PruneExpiredBoosterRowsAsync(skillStore, itemStore, connection, transaction, characterId, nowFileTime, ct);
             return await ReadLockedAugmentationStateAsync(
                 itemStore, dogma, skillStore, connection, transaction, characterId, nowMs, nowFileTime, nextBoosterRoll, ct);
         }, cancellationToken);
@@ -151,13 +150,16 @@ public static SkillAugmentationReader CreateAugmentationReader(
         IReadOnlyList<CharacterSkill> skills,
         IReadOnlyList<Eve.Inventory.Item> installedBoosters,
         IReadOnlyList<StoredSkillBooster> stored,
+        long nowFileTime,
         Func<double>? nextBoosterRoll,
         CancellationToken cancellationToken)
     {
-        var active = ActiveBoostersInInventory(characterId, inventory, stored, dogma);
+        var knownRows = stored.Select(booster => booster.ItemId).ToHashSet();
+        var active = ActiveBoostersInInventory(characterId, inventory,
+            stored.Where(booster => booster.ExpiryFileTime > nowFileTime).ToArray(), dogma);
         foreach (var item in installedBoosters)
         {
-            if (active.ContainsKey(item.Id) || !IsBoosterType(dogma.Type(item.TypeId)))
+            if (knownRows.Contains(item.Id) || !IsBoosterType(dogma.Type(item.TypeId)))
             {
                 continue;
             }
@@ -541,7 +543,11 @@ public static SkillAugmentationReader CreateAugmentationReader(
     {
         var character = CharacterOf(call);
         if (character is { } id)
+        {
             await store.NeuralRemapAsync(id, call.Cancellation);
+            // This RPC seeds the client's training attributes, including after a Host restart where the learning-bonus timeline is cold.
+            await training.Settings.RefreshLearningBonus(id, call.Cancellation);
+        }
         var owner = character ?? 0;
         return new PyDict([.. AttributeIds.Select(id => new KeyValuePair<PyValue, PyValue>(new PyInt(id), Py.Number((training.Settings.Attribute(owner, id) + training.Settings.LearningBonus(owner, id)) * training.Settings.Speed)))]);
     }

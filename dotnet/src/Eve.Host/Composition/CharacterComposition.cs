@@ -50,11 +50,20 @@ internal sealed partial class CharacterServicesComposition
             {
                 Speed = double.Parse(Env("EVE_SKILL_TRAINING_SPEED", "1"), System.Globalization.CultureInfo.InvariantCulture),
                 HasOmega = account => omega.Resolve(new PyInt(account)).HasLicense,
+                HasOmegaAt = (account, atFileTime) => omega.StoredExpiry(new PyInt(account)) > atFileTime,
+                OmegaTrainingHistory = account => omega.TrainingHistory(new PyInt(account))
+                    .Select(frame => new TrainingEntitlementFrame(frame.FromFileTime, frame.ExpiryFileTime)).ToArray(),
                 // each running extra queue (Multiple Character Training) lets one more of the account's characters train
                 AdditionalTrainingSlots = account => accounts.ActiveTrainingSlotCount(checked((uint)account), DateTimeOffset.FromUnixTimeMilliseconds(now())),
                 Attribute = skills.LearningAttribute,
                 // implants and active boosters add to the learning attributes the rate reads (dogma's modifiers)
                 LearningBonus = (character, attribute) => learningBonus.Of(character, attribute),
+                LearningBonusAt = (character, attribute, atFileTime) => learningBonus.At(character, attribute, atFileTime),
+                RateBoundaries = (character, account, start, end) =>
+                {
+                    _ = account;
+                    return learningBonus.BoundariesBetween(character, start, end);
+                },
                 RefreshLearningBonus = (character, token) => learningBonus.RefreshAsync(character, token),
                 RefreshLearningBonusAt = (character, atFileTime, token) => learningBonus.RefreshAtAsync(character, atFileTime, token),
             },

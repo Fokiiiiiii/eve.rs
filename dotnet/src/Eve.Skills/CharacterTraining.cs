@@ -14,6 +14,12 @@ public sealed class TrainingSettings
     /// <summary>Whether an account trains at full speed (a lapsed subscription trains at half).</summary>
     public Func<long, bool> HasOmega { get; init; } = _ => true;
 
+    /// <summary>The account's clone training state at a FILETIME, when entitlement has a known expiry.</summary>
+    public Func<long, long, bool>? HasOmegaAt { get; init; }
+
+    /// <summary>The account's persisted entitlement frames, so a later purchase cannot rewrite earlier training rates.</summary>
+    public Func<long, IReadOnlyList<TrainingEntitlementFrame>>? OmegaTrainingHistory { get; init; }
+
     /// <summary>The value of a learning attribute of a character (charisma, intelligence, memory, perception, willpower).</summary>
     public Func<long, int, double> Attribute { get; init; } = (_, attributeId) => BaseAttribute(attributeId);
 
@@ -22,6 +28,12 @@ public sealed class TrainingSettings
 
     /// <summary>What the implants and active boosters of a character add to one of its learning attributes (dogma's modifiers); the rate adds it to the base.</summary>
     public Func<long, int, double> LearningBonus { get; init; } = (_, _) => 0;
+
+    /// <summary>The learning bonus at a FILETIME, including the current implant and booster state at that time.</summary>
+    public Func<long, int, long, double>? LearningBonusAt { get; init; }
+
+    /// <summary>FILETIMEs when this character's learning bonuses or account's clone speed can change.</summary>
+    public Func<long, long, long, long, IReadOnlyList<long>> RateBoundaries { get; init; } = (_, _, _, _) => [];
 
     /// <summary>Brings the learning bonus of a character up to date. Every call that reads a rate runs it first, so a bonus is never read stale.</summary>
     public Func<long, CancellationToken, Task> RefreshLearningBonus { get; init; } = (_, _) => Task.CompletedTask;
@@ -90,10 +102,51 @@ public sealed class CharacterTraining(
 
     private static long FileTimeAt(long unixMs) => UnixEpochInFileTime + (unixMs * 10_000);
 
-    private Func<SkillType, double> RateOf(long characterId, long accountId)
+    private TrainingRateSchedule RatesOf(long characterId, long accountId)
     {
-        var multiplier = (settings.HasOmega(accountId) ? 1d : 0.5d) * (settings.Speed > 0 ? settings.Speed : 1d);
-        return type => Training.PointsPerMinute(type, attribute => settings.Attribute(characterId, attribute) + settings.LearningBonus(characterId, attribute), multiplier);
+        var speed = settings.Speed > 0 ? settings.Speed : 1d;
+        var history = settings.OmegaTrainingHistory?.Invoke(accountId);
+
+        bool HasOmegaAt(long at) => history is { Count: > 0 }
+            ? OmegaAt(history, at)
+            : settings.HasOmegaAt?.Invoke(accountId, at) ?? settings.HasOmega(accountId);
+
+        return new TrainingRateSchedule(
+            (type, at) => Training.PointsPerMinute(type,
+                attribute => settings.Attribute(characterId, attribute) +
+                    (settings.LearningBonusAt?.Invoke(characterId, attribute, at) ?? settings.LearningBonus(characterId, attribute)),
+                (HasOmegaAt(at) ? 1d : 0.5d) * speed),
+            (start, end) =>
+            {
+                var boundaries = settings.RateBoundaries(characterId, accountId, start, end).ToList();
+                if (history is { Count: > 0 })
+                    boundaries.AddRange(OmegaRateBoundaries(history, start, end));
+                return boundaries.Distinct().Order().ToArray();
+            });
+    }
+
+    private static bool OmegaAt(IReadOnlyList<TrainingEntitlementFrame> history, long atFileTime)
+    {
+        var low = 0;
+        var high = history.Count - 1;
+        while (low < high)
+        {
+            var middle = low + (high - low + 1) / 2;
+            if (history[middle].FromFileTime <= atFileTime)
+                low = middle;
+            else
+                high = middle - 1;
+        }
+        return history[low].ExpiryFileTime > atFileTime;
+    }
+
+    private static IReadOnlyList<long> OmegaRateBoundaries(
+        IReadOnlyList<TrainingEntitlementFrame> history, long afterFileTime, long throughFileTime)
+    {
+        var candidates = history.SelectMany(frame => new[] { frame.FromFileTime, frame.ExpiryFileTime })
+            .Where(at => at > afterFileTime && at <= throughFileTime)
+            .Distinct();
+        return candidates.Where(at => OmegaAt(history, at - 1) != OmegaAt(history, at)).Order().ToArray();
     }
 
     private async Task<Dictionary<int, CharacterSkill>> SkillsOfAsync(long characterId, CancellationToken cancellationToken) =>
@@ -108,12 +161,12 @@ public sealed class CharacterTraining(
     /// <summary>The queue and skills as they are at <paramref name="now"/>.</summary>
     public TrainingView BuildView(long characterId, long accountId, QueueState state, IReadOnlyDictionary<int, CharacterSkill> owned, long now)
     {
-        var rate = RateOf(characterId, accountId);
-        var projection = Training.Project(state, owned, catalog, rate, now);
+        var rates = RatesOf(characterId, accountId);
+        var projection = Training.Project(state, owned, catalog, rates, now);
         var live = owned.ToDictionary(s => s.Key, s => s.Value);
         if (state.Running && projection.Entries.FirstOrDefault() is { Start: { } start, End: not null } line && catalog.Get(line.TypeId) is { } type)
         {
-            var points = Training.PointsAt(line.StartPoints, line.DestinationPoints, start, now, line.PointsPerMinute);
+            var points = Training.PointsAt(line.StartPoints, line.DestinationPoints, start, now, line.PointsPerMinute, line.RateChanges ?? []);
             live[line.TypeId] = new CharacterSkill(line.TypeId, SkillPoints.LevelAt(type.Rank, points), points);
         }
         var list = live.Values.OrderBy(s => s.TypeId).ToList();
@@ -152,7 +205,7 @@ public sealed class CharacterTraining(
         var view = await ViewAsync(characterId, accountId, cancellationToken);
         var owned = view.Skills.ToDictionary(skill => skill.TypeId);
         if (selectedSkills is null &&
-            Training.Validate(view.State.Entries, owned, catalog, RateOf(characterId, accountId), Now) is not null)
+            Training.Validate(view.State.Entries, owned, catalog, RatesOf(characterId, accountId), Now) is not null)
         {
             return new Dictionary<int, long>();
         }
@@ -177,14 +230,14 @@ public sealed class CharacterTraining(
         await LockAsync(connection, transaction, characterId, cancellationToken);
         var remap = await skills.ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
         skills.CacheNeuralRemap(characterId, remap);
-        var rate = RateOf(characterId, accountId);
+        var rates = RatesOf(characterId, accountId);
 
         var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
         var beforeRows = await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken);
         var owned = beforeRows.ToDictionary(skill => skill.TypeId);
         var balance = await skills.LockFreeSkillPointsAsync(connection, transaction, characterId, cancellationToken);
         if (selectedSkills is null &&
-            Training.Validate(state.Entries, owned, catalog, rate, Now) is not null)
+            Training.Validate(state.Entries, owned, catalog, rates, Now) is not null)
         {
             await transaction.RollbackAsync(cancellationToken);
             return (new Dictionary<int, long>(), balance);
@@ -471,10 +524,10 @@ public sealed class CharacterTraining(
             await refreshAt(characterId, bonusAtFileTime, cancellationToken);
         else
             await settings.RefreshLearningBonus(characterId, cancellationToken);
-        var probeRate = RateOf(characterId, accountId);
+        var probeRates = RatesOf(characterId, accountId);
         var probe = await store.LoadAsync(characterId, cancellationToken);
         var at = atFileTime;
-        if (probe.Entries.Count == 0 || !Training.Settle(probe, await SkillsOfAsync(characterId, cancellationToken), catalog, probeRate, at, maxFinished).QueueChanged)
+        if (probe.Entries.Count == 0 || !Training.Settle(probe, await SkillsOfAsync(characterId, cancellationToken), catalog, probeRates, at, maxFinished).QueueChanged)
         {
             return null;
         }
@@ -486,12 +539,12 @@ public sealed class CharacterTraining(
             await LockAsync(connection, transaction, characterId, cancellationToken);
             var remap = await skills.ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
             skills.CacheNeuralRemap(characterId, remap);
-            var rate = RateOf(characterId, accountId);
+            var rates = RatesOf(characterId, accountId);
             var now = at;
             var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
             var before = (await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken))
                 .ToDictionary(skill => skill.TypeId);
-            var settled = Training.Settle(state, before, catalog, rate, now, maxFinished);
+            var settled = Training.Settle(state, before, catalog, rates, now, maxFinished);
             if (!settled.QueueChanged)
             {
                 return null; // another call settled it while this one waited
@@ -630,7 +683,7 @@ public sealed class CharacterTraining(
         await LockAsync(connection, transaction, characterId, cancellationToken);
         var remap = await skills.ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
         skills.CacheNeuralRemap(characterId, remap);
-        var rate = RateOf(characterId, accountId);
+        var rates = RatesOf(characterId, accountId);
         var now = Now;
         var previous = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
         var owned = (await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken))
@@ -642,7 +695,7 @@ public sealed class CharacterTraining(
         CharacterSkill? rebased = null;
         var rebaseChanged = false;
         var state = previous;
-        if (yields && Training.Project(previous, owned, catalog, rate, now).Entries.FirstOrDefault() is { } line && owned.TryGetValue(line.TypeId, out var running))
+        if (yields && Training.Project(previous, owned, catalog, rates, now).Entries.FirstOrDefault() is { } line && owned.TryGetValue(line.TypeId, out var running))
         {
             rebased = Training.Rebase(line, running, catalog.Get(line.TypeId)?.Rank ?? 1, now);
             rebaseChanged = rebased != running;
@@ -653,10 +706,11 @@ public sealed class CharacterTraining(
 
         var freeSkillPoints = isAlphaClone ? await skills.FreeSkillPointsAsync(connection, transaction, characterId, cancellationToken) : 0;
         var pointsAlreadyTrainedInCurrentLine = previous.Running && requestedActive && entries.Count > 0 && Same(previous.Entries[0], entries[0])
-            && Training.Project(previous, owned, catalog, rate, now).Entries.FirstOrDefault() is { } currentLine
-                ? Training.PointsAt(currentLine.StartPoints, currentLine.DestinationPoints, currentLine.Start ?? now, now, currentLine.PointsPerMinute) - currentLine.StartPoints
+            && Training.Project(previous, owned, catalog, rates, now).Entries.FirstOrDefault() is { } currentLine
+                ? Training.PointsAt(currentLine.StartPoints, currentLine.DestinationPoints, currentLine.Start ?? now, now,
+                    currentLine.PointsPerMinute, currentLine.RateChanges ?? []) - currentLine.StartPoints
                 : 0;
-        if (Training.Validate(entries, owned, catalog, rate, now, freeSkillPoints, isAlphaClone && requestedActive, raceId, pointsAlreadyTrainedInCurrentLine) is { } error)
+        if (Training.Validate(entries, owned, catalog, rates, now, freeSkillPoints, isAlphaClone && requestedActive, raceId, pointsAlreadyTrainedInCurrentLine) is { } error)
         {
             return new QueueRefused(error);
         }
@@ -698,7 +752,7 @@ public sealed class CharacterTraining(
         await LockAsync(connection, transaction, characterId, cancellationToken);
         var remap = await skills.ReadNeuralRemapAsync(connection, transaction, characterId, forUpdate: true, cancellationToken);
         skills.CacheNeuralRemap(characterId, remap);
-        var rate = RateOf(characterId, accountId);
+        var rates = RatesOf(characterId, accountId);
         var now = atFileTime;
         var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
         if (!state.Running)
@@ -710,7 +764,7 @@ public sealed class CharacterTraining(
         var before = owned.Values.OrderBy(s => s.TypeId).ToList();
         CharacterSkill? rebased = null;
         var changed = false;
-        if (Training.Project(state, owned, catalog, rate, now).Entries.FirstOrDefault() is { } line && owned.TryGetValue(line.TypeId, out var running))
+        if (Training.Project(state, owned, catalog, rates, now).Entries.FirstOrDefault() is { } line && owned.TryGetValue(line.TypeId, out var running))
         {
             rebased = Training.Rebase(line, running, catalog.Get(line.TypeId)?.Rank ?? 1, now);
             changed = rebased != running;
@@ -742,7 +796,7 @@ public sealed class CharacterTraining(
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         await LockAsync(connection, transaction, characterId, cancellationToken);
-        var rate = RateOf(characterId, accountId);
+        var rates = RatesOf(characterId, accountId);
         var now = atFileTime;
         var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
         if (!state.Running)
@@ -751,7 +805,7 @@ public sealed class CharacterTraining(
         }
         var owned = (await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken)).ToDictionary(skill => skill.TypeId);
         var before = owned.Values.OrderBy(skill => skill.TypeId).ToList();
-        if (Training.Project(state, owned, catalog, rate, now).Entries.FirstOrDefault() is not { } line || !owned.TryGetValue(line.TypeId, out var running))
+        if (Training.Project(state, owned, catalog, rates, now).Entries.FirstOrDefault() is not { } line || !owned.TryGetValue(line.TypeId, out var running))
         {
             return null;
         }
@@ -784,13 +838,13 @@ public sealed class CharacterTraining(
             return null;
         }
 
-        var rate = RateOf(characterId, accountId);
+        var rates = RatesOf(characterId, accountId);
         var now = Now;
         var state = await store.LoadAsync(connection, transaction, characterId, cancellationToken);
         var owned = (await skills.ForCharacterAsync(connection, transaction, characterId, cancellationToken))
             .ToDictionary(skill => skill.TypeId);
         var before = owned.Values.OrderBy(skill => skill.TypeId).ToList();
-        var settled = Training.Settle(state, owned, catalog, rate, now);
+        var settled = Training.Settle(state, owned, catalog, rates, now);
         if (settled.QueueChanged)
         {
             if (settled.Finished.Count > 0)
@@ -804,7 +858,7 @@ public sealed class CharacterTraining(
 
         CharacterSkill? rebased = null;
         var rebaseChanged = false;
-        if (state.Running && Training.Project(state, owned, catalog, rate, now).Entries.FirstOrDefault() is { } line &&
+        if (state.Running && Training.Project(state, owned, catalog, rates, now).Entries.FirstOrDefault() is { } line &&
             owned.TryGetValue(line.TypeId, out var running))
         {
             rebased = Training.Rebase(line, running, catalog.Get(line.TypeId)?.Rank ?? 1, now);

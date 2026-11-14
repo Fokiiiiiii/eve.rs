@@ -633,6 +633,36 @@ public sealed class PgSkillStore
         return await ReadSkillBoostersAsync(command, cancellationToken);
     }
 
+    /// <summary>Reads every persisted booster row, including expired rows still awaiting the lapse job.</summary>
+    public async Task<IReadOnlyList<StoredSkillBooster>> SkillBoostersAsync(
+        long characterId,
+        CancellationToken cancellationToken = default)
+    {
+        if (characterId <= 0) throw new ArgumentOutOfRangeException(nameof(characterId));
+
+        await using var command = _source.CreateCommand(
+            $"SELECT character_id, item_id, booster_type_id, expiry_filetime, side_effect_ids FROM {_schema}.active_skill_boosters " +
+            "WHERE character_id = $1 ORDER BY expiry_filetime, item_id");
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        return await ReadSkillBoostersAsync(command, cancellationToken);
+    }
+
+    /// <summary>Reads every persisted booster row inside the caller's transaction.</summary>
+    public async Task<IReadOnlyList<StoredSkillBooster>> SkillBoostersAsync(
+        NpgsqlConnection connection,
+        NpgsqlTransaction transaction,
+        long characterId,
+        CancellationToken cancellationToken = default)
+    {
+        if (characterId <= 0) throw new ArgumentOutOfRangeException(nameof(characterId));
+
+        await using var command = new NpgsqlCommand(
+            $"SELECT character_id, item_id, booster_type_id, expiry_filetime, side_effect_ids FROM {_schema}.active_skill_boosters " +
+            "WHERE character_id = $1 ORDER BY expiry_filetime, item_id", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        return await ReadSkillBoostersAsync(command, cancellationToken);
+    }
+
     /// <summary>Serializes activations for one character so two requests cannot occupy the same booster slot.</summary>
     public async Task LockActiveSkillBoostersAsync(
         NpgsqlConnection connection,

@@ -91,6 +91,7 @@ public class EntitlementRulesTests
         var accountId = login.AccountId;
         accounts.SetSubscriptionEndsAt(accountId, Now.AddDays(10));
         var stored = await accounts.SubscriptionEndsAtAsync(accountId, CancellationToken.None);
+        var storedHistory = accounts.SubscriptionTrainingHistory(accountId);
 
         await using (var connection = await schema.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
@@ -101,6 +102,7 @@ public class EntitlementRulesTests
         }
 
         Assert.Equal(stored, await accounts.SubscriptionEndsAtAsync(accountId, CancellationToken.None));
+        Assert.Equal(storedHistory, accounts.SubscriptionTrainingHistory(accountId));
         Assert.Empty(await accounts.TrainingSlotsAsync(accountId, CancellationToken.None));
     }
 
@@ -124,10 +126,46 @@ public class EntitlementRulesTests
         }
 
         Assert.Equal(Now.AddDays(90), await accounts.SubscriptionEndsAtAsync(accountId, CancellationToken.None));
+        Assert.Equal(new[]
+        {
+            (0L, new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero).ToFileTime()),
+            (Now.ToFileTime(), Now.AddDays(90).ToFileTime()),
+        }, accounts.SubscriptionTrainingHistory(accountId));
         var slots = await accounts.TrainingSlotsAsync(accountId, CancellationToken.None);
         Assert.Equal(Now.AddDays(30), slots[2]);
         Assert.Equal(Now.AddDays(30), slots[3]);
         Assert.Equal(2, accounts.ActiveTrainingSlotCount(accountId, Now.AddDays(1)));
         Assert.Equal(0, accounts.ActiveTrainingSlotCount(accountId, Now.AddDays(31)));
+    }
+
+    [PgFact]
+    public async Task Concurrent_subscription_purchases_keep_the_expiry_and_training_history_in_step()
+    {
+        await using var schema = await PgSchema.CreateAsync();
+        var accounts = new PgAccountDirectory(schema.Source, new AccountOptions { AutoCreate = true }, schema.Name);
+        var accountId = Assert.IsType<LoggedIn>(await accounts.LoginAsync(
+            new LoginAttempt("concurrent-subscription-buyer", new byte[] { 6, 6 }, "en", "127.0.0.1"), CancellationToken.None)).AccountId;
+        var expired = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        accounts.SetSubscriptionEndsAt(accountId, expired);
+
+        async Task<DateTimeOffset> ExtendAsync()
+        {
+            await using var connection = await schema.Source.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            var endsAt = await accounts.ExtendSubscriptionAsync(
+                connection, transaction, accountId, TimeSpan.FromDays(30), Now, CancellationToken.None);
+            await Task.Delay(10);
+            await transaction.CommitAsync();
+            return endsAt;
+        }
+
+        var results = await Task.WhenAll(ExtendAsync(), ExtendAsync());
+        Assert.Equal(new[] { Now.AddDays(30), Now.AddDays(60) }, results.Order().ToArray());
+        Assert.Equal(Now.AddDays(60), await accounts.SubscriptionEndsAtAsync(accountId, CancellationToken.None));
+        Assert.Equal(new[]
+        {
+            (0L, expired.ToFileTime()),
+            (Now.ToFileTime(), Now.AddDays(60).ToFileTime()),
+        }, accounts.SubscriptionTrainingHistory(accountId));
     }
 }

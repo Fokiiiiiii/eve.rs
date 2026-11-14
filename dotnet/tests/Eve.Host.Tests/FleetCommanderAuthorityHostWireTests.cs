@@ -454,6 +454,71 @@ public partial class HostServerTests
     }
 
     [PgFact]
+    public async Task Fleet_mass_invite_skips_offline_candidates_and_keeps_online_invites_over_host_wire()
+    {
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(
+            Environment.GetEnvironmentVariable("EVE_PG_URL")!));
+        var schema = await CreateFleetSchemaAsync(source);
+        var store = new FleetStore(source, schema);
+        var leaderId = Random.Shared.NextInt64(8_000_000_000_000, 8_999_999_999_999);
+        var onlineInviteeId = leaderId + 1;
+        var offlineInviteeId = leaderId + 2;
+        var fleetId = await store.CreateAsync(leaderId);
+        var initial = await store.SnapshotAsync(fleetId);
+        Assert.NotNull(initial);
+        var wing = Assert.Single(initial!.Wings);
+        var squadId = Assert.Single(wing.Squads).SquadId;
+        var connected = new Dictionary<long, ClientSession>();
+        var sessionsOpened = 0;
+        var service = new FleetObjectService(store, () => FixedNowMs,
+            sessionForCharacter: characterId => connected.GetValueOrDefault(characterId),
+            memberSkillsForCharacter: (_, _) => Task.FromResult<IReadOnlyList<int>>([0, 0, 0]));
+
+        try
+        {
+            Start(strictRpc: true,
+                configure: registry => registry.Register(service),
+                sessionOpened: session =>
+                {
+                    var characterId = Interlocked.Increment(ref sessionsOpened) == 1 ? leaderId : onlineInviteeId;
+                    session.CharacterId = characterId;
+                    session.Set("charid", new PyLong(characterId));
+                    connected[characterId] = session;
+                });
+
+            var leader = await OpenFleetFrontAsync(leaderId, 75);
+            var onlineInvitee = await OpenFleetFrontAsync(onlineInviteeId, 76);
+            var leaderOid = await BindFleetAsync(leader.Front, leader.Open, fleetId, 1);
+            var inviteeOid = await BindFleetAsync(onlineInvitee.Front, onlineInvitee.Open, fleetId, 1);
+
+            var reply = await BoundFleetCallAsync(leader.Front, leader.Open, leaderOid, 2,
+                "MassInvite", new PyList([new PyLong(offlineInviteeId), new PyLong(onlineInviteeId)]),
+                new PyLong(wing.WingId), new PyLong(squadId), new PyInt(FleetStore.Member));
+            var invited = Result(MarshalCodec.Decode(reply.Payload));
+            var offlineInvitationCount = await InvitationCountAsync(source, schema, fleetId, offlineInviteeId);
+            var onlineInvitationCount = await InvitationCountAsync(source, schema, fleetId, onlineInviteeId);
+
+            Assert.Collection(Assert.IsType<PyList>(invited).Items,
+                inviteeId => Assert.Equal(new PyLong(onlineInviteeId), inviteeId));
+            Assert.Equal(0, offlineInvitationCount);
+            Assert.Equal(1, onlineInvitationCount);
+            Assert.Equal("OnFleetInvite",
+                ReadFleetNotification(Assert.IsType<Send>(await onlineInvitee.Front.ReceiveAsync())).Name);
+
+            var accepted = await BoundFleetCallAsync(onlineInvitee.Front, onlineInvitee.Open, inviteeOid, 2,
+                "AcceptInvite", PyNone.Instance);
+            Assert.Equal(PyBool.True, Result(MarshalCodec.Decode(accepted.Payload)));
+            Assert.Equal(fleetId, await store.FleetIdForCharacterAsync(onlineInviteeId));
+            Assert.Equal(0, await InvitationCountAsync(source, schema, fleetId, onlineInviteeId));
+        }
+        finally
+        {
+            if (fleetId > 0) await store.DisbandAsync(fleetId, leaderId);
+            await DropFleetSchemaAsync(source, schema);
+        }
+    }
+
+    [PgFact]
     public async Task Fleet_invitation_acceptance_rejects_duplicate_wing_and_squad_commanders_over_host_wire()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(

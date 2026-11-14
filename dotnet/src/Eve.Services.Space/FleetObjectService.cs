@@ -216,12 +216,15 @@ public sealed partial class FleetObjectService(FleetStore store, Func<long> nowU
         foreach (var inviteeId in inviteeIds.Select(id => id!.Value).Distinct())
         {
             if (inviteeId == inviterId) continue;
+            var inviteeSession = sessionForCharacter?.Invoke(inviteeId);
+            if (inviteeSession is null || CharacterId(inviteeSession) != inviteeId)
+                continue;
             if (await store.FleetIdForCharacterAsync(inviteeId, call.Cancellation) is not null)
                 throw MachoErrors.ThrowUserError("FleetError");
             if (!await store.InviteAsync(fleetId, inviterId, inviteeId, wingId, squadId, role,
                     call.Cancellation, placementRequested))
                 continue;
-            SendInviteNotification(sessionForCharacter?.Invoke(inviteeId), fleetId, inviterId, autoAccept: false);
+            SendInviteNotification(inviteeSession, fleetId, inviterId, autoAccept: false);
             invited.Add(new PyLong(inviteeId));
         }
         var after = await store.SnapshotAsync(fleetId, call.Cancellation);

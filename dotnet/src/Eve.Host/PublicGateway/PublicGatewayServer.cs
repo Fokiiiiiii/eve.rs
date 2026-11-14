@@ -72,14 +72,30 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         await _app.DisposeAsync();
     }
 
-    private static Task Route(HttpContext context, PublicGatewayRoutes routes) => context.Request.Path.Value switch
+    private static Task Route(HttpContext context, PublicGatewayRoutes routes)
     {
-        "/eve_public.gateway.Requests/Ping" or "/eve_public.gateway.Notices/Ping" or "/eve_public.gateway.Events/Ping" => Guard(context, () => AnswerEmpty(context, false)),
-        "/eve_public.gateway.Requests/Send" => Guard(context, () => Send(context, routes)),
-        "/eve_public.gateway.Notices/Consume" => Guard(context, () => Consume(context, routes)),
-        "/eve_public.gateway.Events/Publish" => Guard(context, () => PublishEvents(context, routes)),
-        _ => Unimplemented(context),
-    };
+        if (HttpMethods.IsGet(context.Request.Method) && context.Request.Path.Value == MapTagsGateway.AssetPath)
+            return ServeMapTagsAsset(context);
+
+        return context.Request.Path.Value switch
+        {
+            "/eve_public.gateway.Requests/Ping" or "/eve_public.gateway.Notices/Ping" or "/eve_public.gateway.Events/Ping" => Guard(context, () => AnswerEmpty(context, false)),
+            "/eve_public.gateway.Requests/Send" => Guard(context, () => Send(context, routes)),
+            "/eve_public.gateway.Notices/Consume" => Guard(context, () => Consume(context, routes)),
+            "/eve_public.gateway.Events/Publish" => Guard(context, () => PublishEvents(context, routes)),
+            _ => Unimplemented(context),
+        };
+    }
+
+    private static async Task ServeMapTagsAsset(HttpContext context)
+    {
+        var asset = MapTagsGateway.Asset;
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "application/octet-stream";
+        context.Response.ContentLength = asset.Length;
+        context.Response.Headers.CacheControl = "public, max-age=300";
+        await context.Response.Body.WriteAsync(asset, context.RequestAborted);
+    }
 
     /// <summary>A failure outside the handlers resets the stream (the client sees INTERNAL); the cause goes to the host's log first.</summary>
     private static async Task Guard(HttpContext context, Func<Task> body)
@@ -109,7 +125,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
             reader.AdvanceTo(read.Buffer.End);
             foreach (var frame in GatewayEnvelope.TakeFrames(pending))
             {
-                var response = await Answer(frame, routes, identity, context.RequestAborted);
+                var response = await Answer(frame, routes, identity, context.Request.Host.Host, context.RequestAborted);
                 await context.Response.BodyWriter.WriteAsync(GatewayEnvelope.Frame(response), context.RequestAborted);
             }
             if (read.IsCompleted)
@@ -231,12 +247,12 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         }
     }
 
-    private static async Task<byte[]> Answer(byte[] frame, PublicGatewayRoutes routes, GatewayTokenIdentity? identity, CancellationToken cancellationToken)
+    private static async Task<byte[]> Answer(byte[] frame, PublicGatewayRoutes routes, GatewayTokenIdentity? identity, string publicHost, CancellationToken cancellationToken)
     {
         GatewayRequest request;
         try
         {
-            request = GatewayEnvelope.DecodeRequest(frame);
+            request = GatewayEnvelope.DecodeRequest(frame, publicHost);
         }
         catch (FormatException error)
         {

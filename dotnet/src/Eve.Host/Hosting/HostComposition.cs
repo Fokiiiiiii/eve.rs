@@ -195,6 +195,10 @@ internal static class HostComposition
             await Eve.Host.Persistence.PgShipSkinrStore.MigrateAsync(source, skinrSchema);
             var skinrStore = new Eve.Host.Persistence.PgShipSkinrStore(source, skinrSchema);
             var sde = new Eve.Sde.SdeReader(source);
+            var clientBuild = await sde.BuildAsync()
+                ?? throw new InvalidOperationException("The public gateway needs the loaded client SDE build.");
+            foreach (var (name, handler) in PublicGateway.ClientReadGateway.Handlers(clientBuild))
+                gateway[name] = handler;
             await Eve.Host.Persistence.PersistenceTournamentStore.MigrateAsync(source);
             await Eve.Host.Persistence.PersistenceTournamentArenas.MigrateAsync(source);
             deployedRecords = new PgDeployedStore(source, Env("EVE_SPACE_SCHEMA", PgSpaceItemStore.DefaultSchema));

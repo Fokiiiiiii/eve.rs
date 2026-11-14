@@ -80,6 +80,47 @@ def test_zlib_wrapped_payloads_are_inflated_and_recorded_as_zlib():
     (record,) = records_of([wrapped])
     assert record["encoding"] == "zlib" and record["type"] == "CallReq"
 
+def test_client_notification_keeps_the_existing_capture_record_shape():
+    released = [("N=65450:6", m.BigUnsigned(134391092820280000))]
+    payload = ((1, m.SubStream(value=(released, "ClientHasReleasedTheseObjects", (), m.Dict([("machoVersion", 1)])))),)
+    named = m.Dict([("OID-", m.Dict(released))])
+    raw = m.encode(p.build_packet(
+        p.NOTIFICATION,
+        p.client_address(42),
+        p.broadcast_address(65450),
+        7,
+        payload,
+        named,
+    ))
+
+    (record,) = records_of([raw])
+
+    # The existing decoder records the broadcast ID here and retains the body under $unknown.
+    assert record["method"] == 65450
+    assert set(record) == {
+        "seq", "t", "dir", "conn", "stage", "encoding", "type", "service", "call_id", "method", "args"
+    }
+    assert isinstance(record["args"].get("$unknown"), str)
+
+def test_bound_call_keeps_the_existing_capture_record_shape():
+    handle = ("N=65450:6", m.Long(134391092820280000))
+    payload = ((1, m.SubStream(value=(handle, "List", (), None))),)
+    raw = m.encode(p.build_packet(
+        p.CALL_REQ,
+        p.client_address(42, 7),
+        p.any_address(None),
+        7,
+        payload,
+    ))
+
+    (record,) = records_of([raw])
+
+    assert record["service"] is None
+    assert record["method"] == "List"
+    assert set(record) == {
+        "seq", "t", "dir", "conn", "stage", "encoding", "type", "service", "call_id", "method", "args"
+    }
+
 def test_a_frame_split_across_reads_is_reassembled():
     payload = bytes.fromhex(next(fixture_steps())[1]["packet"])
     import tempfile

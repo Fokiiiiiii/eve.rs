@@ -220,6 +220,49 @@ public sealed class MarketTradeHostWireTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task Registered_market_accepts_consecutive_identical_buys_as_distinct_client_calls()
+    {
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        host = await HostComposition.BuildAsync(Settings());
+        var market = host.Registry.Lookup("marketProxy") ?? throw new InvalidOperationException("marketProxy is not registered");
+        var station = (await StationCatalog.LoadAsync(new SdeReader(source))).All.First();
+        var actor = await CreateTraderAsync(source, station, "Market Repeat Buyer");
+        var sink = new Sink();
+        var session = DockedSession(actor, 809, station, sink, 809);
+        (host.CharacterSessions ?? throw new InvalidOperationException("character sessions are not registered")).Enter(actor, session);
+        var marketStore = new MarketStore(source, Schema("EVE_MARKET_SCHEMA"));
+        await marketStore.SeedNpcAsync([
+            new("market-repeat-asks", 34, false, 10m, 2, 32767,
+                new MarketLocation(station.Id, station.SolarSystemId, station.ConstellationId, station.RegionId),
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()),
+        ]);
+        var inventory = new PgItemStore(source, Schema("EVE_INVENTORY_SCHEMA"));
+        var itemTypes = new ItemTypeCatalog(new SdeReader(source));
+
+        async Task<IReadOnlyList<long>> Buy(long callId)
+        {
+            Assert.IsType<PyNone>(await market.CallAsync(Call(session, "PlaceBuyOrder", callId,
+                new PyLong(station.Id), new PyInt(34), new PyReal(10), new PyInt(1), new PyInt(-1), new PyInt(1),
+                new PyInt(0), PyBool.False, PyNone.Instance)));
+            var delivered = await AssertBuyerDeliveryAsync(sink, inventory, itemTypes, actor, station.Id, expectedCount: 1);
+            AssertSettlementNoticesPrecedeDelivery(sink);
+            sink.Packets.Clear();
+            return delivered;
+        }
+
+        var firstItems = await Buy(1);
+        var secondItems = await Buy(2);
+
+        Assert.NotEqual(Assert.Single(firstItems), Assert.Single(secondItems));
+        Assert.Equal(9980m, (await new PgWalletStore(source, Schema("EVE_WALLET_SCHEMA")).GetAsync(actor))!.Isk);
+        Assert.Equal(2, (await marketStore.WalletFillsAsync(actor, 1000, 0)).Count);
+        Assert.Equal(2, (await inventory.OwnedByAsync(actor)).Where(item => item.TypeId == 34 && item.LocationId == station.Id)
+            .Sum(item => item.Quantity));
+        Assert.Empty((await marketStore.BookAsync(station.RegionId, 34, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())).Asks);
+    }
+
+    [PgFact]
     public async Task Registered_buy_multi_returns_each_transient_order_and_expires_the_same_rows()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;

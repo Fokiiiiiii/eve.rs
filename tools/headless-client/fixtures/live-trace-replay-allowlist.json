@@ -1,0 +1,32 @@
+{
+  "known_failures": [
+    {
+      "service": "alert",
+      "method": "SendClientStackTraceAlert",
+      "reason": "ALERT_ARGUMENTS_INVALID",
+      "owner_job": "60-fix-live-*",
+      "note": "Observed in the owner's first-400-record trace; remove when the live alert RPC fix lands."
+    },
+    {
+      "service": "eventLog",
+      "method": "LogClientStats",
+      "reason": "CLIENT_STATS_SESSION_INVALID",
+      "owner_job": "60-fix-live-*",
+      "note": "Observed in the owner's first-400-record trace; remove when the live session telemetry fix lands."
+    },
+    {
+      "service": "corpFittingMgr",
+      "method": "GetFittings",
+      "reason": "SessionRpcBudgetExceeded",
+      "owner_job": "60-fix-live-*",
+      "note": "Observed in the owner's first-400-record trace; remove when the live corporation fittings fix lands."
+    },
+    {
+      "service": "corpFittingMgr",
+      "method": "GetCommunityFittings",
+      "reason": "SessionRpcBudgetExceeded",
+      "owner_job": "60-fix-live-*",
+      "note": "Observed in the owner's first-400-record trace; remove when the live corporation fittings fix lands."
+    }
+  ]
+}

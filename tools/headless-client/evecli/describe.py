@@ -135,8 +135,18 @@ def shape(described: Any) -> Any:
             return {"$dict": [[shape(k) if not isinstance(k, str) else k, shape(v)] for k, v in described["$dict"]]}
         if "$object" in described:
             return {"$object": described["$object"], "args": shape(described["args"])}
+        if "$objectex" in described:
+            return {
+                "$objectex": shape(described["$objectex"]),
+                "list": [shape(item) for item in described.get("list", [])],
+                "dict": [[key, shape(value)] for key, value in described.get("dict", [])],
+            }
         if "$substream" in described:
             return {"$substream": shape(described["$substream"])}
+        if "$substruct" in described:
+            return {"$substruct": shape(described["$substruct"])}
+        if "$checksummed" in described:
+            return {"$checksummed": shape(described["$checksummed"])}
         if "$row" in described:
             return {"$row": {name: shape(item) for name, item in described["$row"].items()}}
         return {"$" + kind: "value"}

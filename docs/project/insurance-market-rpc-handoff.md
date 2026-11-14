@@ -35,7 +35,7 @@ The whole `/home/user/eve-logic/eve/client` tree was searched for every target R
 
 ## EveJS v0.12.9 comparison
 
-Insurance delegates all six operations through `server/src/services/insurance/insuranceService.js`: contracts `:26-35`, price methods `:46-60`, ship lookup `:62-67`, purchase `:69-83`, cancellation `:85-89`. Market proxy handlers cover station/system asks `server/src/services/market/marketProxyService.js:6211-6292`, history and owner rowsets `:6424-6531`, transactions/escrow `:6582-6694`, PLEX history `:6799-6821`, cancellation `:6823-6856`, and multi-buy `:6915-6965`. eve.rs preserves the client-visible return categories and mutations while using its persisted domain stores. The recent-placement guard remains a documented client-compatibility stop-gap in Q14; successful cancellation clears that guard.
+Insurance delegates all six operations through `server/src/services/insurance/insuranceService.js`: contracts `:26-35`, price methods `:46-60`, ship lookup `:62-67`, purchase `:69-83`, cancellation `:85-89`. Market proxy handlers cover station/system asks `server/src/services/market/marketProxyService.js:6211-6292`, history and owner rowsets `:6424-6531`, transactions/escrow `:6582-6694`, PLEX history `:6799-6821`, cancellation `:6823-6856`, and multi-buy `:6915-6965`. eve.rs preserves the client-visible return categories and mutations while using its persisted domain stores. The former five-second placement guard has been removed: V24 issues a new blocking CallID for each Buy action, and the guard rejected a distinct order with identical terms. The call-ID-scoped persistent receipt still handles retries of that RPC; see `audit-market-wallet.md`.
 
 ## Checks
 

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Eve.Characters;
 using Eve.Inventory;
 using Eve.Macho;
@@ -110,7 +109,6 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         "INVALID_MARKET_PRICE" => "That price is not a valid order price.",
         "MARKET_PRICE_TICK" => "Order prices have at most four significant figures.",
         "MARKET_ORDER_STALE" => "That order has changed since it was shown. Reload the orders and try again.",
-        "MARKET_DUPLICATE_PLACEMENT" => "An identical order was placed a moment ago, so it was not placed again.",
         "INVALID_MARKET_DURATION_OR_RANGE" => "That duration or range is not offered for a market order.",
         "MARKET_ARGUMENT_OUT_OF_RANGE" => "One of the market values is outside the supported range.",
         _ => "The market refused the request.",
@@ -147,22 +145,6 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
     private const int MaxBuyMultipleItems = 500;
     private const int MaxMultiSellOrderEntries = 500;
     private const int MaxHistoryTypeIds = 500;
-    /// <summary>Q14: the window in which an identical placement from the same session is refused.</summary>
-    private const long DuplicateWindowMs = 5_000;
-    private readonly ConcurrentDictionary<long,(MarketRequest Request,long AtMs)> _lastPlacement = new();
-
-    /// <summary>
-    /// Q14: a placement identical to the session's last successful one, within five seconds, is refused. The client sends no operation key
-    /// (each send has a new call id), so a repeated send is what this sees: a documented stop-gap until the client has a key.
-    /// </summary>
-    private void RefuseRepeatedPlacement(ServiceCall call,MarketRequest request)
-    {
-        if (_lastPlacement.TryGetValue(call.Session.SessionId,out var last) && last.Request == request && now() - last.AtMs < DuplicateWindowMs)
-            throw Error(new MarketError("MARKET_DUPLICATE_PLACEMENT"));
-    }
-
-    private void RecordPlacement(ServiceCall call,MarketRequest request) => _lastPlacement[call.Session.SessionId] = (request,now());
-
     private static long FileTimeToUnixMs(PyValue value) => (Integer(value) - 116444736000000000L) / 10_000;
 
     [Method("StartupCheck")]
@@ -495,11 +477,9 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             ExpectedBrokerFee:call.Arg(8) is PyReal quote ? quote.Value : call.Arg(8) is PyInt whole ? whole.Value : null);
         try
         {
-            RefuseRepeatedPlacement(call,request);
             var receipt=await trading.PlaceAsync(request,Key(call,"buy"),call.Cancellation);
             if(receipt.OrderId is null && receipt.FilledQuantity == 0)
                 throw MachoErrors.ThrowUserError("CustomInfo",("info",new PyStr("No matching sell orders were available at the requested price.")));
-            RecordPlacement(call,request);
             await Publish(receipt,request,call.Session);
             return PyNone.Instance;
         }
@@ -542,9 +522,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
             ExpectedBrokerFee: expectedFee is PyReal quote ? quote.Value : expectedFee is PyInt whole ? whole.Value : null);
         try
         {
-            RefuseRepeatedPlacement(call, request);
             var receipt = await trading.PlaceAsync(request, key, call.Cancellation);
-            RecordPlacement(call, request);
             await Publish(receipt, request, call.Session);
             return receipt.OrderId is not null || receipt.FilledQuantity > 0;
         }
@@ -557,7 +535,6 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         try
         {
             var receipt=await trading.CancelAsync(Actor(call),Integer(call.Arg(0)),Key(call,"cancel"),call.Cancellation);
-            _lastPlacement.TryRemove(call.Session.SessionId,out _);
             await Publish(receipt,actorSession:call.Session);
             return PyNone.Instance;
         }
@@ -605,15 +582,13 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
                 continue;
             var request = new MarketRequest(actor, typeId, true, price, quantity, stationId, 0,
                 MarketRules.RangeStation, minimumVolume, UseCorporation: useCorporation);
-            RefuseRepeatedPlacement(call, request);
             if (requests.Any(previous => previous.Request == request))
-                throw Error(new MarketError("MARKET_DUPLICATE_PLACEMENT"));
+                throw Error(new MarketError("MARKET_BULK_ARGUMENT_INVALID"));
             requests.Add((request,Key(call,"buy-multi:" + line)));
         }
         try
         {
             var receipts = await trading.PlaceBuyOrdersAsync(requests, call.Cancellation);
-            foreach (var line in requests) RecordPlacement(call, line.Request);
             var immediateOrders = new List<MarketOwnedOrder>(receipts.Count);
             for (var i = 0; i < receipts.Count; i++)
             {

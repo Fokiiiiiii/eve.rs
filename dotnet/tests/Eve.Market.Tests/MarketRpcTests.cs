@@ -750,24 +750,25 @@ public class MarketRpcTests
     }
 
     [PgFact]
-    public async Task An_identical_placement_within_five_seconds_is_refused_and_a_later_one_is_placed()
+    public async Task Identical_placements_with_distinct_call_ids_are_each_applied_immediately()
     {
-        // Q14: the same request from the same session, five seconds after the first, is not placed again; after the window it is.
+        // Each client call is a separate intent; only a retry with the same CallID reuses its operation receipt.
         await using var r = await TradeRig.Create();
         var actor = await r.Actor("Repeater", 10000m);
         var seat = await SeatAsync(r, actor);
         Task<PyValue> Place(long callId) => seat.Proxy.PlaceBuyOrder(Call(seat.Session, "PlaceBuyOrder", callId, new PyInt(r.Station.Id), new PyInt(Tritanium),
             new PyReal(5), new PyInt(2), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask();
         await Place(30);
-        var refusal = await Assert.ThrowsAsync<MachoWrappedException>(() => Place(31));
-        Assert.Equal("CustomInfo", refusal.Error.UserErrorMessage);
-        Assert.Single((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
-        r.Now += 6_000;
-        await Place(32);
-        Assert.Equal(2, (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids.Count);
-        var cancelled = (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids[0];
+        var firstOrder = Assert.Single((await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids);
+        await Place(31);
+        var bids = (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids;
+        Assert.Equal(2, bids.Count);
+        Assert.NotEqual(firstOrder.Id, bids[1].Id);
+        var cancelled = bids[0];
         await seat.Proxy.CancelCharOrder(Call(seat.Session, "CancelCharOrder", 33, new PyLong(cancelled.Id)));
         await Place(34);
-        Assert.Equal(2, (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids.Count);
+        var afterCancelAndPlace = (await r.Book.BookAsync(r.Station.RegionId, Tritanium, r.Now)).Bids;
+        Assert.Equal(2, afterCancelAndPlace.Count);
+        Assert.DoesNotContain(afterCancelAndPlace, order => order.Id == cancelled.Id);
     }
 }

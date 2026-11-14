@@ -34,6 +34,18 @@ public sealed class StoreOffersServiceTests
     }
 
     [Fact]
+    public async Task Offers_without_an_image_keep_the_client_required_image_url_key_as_none()
+    {
+        var service = Service(StoreState("PLX"));
+
+        var offers = Assert.IsType<PyList>(await service.CallAsync(Request("get_offers", new PyInt(4))));
+        var offer = Assert.IsType<PyDict>(Assert.Single(offers.Items));
+        var imageUrl = offer.Entries.Single(entry => entry.Key.Equals(new PyStr("imageUrl"))).Value;
+
+        Assert.Equal(PyNone.Instance, imageUrl);
+    }
+
+    [Fact]
     public async Task Missing_offer_returns_the_reference_unavailable_detail()
     {
         var service = Service(null);

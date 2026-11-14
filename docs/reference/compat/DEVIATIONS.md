@@ -1873,10 +1873,14 @@ was not built, because the client reads its flags elsewhere (Q1 below).
   `is_tick`). Enforced on place and on modify; a price off the ticks is refused with "Order prices have at most four significant figures."
   (`MARKET_PRICE_TICK`). Existing orders keep their price until modified (CCP-BR). Tests: `ModificationRulesTests.A_price_that_is_not_a_tick...`,
   `RulesTests.Prices_have_at_most_four_significant_figures...`. Status: decided.
-- **Q14 duplicate placement.** An identical placement (the same request) from the same session within five seconds, after the first succeeded, is
-  refused with "An identical order was placed a moment ago, so it was not placed again." (`MARKET_DUPLICATE_PLACEMENT`). The client sends no
-  operation key, so a repeated send is refused within five seconds. A successful cancellation clears the session's recent-placement guard, allowing
-  the player to place the same order again immediately. Test: `MarketRpcTests.An_identical_placement_within_five_seconds...`. Status: decided.
+- **Q14 duplicate placement, corrected by the market/wallet audit (2026-11-14).** The V24 buy UI calls `marketsvc.BuyStuff` for each Buy action
+  (`buyThisTypeWindow.py:543-545`, `marketsvc.py:256-268`); each blocking RPC receives a new call ID (`carbon/common/script/net/machoNet.py:3592-3604`).
+  EveJS executes each `PlaceBuyOrder` request (`marketProxyService.js:7000-7048`). The former five-second, session-local request-equality guard therefore
+  refused separate client intents. It has been removed. The persisted market operation key still identifies a retry of the same call ID and conflicts if
+  the retry terms differ (`MarketProxyService.Key`, `MarketTrading.PlaceWithinTransactionAsync`). Host coverage is
+  `MarketTradeHostWireTests.Registered_market_accepts_consecutive_identical_buys_as_distinct_client_calls` and
+  `MarketHostTests.The_host_refuses_an_off_tick_price_a_fast_modification_and_a_stale_view_but_accepts_identical_new_calls`. See
+  `docs/project/audit-market-wallet.md`. Status: corrected.
 - **Q15 stale view.** A modification carries the client's `oldPrice` and `issueDate`; if either differs from the stored order, the modification is
   refused with "That order has changed since it was shown. Reload the orders and try again." (`MARKET_ORDER_STALE`) and nothing moves. Source:
   the client sends both (`marketsvc.py:288`). Tests: `ModificationRulesTests.A_modification_on_a_stale_view...`,
@@ -2048,7 +2052,7 @@ Source: the gap G17 (`work/market-design.md` 4.1, 4.3 M7). Decisions: none new; 
 
 ## Market slice M8: money and custody invariants (2026-10-11)
 
-Source: `work/market-design.md` 4.3 M8. Q14 (the duplicate window) was decided and built in M2; M8 checks it and does not change it.
+Source: `work/market-design.md` 4.3 M8. The 2026-11-14 market/wallet audit corrected Q14: independent calls with identical terms remain independent orders; persisted operation receipts still protect retries of one call.
 
 - **Reconciliation** (`MarketReconciliation`): four groups of queries over the market, wallet and item schemas, each returning the broken
   facts as text (at most 20 per check). Escrow per wallet; escrowed items per open sell order (and no escrowed items at a closed or bid
@@ -2079,8 +2083,7 @@ Source: `work/market-design.md` 4.3 M8. Q14 (the duplicate window) was decided a
 - **Invariant tests.** `MarketInvariantTests`: a mixed history (placements, a fill of a bid by a seller, a partial fill of an ask, a
   modification after the delay, a cancellation, expiry of every order) keeps every invariant at each step; a planted escrow drift and a
   planted item shortfall are each reported, and the expiry sweep logs the drift.
-- **Q14, checked.** The five-second duplicate refusal (`MarketProxyService.RefuseRepeatedPlacement`) is tested on the wire by
-  `MarketHostTests` (M2). No change.
+- **Q14, corrected.** Host tests prove two consecutive calls with identical terms and different call IDs both commit; each has its own order/fill and wallet outcome. The same-call receipt path remains covered by `TradingTests` retry cases.
 - Status: done (M8). The tests run on PostgreSQL (`EVE_PG_URL`); a skipped test is not a pass.
 
 ## Market slice M9: live acceptance and the NPC seed import (2026-10-11)
@@ -2104,7 +2107,8 @@ Source: `work/market-design.md` 4.3 M8. Q14 (the duplicate window) was decided a
 - **Not covered live** (the headless client cannot issue them, or the step exceeds the walk time budget): modification after its five-minute
   deadline and expiry (controlled-clock coverage: `ModificationRulesTests`, `ExpiryTests`, `MarketCoherenceTests`); a second character's view
   of a price change (the client cache is per run; M4 covers the push); a corporation trade (no player corporation is created in the walk);
-  price priority over several asks (one ask in the walk); the five-second duplicate refusal over the live socket (covered by `MarketHostTests`).
+  price priority over several asks (one ask in the walk); a graphical-client check of consecutive identical buys (Host wire coverage is in
+  `MarketTradeHostWireTests`, but the V24 graphical client was not run).
 - Status: done (M9). The live walk covers placement, matching, both transaction views, the early-modification refusal, cancellation, escrow
   return and corporation-order refusal. `ModificationRulesTests` covers the deadline with controlled time.
 

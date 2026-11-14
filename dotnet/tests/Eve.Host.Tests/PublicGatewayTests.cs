@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.IO.Pipelines;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using Eve.Characters;
 using Eve.Host.PublicGateway;
 using Eve.Skills;
@@ -219,6 +220,157 @@ public sealed class PublicGatewayTests
 
         Assert.DoesNotContain(sentinel, log.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(Convert.ToHexString(System.Text.Encoding.ASCII.GetBytes(sentinel)), log.ToString(), StringComparison.Ordinal);
+    }
+
+    [PgFact]
+    public async Task Campaign_get_all_answers_over_the_host_gateway_with_an_empty_campaign_list()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway);
+
+        var response = await SendOneAsync(server.Port, "eve_public.campaign.api.GetAllRequest", character, []);
+
+        Assert.Equal(200u, response.Status);
+        Assert.Equal("eve_public.campaign.api.GetAllResponse", response.TypeName);
+        Assert.Empty(response.Payload);
+    }
+
+    [PgFact]
+    public async Task Daily_goal_unclaimed_rewards_answer_over_the_host_gateway_with_no_unclaimed_ids()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway);
+        var page = Message(1, Varint(1, 25));
+
+        var response = await SendOneAsync(server.Port, "eve_public.dailygoal.api.GetAllWithRewardsRequest", character, page);
+
+        Assert.Equal(200u, response.Status);
+        Assert.Equal("eve_public.dailygoal.api.GetAllWithRewardsResponse", response.TypeName);
+        Assert.Empty(response.Payload);
+    }
+
+    [PgFact]
+    public async Task Structure_paintworks_answer_over_the_host_gateway_with_no_local_paintworks()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway);
+
+        var response = await SendOneAsync(server.Port,
+            "eve_public.cosmetic.structure.paintwork.api.GetAllInSolarSystemRequest", character, []);
+
+        Assert.Equal(200u, response.Status);
+        Assert.Equal("eve_public.cosmetic.structure.paintwork.api.GetAllInSolarSystemResponse", response.TypeName);
+        Assert.Empty(response.Payload);
+    }
+
+    [PgFact]
+    public async Task Owned_ship_cosmetic_entitlements_answer_over_the_host_gateway_with_no_local_entitlements()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway);
+
+        var response = await SendOneAsync(server.Port, "eve_public.entitlement.character.GetAllRequest", character, []);
+
+        Assert.Equal(200u, response.Status);
+        Assert.Equal("eve_public.entitlement.character.GetAllResponse", response.TypeName);
+        Assert.Empty(response.Payload);
+    }
+
+    [PgFact]
+    public async Task Map_tag_update_answers_over_the_host_gateway_with_a_client_build_checkpoint()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway);
+
+        var response = await SendOneAsync(server.Port, "eve_public.space.api.cdn.GetUpdateRequest", null, Varint(2, 1));
+
+        Assert.Equal(200u, response.Status);
+        Assert.Equal("eve_public.space.api.cdn.GetUpdateResponse", response.TypeName);
+        var checkpoint = SkillPlanWire.Message(response.Payload, 1) ?? throw new InvalidOperationException("no map-tag checkpoint");
+        var url = SkillPlanWire.StringOf(checkpoint, 1);
+        Assert.Equal("https://127.0.0.1/elysian-eve/map-tags/latest.maptags", url);
+        var version = SkillPlanWire.Message(checkpoint, 2) ?? throw new InvalidOperationException("no checkpoint version");
+        Assert.Equal(1L, SkillPlanWire.VarintOf(version, 1));
+        Assert.Equal(new[] { "3396210" }, ProtoReader.Fields(version).Where(field => field.Number == 5)
+            .Select(field => System.Text.Encoding.UTF8.GetString(field.Bytes.Span)));
+        var checksum = SkillPlanWire.Message(checkpoint, 3) ?? throw new InvalidOperationException("no checkpoint checksum");
+        Assert.Equal(2739352333L, SkillPlanWire.VarintOf(checksum, 1));
+
+        using var key = System.Security.Cryptography.RSA.Create(2048);
+        var certificateRequest = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            "CN=localhost", key, System.Security.Cryptography.HashAlgorithmName.SHA256,
+            System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+        using var certificate = certificateRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+        await using var cdn = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway, certificate: certificate);
+        using var httpHandler = new SocketsHttpHandler();
+        httpHandler.SslOptions.RemoteCertificateValidationCallback = (_, _, _, _) => true;
+        httpHandler.ConnectCallback = async (_, cancellationToken) =>
+        {
+            var client = new TcpClient(AddressFamily.InterNetwork);
+            await client.ConnectAsync(IPAddress.Loopback, cdn.Port, cancellationToken);
+            return client.GetStream();
+        };
+        using var http = new HttpClient(httpHandler)
+        {
+            DefaultRequestVersion = HttpVersion.Version20,
+            DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        using var assetRequest = new HttpRequestMessage(HttpMethod.Get, url)
+        {
+            Version = HttpVersion.Version20,
+            VersionPolicy = HttpVersionPolicy.RequestVersionExact,
+        };
+        using var assetResponse = await http.SendAsync(assetRequest);
+        Assert.Equal(HttpVersion.Version20, assetResponse.Version);
+        Assert.Equal(HttpStatusCode.OK, assetResponse.StatusCode);
+        Assert.Equal("application/octet-stream", assetResponse.Content.Headers.ContentType?.MediaType);
+        var asset = await assetResponse.Content.ReadAsByteArrayAsync();
+        Assert.Equal(44, asset.Length);
+        Assert.Equal(2739352333u, Crc32(asset));
+        Assert.Equal(16u, BinaryPrimitives.ReadUInt32LittleEndian(asset));
+        var root = checked((int)BinaryPrimitives.ReadUInt32LittleEndian(asset));
+        var vtable = root - BinaryPrimitives.ReadInt32LittleEndian(asset.AsSpan(root));
+        Assert.Equal(10, BinaryPrimitives.ReadUInt16LittleEndian(asset.AsSpan(vtable)));
+        Assert.Equal(16, BinaryPrimitives.ReadUInt16LittleEndian(asset.AsSpan(vtable + 2)));
+        for (var field = 0; field < 3; field++)
+        {
+            var fieldOffset = BinaryPrimitives.ReadUInt16LittleEndian(asset.AsSpan(vtable + 4 + field * 2));
+            var vector = root + fieldOffset + checked((int)BinaryPrimitives.ReadUInt32LittleEndian(asset.AsSpan(root + fieldOffset)));
+            Assert.Equal(0u, BinaryPrimitives.ReadUInt32LittleEndian(asset.AsSpan(vector)));
+        }
+    }
+
+    [PgFact]
+    public async Task Character_scoped_empty_read_routes_require_an_identity_and_map_tags_require_a_user_token()
+    {
+        await using var rig = await CharacterHostTests.CharacterHostRig.CreateAsync();
+        var character = await rig.CreateCharacterAsync();
+        await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway);
+
+        var noDailyGoalIdentity = await SendOneAsync(server.Port,
+            "eve_public.dailygoal.api.GetAllWithRewardsRequest", null, Message(1, Varint(1, 25)));
+        var noPaintworkIdentity = await SendOneAsync(server.Port,
+            "eve_public.cosmetic.structure.paintwork.api.GetAllInSolarSystemRequest", null, []);
+        var noEntitlementIdentity = await SendOneAsync(server.Port,
+            "eve_public.entitlement.character.GetAllRequest", null, []);
+        var noMapTagsUser = await SendOneAsync(server.Port,
+            "eve_public.space.api.cdn.GetUpdateRequest", null, Varint(2, 1), authorization: null);
+
+        Assert.Equal(400u, noDailyGoalIdentity.Status);
+        Assert.Equal("eve_public.dailygoal.api.GetAllWithRewardsResponse", noDailyGoalIdentity.TypeName);
+        Assert.Equal(400u, noPaintworkIdentity.Status);
+        Assert.Equal("eve_public.cosmetic.structure.paintwork.api.GetAllInSolarSystemResponse", noPaintworkIdentity.TypeName);
+        Assert.Equal(400u, noEntitlementIdentity.Status);
+        Assert.Equal("eve_public.entitlement.character.GetAllResponse", noEntitlementIdentity.TypeName);
+        Assert.Equal(401u, noMapTagsUser.Status);
+
+        var validCampaignRequest = await SendOneAsync(server.Port, "eve_public.campaign.api.GetAllRequest", character, []);
+        Assert.Equal(200u, validCampaignRequest.Status);
+        Assert.Equal("eve_public.campaign.api.GetAllResponse", validCampaignRequest.TypeName);
     }
 
     [Fact]
@@ -576,6 +728,18 @@ public sealed class PublicGatewayTests
     }
 
     private static byte[] Concat(params byte[][] parts) => parts.SelectMany(part => part).ToArray();
+
+    private static uint Crc32(ReadOnlySpan<byte> bytes)
+    {
+        var crc = uint.MaxValue;
+        foreach (var value in bytes)
+        {
+            crc ^= value;
+            for (var bit = 0; bit < 8; bit++)
+                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xedb88320u : crc >> 1;
+        }
+        return ~crc;
+    }
 
     private static Guid IdOf(byte[] payload) => SkillPlanWire.IdentifierOf(SkillPlanWire.Message(payload, 1) ?? ReadOnlyMemory<byte>.Empty);
 

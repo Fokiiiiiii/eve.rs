@@ -234,6 +234,19 @@ public sealed class NewEdenStoreHostTests : IAsyncLifetime
         items.Where(item => item.TypeId == typeId).Sum(item => item.Quantity);
 
     [PgFact]
+    public async Task The_registered_host_store_keeps_image_url_present_when_an_offer_has_no_image()
+    {
+        var host = await BuildHostAsync();
+        var store = host.Registry.Lookup("storeManager")!;
+        var session = new ClientSession(new Sink()) { SessionId = 402, UserId = 1, CharacterId = 1 };
+
+        var offers = Assert.IsType<PyList>(await store.CallAsync(Call(session, "get_offers", 1, [new PyInt(4)])));
+        var omega = Assert.IsType<PyDict>(offers.Items.Single(offer => ValueField(Assert.IsType<PyDict>(offer), "storeOfferID") is PyStr { Value: "omega_30_days" }));
+
+        Assert.Same(PyNone.Instance, ValueField(omega, "imageUrl"));
+    }
+
+    [PgFact]
     public async Task Certificate_purchase_without_checkout_returns_none_and_grants_nothing()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));

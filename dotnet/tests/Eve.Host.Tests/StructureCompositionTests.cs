@@ -1,6 +1,11 @@
+using System.Buffers.Binary;
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json.Nodes;
+using System.Text.Json;
 using Eve.AccessGroups;
 using Eve.Data;
+using Eve.Dogma;
 using Eve.GameStore;
 using Eve.Identity;
 using Eve.Macho;
@@ -9,6 +14,9 @@ using Eve.Characters;
 using Eve.Inventory;
 using Eve.Services;
 using Eve.Sde;
+using Eve.Scheduler;
+using Eve.Ships;
+using Eve.Space;
 using Eve.Structures;
 using Eve.Universe;
 using Npgsql;
@@ -83,6 +91,67 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         public void Send(PyValue packet) => Packets.Add(packet);
     }
 
+    private sealed class FakeSimulationLink : IAsyncDisposable
+    {
+        private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+        private readonly CancellationTokenSource _stop = new();
+        private readonly TaskCompletionSource _connected = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly Task _serve;
+
+        private FakeSimulationLink()
+        {
+            _listener.Start();
+            _serve = ServeAsync();
+        }
+
+        public string Endpoint => $"tcp:127.0.0.1:{((IPEndPoint)_listener.LocalEndpoint).Port}";
+
+        public Task Connected => _connected.Task;
+
+        public static FakeSimulationLink Start() => new();
+
+        private async Task ServeAsync()
+        {
+            try
+            {
+                using var client = await _listener.AcceptTcpClientAsync(_stop.Token);
+                await using var stream = client.GetStream();
+                var length = new byte[sizeof(uint)];
+                await stream.ReadExactlyAsync(length, _stop.Token);
+                var payload = new byte[BinaryPrimitives.ReadUInt32LittleEndian(length)];
+                await stream.ReadExactlyAsync(payload, _stop.Token);
+                Assert.IsType<SimHello>(SimCodec.Decode(payload));
+                var response = SimCodec.Encode(new SimHelloAck(SimCodec.ProtocolVersion, 30));
+                await stream.WriteAsync(response, _stop.Token);
+                _connected.TrySetResult();
+                while (!_stop.IsCancellationRequested)
+                {
+                    await stream.ReadExactlyAsync(length, _stop.Token);
+                    var commandPayload = new byte[BinaryPrimitives.ReadUInt32LittleEndian(length)];
+                    await stream.ReadExactlyAsync(commandPayload, _stop.Token);
+                    if (SimCodec.Decode(commandPayload) is not SimCommand { Code: SimCommands.Measure } command) continue;
+                    var measured = SimCodec.Encode(new SimMeasured(command.SessionId, command.Code, 0));
+                    await stream.WriteAsync(measured, _stop.Token);
+                }
+            }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested)
+            {
+            }
+            catch (Exception error)
+            {
+                _connected.TrySetException(error);
+            }
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _stop.CancelAsync();
+            _listener.Stop();
+            await _serve;
+            _stop.Dispose();
+        }
+    }
+
     private static HostSettings Settings() => new(
         "", "disabled", new ClusterOptions { NewCharacterExperienceEnabled = false, NewCharacterExperienceMode = "disabled" },
         new AccountOptions { AutoCreate = true }, StrictRpc: true);
@@ -115,6 +184,242 @@ public sealed class StructureCompositionTests : IAsyncLifetime
         ["stateEndsAt"] = stateEndsMs,
         ["hasQuantumCore"] = true,
     };
+
+    [PgFact]
+    public async Task PosMgr_production_cycle_is_restored_and_executed_by_the_real_host_scheduler()
+    {
+        const long corporationId = Corporation;
+        const int towerTypeId = 12_235;
+        const int materialTypeId = 34;
+        const int systemId = (int)Jita;
+        var nowMs = 1_790_646_377_000L;
+        var firstHost = await HostComposition.BuildAsync(Settings(), () => nowMs);
+        await firstHost.ShutdownAsync();
+
+        var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
+        await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
+        var spaceSchema = Schema("EVE_SPACE_SCHEMA");
+        var inventorySchema = Schema("EVE_INVENTORY_SCHEMA");
+        var items = new PgItemStore(source, inventorySchema);
+        var deployed = new PgDeployedStore(source, spaceSchema);
+        var sde = new SdeReader(source);
+        var dogma = await DogmaStatic.LoadAsync(sde);
+        var (towerGroupId, siloTypeId, siloGroupId) = await ReadPosTypesAsync(source, towerTypeId);
+        await dogma.EnsureTypesAsync([towerTypeId, siloTypeId, materialTypeId]);
+        var periodAttribute = Assert.IsType<int>(dogma.AttributeId("posControlTowerPeriod"));
+        var periodMs = checked((long)dogma.Type(towerTypeId)!.Attributes[periodAttribute]);
+        var onliningDelayAttribute = Assert.IsType<int>(dogma.AttributeId("onliningDelay"));
+        var moduleOnliningDelayMs = checked((long)dogma.Type(siloTypeId)!.Attributes[onliningDelayAttribute]);
+        var moduleOnlineDueMs = nowMs + 1_000;
+        var moduleOnlineStartedAtMs = moduleOnlineDueMs - moduleOnliningDelayMs;
+        long towerItem;
+        long sourceItem;
+        long destinationItem;
+        long pendingModuleItem;
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            towerItem = await items.CreateAsync(connection, transaction, new NewItem(towerTypeId, corporationId, systemId, 0, Singleton: true));
+            sourceItem = await items.CreateAsync(connection, transaction, new NewItem(siloTypeId, corporationId, systemId, 0, Singleton: true));
+            destinationItem = await items.CreateAsync(connection, transaction, new NewItem(siloTypeId, corporationId, systemId, 0, Singleton: true));
+            pendingModuleItem = await items.CreateAsync(connection, transaction, new NewItem(siloTypeId, corporationId, systemId, 0, Singleton: true));
+            _ = await items.CreateAsync(connection, transaction, new NewItem(materialTypeId, corporationId, sourceItem, 0, 3));
+            await transaction.CommitAsync();
+        }
+        var position = new[] { 1.0, 2.0, 3.0 };
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await deployed.SaveAsync(connection, transaction, new DeployedRecord(towerItem, "control_tower", systemId, "Composition test tower", towerTypeId,
+                towerGroupId, position, 1_000, corporationId, checked((int)corporationId), 0, 0, long.MaxValue, ActivateAtMs: 0));
+            await deployed.SaveAsync(connection, transaction, new DeployedRecord(sourceItem, "starbase_module", systemId, "Composition source silo", siloTypeId,
+                siloGroupId, position, 100, corporationId, checked((int)corporationId), 0, 0, long.MaxValue, ActivateAtMs: 0, ControlTowerId: towerItem));
+            await deployed.SaveAsync(connection, transaction, new DeployedRecord(destinationItem, "starbase_module", systemId, "Composition destination silo", siloTypeId,
+                siloGroupId, position, 100, corporationId, checked((int)corporationId), 0, 0, long.MaxValue, ActivateAtMs: 0, ControlTowerId: towerItem));
+            await deployed.SaveAsync(connection, transaction, new DeployedRecord(pendingModuleItem, "starbase_module", systemId, "Composition onlining silo", siloTypeId,
+                siloGroupId, position, 100, corporationId, checked((int)corporationId), 0, 0, long.MaxValue, ActivateAtMs: 0, ControlTowerId: towerItem));
+            await deployed.SetTowerStateAsync(connection, transaction, towerItem, "online");
+            await deployed.SetTowerStateAsync(connection, transaction, sourceItem, "offline");
+            await deployed.SetTowerStateAsync(connection, transaction, destinationItem, "online");
+            await deployed.SetTowerStateAsync(connection, transaction, pendingModuleItem, "onlining", moduleOnlineStartedAtMs);
+            await transaction.CommitAsync();
+        }
+        var schedulerSchema = Schema("EVE_SCHEDULER_SCHEMA");
+        await using (var seedScheduler = new DurableScheduler(source, () => nowMs, null, schedulerSchema))
+            await seedScheduler.ScheduleAsync(new JobSpec("space.starbase_module.online", moduleOnlineDueMs)
+            {
+                Key = $"module:{pendingModuleItem}",
+                Payload = new Eve.Services.Space.SpaceContainers.StarbaseModuleOnlineDue(pendingModuleItem, moduleOnlineStartedAtMs),
+            });
+        var configuration = JsonSerializer.Serialize(new
+        {
+            provisionTypes = new Dictionary<long, int?> { [sourceItem] = materialTypeId, [destinationItem] = materialTypeId },
+            links = new[] { new { fromItemId = sourceItem, toItemId = destinationItem, typeId = materialTypeId } },
+            production = new { nextCycleAtMs = (long?)null, cyclesCompleted = 0, status = "waiting" },
+        });
+        await using (var connection = await source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            Assert.True(await deployed.SetTowerConfigurationAsync(connection, transaction, towerItem, configuration));
+            await transaction.CommitAsync();
+        }
+
+        var previousSimulation = Environment.GetEnvironmentVariable("EVE_SIM");
+        var previousSimulationSocket = Environment.GetEnvironmentVariable("EVE_SIM_SOCKET");
+        await using var simulation = FakeSimulationLink.Start();
+        Environment.SetEnvironmentVariable("EVE_SIM", "on");
+        Environment.SetEnvironmentVariable("EVE_SIM_SOCKET", simulation.Endpoint);
+        HostRuntime host = null!;
+        try
+        {
+            host = await HostComposition.BuildAsync(Settings(), () => nowMs);
+            try
+            {
+                await simulation.Connected.WaitAsync(TimeSpan.FromSeconds(5));
+                Assert.True(await WaitForAsync(() => Task.FromResult(host.Simulation?.IsConnected == true), TimeSpan.FromSeconds(5)));
+                var posMgr = host.Registry.Lookup("posMgr");
+                Assert.NotNull(posMgr);
+                var scheduler = Assert.IsType<DurableScheduler>(host.Scheduler);
+                var key = $"tower:{towerItem}";
+                var restored = await scheduler.FindAsync("space.control_tower.production_cycle", key);
+                Assert.NotNull(restored);
+                Assert.Equal(nowMs + periodMs + 1, restored.RunAtMs);
+                var moduleOnlineJob = await scheduler.FindAsync("space.starbase_module.online", $"module:{pendingModuleItem}");
+                Assert.NotNull(moduleOnlineJob);
+                Assert.Equal(moduleOnlineDueMs, moduleOnlineJob.RunAtMs);
+                Assert.Equal("onlining", await deployed.TowerStateAsync(pendingModuleItem));
+
+                var observerId = await SeedManagerAsync("POS Inventory Observer");
+                var observerSink = new Sink();
+                const long observerShipId = 9_900_001;
+                var observer = new ClientSession(observerSink)
+                {
+                    SessionId = 9_900_002,
+                    ClientId = 9_900_003,
+                    UserId = 1,
+                    CharacterId = observerId,
+                };
+                observer.Set("corpid", new PyLong(corporationId));
+                observer.Set("corprole", new PyLong(2048));
+                observer.Set("isCEO", PyBool.True);
+                observer.Set("shipid", new PyLong(observerShipId));
+                observer.Set("solarsystemid", new PyInt(systemId));
+                observer.Set("solarsystemid2", new PyInt(systemId));
+                (host.CharacterSessions ?? throw new InvalidOperationException("Character sessions are unavailable"))
+                    .Enter(observerId, observer);
+                (host.Space ?? throw new InvalidOperationException("Space sessions are unavailable"))
+                    .EnterPilotForTest(observer, observerId, observerShipId, 606, systemId);
+                var inventoryBroker = host.Registry.Lookup("invbroker")
+                    ?? throw new InvalidOperationException("invbroker is not registered");
+                var inventoryReference = Assert.IsType<PySubStruct>(await inventoryBroker.CallAsync(
+                    Call(observer, "GetInventoryFromId", 1, new PyLong(sourceItem))));
+                var inventoryReferenceFields = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(inventoryReference.Value).Decoded);
+                var inventoryOid = Assert.IsType<PyStr>(inventoryReferenceFields.Items[0]).Value;
+                var initialSiloContents = Assert.IsType<PyObjectEx>(await inventoryBroker.CallAsync(new ServiceCall
+                {
+                    Session = observer,
+                    Method = "List",
+                    Args = [new PyInt(1)],
+                    CallId = new PyInt(2),
+                    BoundObjectId = inventoryOid,
+                }));
+                Assert.Empty(initialSiloContents.List);
+                observerSink.Packets.Clear();
+                await deployed.SetTowerStateAsync(sourceItem, "online");
+
+                // Run the registered Host handler at a controlled due time. Keeping the SDE interval above
+                // verifies startup restoration separately from the explicit scheduler execution.
+                await scheduler.StopAsync();
+                var configNode = JsonNode.Parse(configuration)!;
+                configNode["production"]!["nextCycleAtMs"] = nowMs;
+                await using (var connection = await source.OpenConnectionAsync())
+                await using (var transaction = await connection.BeginTransactionAsync())
+                {
+                    Assert.True(await deployed.SetTowerConfigurationAsync(connection, transaction, towerItem, configNode.ToJsonString()));
+                    await transaction.CommitAsync();
+                }
+                await scheduler.ScheduleAsync(new JobSpec("space.control_tower.production_cycle", nowMs)
+                {
+                    Key = key,
+                    Payload = new Eve.Services.Space.SpaceContainers.ControlTowerProductionCycleDue(towerItem),
+                    OnDuplicate = OnDuplicate.Replace,
+                });
+                Assert.True(await scheduler.RunDueAsync() >= 1);
+
+                Assert.Empty(await items.InContainerAsync(sourceItem));
+                var output = Assert.Single(await items.InContainerAsync(destinationItem));
+                Assert.Equal(materialTypeId, output.TypeId);
+                Assert.Equal(3, output.Quantity);
+                var notifications = observerSink.Packets
+                    .Select(packet => Assert.IsType<MachoPacket>(MachoPacket.Decode(packet)))
+                    .Where(packet => packet.Type == MachoMessage.Notification).ToArray();
+                // Production runs only while the silos are online, when the V24 inventory access
+                // path denies the silo window. EveJS therefore filters the bound inventory update;
+                // OnMoonProcessChange refreshes the production panel.
+                Assert.Equal(new[] { "OnMoonProcessChange" },
+                    notifications.Select(packet => packet.Dest.BroadcastId).ToArray());
+                Assert.All(notifications, packet => Assert.Equal("clientID", packet.Dest.IdType));
+                static long Number(PyValue value) => value switch
+                {
+                    PyInt number => number.Value,
+                    PyLong number => number.Value,
+                    _ => throw new InvalidOperationException("Expected an integer notification value"),
+                };
+                var refreshArguments = NotificationArguments(notifications[0]);
+                Assert.Equal(towerItem, Number(refreshArguments[0]));
+                Assert.IsType<PyList>(refreshArguments[1]);
+                string persistedConfiguration;
+                await using (var connection = await source.OpenConnectionAsync())
+                    persistedConfiguration = (await deployed.TowerConfigurationAsync(connection, null, towerItem))!;
+                using var cycleState = JsonDocument.Parse(persistedConfiguration);
+                var production = cycleState.RootElement.GetProperty("production");
+                Assert.Equal(1, production.GetProperty("cyclesCompleted").GetInt64());
+                Assert.Equal("operating", production.GetProperty("status").GetString());
+                Assert.Equal(nowMs, production.GetProperty("lastCycleAtMs").GetInt64());
+                Assert.Equal(nowMs + periodMs + 1, production.GetProperty("nextCycleAtMs").GetInt64());
+
+                nowMs = moduleOnlineDueMs;
+                Assert.True(await scheduler.RunDueAsync() >= 1);
+                Assert.Equal("online", await deployed.TowerStateAsync(pendingModuleItem));
+                Assert.Null(await scheduler.FindAsync("space.starbase_module.online", $"module:{pendingModuleItem}"));
+            }
+            finally
+            {
+                await host.ShutdownAsync();
+            }
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EVE_SIM", previousSimulation);
+            Environment.SetEnvironmentVariable("EVE_SIM_SOCKET", previousSimulationSocket);
+        }
+    }
+
+    private static async Task<(int TowerGroupId, int SiloTypeId, int SiloGroupId)> ReadPosTypesAsync(NpgsqlDataSource source, int towerTypeId)
+    {
+        await using var command = source.CreateCommand($"""
+            SELECT (tower.doc->>'groupID')::int, silo.key, (silo.doc->>'groupID')::int
+            FROM sde."types" tower
+            CROSS JOIN LATERAL (
+                SELECT key, doc FROM sde."types"
+                WHERE (doc->>'groupID')::int = 404 AND doc->>'published' = 'true'
+                ORDER BY key LIMIT 1
+            ) silo
+            WHERE tower.key = '{towerTypeId}'
+            """);
+        await using var reader = await command.ExecuteReaderAsync();
+        Assert.True(await reader.ReadAsync());
+        return (reader.GetInt32(0), int.Parse(reader.GetString(1), System.Globalization.CultureInfo.InvariantCulture), reader.GetInt32(2));
+    }
+
+    private static IReadOnlyList<PyValue> NotificationArguments(MachoPacket packet)
+    {
+        var envelope = Assert.IsType<PyTuple>(packet.Payload).Items[0];
+        var buffer = Assert.IsType<PyBuffer>(Assert.IsType<PyTuple>(envelope).Items[1]);
+        var decoded = Assert.IsType<PyTuple>(MarshalCodec.DecodeExact(buffer.Value));
+        var eventCall = Assert.IsType<PyTuple>(decoded.Items[1]);
+        return Assert.IsType<PyTuple>(eventCall.Items[1]).Items;
+    }
 
     /// <summary>Writes the game store's structures table (the legacy table the host reads), then lets the writer go so the host can own it.</summary>
     private async Task SeedStructuresAsync(NpgsqlDataSource source, params JsonObject[] rows)

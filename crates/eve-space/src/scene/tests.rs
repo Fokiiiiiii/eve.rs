@@ -2176,11 +2176,10 @@ fn binding_a_ship_that_came_through_a_gate_sends_the_ship_the_state_and_the_numb
         .collect();
     assert_eq!(
         notifications,
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate", "DoDestinyUpdate"]
+        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"]
     );
-    assert_eq!(names[2], ["AddBalls2"]);
-    assert_eq!(names[3], ["SetState"]);
-    assert_eq!(names[4], ["SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
+    assert_eq!(names[2], ["SetState"]);
+    assert_eq!(names[3], ["SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
     // the ship's own ball says it is stopped
     assert_eq!(there.ship(SESSION, NOON + seconds(6)).unwrap().course, Course::Stop);
 }

@@ -11,6 +11,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Eve.Inventory;
 using Eve.Ships;
+using Eve.Macho;
 using Eve.Marshal;
 using Eve.Npc;
 using Eve.Sde;
@@ -120,7 +121,7 @@ internal sealed partial class CharacterServicesComposition
     internal static ShipcasterRpcService CreateStarterShipcasterService(
         SolarSystemCatalog systems,
         Action<string>? log = null,
-        Func<ServiceCall, bool>? canCharacterJump = null)
+        Func<ServiceCall, ValueTask<bool>>? canCharacterJump = null)
     {
         if (canCharacterJump is not null)
             return new ShipcasterRpcService("starterShipcasterTravelMgr", systems, canCharacterJump: canCharacterJump);
@@ -130,19 +131,48 @@ internal sealed partial class CharacterServicesComposition
         {
             if (System.Threading.Interlocked.Exchange(ref logged, 1) == 0)
                 log?.Invoke("Starter shipcaster eligibility is unavailable; refusing the jump.");
-            return false;
+            return ValueTask.FromResult(false);
         });
     }
 
-    internal static IService[] CreateShipcasterServices(SolarSystemCatalog systems, Action<string>? log = null) =>
-    [
-        // The pinned SDE does not contain deployed shipcaster item IDs or live target schedules. Leave these
-        // readers unwired so the service reports missing authority instead of returning a fabricated empty success.
-        new ShipcasterRpcService("shipCasterLandingPadMgr", systems),
-        new ShipcasterRpcService("shipCasterLauncherMgr", systems),
-        new ShipcasterRpcService("shipcasterTravelMgr", systems),
-        CreateStarterShipcasterService(systems, log),
-    ];
+    internal static IService[] CreateShipcasterServices(
+        SolarSystemCatalog systems,
+        PgShipcasterStore store,
+        SpaceSessions? space,
+        Func<long, CancellationToken, ValueTask<long>> warFactionOf,
+        Func<long> now)
+    {
+        var travel = new ShipcasterTravel(store, space, systems, warFactionOf, now);
+        async ValueTask<IReadOnlyList<ShipcasterLandingPad>> ReadLandingPads(CancellationToken cancellationToken)
+        {
+            if (!await store.NetworkPublishedAsync(cancellationToken).ConfigureAwait(false))
+                throw ShipcasterNetworkUnavailable();
+            return (await store.LandingPadsAsync(cancellationToken: cancellationToken).ConfigureAwait(false))
+                .Select(pad => new ShipcasterLandingPad(pad.ItemId, pad.SolarSystemId, pad.FactionId,
+                    pad.IsBuilt, pad.LinkTimestamp is { } timestamp ? new PyLong(timestamp) : PyNone.Instance,
+                    pad.IsDisrupted))
+                .ToArray();
+        }
+
+        async ValueTask<IReadOnlyList<int>> ReadFactions(CancellationToken cancellationToken)
+        {
+            if (!await store.NetworkPublishedAsync(cancellationToken).ConfigureAwait(false))
+                throw ShipcasterNetworkUnavailable();
+            return await store.FactionsWithShipcasterAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return
+        [
+            new ShipcasterRpcService("shipCasterLandingPadMgr", systems, readLandingPads: ReadLandingPads),
+            new ShipcasterRpcService("shipCasterLauncherMgr", systems, readFactionsWithShipcaster: ReadFactions),
+            new ShipcasterRpcService("shipcasterTravelMgr", systems, travel: travel.TravelAsync),
+            new ShipcasterRpcService("starterShipcasterTravelMgr", systems,
+                travel: travel.TravelAsync, canCharacterJump: travel.CanCharacterJumpAsync),
+        ];
+    }
+
+    private static MachoWrappedException ShipcasterNetworkUnavailable() => MachoErrors.ThrowUserError(
+        "CustomNotify", ("notify", new PyStr("Shipcaster network data is not available on this server.")));
 
     private IReadOnlyList<IService> AgentRpcServices() =>
     [
@@ -209,6 +239,7 @@ internal sealed partial class CharacterServicesComposition
                     },
                 }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync, BridgeToStructureBeaconAsync, GroupJumpToStructureBeaconAsync).TravelAsync),
                 new EntityService(spaceDrones!, now, spaceContainers) },
-            .. CreateShipcasterServices(solarSystems, message => SentrySdk.CaptureMessage(message, SentryLevel.Warning)),
+            .. CreateShipcasterServices(solarSystems, new PgShipcasterStore(source, spaceSchema), spaceSessions,
+                WarFactionOfAsync, now),
     ];
 }

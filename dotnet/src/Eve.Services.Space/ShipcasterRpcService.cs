@@ -18,18 +18,18 @@ public sealed class ShipcasterRpcService : IService
 {
     private const string LandingPadDataClass = "shipcaster.landingPadData.LandingPadData";
     private readonly SolarSystemCatalog _solarSystems;
-    private readonly Func<IReadOnlyList<ShipcasterLandingPad>>? _readLandingPads;
-    private readonly Func<IReadOnlyList<int>>? _readFactionsWithShipcaster;
+    private readonly Func<CancellationToken, ValueTask<IReadOnlyList<ShipcasterLandingPad>>>? _readLandingPads;
+    private readonly Func<CancellationToken, ValueTask<IReadOnlyList<int>>>? _readFactionsWithShipcaster;
     private readonly Func<ServiceCall, ValueTask<PyValue>>? _travel;
-    private readonly Func<ServiceCall, bool>? _canCharacterJump;
+    private readonly Func<ServiceCall, ValueTask<bool>>? _canCharacterJump;
 
     public ShipcasterRpcService(
         string name,
         SolarSystemCatalog solarSystems,
-        Func<IReadOnlyList<ShipcasterLandingPad>>? readLandingPads = null,
-        Func<IReadOnlyList<int>>? readFactionsWithShipcaster = null,
+        Func<CancellationToken, ValueTask<IReadOnlyList<ShipcasterLandingPad>>>? readLandingPads = null,
+        Func<CancellationToken, ValueTask<IReadOnlyList<int>>>? readFactionsWithShipcaster = null,
         Func<ServiceCall, ValueTask<PyValue>>? travel = null,
-        Func<ServiceCall, bool>? canCharacterJump = null)
+        Func<ServiceCall, ValueTask<bool>>? canCharacterJump = null)
     {
         if (name is not ("shipCasterLandingPadMgr" or "shipCasterLauncherMgr" or "shipcasterTravelMgr" or "starterShipcasterTravelMgr"))
             throw new ArgumentOutOfRangeException(nameof(name), name, "Unknown shipcaster service.");
@@ -64,15 +64,15 @@ public sealed class ShipcasterRpcService : IService
             if (call.Method == "GetFactionLandingPads" &&
                 (factionId is null || !FwFactions.IsWarfareFaction(factionId.Value)))
                 return new PyList([]);
-            return new PyList(LandingPads(factionId).Select(ToWire).ToArray());
+            return new PyList((await LandingPads(factionId, call.Cancellation).ConfigureAwait(false)).Select(ToWire).ToArray());
         }
 
         if (call.Method == "GetFactionsWithShipcaster")
         {
             var factions = _readFactionsWithShipcaster is { } readFactions
-                ? readFactions()
+                ? await readFactions(call.Cancellation).ConfigureAwait(false)
                 : _readLandingPads is not null
-                    ? LandingPads(null).Select(pad => pad.FactionId).ToArray()
+                    ? (await LandingPads(null, call.Cancellation).ConfigureAwait(false)).Select(pad => pad.FactionId).ToArray()
                     : throw MissingBackend("Shipcaster faction data");
             return new PyList(factions
                 .Where(factionId => FwFactions.IsWarfareFaction(factionId))
@@ -83,7 +83,9 @@ public sealed class ShipcasterRpcService : IService
         }
 
         if (call.Method == "CanCharacterJump")
-            return (_canCharacterJump ?? throw MissingBackend("Starter shipcaster eligibility"))(call) ? PyBool.True : PyBool.False;
+            return (await (_canCharacterJump ?? throw MissingBackend("Starter shipcaster eligibility"))(call).ConfigureAwait(false))
+                ? PyBool.True
+                : PyBool.False;
 
         if (_travel is not null)
             return await _travel(call).ConfigureAwait(false);
@@ -94,8 +96,8 @@ public sealed class ShipcasterRpcService : IService
         throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(notify)));
     }
 
-    private IReadOnlyList<ShipcasterLandingPad> LandingPads(int? factionId) =>
-        (_readLandingPads ?? throw MissingBackend("Shipcaster landing-pad data"))()
+    private async ValueTask<IReadOnlyList<ShipcasterLandingPad>> LandingPads(int? factionId, CancellationToken cancellationToken) =>
+        (await (_readLandingPads ?? throw MissingBackend("Shipcaster landing-pad data"))(cancellationToken).ConfigureAwait(false))
         .Where(pad => pad.ItemId > 0 &&
             _solarSystems.Get(pad.SolarSystemId) is not null &&
             FwFactions.IsWarfareFaction(pad.FactionId) &&
@@ -120,7 +122,7 @@ public sealed class ShipcasterRpcService : IService
                 new PyInt(pad.SolarSystemId),
                 new PyInt(pad.FactionId),
                 pad.IsBuilt ? PyBool.True : PyBool.False,
-                pad.LinkTimestamp ?? PyNone.Instance,
+                pad.IsBuilt ? pad.LinkTimestamp ?? PyNone.Instance : PyNone.Instance,
                 pad.IsDisrupted ? PyBool.True : PyBool.False,
             ]),
         ]),

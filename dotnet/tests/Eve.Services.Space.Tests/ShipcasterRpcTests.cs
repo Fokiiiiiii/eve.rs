@@ -38,7 +38,8 @@ public sealed class ShipcasterRpcTests
             new(9003, 30_000_001, 500_099, true),
             new(9004, 30_000_099, 500_001, true),
         ];
-        var service = new ShipcasterRpcService("shipCasterLandingPadMgr", Systems, () => pads);
+        var service = new ShipcasterRpcService("shipCasterLandingPadMgr", Systems,
+            _ => ValueTask.FromResult<IReadOnlyList<ShipcasterLandingPad>>(pads));
 
         var result = Assert.IsType<PyList>(await service.CallAsync(Call("GetAllLandingPads")));
 
@@ -59,12 +60,13 @@ public sealed class ShipcasterRpcTests
             new(9001, 30_000_001, 500_003, false),
             new(9005, 30_000_001, 500_001, false),
         ];
-        var landingPads = new ShipcasterRpcService("shipCasterLandingPadMgr", Systems, () => pads);
+        var landingPads = new ShipcasterRpcService("shipCasterLandingPadMgr", Systems,
+            _ => ValueTask.FromResult<IReadOnlyList<ShipcasterLandingPad>>(pads));
         var launchers = new ShipcasterRpcService(
             "shipCasterLauncherMgr",
             Systems,
-            () => pads,
-            () => [500_004, 500_003, 500_001, 500_003, 500_099]);
+            _ => ValueTask.FromResult<IReadOnlyList<ShipcasterLandingPad>>(pads),
+            _ => ValueTask.FromResult<IReadOnlyList<int>>([500_004, 500_003, 500_001, 500_003, 500_099]));
 
         var factionPads = Assert.IsType<PyList>(await landingPads.CallAsync(Call("GetFactionLandingPads", new PyInt(500_001))));
         var unknownFactionPads = Assert.IsType<PyList>(await landingPads.CallAsync(Call("GetFactionLandingPads", new PyInt(500_099))));
@@ -107,8 +109,10 @@ public sealed class ShipcasterRpcTests
     public async Task Starter_jump_check_returns_a_boolean_when_wired_and_reports_a_missing_policy()
     {
         var session = new ClientSession { CharacterId = 42 };
-        var service = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems, canCharacterJump: call => call.Session.CharacterId == 42);
-        var falseService = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems, canCharacterJump: _ => false);
+        var service = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems,
+            canCharacterJump: call => ValueTask.FromResult(call.Session.CharacterId == 42));
+        var falseService = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems,
+            canCharacterJump: _ => ValueTask.FromResult(false));
         var defaultService = new ShipcasterRpcService("starterShipcasterTravelMgr", Systems);
 
         Assert.Equal(PyBool.True, await service.CallAsync(Call("CanCharacterJump", session: session)));
@@ -140,8 +144,10 @@ public sealed class ShipcasterRpcTests
     [Fact]
     public async Task Explicitly_empty_state_returns_the_client_collection_shapes()
     {
-        var landingPads = new ShipcasterRpcService("shipCasterLandingPadMgr", Systems, () => []);
-        var launchers = new ShipcasterRpcService("shipCasterLauncherMgr", Systems, readFactionsWithShipcaster: () => []);
+        var landingPads = new ShipcasterRpcService("shipCasterLandingPadMgr", Systems,
+            _ => ValueTask.FromResult<IReadOnlyList<ShipcasterLandingPad>>([]));
+        var launchers = new ShipcasterRpcService("shipCasterLauncherMgr", Systems,
+            readFactionsWithShipcaster: _ => ValueTask.FromResult<IReadOnlyList<int>>([]));
 
         Assert.Empty(Assert.IsType<PyList>(await landingPads.CallAsync(Call("GetAllLandingPads"))).Items);
         Assert.Empty(Assert.IsType<PyList>(await launchers.CallAsync(Call("GetFactionsWithShipcaster"))).Items);

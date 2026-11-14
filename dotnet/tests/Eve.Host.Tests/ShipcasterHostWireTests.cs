@@ -7,13 +7,15 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
-    public async Task Production_shipcaster_routes_refuse_when_dynamic_authority_is_missing()
+    public async Task Unwired_shipcaster_services_report_missing_dynamic_authority()
     {
         var systems = new Eve.Universe.SolarSystemCatalog([]);
         Start(configure: registry =>
         {
-            foreach (var service in Eve.Host.CharacterServicesComposition.CreateShipcasterServices(systems))
-                registry.Register(service);
+            registry.Register(new Eve.Services.Space.ShipcasterRpcService("shipCasterLandingPadMgr", systems));
+            registry.Register(new Eve.Services.Space.ShipcasterRpcService("shipCasterLauncherMgr", systems));
+            registry.Register(new Eve.Services.Space.ShipcasterRpcService("shipcasterTravelMgr", systems));
+            registry.Register(Eve.Host.CharacterServicesComposition.CreateStarterShipcasterService(systems));
         });
         var (front, open) = await OpenFrontAsync();
 
@@ -53,9 +55,11 @@ public partial class HostServerTests
         };
         Start(configure: registry =>
         {
-            registry.Register(new Eve.Services.Space.ShipcasterRpcService("shipCasterLandingPadMgr", systems, () => pads));
+            registry.Register(new Eve.Services.Space.ShipcasterRpcService("shipCasterLandingPadMgr", systems,
+                _ => ValueTask.FromResult<IReadOnlyList<Eve.Services.Space.ShipcasterLandingPad>>(pads)));
             registry.Register(new Eve.Services.Space.ShipcasterRpcService(
-                "shipCasterLauncherMgr", systems, readFactionsWithShipcaster: () => [500_001]));
+                "shipCasterLauncherMgr", systems,
+                readFactionsWithShipcaster: _ => ValueTask.FromResult<IReadOnlyList<int>>([500_001])));
         });
         var front = await Handshaken(await ConnectAsync());
         var open = Open();

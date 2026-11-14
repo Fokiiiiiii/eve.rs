@@ -1,10 +1,45 @@
 using Eve.Macho;
 using Eve.Marshal;
+using System.Text;
 
 namespace Eve.Host.Tests;
 
 public partial class HostServerTests
 {
+    [Fact]
+    public async Task Production_shipcaster_routes_refuse_when_dynamic_authority_is_missing()
+    {
+        var systems = new Eve.Universe.SolarSystemCatalog([]);
+        Start(configure: registry =>
+        {
+            foreach (var service in Eve.Host.CharacterServicesComposition.CreateShipcasterServices(systems))
+                registry.Register(service);
+        });
+        var (front, open) = await OpenFrontAsync();
+
+        await AssertUnavailable("shipCasterLandingPadMgr", "GetAllLandingPads", 1);
+        await AssertUnavailable("shipCasterLandingPadMgr", "GetFactionLandingPads", 2, new PyInt(500_001));
+        await AssertUnavailable("shipCasterLauncherMgr", "GetFactionsWithShipcaster", 3);
+        Assert.Empty(Assert.IsType<PyList>(await HostRpcAsync(front, open, 4,
+            "shipCasterLandingPadMgr", "GetFactionLandingPads", new PyInt(500_099))).Items);
+        Assert.Same(PyBool.False, await HostRpcAsync(front, open, 5,
+            "starterShipcasterTravelMgr", "CanCharacterJump"));
+
+        async Task AssertUnavailable(string service, string method, uint callId, params PyValue[] args)
+        {
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+                open, callId, service, method, new PyTuple(args), TransportKwargs()))));
+            var send = Assert.IsType<Send>(await front.ReceiveAsync());
+            var envelope = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(send.Payload)));
+            Assert.Equal(MachoMessage.ErrorResponse, envelope.Type);
+            Assert.Contains("CustomNotify", Encoding.ASCII.GetString(send.Payload.Span));
+        }
+
+        await AssertUnavailable("shipcasterTravelMgr", "CmdJumpThroughShipcaster", 6,
+            new PyLong(77), new PyInt(30_000_001), new PyLong(90));
+        await AssertUnavailable("starterShipcasterTravelMgr", "CmdJumpThroughStarterShipcaster", 7, new PyLong(77));
+    }
+
     [Fact]
     public async Task Shipcaster_reads_return_client_wire_rows_through_host_dispatch()
     {

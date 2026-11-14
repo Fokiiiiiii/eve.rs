@@ -134,6 +134,16 @@ internal sealed partial class CharacterServicesComposition
         });
     }
 
+    internal static IService[] CreateShipcasterServices(SolarSystemCatalog systems, Action<string>? log = null) =>
+    [
+        // The pinned SDE does not contain deployed shipcaster item IDs or live target schedules. Leave these
+        // readers unwired so the service reports missing authority instead of returning a fabricated empty success.
+        new ShipcasterRpcService("shipCasterLandingPadMgr", systems),
+        new ShipcasterRpcService("shipCasterLauncherMgr", systems),
+        new ShipcasterRpcService("shipcasterTravelMgr", systems),
+        CreateStarterShipcasterService(systems, log),
+    ];
+
     private IReadOnlyList<IService> AgentRpcServices() =>
     [
             agentMissionService,
@@ -197,6 +207,8 @@ internal sealed partial class CharacterServicesComposition
                         var site = (await sites.ActiveAsync(systemId, token)).FirstOrDefault(active => active.InstanceId == instanceId);
                         return site is null ? null : new WarpCoordinates(systemId, site.Position[0], site.Position[1], site.Position[2]);
                     },
-                }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync, BridgeToStructureBeaconAsync, GroupJumpToStructureBeaconAsync).TravelAsync), new ShipcasterRpcService("shipCasterLandingPadMgr", solarSystems), new ShipcasterRpcService("shipCasterLauncherMgr", solarSystems), new ShipcasterRpcService("shipcasterTravelMgr", solarSystems), CreateStarterShipcasterService(solarSystems, message => SentrySdk.CaptureMessage(message, SentryLevel.Warning)), new EntityService(spaceDrones!, now, spaceContainers) },
+                }, new StructureTravelRpcService("structureCynoBeaconMgr", new StructureBeaconTravel(StructureBeaconAsync, CynoJammedAsync, structureDirectoryReadModel.CharacterHasServiceAsync, JumpToStructureBeaconAsync, BridgeToStructureBeaconAsync, GroupJumpToStructureBeaconAsync).TravelAsync),
+                new EntityService(spaceDrones!, now, spaceContainers) },
+            .. CreateShipcasterServices(solarSystems, message => SentrySdk.CaptureMessage(message, SentryLevel.Warning)),
     ];
 }

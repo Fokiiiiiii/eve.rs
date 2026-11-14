@@ -197,35 +197,48 @@ fn the_ship_that_has_jumped_is_bound_in_the_other_system_as_the_reference_bound_
 
     let bind = step(&r.race, "bind the ballpark of the next system");
     let theirs: Vec<&Value> = bind["events"].as_array().unwrap().iter().take(5).collect();
-    assert_eq!(out.len(), 5);
+    assert_eq!(out.len(), 4);
     let name = |o: &Out| match o {
         Out::Notify { name, .. } => name.to_string(),
         other => panic!("{other:?}"),
     };
     assert_eq!(
         out.iter().map(name).collect::<Vec<_>>(),
-        theirs.iter().map(|e| e["name"].as_str().unwrap().to_string()).collect::<Vec<_>>()
+        [0, 1, 3, 4].map(|index| theirs[index]["name"].as_str().unwrap().to_string())
     );
-    // the clock and the dilation are the reference's own numbers
+    // The client gets the reference's clock and rebase, then the complete state and ship numbers.
     assert_eq!(out_args(&out[0]), event_args(theirs[0]));
+    // Michelle applies newSimTime - oldSimTime (michelle.py:699-703); absolute filetimes belong to the capture.
+    let rebase = out_args(&out[1]);
+    let recorded_rebase = event_args(theirs[1]);
+    assert_eq!(shape(&rebase), shape(&recorded_rebase));
+    let rebase_delta = |args: &Value| {
+        let times = args["$tuple"][0]["$tuple"].as_array().expect("clock rebase time pair");
+        number(&times[1]) - number(&times[0])
+    };
+    assert_eq!(rebase_delta(&rebase), rebase_delta(&recorded_rebase));
 
-    // the ship, then the state, then the numbers: the same actions on the same steps of the stamp, and the client is not made to wait
-    let (first, second) = (stamps_of(&out_args(&out[2]))[0], stamps_of(&out_args(&out[3]))[0]);
-    let recorded_first = stamps_of(&event_args(theirs[2]))[0];
-    for (index, offset) in [(2, 0), (3, 1)] {
-        let ours = out_args(&out[index]);
-        let recorded = event_args(theirs[index]);
-        assert_eq!(action_names_of(&ours), action_names_of(&recorded));
-        assert_eq!(ours["$tuple"][1], recorded["$tuple"][1], "wait of event {index}");
-        assert_eq!(stamps_of(&recorded)[0] - recorded_first, offset, "the recording's stamps");
-    }
-    assert_eq!(second - first, 1);
+    // EveJS sends an incremental AddBalls2 before SetState. SetState then clears and rebuilds the
+    // ballpark from its full buffer and slims; this transient add carries no unique scene state.
+    assert_eq!(action_names_of(&event_args(theirs[2])), ["AddBalls2"]);
+    let state = out_args(&out[2]);
+    let recorded_state = event_args(theirs[3]);
+    assert_eq!(action_names_of(&state), ["SetState"]);
+    assert_eq!(action_names_of(&state), action_names_of(&recorded_state));
+    assert_eq!(state["$tuple"][1], recorded_state["$tuple"][1], "wait of SetState");
+
+    // The traveller's state and numbers share one simulation step in both implementations.
+    let (state_stamp, numbers_stamp) = (stamps_of(&state)[0], stamps_of(&out_args(&out[3]))[0]);
+    let recorded_state_stamp = stamps_of(&recorded_state)[0];
+    let recorded_numbers = event_args(theirs[4]);
+    assert_eq!(stamps_of(&recorded_numbers)[0], recorded_state_stamp, "the recording's stamps");
+    assert_eq!(numbers_stamp, state_stamp);
 
     // the ship's own numbers are the recorded ones (the reference sends those of its ambient ships too)
     let ship_id = r.spec.ship_id;
-    let ours = out_args(&out[4]);
-    assert_eq!(stamps_of(&ours), [second, second, second]);
-    let recorded: Vec<Value> = without_stamps(&event_args(theirs[4]))
+    let ours = out_args(&out[3]);
+    assert_eq!(stamps_of(&ours), vec![numbers_stamp; stamps_of(&ours).len()]);
+    let recorded: Vec<Value> = without_stamps(&recorded_numbers)
         .into_iter()
         .filter(|a| number(&a["$tuple"][1]["$tuple"][0]) == ship_id)
         .collect();

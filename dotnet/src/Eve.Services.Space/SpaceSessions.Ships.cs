@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using Eve.Crimewatch;
 using Eve.Events;
 using Eve.Inventory;
@@ -18,6 +19,8 @@ namespace Eve.Services.Space;
 
 public sealed partial class SpaceSessions
 {
+    private readonly ConditionalWeakTable<ClientSession, SemaphoreSlim> _ballparkBindGates = new();
+
     /// <summary>The SDE category of subsystems (a Strategic Cruiser's fit).</summary>
     private const int SubsystemCategory = 32;
 
@@ -534,12 +537,24 @@ public sealed partial class SpaceSessions
 
     // ── what the pilot does ──────────────────────────────────────────────────
 
-    /// <summary>The client bound the system's ballpark: the simulation sends it the scene.</summary>
-    public void Bind(ClientSession session)
+    /// <summary>The client bound a ballpark; wait until the simulation delivers its scene before answering the bind RPC.</summary>
+    public async ValueTask<bool> BindAsync(ClientSession session, CancellationToken cancellationToken)
     {
-        if (IsInSpace(session) || IsStructureObserver(session))
+        if (!IsInSpace(session) && !IsStructureObserver(session))
+            return false;
+
+        var gate = _ballparkBindGates.GetValue(session, static _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            _sim.Bind((ulong)session.SessionId);
+            var reply = await _sim.BindAsync((ulong)session.SessionId, cancellationToken).ConfigureAwait(false);
+            if (!reply.Accepted)
+                _log?.Invoke($"ballpark bind for session {session.SessionId} was refused: {reply.Reason}");
+            return reply.Accepted;
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 

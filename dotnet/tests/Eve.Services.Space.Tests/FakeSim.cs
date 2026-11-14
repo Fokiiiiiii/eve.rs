@@ -14,6 +14,7 @@ internal sealed class FakeSim : ISimulation
     public TaskCompletionSource? PublicMoveStarted { get; set; }
     public TaskCompletionSource? PublicMoveRelease { get; set; }
     public Action<SimEnter>? OnEnter { get; set; }
+    public Func<ulong, CancellationToken, Task<CommandReply>>? BindHandler { get; set; }
 
     public async Task<SimMovePublicParticipantReply> MovePublicParticipantInOrderAsync(SimMovePublicParticipant move,
         Action<SimMovePublicParticipantReply> beforeFollowingMessages, CancellationToken cancellationToken = default)
@@ -607,7 +608,12 @@ internal sealed class FakeSim : ISimulation
 
     public void Leave(ulong sessionId, LeaveWhy why) => Heard.Enqueue(new SimLeave(sessionId, why));
 
-    public void Bind(ulong sessionId) => Heard.Enqueue(new SimBind(sessionId));
+    public Task<CommandReply> BindAsync(ulong sessionId, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Heard.Enqueue(new SimBind(sessionId));
+        return BindHandler?.Invoke(sessionId, cancellationToken) ?? Task.FromResult(new CommandReply(true, 1, null));
+    }
 
     public void UpdateState(ulong sessionId) => Heard.Enqueue(new SimUpdateState(sessionId));
 

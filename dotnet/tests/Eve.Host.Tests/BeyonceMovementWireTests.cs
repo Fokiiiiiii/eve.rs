@@ -170,6 +170,7 @@ public partial class HostServerTests
                 Commands.Add((sessionId, command, values));
                 return Task.FromResult(new CommandReply(true, 1, null));
             }
+            if (method.Name == "BindAsync") return Task.FromResult(new CommandReply(true, 1, null));
             if (method.Name == "get_IsConnected") return true;
             if (method.Name.StartsWith("add_") || method.Name.StartsWith("remove_")) return null;
             if (method.ReturnType == typeof(void)) return null;
@@ -186,6 +187,7 @@ public partial class HostServerTests
             var returnType = targetMethod?.ReturnType ?? typeof(void);
             if (returnType == typeof(void)) return null;
             if (returnType == typeof(Task)) return Task.CompletedTask;
+            if (returnType == typeof(Task<CommandReply>)) return Task.FromResult(new CommandReply(true, 1, null));
             return returnType.IsValueType ? Activator.CreateInstance(returnType) : null;
         }
     }
@@ -198,6 +200,7 @@ public partial class HostServerTests
         {
             if (method?.Name == "Command" && args is [ulong sessionId, byte command, double[] values])
                 Commands.Add((sessionId, command, values));
+            if (method?.Name == "BindAsync") return Task.FromResult(new CommandReply(true, 1, null));
             return method?.ReturnType == typeof(bool) ? true : null;
         }
     }

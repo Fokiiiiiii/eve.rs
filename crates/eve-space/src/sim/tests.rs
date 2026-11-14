@@ -1620,19 +1620,6 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
         "Move updates the destination view but must not push a proactive snapshot"
     );
     assert_eq!(sim.scenes[&first].pilots[&7].protected_until, NOON + 61 * SECOND);
-    let prime = sim
-        .handle(
-            Message::Command {
-                session_id: 7,
-                command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
-                args: vec![],
-            },
-            NOON + SECOND,
-        )
-        .unwrap();
-    assert!(!prime.iter().any(
-        |message| matches!(message, Message::Notify { session_id: 7, name, .. } if name == "DoDestinyUpdate")
-    ));
     let entry_bind = sim.handle(Message::Bind { session_id: 7 }, NOON + SECOND).unwrap();
     assert!(entry_bind.iter().any(
         |message| matches!(message, Message::Notify { session_id: 7, name, .. } if name == "DoDestinyUpdate")
@@ -1744,19 +1731,6 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
     assert!(!sim.scenes[&second].pilots.contains_key(&7));
     assert_eq!(sim.scenes[&second].pilots[&77].ship.spec.ship_id, ship_id);
     assert!(!sim.scenes[&second].pilots[&77].bound);
-    let primed = sim
-        .handle(
-            Message::Command {
-                session_id: 77,
-                command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
-                args: vec![],
-            },
-            NOON + 2 * SECOND,
-        )
-        .unwrap();
-    assert!(primed.iter().any(
-        |message| matches!(message, Message::Notify { session_id: 77, name, .. } if name == "DoDestinyUpdate")
-    ));
     let rebound = sim.handle(Message::Bind { session_id: 77 }, NOON + 2 * SECOND).unwrap();
     let rebound_updates = rebound
         .iter()
@@ -1768,7 +1742,7 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
         .count();
     assert!(
         rebound_updates >= 3,
-        "rebind must backfill static scene objects, SetState and ship numbers after the visual prime: {rebound:?}"
+        "rebind must send static scene objects, SetState and ship numbers with the bound ballpark: {rebound:?}"
     );
     let rebound_state = sim.handle(Message::UpdateState { session_id: 77 }, NOON + 2 * SECOND).unwrap();
     assert!(names(&rebound_state).iter().any(|name| name == "DoDestinyUpdate"));
@@ -2720,10 +2694,16 @@ fn an_undock_puts_the_ship_in_space_and_binding_sends_it_the_scene_as_marshalled
     let mut sim = undocked();
     assert_eq!(sim.ships(), 1);
     let out = sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+    let (acknowledgement, notifications) =
+        out.split_last().expect("ballpark bind returns its acknowledgement after the scene");
     assert_eq!(
-        names(&out),
+        names(notifications),
         ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate", "DoDestinyUpdate"]
     );
+    assert!(matches!(
+        acknowledgement,
+        Message::Accepted { session_id: SESSION, command: crate::link::COMMAND_BIND_BALLPARK, at: NOON }
+    ));
     let Message::Notify { id_type, args, session_id, .. } = &out[0] else { panic!() };
     assert_eq!((id_type.as_str(), *session_id), ("clientID", SESSION));
     // the arguments are a marshalled tuple
@@ -2814,28 +2794,22 @@ fn an_undock_rejects_bad_locations_and_in_space_login_restores_the_saved_pose() 
     assert_eq!(restored.spec.ship_id, ship_id);
     assert_eq!(restored.position, Vec3::new(position[0], position[1], position[2]));
 
-    let primed = sim
-        .handle(
-            Message::Command {
-                session_id: 9,
-                command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
-                args: Vec::new(),
-            },
-            NOON,
-        )
-        .unwrap();
-    assert_eq!(primed.len(), 4, "clock reset, visual AddBalls2, and command acknowledgement");
-    assert!(matches!(
-        primed.last(),
-        Some(Message::Accepted {
-            session_id: 9,
-            command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
-            ..
-        })
-    ));
-
     let bound = sim.handle(Message::Bind { session_id: 9 }, NOON + 1).unwrap();
-    assert_eq!(bound.len(), 2, "the full SetState and ship numbers follow the earlier visual prime");
+    assert_eq!(
+        bound
+            .iter()
+            .filter_map(|message| match message {
+                Message::Notify { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"],
+        "the bind carries clock sync, full ego-ball state and ship numbers"
+    );
+    assert!(matches!(
+        bound.last(),
+        Some(Message::Accepted { session_id: 9, command: crate::link::COMMAND_BIND_BALLPARK, .. })
+    ));
 }
 
 #[test]
@@ -3497,7 +3471,14 @@ fn leaving_takes_the_ship_out_and_the_scene_with_it() {
         sim.handle(Message::Leave { session_id: SESSION, why: 1 }, NOON).unwrap().is_empty(),
         "leaving twice is harmless"
     );
-    assert!(sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap().is_empty());
+    assert!(matches!(
+        sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap().as_slice(),
+        [Message::Refused {
+            session_id: SESSION,
+            command: crate::link::COMMAND_BIND_BALLPARK,
+            reason,
+        }] if reason == "NO_SHIP_IN_SPACE"
+    ));
 }
 
 #[test]
@@ -3629,7 +3610,18 @@ fn a_jump_takes_the_ship_to_the_scene_of_the_other_system_when_it_is_due() {
 
     // the client binds the ballpark of the new system and is sent it
     let bound = sim.handle(Message::Bind { session_id: SESSION }, NOON + 5 * SECOND).unwrap();
-    assert_eq!(bound.len(), 5);
+    let (acknowledgement, notifications) = bound.split_last().expect("the bound scene is acknowledged last");
+    assert_eq!(
+        names(notifications),
+        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"]
+    );
+    let Message::Accepted { session_id, command, at } = acknowledgement else {
+        panic!("{acknowledgement:?}")
+    };
+    assert_eq!(
+        (*session_id, *command, *at),
+        (SESSION, crate::link::COMMAND_BIND_BALLPARK, NOON + 5 * SECOND)
+    );
     // and orders go to the ship where it is
     let out = sim
         .handle(Message::Command { session_id: SESSION, command: 1, args: vec![1.0] }, NOON + 6 * SECOND)

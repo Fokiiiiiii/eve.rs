@@ -360,11 +360,10 @@ public static class SimCommands
 
     /// <summary>Read a body's or ship's current coordinates.</summary>
     public const byte PositionOf = 23;
+    /// <summary>Request the initial scene for a bound ballpark; answered after the scene notifications.</summary>
+    public const byte BindBallpark = 24;
     /// <summary>The point a distance ahead of the ship along its heading (protocol 49): where a mobile warp disruptor is dropped.</summary>
     public const byte DropPoint = 25;
-
-    /// <summary>Send the visual half of an in-space login before the later full ballpark bind.</summary>
-    public const byte PrimeLoginBallparkVisuals = 24;
 
     /// <summary>The code a <see cref="SimPlaceContainer"/> is answered under (<see cref="SimContainerPlaced"/>, or <see cref="SimRefused"/>).</summary>
     public const byte PlaceContainer = 28;

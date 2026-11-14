@@ -107,7 +107,7 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
 
     /// <summary>
     /// <c>MachoBindObject((solarSystemID, groupID), (method, args, kwargs))</c>: binds the ballpark of the solar system the ship is in. Once the
-    /// answer has gone the simulation sends the scene.
+    /// simulation sends the scene before the answer is returned.
     /// </summary>
     [Method("MachoBindObject")]
     public async ValueTask<PyValue> MachoBindObject(ServiceCall call)
@@ -119,10 +119,18 @@ public sealed partial class BeyonceService(SpaceSessions space, Func<long> nowUn
             return Py.Tuple(refusedBound, None);
         }
         var (bound, oid) = _binding.Bind(call.Session);
-        var result = await Binding.NestedAsync(this, call, oid);
-        if (space is not null)
-            call.Session.AfterResponse(() => space.Bind(call.Session));
-        return Py.Tuple(bound, result);
+        try
+        {
+            var result = await Binding.NestedAsync(this, call, oid);
+            if (space is not null && !await space.BindAsync(call.Session, call.Cancellation))
+                throw new InvalidOperationException($"The simulation refused ballpark bind for session {call.Session.SessionId}.");
+            return Py.Tuple(bound, result);
+        }
+        catch
+        {
+            _binding.Release(oid);
+            throw;
+        }
     }
 
     [Method("BookmarkLocation")]

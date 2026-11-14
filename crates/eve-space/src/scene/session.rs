@@ -2,26 +2,6 @@ use super::docking::{is_dock_body, surface_distance};
 use super::*;
 
 impl Scene {
-    /// Send the visual half of a login-in-space bootstrap; the later ballpark bind sends the full SetState.
-    pub fn prime_login_visuals(&mut self, session: SessionId, now: i64) -> Vec<Out> {
-        if self.pilots.get(&session).is_none_or(|pilot| pilot.bound || pilot.login_visuals_sent) {
-            return Vec::new();
-        }
-        self.settle_all(now);
-        let stamp = self.next_stamp(now);
-        let ships = self.ships_visible_to(session);
-        let Ok(added) = payload::add_ships(stamp, &ships, now) else { return Vec::new() };
-        let told = vec![
-            Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
-            Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
-            Self::notify(session, "DoDestinyUpdate", payload::destiny_update([added], true)),
-        ];
-        if let Some(pilot) = self.pilots.get_mut(&session) {
-            pilot.login_visuals_sent = true;
-        }
-        told
-    }
-
     pub(crate) fn controlled_structure_id(&self, session: SessionId) -> Option<i64> {
         self.controlled_structures.get(&session).map(|observer| observer.structure_id)
     }
@@ -298,16 +278,17 @@ impl Scene {
         if !self.pilots.contains_key(&session) {
             return self.bind_controlled_structure(session, now);
         }
-        let login_visuals_sent = self.pilots[&session].login_visuals_sent;
         self.settle_all(now);
         self.take_in_view(session);
         let first = self.next_stamp(now);
         let second = self.next_stamp(now);
+        let (add_stamp, state_stamp) =
+            if self.pilots[&session].jumped_in { (second, first) } else { (first, second) };
         let system = Arc::clone(&self.system);
         let ships = self.ships_in_view(session);
         let traces = self.abyssal_traces_in_view(session);
         let trace_adds: Vec<_> =
-            match traces.iter().map(|trace| payload::add_abyssal_trace(first, trace)).collect() {
+            match traces.iter().map(|trace| payload::add_abyssal_trace(add_stamp, trace)).collect() {
                 Ok(adds) => adds,
                 Err(_) => return Vec::new(),
             };
@@ -318,22 +299,26 @@ impl Scene {
             |action_stamp: u32| payload::action(action_stamp, heading_name(ship), heading_args(ship));
 
         let mut added_actions = Vec::new();
-        if !login_visuals_sent {
-            let Ok(ship_added) = payload::add_ships(first, &ships, now) else { return Vec::new() };
+        if pilot.jumped_in {
+            // SetState contains every system body, in-view ship and wreck. Only runtime traces live outside it.
+            added_actions.extend(trace_adds);
+            added_actions
+                .extend(system.bodies.iter().filter_map(|body| payload::moon_chunk_effect(add_stamp, body)));
+        } else {
+            let Ok(ship_added) = payload::add_ships(add_stamp, &ships, now) else { return Vec::new() };
             added_actions.push(ship_added);
+            let Ok(abyssal_scene_objects) = payload::add_abyssal_scene_objects(add_stamp, &system) else {
+                return Vec::new();
+            };
+            added_actions.extend(payload::add_structures(add_stamp, &system, now));
+            added_actions.extend(payload::add_moon_chunks(add_stamp, &system));
+            added_actions.extend(abyssal_scene_objects);
+            added_actions.extend(trace_adds);
         }
-        let Ok(abyssal_scene_objects) = payload::add_abyssal_scene_objects(first, &system) else {
-            return Vec::new();
-        };
-        // login visual priming adds ships only; structures and private scene objects still need their balls.
-        added_actions.extend(payload::add_structures(first, &system, now));
-        added_actions.extend(payload::add_moon_chunks(first, &system));
-        added_actions.extend(abyssal_scene_objects);
-        added_actions.extend(trace_adds);
         let added = (!added_actions.is_empty()).then_some(added_actions);
         let wrecks = self.wrecks_in_view(session);
         let Ok(state) = payload::set_state_for_ego(
-            second,
+            state_stamp,
             &system,
             ship.spec.ship_id,
             &ships,
@@ -347,13 +332,22 @@ impl Scene {
             Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
         };
         let mut told = Vec::new();
-        if let Some(added) = added {
+        if pilot.jumped_in || added.is_some() {
             told.extend([
                 Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
                 Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
-                // An undocked ship waits for its ball; an in-space arrival does not.
-                Self::notify(session, "DoDestinyUpdate", payload::destiny_update(added, !pilot.jumped_in)),
             ]);
+            // The reference makes the bound ballpark's SetState its first Destiny update on login or jump.
+            // An undock instead introduces the ship before its movement prime and later SetState.
+            if !pilot.jumped_in
+                && let Some(added) = added.as_ref()
+            {
+                told.push(Self::notify(
+                    session,
+                    "DoDestinyUpdate",
+                    payload::destiny_update(added.clone(), true),
+                ));
+            }
         }
         if !pilot.jumped_in {
             // Station undocks already receive their movement prime with AddBalls2; structures need their own entry pose.
@@ -381,6 +375,11 @@ impl Scene {
             told.push(update(actions));
         }
         told.push(update(vec![state]));
+        if pilot.jumped_in
+            && let Some(added) = added
+        {
+            told.push(update(added));
+        }
         let mut numbers = Vec::new();
         for other in &ships {
             // The undocked ego's numbers are in SetState; fixed SDE sentries do not move.
@@ -390,9 +389,6 @@ impl Scene {
         }
         if !numbers.is_empty() {
             told.push(update(numbers));
-        }
-        if login_visuals_sent && let Some(pilot) = self.pilots.get_mut(&session) {
-            pilot.login_visuals_sent = false;
         }
         self.with_backlog(told)
     }

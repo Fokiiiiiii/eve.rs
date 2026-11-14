@@ -1227,7 +1227,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void Leave(ulong sessionId, LeaveWhy why) => Send(new SimLeave(sessionId, why));
 
-    public void Bind(ulong sessionId) => Send(new SimBind(sessionId));
+    public Task<CommandReply> BindAsync(ulong sessionId, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_answered, (sessionId, SimCommands.BindBallpark), new SimBind(sessionId), cancellationToken);
 
     public void UpdateState(ulong sessionId) => Send(new SimUpdateState(sessionId));
 

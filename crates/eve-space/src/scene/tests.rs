@@ -159,23 +159,10 @@ fn tournament_damage_ledger_fails_closed_on_overflow_unknown_source_and_clock_re
 }
 
 #[test]
-fn a_space_login_primes_visuals_before_the_full_bind_without_undocking_again() {
+fn a_space_login_sends_the_ego_ball_with_the_initial_bind() {
     let mut scene = Scene::new(system());
     scene.enter_in_space(SESSION, spec(), [100.0, 200.0, 300.0], [0.0, 0.0, 1.0], NOON).unwrap();
     assert!(scene.pilots[&SESSION].jumped_in);
-
-    let visuals = scene.prime_login_visuals(SESSION, NOON);
-    let names: Vec<_> = visuals
-        .iter()
-        .filter_map(|out| match out {
-            Out::Notify { name, .. } => Some(*name),
-            _ => None,
-        })
-        .collect();
-    assert!(names.contains(&"DoSimClockRebase"));
-    assert!(names.contains(&"DoDestinyUpdate"));
-    assert!(!scene.pilots[&SESSION].bound);
-    assert!(scene.pilots[&SESSION].login_visuals_sent);
 
     let bound = scene.bind(SESSION, NOON);
     let names: Vec<_> = bound
@@ -185,9 +172,24 @@ fn a_space_login_primes_visuals_before_the_full_bind_without_undocking_again() {
             _ => None,
         })
         .collect();
+    assert!(names.contains(&"DoSimClockRebase"));
+    assert!(names.contains(&"OnSetTimeDilation"));
+    assert!(names.contains(&"DoDestinyUpdate"));
     assert!(scene.pilots[&SESSION].bound);
-    assert!(!scene.pilots[&SESSION].login_visuals_sent);
-    assert!(!names.contains(&"DoSimClockRebase"));
+
+    let destiny_updates: Vec<_> =
+        bound.iter().filter(|out| matches!(out, Out::Notify { name: "DoDestinyUpdate", .. })).collect();
+    let set_state = destiny_updates
+        .iter()
+        .position(|out| actions_of(out).iter().any(|(name, _)| name == "SetState"))
+        .expect("the bind must send the authoritative ballpark state");
+    assert_eq!(set_state, 0, "SetState is the first bound Destiny update: {destiny_updates:?}");
+    assert_eq!(action_names(destiny_updates[set_state]), ["SetState"]);
+    assert!(
+        !destiny_updates.iter().any(|out| actions_of(out).iter().any(|(name, _)| name == "AddBalls2")),
+        "SetState already carries the ego and visible scene balls: {destiny_updates:?}"
+    );
+    assert!(holds_ball_of(&set_state_buffer(destiny_updates[set_state]), spec().ship_id));
     assert_eq!(names.iter().filter(|name| **name == "DoDestinyUpdate").count(), 2);
 }
 
@@ -1042,6 +1044,26 @@ fn actions_of(out: &Out) -> Vec<(String, Vec<Value>)> {
             (name.to_string(), args[1..].to_vec())
         })
         .collect()
+}
+
+fn set_state_buffer(out: &Out) -> Vec<u8> {
+    let Out::Notify { args, .. } = out else { panic!("{out:?}") };
+    let Some(Value::List(actions)) = args.first() else { panic!("{out:?}") };
+    let Value::Tuple(pair) = &actions[0] else { panic!("{:?}", actions[0]) };
+    let Value::Tuple(inner) = &pair[1] else { panic!("{:?}", pair[1]) };
+    assert!(matches!(&inner[0], Value::Str(name) if name == "SetState"));
+    let Value::Tuple(arguments) = &inner[1] else { panic!("{:?}", inner[1]) };
+    let Value::Object { args, .. } = &arguments[0] else { panic!("{:?}", arguments[0]) };
+    let Value::Dict(fields) = &**args else { panic!("{:?}", args) };
+    let (_, buffer) =
+        fields.iter().find(|(key, _)| matches!(key, Value::Str(name) if name == "state")).unwrap();
+    let Value::Buffer(bytes) = buffer else { panic!("{buffer:?}") };
+    bytes.to_vec()
+}
+
+fn holds_ball_of(buffer: &[u8], ship_id: i64) -> bool {
+    let needle = ship_id.to_le_bytes();
+    buffer.windows(needle.len()).any(|window| window == needle)
 }
 
 fn accepted(command: u8, at: i64) -> Out {

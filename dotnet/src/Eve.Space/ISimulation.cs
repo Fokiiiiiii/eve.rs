@@ -157,7 +157,8 @@ public interface ISimulation
 
     void Leave(ulong sessionId, LeaveWhy why);
 
-    void Bind(ulong sessionId);
+    /// <summary>Sends a bound ballpark and completes after its scene notifications have been delivered.</summary>
+    Task<CommandReply> BindAsync(ulong sessionId, CancellationToken cancellationToken = default);
 
     void UpdateState(ulong sessionId);
 

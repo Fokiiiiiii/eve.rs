@@ -21,7 +21,6 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 {
     /// <summary>How long a ship that has undocked cannot be hurt (the reference's: 30 seconds).</summary>
     public const long UndockInvulnerabilityTicks = 300_000_000;
-    private const string LoginInventoryBootstrapPending = "loginInventoryBootstrapPending";
 
     /// <summary>How long a ship that has come through a stargate is cloaked and cannot be hurt (the reference's: 60 seconds).</summary>
     public const long JumpCloakTicks = 600_000_000;
@@ -708,7 +707,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     public async ValueTask OnCharacterLeavingAsync(
         ClientSession session, long characterId, CancellationToken cancellationToken)
     {
-        session.Set(LoginInventoryBootstrapPending, None);
         await OnSessionClosedAsync(session);
     }
 
@@ -813,7 +811,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 _log?.Invoke($"space login for character {characterId}: the squadrons in space could not be taken up: {error.Message}");
             }
         }
-        session.Set(LoginInventoryBootstrapPending, new PyInt(1));
         session.Closed += () => OnSessionClosed(session);
         await spaceItems.RemoveAsync(snapshot.Ship.Id, cancellationToken);
         SystemEntered?.Invoke(systemId);
@@ -839,36 +836,6 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         session.GetInt("worldspaceid") is null &&
         session.GetInt("solarsystemid") is { } systemId &&
         session.GetInt("locationid") == systemId;
-
-    public async ValueTask OnInventoryRpcAsync(
-        ClientSession session,
-        string method,
-        bool stationHangar,
-        bool activeSpaceShipInventoryList,
-        CancellationToken cancellationToken)
-    {
-        if (method != "List" || !activeSpaceShipInventoryList ||
-            session.GetInt(LoginInventoryBootstrapPending) != 1)
-            return;
-
-        session.Set(LoginInventoryBootstrapPending, None);
-        if (!_sim.IsConnected)
-            return;
-        try
-        {
-            var prime = await _sim.CommandAsync(
-                (ulong)session.SessionId,
-                SimCommands.PrimeLoginBallparkVisuals,
-                [],
-                cancellationToken);
-            if (!prime.Accepted)
-                _log?.Invoke($"ballpark visuals for space login session {session.SessionId} were not primed: {prime.Reason}");
-        }
-        catch (SimUnavailableException error)
-        {
-            _log?.Invoke($"ballpark visuals for space login session {session.SessionId} could not be primed: {error.Message}");
-        }
-    }
 
     // ── undocking ────────────────────────────────────────────────────────────
 

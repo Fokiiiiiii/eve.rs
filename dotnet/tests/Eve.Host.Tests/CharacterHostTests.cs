@@ -4112,6 +4112,7 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         public string CharactersSchema => _schemas["EVE_CHARACTERS_SCHEMA"];
         public string SkillsSchema => _schemas["EVE_SKILLS_SCHEMA"];
         public string InventorySchema => _schemas["EVE_INVENTORY_SCHEMA"];
+        public string SpaceSchema => _schemas["EVE_SPACE_SCHEMA"];
         public string IndustrySchema => _schemas["EVE_INDUSTRY_SCHEMA"];
         public string AgentsSchema => _schemas["EVE_AGENTS_SCHEMA"];
         public string MarketSchema => _schemas["EVE_MARKET_SCHEMA"];

@@ -1154,14 +1154,23 @@ impl Sim {
                 }
                 told
             }
-            Message::Bind { session_id } => self
-                .scene_of(session_id)
-                .map(|s| {
-                    let mut out = s.bind(session_id, now);
-                    out.extend(s.abyssal_environment_fx(session_id, None, now, true));
+            Message::Bind { session_id } => match self.scene_of(session_id) {
+                Some(scene) => {
+                    let mut out = scene.bind(session_id, now);
+                    out.extend(scene.abyssal_environment_fx(session_id, None, now, true));
+                    out.push(Out::Accepted {
+                        session: session_id,
+                        command: crate::link::COMMAND_BIND_BALLPARK,
+                        at: now,
+                    });
                     out
-                })
-                .unwrap_or_default(),
+                }
+                None => vec![Out::Refused {
+                    session: session_id,
+                    command: crate::link::COMMAND_BIND_BALLPARK,
+                    reason: "NO_SHIP_IN_SPACE",
+                }],
+            },
             Message::UpdateState { session_id } => self
                 .scene_of(session_id)
                 .map(|s| {
@@ -1502,31 +1511,6 @@ impl Sim {
             Message::Command { session_id, command: 19, .. } => match self.scene_of(session_id) {
                 Some(scene) => scene.condition(session_id, now),
                 None => vec![Out::Refused { session: session_id, command: 19, reason: "NO_SHIP_IN_SPACE" }],
-            },
-            Message::Command {
-                session_id,
-                command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
-                args,
-            } => match (self.scene_of(session_id), args.as_slice()) {
-                (Some(scene), []) => {
-                    let mut told = scene.prime_login_visuals(session_id, now);
-                    told.push(Out::Accepted {
-                        session: session_id,
-                        command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
-                        at: now,
-                    });
-                    told
-                }
-                (Some(_), _) => vec![Out::Refused {
-                    session: session_id,
-                    command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
-                    reason: "UNKNOWN_COMMAND",
-                }],
-                (None, _) => vec![Out::Refused {
-                    session: session_id,
-                    command: crate::link::COMMAND_PRIME_LOGIN_BALLPARK_VISUALS,
-                    reason: "NO_SHIP_IN_SPACE",
-                }],
             },
             Message::Command { session_id, command: crate::link::COMMAND_MEASURE, args } => {
                 match (self.scene_of(session_id), args.as_slice()) {

@@ -41,7 +41,7 @@ public sealed class StructureControlTests
         Assert.Equal(["$sessionchange", "OnShipCosmeticsChanged"], Sequence.Of(session));
 
         var count = sim.Heard.Count;
-        space.Bind(session);
+        Assert.True(await space.BindAsync(session, CancellationToken.None));
         space.UpdateState(session);
         Assert.Equal(count + 2, sim.Heard.Count);
         sim.Deliver(new SimNotify(7, "OnSlimItemChange", "clientID", MarshalCodec.Encode(Py.Tuple(new PyLong(Structure)))));

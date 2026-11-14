@@ -445,11 +445,13 @@ public class SimClientTests
     [Fact]
     public async Task Commands_reach_the_simulation_in_the_order_they_were_given()
     {
-        var (sim, client) = await ConnectedAsync();
+        var (sim, client) = await ConnectedAsync(message => message is SimBind bind
+            ? [new SimAccepted(bind.SessionId, SimCommands.BindBallpark, 123)]
+            : []);
         await using var _ = sim;
         await using var __ = client;
 
-        client.Bind(7);
+        Assert.True((await Within(client.BindAsync(7))).Accepted);
         client.UpdateState(7);
         client.Command(7, SimCommands.SetSpeedFraction, 0.5);
         client.Command(7, SimCommands.GotoDirection, 1, 0, 0);
@@ -463,6 +465,34 @@ public class SimClientTests
         Assert.Equal([0.5], ((SimCommand)heard[2]).Args);
         Assert.Equal([1d, 0d, 0d], ((SimCommand)heard[3]).Args);
         Assert.Equal(LeaveWhy.LoggedOff, ((SimLeave)heard[6]).Why);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_ballpark_bind_waits_for_the_simulation_and_dispatches_prior_notifications(bool accepted)
+    {
+        var notification = new SimNotify(7, "OnSetTimeDilation", "clientID", ReadOnlyMemory<byte>.Empty);
+        var (sim, client) = await ConnectedAsync(message => message is SimBind bind
+            ? accepted
+                ? [notification, new SimAccepted(bind.SessionId, SimCommands.BindBallpark, 123)]
+                : [notification, new SimRefused(bind.SessionId, SimCommands.BindBallpark, "NO_SCENE")]
+            : []);
+        await using var _ = sim;
+        await using var __ = client;
+        var received = new List<SimMessage>();
+        client.Received += received.Add;
+
+        var result = await Within(client.BindAsync(7));
+
+        Assert.Equal(accepted, result.Accepted);
+        Assert.Equal(accepted ? 123 : 0, result.At);
+        Assert.Equal(accepted ? null : "NO_SCENE", result.Reason);
+        var deliveredNotification = Assert.IsType<SimNotify>(Assert.Single(received));
+        Assert.Equal((notification.SessionId, notification.Name, notification.IdType),
+            (deliveredNotification.SessionId, deliveredNotification.Name, deliveredNotification.IdType));
+        Assert.Equal(notification.Args.ToArray(), deliveredNotification.Args.ToArray());
+        Assert.Equal(new SimBind(7), sim.HeardNow().OfType<SimBind>().Single());
     }
 
     [Fact]
@@ -519,7 +549,7 @@ public class SimClientTests
         Assert.False(client.IsConnected);
         await Assert.ThrowsAsync<SimUnavailableException>(() => client.EnterAsync(Enter()));
         await Assert.ThrowsAsync<SimUnavailableException>(() => client.CommandAsync(7, SimCommands.Dock, [1]));
-        client.Bind(7); // said to nobody: nothing happens
+        await Assert.ThrowsAsync<SimUnavailableException>(() => client.BindAsync(7));
     }
 
     [Fact]
@@ -876,7 +906,7 @@ public class SimClientTests
         Assert.True(overflow.IsCompleted);
         var overload = await Assert.ThrowsAsync<SimUnavailableException>(() => Within(overflow));
         Assert.Contains("outbound queue is full", overload.Message);
-        client.Bind(200); // one-way sends stay quiet after the link is marked unavailable
+        client.UpdateState(200); // one-way sends stay quiet after the link is marked unavailable
         await Assert.ThrowsAsync<SimUnavailableException>(() => Within(client.EnterAsync(Enter(200))));
         foreach (var request in pending)
             await Assert.ThrowsAsync<SimUnavailableException>(() => Within(request));
@@ -895,12 +925,12 @@ public class SimClientTests
         client.Start();
         await Until(() => client.IsConnected);
 
-        client.Bind(200);
+        client.UpdateState(200);
         await stream.WriteStarted.Task.WaitAsync(Patience);
         for (var i = 0; i < SimClient.OutboundQueueCapacity; i++)
-            client.Bind((ulong)(201 + i));
+            client.UpdateState((ulong)(201 + i));
 
-        var error = Record.Exception(() => client.Bind((ulong)(201 + SimClient.OutboundQueueCapacity)));
+        var error = Record.Exception(() => client.UpdateState((ulong)(201 + SimClient.OutboundQueueCapacity)));
 
         Assert.Null(error);
         await Until(() => !client.IsConnected && Volatile.Read(ref lost) == 1);
@@ -915,7 +945,7 @@ public class SimClientTests
         client.Start();
         await Until(() => client.IsConnected);
 
-        client.Bind(200);
+        client.UpdateState(200);
         await stream.WriteStarted.Task.WaitAsync(Patience);
         for (var i = 0; i < SimClient.OutboundQueueCapacity; i++)
             Assert.True(await client.PlaceStructureAsync(Structure(10_000 + i)));

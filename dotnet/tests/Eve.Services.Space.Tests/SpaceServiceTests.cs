@@ -35,39 +35,6 @@ public sealed class FleetLoginHookTests
     }
 }
 
-public sealed class CharacterEntryInventoryBootstrapTests
-{
-    [Fact]
-    public async Task First_active_space_ship_list_primes_visuals_once()
-    {
-        var sim = new FakeSim();
-        using var space = new SpaceSessions(sim, null!, null!, null!, null!, () => 1_700_000_000_000);
-        var session = new Eve.Services.ClientSession();
-        session.Set("loginInventoryBootstrapPending", new Eve.Marshal.PyInt(1));
-
-        await space.OnInventoryRpcAsync(session, "List", stationHangar: false, activeSpaceShipInventoryList: true, CancellationToken.None);
-        Assert.Equal(SimCommands.PrimeLoginBallparkVisuals, Assert.Single(sim.Heard.OfType<SimCommand>()).Code);
-        Assert.Equal(Eve.Marshal.PyNone.Instance, session.Get("loginInventoryBootstrapPending"));
-
-        await space.OnInventoryRpcAsync(session, "List", stationHangar: false, activeSpaceShipInventoryList: true, CancellationToken.None);
-        Assert.Single(sim.Heard.OfType<SimCommand>());
-    }
-
-    [Fact]
-    public async Task A_docked_hangar_list_leaves_the_shipid_the_selection_gave()
-    {
-        // the active ship is in the selection's session change (no deferral): the hangar list does not change it again
-        using var space = new SpaceSessions(new FakeSim(), null!, null!, null!, null!, () => 1_700_000_000_000);
-        var session = new Eve.Services.ClientSession();
-        session.Set("shipid", new Eve.Marshal.PyLong(9_998_400_000_001));
-
-        await space.OnInventoryRpcAsync(session, "List", stationHangar: true, activeSpaceShipInventoryList: false, CancellationToken.None);
-
-        session.RunAfterResponse();
-        Assert.Equal(9_998_400_000_001, session.GetInt("shipid"));
-    }
-}
-
 internal static class WarpArrivalAssertions
 {
     public static void TellOwnShipStopped(Rig rig, ClientSession session)
@@ -1471,7 +1438,7 @@ public class SpaceServiceTests
     }
 
     [PgFact]
-    public async Task The_ballpark_binds_only_for_a_ship_in_space_and_once_the_answer_has_gone_the_simulation_sends_the_scene()
+    public async Task The_ballpark_bind_waits_for_the_simulation_scene_before_answering()
     {
         var (rig, _, session) = await DockedAsync();
         await using var _ = rig;
@@ -1485,14 +1452,48 @@ public class SpaceServiceTests
         var answer = (PyTuple)await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(system), new PyInt(5)), PyNone.Instance);
         Assert.StartsWith("N=65450:", Rig.OidOf(answer.Items[0]));
         Assert.Equal(PyNone.Instance, answer.Items[1]);
-        Assert.DoesNotContain(rig.Sim.Heard, m => m is SimBind);
-
-        session.RunAfterResponse();
         Assert.Equal(new SimBind((ulong)session.SessionId), rig.Sim.Heard.Last());
         // not the ballpark of another system
         var wrongSystemBind = Assert.IsType<PyTuple>(await rig.BeyonceCallAsync(session, "MachoBindObject", null, Py.Tuple(new PyInt(30000142), new PyInt(5)), PyNone.Instance));
         Assert.StartsWith("N=65450:", Rig.OidOf(wrongSystemBind.Items[0]));
         Assert.Equal(PyNone.Instance, wrongSystemBind.Items[1]);
+    }
+
+    [PgFact]
+    public async Task Concurrent_ballpark_binds_wait_for_each_simulation_reply_and_a_refusal_is_not_success()
+    {
+        var (rig, _, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+
+        var firstBindStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseFirstBind = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bindCalls = 0;
+        rig.Sim.BindHandler = async (sessionId, cancellationToken) =>
+        {
+            Assert.Equal((ulong)session.SessionId, sessionId);
+            if (Interlocked.Increment(ref bindCalls) == 1)
+            {
+                firstBindStarted.TrySetResult();
+                await releaseFirstBind.Task.WaitAsync(cancellationToken);
+            }
+            return new CommandReply(true, 123, null);
+        };
+
+        var first = rig.Space.BindAsync(session, CancellationToken.None).AsTask();
+        await firstBindStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var second = rig.Space.BindAsync(session, CancellationToken.None).AsTask();
+        Assert.Equal(1, bindCalls);
+        Assert.False(second.IsCompleted);
+        releaseFirstBind.TrySetResult();
+        Assert.True(await first);
+        Assert.True(await second);
+        Assert.Equal(2, bindCalls);
+        Assert.Equal(2, rig.Sim.Heard.OfType<SimBind>().Count());
+
+        rig.Sim.BindHandler = (_, _) => Task.FromResult(new CommandReply(false, 0, "NO_SCENE"));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.BeyonceCallAsync(session, "MachoBindObject", null,
+            Py.Tuple(new PyInt(session.GetInt("solarsystemid")!.Value), new PyInt(5)), PyNone.Instance));
     }
 
     [PgFact]

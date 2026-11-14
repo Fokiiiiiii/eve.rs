@@ -14,7 +14,9 @@ A payload that does not decode is logged as raw hex and forwarded all the same.
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
+import os
 import re
 import socket
 import struct
@@ -72,7 +74,7 @@ def macho_record(pk, encoding):
     rec = {"stage": "macho", "encoding": encoding, "type": kind}
     rec["service"] = pk.destination.service if pk.destination.service is not None else pk.source.service
     rec["call_id"] = next((c for c in (pk.source.call_id, pk.destination.call_id) if c is not None), None)
-    if kind == "Notification":  # the client's decoder: the server's notifications carry their call in the address, not the payload
+    if kind == "Notification":  # the client's decoder: server notifications carry their call in the address, not payload
         event = _notification_event(pk)
         rec["method"], rec["args"] = event.get("name"), describe(event.get("args"))
     elif kind == "CallReq":
@@ -287,7 +289,7 @@ def cmd_capture(args):
 
 def cmd_show(args):
     keep = _filter(args)
-    with open(args.capture, encoding="utf-8") as source:
+    with _open_capture(args.capture) as source:
         for line in source:
             rec = json.loads(line)
             if "dir" not in rec or keep(rec):
@@ -296,8 +298,12 @@ def cmd_show(args):
 
 
 def load(path):
-    with open(path, encoding="utf-8") as source:
+    with _open_capture(path) as source:
         return [json.loads(line) for line in source if line.strip()]
+
+
+def _open_capture(path):
+    return gzip.open(path, "rt", encoding="utf-8") if str(path).endswith(".gz") else open(path, encoding="utf-8")
 
 
 def _normal_service(name, ignore_volatile):
@@ -410,6 +416,27 @@ def cmd_diff(args):
     return 1
 
 
+def cmd_replay(args):
+    host = args.host or os.environ.get("EVE_LIVE_HOST")
+    if not host:
+        print("mitm replay: pass --host host:port or set EVE_LIVE_HOST", file=sys.stderr)
+        return 2
+    from evecli.trace_replay import format_report, replay_live_capture
+
+    report = replay_live_capture(
+        args.capture,
+        conn=args.conn,
+        host=host,
+        timeout=args.timeout,
+        time_scale=args.time_scale,
+        allowlist_path=args.allowlist,
+        user=args.user,
+        password=args.password,
+    )
+    print(format_report(report))
+    return 1 if report.failed else 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="mitm", description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -443,6 +470,19 @@ def main(argv=None):
     diff.add_argument("--ignore-notification-order", action="store_true",
                       help="compare the server's notifications as a set, after the results (independent notices may race)")
     diff.set_defaults(run=cmd_diff)
+
+    replay = sub.add_parser("replay", help="replay client CallReq and Notification requests against a live eve.rs server")
+    replay.add_argument("capture", help="mitm JSONL capture, plain or gzip-compressed")
+    replay.add_argument("--conn", required=True, type=int, help="connection number from the capture")
+    replay.add_argument("--host", help="live server host:port (defaults to EVE_LIVE_HOST)")
+    replay.add_argument("--timeout", type=float, default=20.0, help="maximum wait for each CallReq reply in seconds")
+    replay.add_argument("--time-scale", type=float, default=1.0,
+                        help="scale the capture's inter-request timing (1.0 preserves it; 0 replays immediately)")
+    replay.add_argument("--allowlist", default="tools/headless-client/fixtures/live-trace-replay-allowlist.json",
+                        help="JSON allowlist for known ErrorResponse signatures")
+    replay.add_argument("--user", help="account name; defaults to a unique local replay account")
+    replay.add_argument("--password", help="account password; defaults to a random local password")
+    replay.set_defaults(run=cmd_replay)
 
     args = parser.parse_args(argv)
     return args.run(args)

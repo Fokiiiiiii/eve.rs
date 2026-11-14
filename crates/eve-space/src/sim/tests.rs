@@ -2854,6 +2854,14 @@ fn commands_are_read_from_their_codes_and_arguments() {
         "the gate alone is enough"
     );
     assert_eq!(
+        command_of(35, &[90_000_101.0, 30_000_001.0, 90_000_102.0]),
+        Some(Command::StructureJump {
+            structure_id: 90_000_101,
+            destination_system: 30_000_001,
+            destination_structure_id: 90_000_102,
+        })
+    );
+    assert_eq!(
         command_of(crate::scene::DOCKING_DECISION_COMMAND, &[STATION as f64, 1.0]),
         Some(Command::DockingDecision { station_id: STATION, allowed: true })
     );
@@ -2873,6 +2881,10 @@ fn commands_are_read_from_their_codes_and_arguments() {
         (9, vec![1.5]),
         (9, vec![50_016_630.0, f64::NAN]),
         (9, vec![1.0, 2.0, 3.0]),
+        (35, vec![]),
+        (35, vec![90_000_101.0, 30_000_001.5, 90_000_102.0]),
+        (35, vec![90_000_101.0, 2_147_483_648.0, 90_000_102.0]),
+        (35, vec![90_000_101.0, 30_000_001.0, f64::NAN]),
         (crate::scene::DOCKING_DECISION_COMMAND, vec![STATION as f64]),
         (crate::scene::DOCKING_DECISION_COMMAND, vec![STATION as f64, 0.5]),
         (crate::scene::DOCKING_DECISION_COMMAND, vec![1.5, 1.0]),

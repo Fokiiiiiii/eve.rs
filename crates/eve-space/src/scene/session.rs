@@ -524,6 +524,7 @@ impl Scene {
                 Command::WarpTo { .. }
                     | Command::WarpToPoint { .. }
                     | Command::Jump { .. }
+                    | Command::StructureJump { .. }
                     | Command::CynoJump { .. }
                     | Command::OpenBridge { .. }
                     | Command::BridgeJump { .. }
@@ -556,6 +557,9 @@ impl Scene {
             Command::ScanTargets => self.scan_targets(session, now),
             Command::DirectionalScan => self.directional_targets(session, now),
             Command::Jump { gate_id, destination_gate } => self.jump(session, gate_id, destination_gate, now),
+            Command::StructureJump { structure_id, destination_system, destination_structure_id } => {
+                self.structure_jump(session, structure_id, destination_system, destination_structure_id, now)
+            }
             Command::AccelerationGateTransit { gate_id, destination } => {
                 self.acceleration_gate_transit(session, gate_id, destination, now)
             }

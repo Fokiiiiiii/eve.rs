@@ -141,6 +141,117 @@ impl Scene {
         out
     }
 
+    /// `CmdJumpThroughStructureStargate`: an Ansiblex jump uses the same jump-out
+    /// animation, deferred scene transfer and arrival pipeline as a stargate. The Host
+    /// owns access, fuel, fees and the bridge's persistent configuration; the scene
+    /// checks live ship state, the local bridge body, range and warp bubbles.
+    pub(super) fn structure_jump(
+        &mut self,
+        session: SessionId,
+        structure_id: i64,
+        destination_system: i32,
+        destination_structure_id: i64,
+        now: i64,
+    ) -> Vec<Out> {
+        let code =
+            Command::StructureJump { structure_id, destination_system, destination_structure_id }.code();
+        let refused = |reason: &'static str| vec![Out::Refused { session, command: code, reason }];
+        let system = Arc::clone(&self.system);
+        let Some(pilot) = self.pilots.get(&session) else { return refused("NO_SHIP_IN_SPACE") };
+        if pilot.immobile_until > now {
+            return refused("IMMOBILE");
+        }
+        if pilot.no_jump_until > now {
+            return refused("NO_JUMP_OR_CLOAK");
+        }
+        if pilot.disrupted_until > now {
+            return refused("JUMP_DISRUPTED");
+        }
+        if pilot.jump.is_some() {
+            return refused("STARGATE_JUMP_IN_PROGRESS");
+        }
+        if pilot.docking.is_some() {
+            return refused("DOCKING");
+        }
+        if pilot.flight.is_some() {
+            return refused("IN_WARP");
+        }
+        if destination_system <= 0 || destination_system == system.id {
+            return refused("WRONG_SOLAR_SYSTEM");
+        }
+        let Some(bridge) =
+            system.body(structure_id).filter(|body| body.kind == crate::world::BodyKind::Structure)
+        else {
+            return refused("STRUCTURE_NOT_FOUND");
+        };
+        if crate::gate::surface_distance(bridge, pilot.ship.position, pilot.ship.spec.radius)
+            > crate::gate::JUMP_RANGE
+        {
+            return refused("TOO_FAR_FROM_STRUCTURE");
+        }
+        if self.warp_disrupted_at(pilot.ship.position, now) {
+            return refused("WARP_DISRUPTED_BY_BUBBLE");
+        }
+
+        let stamp = self.next_stamp(now);
+        let boundary = if stamp > stamp_at(now) {
+            (i64::from(stamp) + UNIX_EPOCH_SECONDS) * TICKS_PER_SECOND
+        } else {
+            now
+        };
+        let leaves_at = (now + JUMP_DELAY).max(boundary + JUMP_EFFECT_DELAY);
+        let mut out = self.clear_tether_policy(session, now);
+        let pilot = self.pilots.get_mut(&session).expect("checked above");
+        pilot.flight = None;
+        let ship = &mut pilot.ship;
+        if !matches!(ship.course, Course::Stop) || ship.speed_fraction > 0.0 || speed_of(ship.velocity) > 0.5
+        {
+            ship.course = Course::Stop;
+            ship.speed_fraction = 0.0;
+            ship.velocity = Vec3::ZERO;
+        }
+        pilot.jump = Some(PendingJump {
+            gate_id: structure_id,
+            destination_system,
+            destination_gate: destination_structure_id,
+            field_id: None,
+            far_end: None,
+            leaves_at,
+        });
+        let ship_id = id(ship.spec.ship_id);
+        let actions = [
+            payload::action(
+                stamp,
+                "OnSpecialFX",
+                [
+                    ship_id.clone(),
+                    Value::None,
+                    Value::None,
+                    id(structure_id),
+                    Value::None,
+                    text("effects.JumpOut"),
+                    int(0),
+                    int(1),
+                    int(0),
+                    int(-1),
+                    Value::None,
+                    Value::None,
+                    int(0),
+                    tuple([int(i64::from(destination_system)), Value::None]),
+                ],
+            ),
+            payload::action(stamp, "Stop", [ship_id]),
+        ];
+        out.extend(self.tell_all(session, actions.into()));
+        out.push(Out::Jumping {
+            session,
+            command: code,
+            destination_system,
+            destination_gate: destination_structure_id,
+        });
+        out
+    }
+
     /// `CmdJumpToFleetModuleBeacon` and `CmdJumpToFleetDeployableBeacon` (command 26): the ship's jump drive spools for `spool_ms`, and the ship then leaves
     /// for `destination_system` to appear at the cynosural field `field_id` lit there. The stop and the jump-out effect are the stargate jump's; the checks are
     /// its checks, without the gate. The host has checked the field, the fleet, the range, the fuel and the drive's cooldown. The activation takes
@@ -306,7 +417,10 @@ impl Scene {
                 &mut random,
             )
         } else {
-            let Some(gate) = system.body(traveller.to_gate).filter(|b| b.kind == BodyKind::Stargate) else {
+            let Some(gate) = system
+                .body(traveller.to_gate)
+                .filter(|body| matches!(body.kind, BodyKind::Stargate | BodyKind::Structure))
+            else {
                 return Err(Box::new(traveller));
             };
             let mut random = PythonRandom::new(seed_of(traveller.pilot.ship.spec.ship_id, gate.id, now));

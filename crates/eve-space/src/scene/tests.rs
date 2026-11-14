@@ -2178,6 +2178,62 @@ fn a_ship_that_has_jumped_is_not_told_of_the_others_until_it_binds_the_ballpark_
 }
 
 #[test]
+fn an_ansiblex_uses_the_jump_out_and_arrival_pipeline_and_checks_live_range() {
+    const SOURCE: i64 = 90_000_101;
+    const DESTINATION: i64 = 90_000_102;
+    let (mut origin, mut destination) = gated_systems();
+    let mut reference = Scene::new(system());
+    reference.undock(SESSION, spec(), STATION, NOON).unwrap();
+    let reference_position = reference.ship(SESSION, NOON).unwrap().position;
+    let mut source = celestial(SOURCE, BodyKind::Structure, 1_408, reference_position.x + 1_500.0);
+    source.position = Vec3::new(reference_position.x + 1_500.0, reference_position.y, reference_position.z);
+    origin.bodies.push(source);
+    destination.bodies.push(celestial(DESTINATION, BodyKind::Structure, 1_408, 20_000_000.0));
+    let mut scene = Scene::new(Arc::new(origin));
+    scene.undock(SESSION, spec(), STATION, NOON).unwrap();
+    let command = Command::StructureJump {
+        structure_id: SOURCE,
+        destination_system: OTHER_SYSTEM,
+        destination_structure_id: DESTINATION,
+    };
+
+    let out = scene.command(SESSION, command, NOON);
+    assert_eq!(out.len(), 2, "{out:?}");
+    assert_eq!(action_names(&out[0]), ["OnSpecialFX", "Stop"]);
+    assert_eq!(
+        out[1],
+        Out::Jumping {
+            session: SESSION,
+            command: 35,
+            destination_system: OTHER_SYSTEM,
+            destination_gate: DESTINATION,
+        }
+    );
+    assert_eq!(
+        scene.command(SESSION, command, NOON + seconds(1)),
+        [Out::Refused { session: SESSION, command: 35, reason: "STARGATE_JUMP_IN_PROGRESS" }]
+    );
+    let (travellers, _) = scene.due_jumps(NOON + seconds(4));
+    let traveller = travellers.into_iter().next().unwrap();
+    assert_eq!((traveller.to_system, traveller.to_gate), (OTHER_SYSTEM, DESTINATION));
+
+    let mut arrival = Scene::new(Arc::new(destination));
+    arrival.arrive(traveller, NOON + seconds(4)).unwrap();
+    assert!(arrival.contains(SESSION));
+
+    let mut too_far = Scene::new(Arc::new({
+        let (mut origin, _) = gated_systems();
+        origin.bodies.push(celestial(SOURCE, BodyKind::Structure, 1_408, 2_000_000.0));
+        origin
+    }));
+    too_far.undock(SESSION, spec(), STATION, NOON).unwrap();
+    assert_eq!(
+        too_far.command(SESSION, command, NOON),
+        [Out::Refused { session: SESSION, command: 35, reason: "TOO_FAR_FROM_STRUCTURE" }]
+    );
+}
+
+#[test]
 fn a_ship_sent_to_a_system_without_the_gate_is_given_back_and_goes_on_where_it_was() {
     let mut scene = scene_by_a_gate();
     let traveller = jumped(&mut scene);

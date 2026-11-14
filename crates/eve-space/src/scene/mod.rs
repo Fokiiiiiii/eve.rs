@@ -195,6 +195,14 @@ pub enum Command {
         gate_id: i64,
         destination_gate: i64,
     },
+    /// Jump through an Upwell Ansiblex bridge to its reciprocal structure (code 35).
+    /// Access, fuel, fee, range, and mass policy are checked by the Host; this scene
+    /// validates its live ship state and structure bodies and owns the jump animation.
+    StructureJump {
+        structure_id: i64,
+        destination_system: i32,
+        destination_structure_id: i64,
+    },
     /// Jump to a cynosural field lit in another system (code 26): the ship's drive spools for `spool_ms`, then the ship leaves for
     /// `destination_system` and appears at the field `field_id` there ([`Scene::arrive`]). The activation takes `capacitor` of the ship's full
     /// capacitor (the host's fraction: the hull's 95 % less the pilot's Jump Drive Operation), and is refused when the charge is short.
@@ -252,6 +260,7 @@ impl Command {
             Self::AlignTo { .. } => 7,
             Self::WarpTo { .. } => 8,
             Self::Jump { .. } => 9,
+            Self::StructureJump { .. } => 35,
             Self::CynoJump { .. } => 26,
             Self::OpenBridge { .. } => 30,
             Self::BridgeJump { .. } => 31,

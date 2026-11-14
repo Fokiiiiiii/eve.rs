@@ -91,6 +91,18 @@ pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
         (9, [gate, leads_to]) if is_id(*gate) && is_id(*leads_to) => {
             Some(Command::Jump { gate_id: *gate as i64, destination_gate: *leads_to as i64 })
         }
+        (35, [structure, destination, destination_structure])
+            if is_id(*structure)
+                && is_id(*destination)
+                && *destination <= i32::MAX as f64
+                && is_id(*destination_structure) =>
+        {
+            Some(Command::StructureJump {
+                structure_id: *structure as i64,
+                destination_system: *destination as i32,
+                destination_structure_id: *destination_structure as i64,
+            })
+        }
         // the transit through an acceleration gate of a dungeon room: the gate's id and the point the pilot warps to in the other room (protocol 75)
         (34, [gate, x, y, z]) if is_id(*gate) && [*x, *y, *z].iter().all(|v| v.is_finite()) => {
             Some(Command::AccelerationGateTransit {

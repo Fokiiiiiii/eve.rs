@@ -360,6 +360,7 @@ pub(super) fn steer(ship: &mut Ship, target: Option<Target>, command: Command) -
         | Command::ScanTargets
         | Command::DirectionalScan
         | Command::Jump { .. }
+        | Command::StructureJump { .. }
         | Command::AccelerationGateTransit { .. }
         | Command::CynoJump { .. }
         | Command::OpenBridge { .. }

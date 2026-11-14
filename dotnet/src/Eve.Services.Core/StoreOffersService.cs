@@ -126,6 +126,8 @@ public sealed class StoreOffersService(
                 return ToPyValue(node);
 
             var visible = (JsonObject)offer.DeepClone();
+            if (!visible.ContainsKey("imageUrl"))
+                visible["imageUrl"] = null;
             visible["canPurchase"] = Purchasable(state, storeId, offer);
             return ToPyValue(visible);
         })]);

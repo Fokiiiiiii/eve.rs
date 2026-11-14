@@ -96,6 +96,7 @@ public sealed class NewEdenStoreCatalogTests
         Assert.Equal(15, inGameOffers.Items.Count);
         var omega = Assert.IsType<PyDict>(inGameOffers.Items.Single(offer => Field(Assert.IsType<PyDict>(offer), "storeOfferID") is PyStr { Value: "omega_30_days" }));
         Assert.Equal(new PyStr("/store/4/offers/omega-30-days"), Field(omega, "href"));
+        Assert.Same(PyNone.Instance, Field(omega, "imageUrl"));
         Assert.Equal(21, Assert.IsType<PyList>(await service.CallAsync(Call("get_offers", new PyInt(9)))).Items.Count);
         Assert.Equal(15, Assert.IsType<PyList>(await service.CallAsync(Call("get_products", new PyInt(4)))).Items.Count);
 

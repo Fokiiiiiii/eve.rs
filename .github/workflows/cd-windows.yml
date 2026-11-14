@@ -1,0 +1,115 @@
+name: CD (Windows)
+
+# Builds the Windows deliverable in GitHub Actions: the three Rust binaries (eve-net, eve-sim, eve-sde) as .exe files
+# and the published C# host, in one zip together with server.env.example and a start script
+# (tools/windows/start-package.ps1, shipped as start-server.ps1 with a .bat wrapper). Unzip it on a Windows machine
+# that has the .NET 10 runtime and PostgreSQL 18, then run start-server.bat. Runs only on a version tag (v*) or by
+# hand, so it never gates main. No secrets: the release asset goes to this repository with the workflow's own
+# GITHUB_TOKEN. The Linux build and the container image are in cd.yml.
+
+'on':
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: cd-windows-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  RUST_TOOLCHAIN: "1.99.0"
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  DOTNET_NOLOGO: "1"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+
+jobs:
+  package:
+    name: Windows server binaries and C# host
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master as of 2026-10-19
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: cd-windows-release
+      - uses: actions/setup-dotnet@349aa191ae05aee6d53db4bcba37bd6980e812fe # v6 with skip-lts-prepass
+        with:
+          dotnet-version: 10.0.401
+          skip-lts-prepass: true
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('dotnet/Directory.Packages.props', 'dotnet/**/*.csproj', 'dotnet/**/*.props', 'dotnet/**/*.targets') }}
+          restore-keys: nuget-${{ runner.os }}-
+      - name: Build the Rust binaries
+        shell: pwsh
+        run: cargo build --release --locked -p eve-net -p eve-sim -p eve-sde
+      - name: Publish the C# host
+        shell: pwsh
+        run: dotnet publish dotnet/src/Eve.Host -c Release -o dist/host --nologo -nodeReuse:false
+      - name: Assemble the package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist/bin | Out-Null
+          foreach ($name in 'eve-net', 'eve-sim', 'eve-sde') {
+            Copy-Item "target/release/$name.exe" dist/bin/
+          }
+          Copy-Item server.env.example dist/
+          Copy-Item tools/windows/start-package.ps1 dist/start-server.ps1
+          Set-Content -Path dist/start-server.bat -Encoding ascii -Value @(
+            '@echo off',
+            'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-server.ps1" %*'
+          )
+          Get-ChildItem dist -Recurse -File | Where-Object { $_.FullName -match 'bin|start-server|server.env' } | Select-Object -First 20 | ForEach-Object { $_.FullName }
+      - name: Check the start script parses and the package is complete
+        shell: pwsh
+        run: |
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$PWD/dist/start-server.ps1", [ref]$null, [ref]$errors)
+          if ($errors.Count -gt 0) { $errors | ForEach-Object { Write-Error $_.Message }; exit 1 }
+          foreach ($path in 'bin/eve-net.exe', 'bin/eve-sim.exe', 'bin/eve-sde.exe', 'host/eve-host.dll', 'host/eve-host.runtimeconfig.json', 'server.env.example', 'start-server.ps1', 'start-server.bat') {
+            if (-not (Test-Path -LiteralPath "dist/$path")) { throw "the package lacks $path" }
+          }
+      - name: Zip
+        shell: pwsh
+        env:
+          VERSION: ${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+        run: |
+          Compress-Archive -Path dist/* -DestinationPath "eve-rs-windows-x64-$env:VERSION.zip"
+          Get-Item eve-rs-windows-x64-*.zip | Select-Object Name, Length
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eve-rs-windows-x64
+          path: eve-rs-windows-x64-*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: GitHub release
+    if: github.ref_type == 'tag'
+    needs: [package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: eve-rs-windows-x64
+          path: release
+      - name: Attach the zip to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # cd.yml creates the release too; whichever workflow gets there first creates it, the other uploads
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" || true
+          fi
+          gh release upload "$GITHUB_REF_NAME" release/*.zip --clobber --repo "$GITHUB_REPOSITORY"

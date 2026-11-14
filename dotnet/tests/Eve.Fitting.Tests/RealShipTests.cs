@@ -92,7 +92,7 @@ public class RealShipTests
     }
 
     [PgFact]
-    public async Task A_module_that_needs_a_skill_the_character_has_not_trained_is_refused_naming_it()
+    public async Task A_module_that_needs_a_skill_can_be_fitted_but_the_skill_is_reported_for_onlining()
     {
         var (world, statics) = await ShipAsync();
         // 3 is a made-up level higher than any starting skill: the railgun needs Gunnery and Small Hybrid Turret at least at 1, so ask for more
@@ -109,7 +109,8 @@ public class RealShipTests
         bare.Add(new DogmaItem(Ship, Ibis, CharId, Station, 4));
         var loose = new DogmaItem(Ship + 2, Railgun, CharId, Station, 4);
         bare.Add(loose);
-        var failure = FittingRules.Check(bare, statics, Ship, loose, Slots.HighFirst);
+        Assert.Null(FittingRules.Check(bare, statics, Ship, loose, Slots.HighFirst));
+        var failure = FittingRules.MissingSkill(bare, CharId, railgunType);
         Assert.Equal(FitError.SkillRequired, failure?.Error);
         Assert.Contains(required.Select(r => (double)r.Skill), s => s == failure!.Data["skillTypeID"]);
         Assert.Equal(0, failure!.Data["currentLevel"]);

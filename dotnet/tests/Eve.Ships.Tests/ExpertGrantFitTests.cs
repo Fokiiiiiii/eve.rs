@@ -1,11 +1,13 @@
+using Eve.Dogma;
 using Eve.Fitting;
+using Eve.Inventory;
 using Eve.Skills;
 
 namespace Eve.Ships.Tests;
 
 /// <summary>
-/// A module's skill check honours the levels an active expert system grants (wiki: an expert system gives access to its skills while it is
-/// active; EveJS grants them in the ship's skill view). The grant comes from the expert system store, through the ship snapshot the fit reads.
+/// An active expert system supplies skill levels to the online check (EveJS exposes them in the ship's skill view). Fitting keeps a module
+/// offline without that check; the grant comes from the expert system store through the ship snapshot.
 /// </summary>
 public class ExpertGrantFitTests
 {
@@ -13,7 +15,7 @@ public class ExpertGrantFitTests
     private const int CoreShipOperations = 57208; // grants Hull Upgrades at level 5 for seven days
 
     [PgFact]
-    public async Task A_module_refused_for_a_missing_skill_fits_while_an_expert_system_grants_it_and_is_refused_after_the_lapse()
+    public async Task An_expert_system_allows_a_fitted_module_to_online_and_the_module_is_refused_after_the_lapse()
     {
         await using var rig = await Rig.CreateAsync();
         var c = await rig.NewCharacterAsync();
@@ -24,10 +26,12 @@ public class ExpertGrantFitTests
 
         // no expert system: Damage Control II needs Hull Upgrades at 4 and the pilot has none
         var control = await rig.GiveAsync(c.CharacterId, Rig.DamageControlII);
-        var refused = Assert.IsType<ShipRefused>(await rig.Ships.MoveAsync(c.CharacterId, control, Rig.Station, c.ShipId, 11, 1));
-        Assert.Equal(FitError.SkillRequired, refused.Fit!.Error);
-        Assert.Equal((HullUpgrades, 4), (refused.Fit.Data["skillTypeID"], refused.Fit.Data["requiredLevel"]));
-        Assert.True(Convert.ToInt32(refused.Fit.Data["currentLevel"]) < 4, "the new pilot is below the level the module needs");
+        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, control, Rig.Station, c.ShipId, 11, 1));
+        var refused = Assert.IsType<ShipRefused>(await rig.Ships.SetOnlineAsync(c.CharacterId, c.ShipId, control, online: true));
+        Assert.Equal(ShipRefusal.SkillRequired, refused.Reason);
+        Assert.Equal((HullUpgrades, 4), (refused.Fit!.Data["skillTypeID"], refused.Fit.Data["requiredLevel"]));
+        Assert.True(Convert.ToInt32(refused.Fit!.Data["currentLevel"]) < 4, "the new pilot is below the level the module needs");
+        Assert.Equal(ItemState.Offline, (await rig.Modules.StatesAsync([control]))[control]);
 
         // the expert system is installed: the level it grants is the one the check reads, and the module fits
         await using (var connection = await rig.Source.OpenConnectionAsync())
@@ -36,14 +40,14 @@ public class ExpertGrantFitTests
             await store.UpsertAsync(connection, transaction, new ExpertSystemEntry(c.CharacterId, CoreShipOperations, now, now + 7 * ExpertSystemRules.Day, null, "item", now));
             await transaction.CommitAsync();
         }
-        Assert.IsType<ShipChanged>(await withExpert.MoveAsync(c.CharacterId, control, Rig.Station, c.ShipId, 11, 1));
+        Assert.IsType<ShipChanged>(await withExpert.SetOnlineAsync(c.CharacterId, c.ShipId, control, online: true));
+        Assert.Equal(ItemState.Online, (await rig.Modules.StatesAsync([control]))[control]);
 
-        // the same module in another slot is still refused without the grant (the plain ship view ignores expert systems)
-        var second = await rig.GiveAsync(c.CharacterId, Rig.DamageControlII);
-        Assert.Equal(FitError.SkillRequired, Assert.IsType<ShipRefused>(await rig.Ships.MoveAsync(c.CharacterId, second, Rig.Station, c.ShipId, 12, 1)).Fit!.Error);
-
-        // after the expert system has run out of time the grant is gone: the module in the next slot is refused with the skill
+        // after the expert system has run out of time the grant is gone: the fitted module cannot be reactivated
         now += 8 * ExpertSystemRules.Day;
-        Assert.Equal(FitError.SkillRequired, Assert.IsType<ShipRefused>(await withExpert.MoveAsync(c.CharacterId, second, Rig.Station, c.ShipId, 12, 1)).Fit!.Error);
+        Assert.IsType<ShipChanged>(await withExpert.SetOnlineAsync(c.CharacterId, c.ShipId, control, online: false));
+        var lapsed = Assert.IsType<ShipRefused>(await withExpert.SetOnlineAsync(c.CharacterId, c.ShipId, control, online: true));
+        Assert.Equal((ShipRefusal.SkillRequired, HullUpgrades, 4), (lapsed.Reason, lapsed.Fit!.Data["skillTypeID"], lapsed.Fit!.Data["requiredLevel"]));
+        Assert.Equal(ItemState.Offline, (await rig.Modules.StatesAsync([control]))[control]);
     }
 }

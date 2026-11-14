@@ -146,18 +146,22 @@ public class RulesTests
     }
 
     [Fact]
-    public void A_module_needs_the_skills_it_names_at_the_level_it_names()
+    public void A_module_with_missing_skills_can_be_fitted_but_cannot_be_onlined()
     {
         var (none, s0) = Ship();
-        var failure = FittingRules.Check(none, s0, ShipId, Candidate(none, SkilledModule), Slots.HighFirst);
+        var candidate = Candidate(none, SkilledModule);
+        Assert.Null(FittingRules.Check(none, s0, ShipId, candidate, Slots.HighFirst));
+        var failure = FittingRules.MissingSkill(none, Char, s0.Type(SkilledModule)!)!;
         Assert.Equal(FitError.SkillRequired, failure?.Error);
         Assert.Equal((Skill, 3, 0), (failure!.Data["skillTypeID"], failure.Data["requiredLevel"], failure.Data["currentLevel"]));
 
         var (two, s2) = Ship(skillLevel: 2);
-        Assert.Equal(2, FittingRules.Check(two, s2, ShipId, Candidate(two, SkilledModule), Slots.HighFirst)!.Data["currentLevel"]);
+        Assert.Null(FittingRules.Check(two, s2, ShipId, Candidate(two, SkilledModule), Slots.HighFirst));
+        Assert.Equal(2, FittingRules.MissingSkill(two, Char, s2.Type(SkilledModule)!)!.Data["currentLevel"]);
 
         var (three, s3) = Ship(skillLevel: 3);
         Assert.Null(FittingRules.Check(three, s3, ShipId, Candidate(three, SkilledModule), Slots.HighFirst));
+        Assert.Null(FittingRules.MissingSkill(three, Char, s3.Type(SkilledModule)!));
     }
 
     [Fact]

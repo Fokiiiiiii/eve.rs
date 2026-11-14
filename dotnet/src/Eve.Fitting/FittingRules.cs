@@ -2,7 +2,7 @@ using Eve.Dogma;
 
 namespace Eve.Fitting;
 
-/// <summary>Why a module cannot be fitted where it was put.</summary>
+/// <summary>Why a module cannot be fitted or switched online.</summary>
 public enum FitError
 {
     InvalidRequest,
@@ -52,12 +52,6 @@ public static class FittingRules
 
     /// <summary>What a fitting may overshoot the processor or the power grid by and still be online (the values are kept to two places).</summary>
     private const double LoadSlack = 1e-6;
-
-    /// <summary>The attributes that name the groups and the types of ship a module can be fitted to.</summary>
-    private static readonly int[] CanFitShipGroups =
-        [1298, 1299, 1300, 1301, 1872, 1879, 1880, 1881, 2065, 2396, 2476, 2477, 2478, 2479, 2480, 2481, 2482, 2483, 2484, 2485];
-
-    private static readonly int[] CanFitShipTypes = [1302, 1303, 1304, 1305, 1944, 2103, 2463, 2486, 2487, 2488];
 
     /// <summary>The modules fitted to the ship now (not counting <paramref name="candidate"/>).</summary>
     public static IEnumerable<DogmaItem> Fitted(DogmaWorld world, long shipId) =>
@@ -205,14 +199,18 @@ public static class FittingRules
             return FitFailure.Of(FitError.SlotOccupied);
         }
 
-        if (MissingSkill(world, candidate.OwnerId, type) is { } missing)
-        {
-            return missing;
-        }
-
-        // the groups a module names and the single types it names are alternatives (a Command Burst names its groups and some types): a hull of either fits
-        var groups = CanFitShipGroups.Where(type.Attributes.ContainsKey).Select(a => (int)type.Attributes[a]).Where(g => g > 0).ToList();
-        var types = CanFitShipTypes.Where(type.Attributes.ContainsKey).Select(a => (int)type.Attributes[a]).Where(t => t > 0).ToList();
+        // The client and EveJS discover these SDE attributes by their names. Keep that behavior as CCP adds attributes instead of freezing the current IDs.
+        var groups = type.Attributes
+            .Where(attribute => statics.Attribute(attribute.Key)?.Name.StartsWith("canFitShipGroup", StringComparison.Ordinal) == true)
+            .Select(attribute => (int)attribute.Value)
+            .Where(group => group > 0)
+            .ToList();
+        var types = type.Attributes
+            .Where(attribute => statics.Attribute(attribute.Key)?.Name.StartsWith("canFitShipType", StringComparison.Ordinal) == true)
+            .Select(attribute => (int)attribute.Value)
+            .Where(typeId => typeId > 0)
+            .ToList();
+        // The groups a module names and the single types it names are alternatives (a Command Burst names its groups and some types): a hull of either fits.
         if ((groups.Count > 0 || types.Count > 0) && !groups.Contains(shipType.GroupId) && !types.Contains(ship.TypeId))
         {
             return FitFailure.Of(types.Count > 0 ? FitError.InvalidShipType : FitError.InvalidShipGroup);

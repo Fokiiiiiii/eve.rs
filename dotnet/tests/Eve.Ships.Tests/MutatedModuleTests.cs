@@ -68,14 +68,17 @@ public class MutatedModuleTests
         var module = accepted.Receipt.ItemId;
         Assert.Equal(Result, accepted.Receipt.TypeId);
 
-        // the result's skill is the requirement: a pilot at level 1 of it cannot fit the module, and one at level 4 can
+        // The result's requirement is checked when the fitted module is switched online.
         await rig.SetSkillAsync(c.CharacterId, RequiredSkill, 1);
-        var refused = Assert.IsType<ShipRefused>(await rig.Ships.MoveAsync(c.CharacterId, module, Rig.Station, c.ShipId, ItemFlags.MedSlot0, null));
-        Assert.Equal(ShipRefusal.CannotFit, refused.Reason);
-        Assert.Equal(FitError.SkillRequired, refused.Fit!.Error);
+        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, module, Rig.Station, c.ShipId, ItemFlags.MedSlot0, null));
+        var refused = Assert.IsType<ShipRefused>(await rig.Ships.SetOnlineAsync(c.CharacterId, c.ShipId, module, online: true));
+        Assert.Equal(ShipRefusal.SkillRequired, refused.Reason);
+        Assert.Equal((RequiredSkill, 4, 1), (refused.Fit!.Data["skillTypeID"], refused.Fit.Data["requiredLevel"], refused.Fit.Data["currentLevel"]));
+        Assert.Equal(ItemState.Offline, (await rig.Modules.StatesAsync([module]))[module]);
 
         await rig.SetSkillAsync(c.CharacterId, RequiredSkill, 4);
-        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, module, Rig.Station, c.ShipId, ItemFlags.MedSlot0, null));
+        Assert.IsType<ShipChanged>(await rig.Ships.SetOnlineAsync(c.CharacterId, c.ShipId, module, online: true));
+        Assert.Equal(ItemState.Online, (await rig.Modules.StatesAsync([module]))[module]);
 
         // the ship as the server loads it: the module is typed as its result, takes its base from its input, and carries its rolled values
         var world = (await rig.Ships.LoadAsync(c.CharacterId))!.World;

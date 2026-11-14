@@ -221,15 +221,23 @@ public class ShipTests
     }
 
     [PgFact]
-    public async Task A_module_needs_the_skills_it_names_and_the_message_names_the_skill()
+    public async Task A_module_can_be_fitted_without_its_skills_but_cannot_be_onlined_and_the_message_names_the_skill()
     {
         await using var rig = await Rig.CreateAsync();
         var c = await rig.NewCharacterAsync();
         var control = await rig.GiveAsync(c.CharacterId, Rig.DamageControlII); // needs Hull Upgrades at 4, the character has less
-        var refused = Assert.IsType<ShipRefused>(await rig.Ships.MoveAsync(c.CharacterId, control, Rig.Station, c.ShipId, 11, 1));
-        Assert.Equal(FitError.SkillRequired, refused.Fit!.Error);
-        Assert.Equal((3394, 4), (refused.Fit.Data["skillTypeID"], refused.Fit.Data["requiredLevel"]));
+        Assert.IsType<ShipChanged>(await rig.Ships.MoveAsync(c.CharacterId, control, Rig.Station, c.ShipId, 11, 1));
+        Assert.Equal(ItemState.Offline, (await rig.Modules.StatesAsync([control]))[control]);
+
+        var refused = Assert.IsType<ShipRefused>(await rig.Ships.SetOnlineAsync(c.CharacterId, c.ShipId, control, online: true));
+        Assert.Equal(ShipRefusal.SkillRequired, refused.Reason);
+        Assert.Equal((3394, 4), (refused.Fit!.Data["skillTypeID"], refused.Fit.Data["requiredLevel"]));
         Assert.False(string.IsNullOrEmpty(rig.Statics.Type(3394)?.Name)); // the static data can name the skill for the message
+        Assert.Equal(ItemState.Offline, (await rig.Modules.StatesAsync([control]))[control]);
+        Assert.Equal(c.ShipId, (await rig.Items.GetAsync(control))!.LocationId);
+
+        // The untrained module is fitted but offline; remove it so the next group-limit assertion remains independent.
+        Changed(await rig.Ships.MoveAsync(c.CharacterId, control, c.ShipId, Rig.Station, ItemFlags.Hangar, null));
 
         var easy = await rig.GiveAsync(c.CharacterId, Rig.DamageControlI);
         Changed(await rig.Ships.MoveAsync(c.CharacterId, easy, Rig.Station, c.ShipId, 11, 1));

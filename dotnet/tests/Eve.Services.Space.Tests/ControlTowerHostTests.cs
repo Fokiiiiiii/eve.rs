@@ -1,14 +1,17 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
+using Eve.Dogma;
 using Eve.Host;
 using Eve.Identity;
+using Eve.Inventory;
 using Eve.Macho;
 using Eve.Marshal;
 using Eve.Services;
 using Eve.Services.Core;
-using Eve.Services.Inventory;
+using Eve.Services.Dogma;
 using Eve.Ships;
+using Eve.Sde;
 using Eve.Space;
 using Eve.Structures;
 using Npgsql;
@@ -65,7 +68,7 @@ public class ControlTowerHostTests
                 {
                     hostSession = opened;
                     opened.CharacterId = sourceSession.CharacterId;
-                    foreach (var key in new[] { "corpid", "solarsystemid2", "shipid", "isCEO", "corprole", "role", "allianceid" })
+                    foreach (var key in new[] { "corpid", "solarsystemid", "solarsystemid2", "shipid", "isCEO", "corprole", "role", "allianceid" })
                         if (sourceSession.Get(key) is { } value) opened.Set(key, value);
                 },
             }, dispatcher, new InMemoryAccountDirectory(new AccountOptions { AutoCreate = true }),
@@ -209,9 +212,10 @@ public class ControlTowerHostTests
         (await rig.Items.InContainerAsync(tower)).Where(stack => stack.TypeId == fuelType).Sum(stack => stack.Quantity);
 
     /// <summary>A pilot with the given types in its hold, in space in <paramref name="system"/>, with Anchoring III.</summary>
-    private static async Task<(ClientSession Session, long[] Items)> PilotWithItemsAsync(Rig rig, int[] typeIds, long system)
+    private static async Task<(ClientSession Session, long[] Items)> PilotWithItemsAsync(
+        Rig rig, int[] typeIds, long system, int account = 1, string name = "Space Tester", long sessionId = 1)
     {
-        var character = await rig.NewCharacterAsync();
+        var character = await rig.NewCharacterAsync(name: name, account: account);
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var transaction = await connection.BeginTransactionAsync())
         {
@@ -228,7 +232,7 @@ public class ControlTowerHostTests
         }
         await PlaceCharacterAtSystemStationAsync(rig, character, (int)system);
 
-        var session = await rig.SessionAsync(character, 1);
+        var session = await rig.SessionAsync(character, sessionId);
         var oid = await rig.BindShipAsync(session);
         await rig.ShipCallAsync(session, "Undock", oid, new PyLong(session.GetInt("shipid")!.Value), PyBool.False);
         await rig.BindBeyonceAsync(session);
@@ -694,6 +698,340 @@ public class ControlTowerHostTests
         AssertControlTowerSlimState(rig, moonHarvester, 1, null);
     }
 
+    [PgFact]
+    public async Task PosMgr_forced_production_cycle_moves_configured_material_between_online_silos_over_host_wire()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.Containers.CharacterSessions = rig.CharacterSessions;
+        int siloTypeId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            "SELECT key FROM sde.\"types\" WHERE (doc->>'groupID')::int = 404 AND doc->>'published' = 'true' ORDER BY key LIMIT 1", connection))
+        {
+            siloTypeId = int.Parse((string)(await command.ExecuteScalarAsync())!, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        await rig.Statics.EnsureTypesAsync([ControlTower]);
+        var periodAttribute = Assert.IsType<int>(rig.Statics.AttributeId("posControlTowerPeriod"));
+        var productionPeriodMs = checked((long)rig.Statics.Type(ControlTower)!.Attributes[periodAttribute]);
+
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower, siloTypeId, siloTypeId], LowSecSystem);
+        var (tower, sourceSilo, destinationSilo) = (items[0], items[1], items[2]);
+        await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None);
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        var towerRecord = (await rig.Deployed.GetAsync(tower))!;
+
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var host = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+        async Task<PyValue> Call(string method, params PyValue[] args) => await host.CallAsync(method, args);
+
+        foreach (var (module, offset) in new[] { (sourceSilo, 10_000.0), (destinationSilo, 20_000.0) })
+        {
+            Assert.Equal(module, await rig.Containers.LaunchFromShipAsync(session, module, CancellationToken.None));
+            var position = new[] { towerRecord.Position[0] + offset, towerRecord.Position[1], towerRecord.Position[2] };
+            rig.Sim.PositionAnswers[module] = position;
+            rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = position;
+            await Call("AnchorStructure", new PyLong(module),
+                new PyTuple(position.Select(value => (PyValue)new PyReal(value)).ToArray()));
+            rig.Now += AnchoringMs;
+            await rig.Scheduler.RunDueAsync();
+        }
+
+        await Call("ChangeStructureProvisionType", new PyLong(tower), new PyLong(sourceSilo), new PyInt(34));
+        await Call("ChangeStructureProvisionType", new PyLong(tower), new PyLong(destinationSilo), new PyInt(34));
+        Assert.Equal(PyBool.True, await Call("LinkResourceForTower", new PyLong(tower), new PyList
+        ([Py.List(new PyLong(sourceSilo), new PyLong(destinationSilo), new PyInt(34))])));
+        Assert.Null(await rig.Scheduler.FindAsync(SpaceContainers.ControlTowerProductionCycleJob, $"tower:{tower}"));
+
+        var sourceRecord = (await rig.Deployed.GetAsync(sourceSilo))!;
+        var destinationRecord = (await rig.Deployed.GetAsync(destinationSilo))!;
+        await rig.Deployed.SetTowerStateAsync(tower, "online");
+        await rig.Deployed.SetTowerStateAsync(sourceSilo, "online");
+        await rig.Deployed.SetTowerStateAsync(destinationSilo, "offline");
+        await rig.Containers.RestoreProductionCyclesAsync();
+        var productionJob = await rig.Scheduler.FindAsync(SpaceContainers.ControlTowerProductionCycleJob, $"tower:{tower}");
+        Assert.NotNull(productionJob);
+        Assert.Equal(rig.Now + productionPeriodMs + 1, productionJob.RunAtMs);
+        await FuelAsync(rig, tower, HeliumFuelBlock, 80, towerRecord.OwnerId);
+        await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(SpaceContainers.ControlTowerFuelJob, productionJob.RunAtMs - 1)
+        {
+            Key = $"tower:{tower}",
+            Payload = new SpaceContainers.ControlTowerFuelDue(tower),
+        });
+        await rig.Statics.EnsureTypesAsync([siloTypeId, 34]);
+        var capacityAttribute = Assert.IsType<int>(rig.Statics.AttributeId("capacity"));
+        var volumeAttribute = Assert.IsType<int>(rig.Statics.AttributeId("volume"));
+        var capacity = rig.Statics.Type(siloTypeId)!.Attributes[capacityAttribute];
+        var materialVolume = rig.Statics.Type(34)!.Attributes[volumeAttribute];
+        var existingQuantity = checked((long)Math.Floor(capacity / materialVolume) - 5);
+        Assert.True(existingQuantity > 0);
+        var expectedTransfer = Math.Min(12L,
+            checked((long)Math.Floor(Math.Max(0, (capacity - existingQuantity * materialVolume) / materialVolume))));
+        Assert.InRange(expectedTransfer, 1, 12);
+        long fullDestinationStack;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            _ = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(34, sourceRecord.OwnerId, sourceSilo, 0, 12));
+            fullDestinationStack = await rig.Items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(34, destinationRecord.OwnerId, destinationSilo, 0, existingQuantity));
+            await transaction.CommitAsync();
+        }
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = sourceRecord.Position;
+        rig.CharacterSessions.Enter(host.Session.CharacterId!.Value, host.Session);
+
+        host.Session.Set("role", new PyLong(0));
+        var deniedCycle = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+            Call("RunMoonProcessCycleforTower", new PyLong(tower)));
+        Assert.Contains("Only a Game Master", Texts(deniedCycle.Error.Payload));
+        Assert.Equal(12, Assert.Single(await rig.Items.InContainerAsync(sourceSilo)).Quantity);
+
+        host.Session.Set("role", new PyLong(1L << 54));
+        host.Notifications.Clear();
+        Assert.IsType<PyNone>(await Call("RunMoonProcessCycleforTower", new PyLong(tower)));
+        Assert.Equal(12, (await rig.Items.InContainerAsync(sourceSilo)).Single().Quantity);
+        Assert.Equal(existingQuantity, Assert.Single(await rig.Items.InContainerAsync(destinationSilo)).Quantity);
+        Assert.Empty(host.Notifications);
+
+        await rig.Deployed.SetTowerStateAsync(destinationSilo, "online");
+        var (concurrentSession, _) = await PilotWithItemsAsync(rig, [], LowSecSystem,
+            account: 2, name: "POS Cycle Observer", sessionId: 2);
+        await using var concurrentHost = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+        concurrentHost.Session.Set("role", new PyLong(1L << 54));
+        host.Notifications.Clear();
+        concurrentHost.Notifications.Clear();
+        rig.CharacterSessions.Enter(host.Session.CharacterId!.Value, host.Session);
+        rig.CharacterSessions.Enter(concurrentSession.CharacterId!.Value, concurrentSession);
+        var concurrentCycles = await Task.WhenAll(
+            Call("RunMoonProcessCycleforTower", new PyLong(tower)),
+            concurrentHost.CallAsync("RunMoonProcessCycleforTower", new PyLong(tower)));
+        Assert.All(concurrentCycles, result => Assert.IsType<PyNone>(result));
+        Assert.Equal(12 - expectedTransfer, Assert.Single(await rig.Items.InContainerAsync(sourceSilo)).Quantity);
+        var destinationContents = await rig.Items.InContainerAsync(destinationSilo);
+        Assert.Equal(2, destinationContents.Count);
+        Assert.Equal(existingQuantity, Assert.Single(destinationContents, item => item.Id == fullDestinationStack).Quantity);
+        var moved = Assert.Single(destinationContents, item => item.Id != fullDestinationStack);
+        Assert.Equal(34, moved.TypeId);
+        Assert.Equal(expectedTransfer, moved.Quantity);
+        Assert.Equal(destinationSilo, moved.LocationId);
+        Assert.Equal(sourceRecord.OwnerId, moved.OwnerId);
+        var callerRefreshes = host.Notifications.Concat(concurrentHost.Notifications)
+            .Where(notice => notice.Dest.BroadcastId == "OnMoonProcessChange").ToArray();
+        Assert.Single(host.Notifications, notice => notice.Dest.BroadcastId == "OnMoonProcessChange");
+        var observerRefreshes = Events.Of(concurrentSession).Where(notification => notification.Name == "OnMoonProcessChange").ToArray();
+        var directConcurrentRefreshes = concurrentHost.Notifications
+            .Where(notice => notice.Dest.BroadcastId == "OnMoonProcessChange").ToArray();
+        Assert.Single(observerRefreshes);
+        Assert.InRange(directConcurrentRefreshes.Length, 0, 1);
+        Assert.Equal(2 + directConcurrentRefreshes.Length, callerRefreshes.Length + observerRefreshes.Length);
+        Assert.All(callerRefreshes, refresh =>
+        {
+            Assert.Equal("clientID", refresh.Dest.IdType);
+            var refreshArguments = NotificationArguments(refresh);
+            Assert.Equal(tower, Events.Number(refreshArguments[0]));
+            Assert.IsType<PyList>(refreshArguments[1]);
+        });
+        Assert.All(observerRefreshes, refresh =>
+        {
+            Assert.Equal("clientID", refresh.IdType);
+            Assert.Equal(tower, Events.Number(refresh.Args[0]));
+            Assert.IsType<PyList>(refresh.Args[1]);
+        });
+
+        rig.CharacterSessions.Enter(session.CharacterId!.Value, host.Session);
+        host.Notifications.Clear();
+        Assert.IsType<PyNone>(await Call("RunMoonProcessCycleforTower", new PyLong(tower)));
+        Assert.Equal(12 - expectedTransfer, Assert.Single(await rig.Items.InContainerAsync(sourceSilo)).Quantity);
+        Assert.Equal(2, (await rig.Items.InContainerAsync(destinationSilo)).Count);
+        Assert.Empty(host.Notifications);
+        using var persistedCycle = System.Text.Json.JsonDocument.Parse(await ReadConfigurationAsync(rig, tower));
+        Assert.Equal(4, persistedCycle.RootElement.GetProperty("production").GetProperty("cyclesCompleted").GetInt64());
+        Assert.Equal("waiting", persistedCycle.RootElement.GetProperty("production").GetProperty("status").GetString());
+        Assert.True(persistedCycle.RootElement.GetProperty("production").GetProperty("lastCycleAtMs").GetInt64() > 0);
+
+        await using var restartedScheduler = new Eve.Scheduler.DurableScheduler(rig.Source, () => rig.Now,
+            new Eve.Scheduler.SchedulerOptions { Concurrency = 1 }, rig.SchedulerSchema);
+        restartedScheduler.Register(SpaceContainers.ControlTowerProductionCycleJob,
+            async (context, token) => await rig.Containers.RunScheduledProductionCycleAsync(context, token));
+        rig.Now = productionJob.RunAtMs;
+        host.Notifications.Clear();
+        await restartedScheduler.RunDueAsync();
+        Assert.Equal(12 - expectedTransfer, Assert.Single(await rig.Items.InContainerAsync(sourceSilo)).Quantity);
+        Assert.Equal(2, (await rig.Items.InContainerAsync(destinationSilo)).Count);
+        Assert.Empty(host.Notifications);
+        var deferredProductionJob = await restartedScheduler.FindAsync(SpaceContainers.ControlTowerProductionCycleJob, $"tower:{tower}");
+        Assert.NotNull(deferredProductionJob);
+        Assert.Equal(rig.Now + 1, deferredProductionJob.RunAtMs);
+        restartedScheduler.Register(SpaceContainers.ControlTowerFuelJob, async (context, token) =>
+        {
+            if (await rig.Containers.ControlTowerFuelAsync(context.Connection, context.Transaction,
+                context.Payload<SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token))
+                context.AfterCommit(_ => { rig.Events.Wake(); return Task.CompletedTask; });
+        });
+        rig.Now = deferredProductionJob.RunAtMs;
+        await restartedScheduler.RunDueAsync();
+        Assert.Equal(40, await BayAsync(rig, tower, HeliumFuelBlock));
+        using (var firstScheduledCycle = System.Text.Json.JsonDocument.Parse(await ReadConfigurationAsync(rig, tower)))
+            Assert.Equal(5, firstScheduledCycle.RootElement.GetProperty("production").GetProperty("cyclesCompleted").GetInt64());
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            foreach (var item in await rig.Items.LockContainerAsync(connection, transaction, destinationSilo, CancellationToken.None))
+                await rig.Items.DeleteAsync(connection, transaction, item.Id, CancellationToken.None);
+            await transaction.CommitAsync();
+        }
+        var nextProductionJob = await restartedScheduler.FindAsync(SpaceContainers.ControlTowerProductionCycleJob, $"tower:{tower}");
+        Assert.NotNull(nextProductionJob);
+        Assert.Equal(rig.Now + productionPeriodMs + 1, nextProductionJob.RunAtMs);
+        rig.Now = nextProductionJob.RunAtMs;
+        host.Notifications.Clear();
+        await restartedScheduler.RunDueAsync();
+        _ = await Call("GetTowerNotificationSettings", new PyLong(tower));
+        Assert.Empty(await rig.Items.InContainerAsync(sourceSilo));
+        var scheduledOutput = Assert.Single(await rig.Items.InContainerAsync(destinationSilo));
+        Assert.Equal(34, scheduledOutput.TypeId);
+        Assert.Equal(12 - expectedTransfer, scheduledOutput.Quantity);
+        Assert.Equal(towerRecord.OwnerId, scheduledOutput.OwnerId);
+        Assert.Equal(destinationSilo, scheduledOutput.LocationId);
+        var scheduledRefresh = Assert.Single(host.Notifications);
+        Assert.Equal("OnMoonProcessChange", scheduledRefresh.Dest.BroadcastId);
+        Assert.Equal("clientID", scheduledRefresh.Dest.IdType);
+        var scheduledRefreshArguments = NotificationArguments(scheduledRefresh);
+        Assert.Equal(tower, Events.Number(scheduledRefreshArguments[0]));
+        Assert.Empty(Assert.IsType<PyList>(scheduledRefreshArguments[1]).Items);
+        using var scheduledCycleState = System.Text.Json.JsonDocument.Parse(await ReadConfigurationAsync(rig, tower));
+        var productionState = scheduledCycleState.RootElement.GetProperty("production");
+        Assert.Equal(6, productionState.GetProperty("cyclesCompleted").GetInt64());
+        Assert.Equal("operating", productionState.GetProperty("status").GetString());
+        Assert.Equal(rig.Now, productionState.GetProperty("lastCycleAtMs").GetInt64());
+        Assert.Equal(rig.Now + productionPeriodMs + 1, productionState.GetProperty("nextCycleAtMs").GetInt64());
+    }
+
+    [PgFact]
+    public async Task PosMgr_onlineForStructures_reserves_resources_and_transitions_associated_modules_through_registered_dogma_host_wire()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var systemId = (int)LowSecSystem;
+        int siloTypeId;
+        int reactorTypeId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            "SELECT key FROM sde.\"types\" WHERE (doc->>'groupID')::int = 404 AND doc->>'published' = 'true' ORDER BY key LIMIT 1", connection))
+        {
+            siloTypeId = int.Parse((string)(await command.ExecuteScalarAsync())!, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            "SELECT t.key FROM sde.\"types\" t JOIN sde.\"typeDogma\" d ON d.key = t.key " +
+            "CROSS JOIN LATERAL jsonb_array_elements(d.doc->'dogmaAttributes') a " +
+            "WHERE (t.doc->>'groupID')::int = 438 AND t.doc->>'published' = 'true' AND a->>'attributeID' = '50' " +
+            "ORDER BY (a->>'value')::double precision DESC, t.key LIMIT 1", connection))
+        {
+            reactorTypeId = int.Parse((string)(await command.ExecuteScalarAsync())!, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower, siloTypeId, reactorTypeId, reactorTypeId], LowSecSystem);
+        var (tower, module, firstReactor, secondReactor) = (items[0], items[1], items[2], items[3]);
+        session.Set("solarsystemid", new PyInt(systemId));
+        await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None);
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        var towerRecord = (await rig.Deployed.GetAsync(tower))!;
+
+        Assert.Equal(module, await rig.Containers.LaunchFromShipAsync(session, module, CancellationToken.None));
+        var modulePosition = new[] { towerRecord.Position[0] + 10_000, towerRecord.Position[1], towerRecord.Position[2] };
+        rig.Sim.PositionAnswers[module] = modulePosition;
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = modulePosition;
+        await rig.Containers.AnchorControlTowerAsync(session, module, modulePosition, CancellationToken.None);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        await rig.Deployed.SetTowerStateAsync(tower, "online");
+
+        var dogma = new DogmaIMService(rig.Statics, rig.Ships, () => rig.Now,
+            (_, _, _, _, _, _) => ValueTask.FromResult<bool?>(null), space: rig.Space, modules: rig.Space);
+        var posMgr = new PosMgrService(operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var host = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now, dogma);
+        var boundResult = Assert.IsType<PyTuple>(await host.CallServiceAsync("dogmaIM", "MachoBindObject",
+            new PyTuple([new PyLong(systemId), new PyInt(5)]), PyNone.Instance));
+        var dogmaOid = BoundOid(boundResult.Items[0]);
+
+        Assert.Equal(new PyInt(1), await host.BoundCallAsync(dogmaOid, "Activate",
+            new PyLong(module), new PyStr("onlineForStructures"), PyNone.Instance, new PyInt(1)));
+
+        Assert.Equal("onlining", await rig.Deployed.TowerStateAsync(module));
+        var onliningJob = await rig.Scheduler.FindAsync("space.starbase_module.online", $"module:{module}");
+        Assert.NotNull(onliningJob);
+        Assert.Equal(rig.Now + rig.Statics.Type(siloTypeId)!.Attributes[Assert.IsType<int>(rig.Statics.AttributeId("onliningDelay"))], onliningJob.RunAtMs);
+        AssertControlTowerSlimState(rig, module, 2, rig.Now);
+
+        Assert.Equal(new PyInt(1), await host.BoundCallAsync(dogmaOid, "Activate",
+            new PyLong(module), new PyStr("onlineForStructures"), PyNone.Instance, new PyInt(1)));
+        Assert.Equal(onliningJob.RunAtMs, (await rig.Scheduler.FindAsync(SpaceContainers.StarbaseModuleOnlineJob, $"module:{module}"))!.RunAtMs);
+        rig.Now = onliningJob.RunAtMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("online", await rig.Deployed.TowerStateAsync(module));
+        Assert.Null(await rig.Scheduler.FindAsync(SpaceContainers.StarbaseModuleOnlineJob, $"module:{module}"));
+        AssertControlTowerSlimState(rig, module, 4, null);
+
+        Assert.Equal(new PyInt(1), await host.BoundCallAsync(dogmaOid, "Deactivate",
+            new PyLong(module), new PyStr("onlineForStructures")));
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(module));
+        AssertControlTowerSlimState(rig, module, 1, null);
+
+        async Task AnchorAssociatedModuleAsync(long moduleId, double offset)
+        {
+            Assert.Equal(moduleId, await rig.Containers.LaunchFromShipAsync(session, moduleId, CancellationToken.None));
+            var position = new[] { towerRecord.Position[0] + offset, towerRecord.Position[1], towerRecord.Position[2] };
+            rig.Sim.PositionAnswers[moduleId] = position;
+            rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = position;
+            await rig.Containers.AnchorControlTowerAsync(session, moduleId, position, CancellationToken.None);
+        }
+
+        var towerType = rig.Statics.Type(ControlTower)!;
+        var reactorType = rig.Statics.Type(reactorTypeId)!;
+        var cpuOutputAttribute = Assert.IsType<int>(rig.Statics.AttributeId("cpuOutput"));
+        var cpuUsageAttribute = Assert.IsType<int>(rig.Statics.AttributeId("cpu"));
+        var cpuOutput = towerType.Attributes[cpuOutputAttribute];
+        var reactorCpu = reactorType.Attributes[cpuUsageAttribute];
+        Assert.True(reactorCpu > 0 && reactorCpu * 2 > cpuOutput,
+            "The pinned SDE fixture must require more CPU for two selected reactor arrays than this control tower supplies.");
+        await AnchorAssociatedModuleAsync(firstReactor, 20_000);
+        await AnchorAssociatedModuleAsync(secondReactor, 30_000);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        await rig.Deployed.SetTowerStateAsync(tower, "online");
+
+        Assert.Equal(new PyInt(1), await host.BoundCallAsync(dogmaOid, "Activate",
+            new PyLong(firstReactor), new PyStr("onlineForStructures"), PyNone.Instance, new PyInt(1)));
+        var reactorJob = await rig.Scheduler.FindAsync(SpaceContainers.StarbaseModuleOnlineJob, $"module:{firstReactor}");
+        Assert.NotNull(reactorJob);
+        rig.Now = reactorJob.RunAtMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("online", await rig.Deployed.TowerStateAsync(firstReactor));
+
+        var overCapacity = await Assert.ThrowsAsync<MachoWrappedException>(() => host.BoundCallAsync(dogmaOid, "Activate",
+            new PyLong(secondReactor), new PyStr("onlineForStructures"), PyNone.Instance, new PyInt(1)));
+        Assert.Equal("STARBASE_CPU_INSUFFICIENT", overCapacity.Error.UserErrorMessage);
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(secondReactor));
+        Assert.Null(await rig.Scheduler.FindAsync(SpaceContainers.StarbaseModuleOnlineJob, $"module:{secondReactor}"));
+
+        Assert.Equal(new PyInt(1), await host.BoundCallAsync(dogmaOid, "Deactivate",
+            new PyLong(firstReactor), new PyStr("onlineForStructures")));
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(firstReactor));
+        Assert.Equal(new PyInt(1), await host.BoundCallAsync(dogmaOid, "Activate",
+            new PyLong(secondReactor), new PyStr("onlineForStructures"), PyNone.Instance, new PyInt(1)));
+        reactorJob = await rig.Scheduler.FindAsync(SpaceContainers.StarbaseModuleOnlineJob, $"module:{secondReactor}");
+        Assert.NotNull(reactorJob);
+        rig.Now = reactorJob.RunAtMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("online", await rig.Deployed.TowerStateAsync(secondReactor));
+    }
+
     private static PyValue? Field(PyDict fields, string name) => fields.Entries
         .Single(entry => JsSemantics.StringValue(entry.Key) == name).Value;
 
@@ -764,9 +1102,9 @@ public class ControlTowerHostTests
         host.Session.Set("isCEO", PyBool.False);
         host.Session.Set("corprole", new PyLong(0));
         await rig.Deployed.SetTowerStateAsync(silo, "online");
-        var onlineSilo = await Assert.ThrowsAsync<MachoWrappedException>(() =>
+        var onlineSiloError = await Assert.ThrowsAsync<MachoWrappedException>(() =>
             host.CallServiceAsync("invbroker", "GetInventoryFromId", new PyLong(silo)));
-        Assert.Equal("STARBASE_PRODUCTION_MUST_BE_OFFLINE", onlineSilo.Error.UserErrorMessage);
+        Assert.Equal("STARBASE_PRODUCTION_MUST_BE_OFFLINE", onlineSiloError.Error.UserErrorMessage);
         await rig.Deployed.SetTowerStateAsync(silo, "offline");
         var siloInventory = BoundOid(await host.CallServiceAsync("invbroker", "GetInventoryFromId", new PyLong(silo)));
         var shipInventory = BoundOid(await host.CallServiceAsync("invbroker", "GetInventoryFromId", new PyLong(session.GetInt("shipid")!.Value)));

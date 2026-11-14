@@ -56,6 +56,8 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
 
     internal SimClient? Simulation { get; } = simulation;
 
+    internal SpaceSessions? Space { get; } = space;
+
     /// <summary>The public protobuf gateway: the answers by request type, the notice streams and the authority of requests (no answers without PostgreSQL: no characters, no plans).</summary>
     internal PublicGateway.PublicGatewayRoutes PublicGateway { get; } = publicGateway ?? new PublicGateway.PublicGatewayRoutes(
         new Dictionary<string, PublicGateway.GatewayHandler>(), new PublicGateway.NoticeHub(),
@@ -100,7 +102,7 @@ internal sealed class HostRuntime(HostServer server, ServiceRegistry registry, L
         {
             await foundations.DisposeAsync();
         }
-        space?.Dispose();
+        Space?.Dispose();
         crimewatch?.Dispose();
         if (Simulation is not null)
         {

@@ -553,11 +553,24 @@ internal sealed partial class CharacterServicesComposition
                     context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token))
                     context.AfterCommit(_ => { foundations.Events.Wake(); return Task.CompletedTask; });
             });
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerProductionCycleJob,
+                async (context, token) => await spaceContainers.RunScheduledProductionCycleAsync(context, token));
+            await spaceContainers.RestoreProductionCyclesAsync();
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerOnlineJob, async (context, token) =>
             {
                 var due = context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerOnlineDue>()!;
                 if (await spaceContainers.CompleteControlTowerOnlineAsync(context.Connection, context.Transaction, due.DeployableId, due.StartedAtMs, token))
                     context.AfterCommit(_ => { foundations.Events.Wake(); return Task.CompletedTask; });
+            });
+            foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.StarbaseModuleOnlineJob, async (context, token) =>
+            {
+                var due = context.Payload<Eve.Services.Space.SpaceContainers.StarbaseModuleOnlineDue>()!;
+                if (await spaceContainers.CompleteStarbaseModuleOnlineAsync(context.Connection, context.Transaction, due, token) is { } online)
+                    context.AfterCommit(_ =>
+                    {
+                        spaceContainers.PublishStarbaseModuleOnlineState(due.DeployableId, online);
+                        return Task.CompletedTask;
+                    });
             });
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerUnanchorJob, async (context, token) =>
                 await spaceContainers.CompleteControlTowerUnanchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerUnanchorDue>()!.DeployableId,

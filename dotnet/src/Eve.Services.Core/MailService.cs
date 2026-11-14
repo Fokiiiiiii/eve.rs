@@ -367,11 +367,14 @@ public static class MailSentNotification
         long statusMask)
     {
         var organizationId = request.CorporationOrAllianceRecipientIds?.FirstOrDefault();
+        var senderId = request.MailingListId is { } welcomeListId &&
+            (request.MailingListWelcomeRecipientId is not null || request.MailingListWelcomeBroadcast)
+                ? welcomeListId
+                : request.SenderCharacterId;
         return
         [
             new PyLong(messageId),
-            new PyLong(request.MailingListWelcomeRecipientId is not null && request.MailingListId is { } welcomeListId
-                ? welcomeListId : request.SenderCharacterId),
+            new PyLong(senderId),
             new PyLong(sentFiletime),
             new PyList([.. request.CharacterRecipientIds.Select(id => (PyValue)new PyLong(id))]),
             request.MailingListId is { } listId ? new PyLong(listId) : PyNone.Instance,
@@ -758,7 +761,14 @@ public sealed record MailSendRequest(
     long? ReplyToMessageId,
     long? ForwardedFromMessageId,
     bool SaveSenderCopy = true,
-    long? MailingListWelcomeRecipientId = null);
+    long? MailingListWelcomeRecipientId = null,
+    bool MailingListWelcomeBroadcast = false);
+
+public static class MailStatusMasks
+{
+    /// <summary>The bit the V24 client uses to recognize automated mail from a mailing list.</summary>
+    public const long Automated = 32;
+}
 
 public sealed record GmChatPokeMailRequest(
     long CharacterId,

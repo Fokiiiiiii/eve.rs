@@ -1732,17 +1732,79 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
     assert_eq!(sim.scenes[&second].pilots[&77].ship.spec.ship_id, ship_id);
     assert!(!sim.scenes[&second].pilots[&77].bound);
     let rebound = sim.handle(Message::Bind { session_id: 77 }, NOON + 2 * SECOND).unwrap();
-    let rebound_updates = rebound
+    let session_notifications: Vec<_> = rebound
         .iter()
-        .filter(|message| {
-            matches!(
-                message, Message::Notify { session_id: 77, name, .. } if name == "DoDestinyUpdate"
-            )
+        .filter_map(|message| match message {
+            Message::Notify { session_id: 77, name, .. } => Some(name.as_str()),
+            _ => None,
         })
-        .count();
-    assert!(
-        rebound_updates >= 3,
-        "rebind must send static scene objects, SetState and ship numbers with the bound ballpark: {rebound:?}"
+        .collect();
+    assert_eq!(
+        session_notifications,
+        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"],
+        "the full bound state precedes its ship numbers and the bind acknowledgement"
+    );
+    assert!(matches!(
+        rebound.last(),
+        Some(Message::Accepted {
+            session_id: 77,
+            command: crate::link::COMMAND_BIND_BALLPARK,
+            at
+        }) if *at == NOON + 2 * SECOND
+    ));
+
+    let destiny_updates: Vec<_> = rebound
+        .iter()
+        .filter(|message| matches!(message, Message::Notify { session_id: 77, name, .. } if name == "DoDestinyUpdate"))
+        .map(destiny_actions)
+        .collect();
+    assert_eq!(destiny_updates.len(), 2);
+    assert_eq!(
+        destiny_updates[0].iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        ["SetState"],
+        "SetState is the first Destiny update for the rebound ballpark"
+    );
+    let set_state = destiny_updates[0][0].1.first().expect("SetState carries its full-state KeyVal");
+    let slim_items = match object_field(set_state, "slims") {
+        Some(Value::List(items)) => items,
+        other => panic!("SetState must carry slim items: {other:?}"),
+    };
+    let slim_ids: Vec<_> =
+        slim_items.iter().filter_map(|item| object_field(item, "itemID").and_then(wire_integer)).collect();
+    let state_buffer = match object_field(set_state, "state") {
+        Some(Value::Buffer(bytes)) => bytes,
+        other => panic!("SetState must carry its full ball buffer: {other:?}"),
+    };
+    assert_eq!(wire_integer(object_field(set_state, "ego").expect("SetState ego")), Some(ship_id));
+    for item_id in [ship_id, second_npc_id, second_cache_id, second_object_id] {
+        assert!(slim_ids.contains(&item_id), "SetState slims must include item {item_id}: {slim_ids:?}");
+        let item_id_bytes = item_id.to_le_bytes();
+        assert!(
+            state_buffer.windows(item_id_bytes.len()).any(|window| window == item_id_bytes.as_slice()),
+            "SetState ball buffer must include item {item_id}"
+        );
+    }
+
+    let number_actions = &destiny_updates[1];
+    let actual_numbers: BTreeSet<_> = number_actions
+        .iter()
+        .filter_map(|(name, args)| {
+            args.first().and_then(wire_integer).map(|item_id| (name.as_str(), item_id))
+        })
+        .collect();
+    let expected_numbers: BTreeSet<_> = sim.scenes[&second]
+        .ships_in_view(77)
+        .into_iter()
+        .filter(|ship| ship.spec.max_velocity > 0.0)
+        .flat_map(|ship| {
+            ["SetBallAgility", "SetBallMass", "SetMaxSpeed"]
+                .into_iter()
+                .map(move |name| (name, ship.spec.ship_id))
+        })
+        .collect();
+    assert_eq!(
+        actual_numbers, expected_numbers,
+        "the bound state is followed by each visible ship's numbers"
     );
     let rebound_state = sim.handle(Message::UpdateState { session_id: 77 }, NOON + 2 * SECOND).unwrap();
     assert!(names(&rebound_state).iter().any(|name| name == "DoDestinyUpdate"));
@@ -2659,6 +2721,57 @@ fn names(messages: &[Message]) -> Vec<String> {
             other => format!("{other:?}"),
         })
         .collect()
+}
+
+fn destiny_actions(message: &Message) -> Vec<(String, Vec<Value>)> {
+    let Message::Notify { name, args, .. } = message else { panic!("expected a notification: {message:?}") };
+    assert_eq!(name, "DoDestinyUpdate");
+    let Value::Tuple(arguments) = eve_marshal::decode_exact(args).unwrap() else {
+        panic!("DoDestinyUpdate arguments must be a tuple")
+    };
+    let Some(Value::List(actions)) = arguments.first() else { panic!("DoDestinyUpdate must carry actions") };
+    actions
+        .iter()
+        .map(|action| {
+            let Value::Tuple(action) = action else { panic!("Destiny action must be a tuple: {action:?}") };
+            let Value::Tuple(call) = &action[1] else {
+                panic!("Destiny action call must be a tuple: {action:?}")
+            };
+            let name =
+                wire_text(&call[0]).unwrap_or_else(|| panic!("Destiny action name must be text: {call:?}"));
+            let Value::Tuple(args) = &call[1] else {
+                panic!("Destiny action arguments must be a tuple: {call:?}")
+            };
+            (name, args.clone())
+        })
+        .collect()
+}
+
+fn object_field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    match value {
+        Value::Object { args, .. } => object_field(args, key),
+        Value::Dict(fields) => fields.iter().find_map(|(name, value)| match name {
+            Value::Str(name) if name.as_ref() == key => Some(value),
+            Value::Bytes(name) if name.as_ref() == key.as_bytes() => Some(value),
+            _ => None,
+        }),
+        _ => None,
+    }
+}
+
+fn wire_text(value: &Value) -> Option<String> {
+    match value {
+        Value::Str(value) => Some(value.to_string()),
+        Value::Bytes(value) => Some(String::from_utf8_lossy(value).into_owned()),
+        _ => None,
+    }
+}
+
+fn wire_integer(value: &Value) -> Option<i64> {
+    match value {
+        Value::Int(value) | Value::Long(value) => Some(*value),
+        _ => None,
+    }
 }
 
 #[test]

@@ -100,6 +100,48 @@ internal sealed partial class CharacterServicesComposition
                 new Dictionary<long, int> { [recipientId] = 1 });
         }
 
+        var recipientIds = new List<long>();
+        var recipientLabelMasks = new Dictionary<long, int>();
+        void AddRecipient(long characterId, int labelMask)
+        {
+            if (!MailOrganizationAuthorization.TryAddRecipient(
+                    recipientIds, recipientLabelMasks, characterId, labelMask))
+                throw Eve.Services.MachoErrors.ThrowUserError("MAIL_RECIPIENT_LIMIT_EXCEEDED");
+        }
+
+        if (request.MailingListWelcomeBroadcast)
+        {
+            if (request.MailingListId is not { } broadcastListId ||
+                request.MailingListWelcomeRecipientId is not null ||
+                request.SenderCharacterId <= 0 || session.CharacterId != request.SenderCharacterId ||
+                request.CharacterRecipientIds.Count != 0 || request.CorporationOrAllianceRecipientIds is { Count: > 0 } ||
+                request.SaveSenderCopy || request.ReplyToMessageId is not null || request.ForwardedFromMessageId is not null)
+                return null;
+
+            var list = mailCache.Read("mail", $"/mailingLists/{broadcastListId}").Data as JsonObject;
+            var welcome = list?["welcomeMail"] as JsonObject;
+            var members = list?["members"] as JsonObject;
+            if (list is null || MailingListDeleted(list) || !MailingListCanManage(list, request.SenderCharacterId) ||
+                members is null ||
+                !string.Equals(MailingListJsonText(welcome?["title"]), request.Title, StringComparison.Ordinal) ||
+                !string.Equals(MailingListJsonText(welcome?["body"]), request.Body, StringComparison.Ordinal))
+                return null;
+
+            foreach (var (key, _) in members)
+            {
+                if (!long.TryParse(key, System.Globalization.NumberStyles.Integer,
+                        System.Globalization.CultureInfo.InvariantCulture, out var characterId) || characterId <= 0 ||
+                    await characters.GetAsync(characterId, cancellationToken) is null)
+                    continue;
+                AddRecipient(characterId, 0);
+            }
+
+            return recipientIds.Count == 0
+                ? null
+                : new PersistenceMailSendRecipients(
+                    recipientIds, MailingListJsonText(list["displayName"]), 0, recipientLabelMasks);
+        }
+
         if (request.MailingListWelcomeRecipientId is { } welcomeRecipientId)
         {
             if (request.MailingListId is not { } welcomeListId ||
@@ -120,7 +162,7 @@ internal sealed partial class CharacterServicesComposition
 
             return new PersistenceMailSendRecipients(
                 [welcomeRecipientId], MailingListJsonText(list["displayName"]), 0,
-                new Dictionary<long, int> { [welcomeRecipientId] = 1 });
+                new Dictionary<long, int> { [welcomeRecipientId] = 0 });
         }
 
         if (request.SenderCharacterId <= 0 || session.CharacterId != request.SenderCharacterId)
@@ -143,15 +185,6 @@ internal sealed partial class CharacterServicesComposition
                 requestedOrganizationIds.Distinct().Any(recipientId =>
                     !MailOrganizationAuthorization.CanSendOrganizationMail(recipientId, senderCorporation, currentCorpRoleMask.Value)))
                 return null;
-        }
-
-        var recipientIds = new List<long>();
-        var recipientLabelMasks = new Dictionary<long, int>();
-        void AddRecipient(long characterId, int labelMask)
-        {
-            if (!MailOrganizationAuthorization.TryAddRecipient(
-                    recipientIds, recipientLabelMasks, characterId, labelMask))
-                throw Eve.Services.MachoErrors.ThrowUserError("MAIL_RECIPIENT_LIMIT_EXCEEDED");
         }
 
         var senderLabelMask = 2;

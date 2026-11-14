@@ -283,7 +283,7 @@ impl Scene {
         let first = self.next_stamp(now);
         let second = self.next_stamp(now);
         let (add_stamp, state_stamp) =
-            if self.pilots[&session].jumped_in { (second, first) } else { (first, second) };
+            if self.pilots[&session].jumped_in { (second, second) } else { (first, second) };
         let system = Arc::clone(&self.system);
         let ships = self.ships_in_view(session);
         let traces = self.abyssal_traces_in_view(session);

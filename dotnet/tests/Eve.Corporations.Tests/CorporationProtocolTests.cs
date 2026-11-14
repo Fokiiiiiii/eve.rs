@@ -1253,7 +1253,7 @@ private static PyValue RowField(PyValue value,string key)
         Assert.IsType<PyNone>(await CorpRpc("UpdateMember",removeRoles));
         Assert.True((await rig.Store.MemberAsync(member))!.StasisUntilMs > rig.Now);
         Assert.Equal(new PyInt(1),Assert.IsType<PyTuple>(await registry.CallAsync(Call(memberSession,"CanLeaveCurrentCorporation"))).Items[0]);
-        Assert.Equal(new PyInt(0),await CorpRpc("CanBeKickedOut",new PyInt(member)));
+        Assert.Equal(new PyInt(1),await registry.CallAsync(Call(memberSession,"CanBeKickedOut",new PyInt(member))));
         Assert.IsType<PyNone>(await CorpRpc("UpdateMember",memberUpdate));
 
         var title = new PyValue[] { new PyInt(32768),new PyStr("Recruiter"),new PyLong(0),new PyLong(0),new PyLong(0),

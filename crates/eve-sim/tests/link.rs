@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use eve_destiny::Vec3;
 use eve_sim::serve_connection;
-use eve_space::link::{Enter, How, Message, PROTOCOL_VERSION, SceneKey};
+use eve_space::link::{COMMAND_BIND_BALLPARK, Enter, How, Message, PROTOCOL_VERSION, SceneKey};
 use eve_space::ship::ShipSpec;
 use eve_space::sim::{POLL_HZ, Universe};
 use eve_space::world::{Body, BodyKind, Detail, SolarSystem};
@@ -150,6 +150,14 @@ impl Host {
         }
     }
 
+    async fn wait_for_bind_reply(&mut self) {
+        let (message, _) = self.recv_response().await;
+        assert_eq!(
+            message,
+            Message::Accepted { session_id: SESSION, command: COMMAND_BIND_BALLPARK, at: NOON }
+        );
+    }
+
     async fn hello(&mut self) {
         self.send(Message::Hello { version: PROTOCOL_VERSION }).await;
         assert_eq!(self.recv().await, Message::HelloAck { version: PROTOCOL_VERSION, poll_hz: POLL_HZ });
@@ -203,12 +211,14 @@ async fn a_destiny_update_is_sent_without_waiting_for_a_second_boundary() {
         _ = tokio::time::sleep(Duration::ZERO) => None,
     };
 
-    drop(host.stream);
-    assert!(host.served.await.unwrap().is_ok());
     assert!(matches!(
         next,
         Some(Message::Notify { name, .. }) if name == "DoDestinyUpdate"
     ));
+    host.wait_for_bind_reply().await;
+
+    drop(host.stream);
+    assert!(host.served.await.unwrap().is_ok());
 }
 
 #[tokio::test]
@@ -221,7 +231,7 @@ async fn a_ship_is_sent_out_bound_told_to_dock_and_reported_docked() {
 
     host.send(Message::Bind { session_id: SESSION }).await;
     let mut names = Vec::new();
-    while names.len() < 5 {
+    loop {
         match host.recv().await {
             Message::Notify { name, id_type, session_id, .. } => {
                 assert_eq!((id_type.as_str(), session_id), ("clientID", SESSION));
@@ -232,11 +242,13 @@ async fn a_ship_is_sent_out_bound_told_to_dock_and_reported_docked() {
                 assert_eq!(solar_system_id, SYSTEM);
                 assert!(entity_id > 0);
             }
+            Message::Accepted { session_id: SESSION, command: COMMAND_BIND_BALLPARK, at: NOON } => break,
             other => panic!("expected a notification or scene update, got {other:?}"),
         }
     }
     assert_eq!(names[..2], ["OnSetTimeDilation", "DoSimClockRebase"]);
     assert!(names[2..].iter().all(|n| n == "DoDestinyUpdate"));
+    assert!(!names[2..].is_empty(), "the bind reply follows the initial scene update");
 
     host.send(Message::Command { session_id: SESSION, command: 4, args: vec![STATION as f64] }).await;
     // Periodic simulation updates can arrive before the command's reply.
@@ -293,7 +305,7 @@ async fn a_station_dock_approach_is_accepted_on_arrival_without_a_second_command
 
     host.send(Message::Bind { session_id: SESSION }).await;
     let mut names = Vec::new();
-    while names.len() < 5 {
+    loop {
         match host.recv().await {
             Message::Notify { name, id_type, session_id, .. } => {
                 assert_eq!((id_type.as_str(), session_id), ("clientID", SESSION));
@@ -304,11 +316,13 @@ async fn a_station_dock_approach_is_accepted_on_arrival_without_a_second_command
                 assert_eq!(solar_system_id, SYSTEM);
                 assert!(entity_id > 0);
             }
+            Message::Accepted { session_id: SESSION, command: COMMAND_BIND_BALLPARK, at: NOON } => break,
             other => panic!("expected a notification or scene update, got {other:?}"),
         }
     }
     assert_eq!(names[..2], ["OnSetTimeDilation", "DoSimClockRebase"]);
     assert!(names[2..].iter().all(|name| name == "DoDestinyUpdate"));
+    assert!(!names[2..].is_empty(), "the bind reply follows the initial scene update");
 
     host.send(Message::Command { session_id: SESSION, command: 4, args: vec![STATION as f64] }).await;
     let (approach, saw_approach_update) = host.recv_response().await;

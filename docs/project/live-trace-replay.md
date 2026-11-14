@@ -18,6 +18,7 @@ pinned SDE available under `.cache/sde` and PostgreSQL ready:
 
 ```sh
 EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p6 \
+EVE_MARKET_SEED=skip \
 EVE_RUN='tools/mitm/mitm replay tools/headless-client/fixtures/live-trace-conn4-first400.jsonl.gz --conn 4' \
 tools/dev/run-eve-live.sh
 ```

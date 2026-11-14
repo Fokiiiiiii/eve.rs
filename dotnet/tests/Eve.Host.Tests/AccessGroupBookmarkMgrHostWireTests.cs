@@ -91,11 +91,11 @@ public sealed class AccessGroupBookmarkMgrHostWireTests
     }
 
     [Fact]
-    public void Bookmark_expiry_modes_follow_the_wiki_duration_and_keep_the_client_wire_values()
+    public void Bookmark_expiry_modes_follow_client_and_evejs_durations_and_keep_the_wire_values()
     {
         const long now = 1_800_000_000_000;
         Assert.Null(BookmarkRules.ExpiryMs(BookmarkRules.ExpiryNone, now));
-        Assert.Equal(now + 3L * 3_600_000, BookmarkRules.ExpiryMs(BookmarkRules.Expiry4Hours, now));
+        Assert.Equal(now + 4L * 3_600_000, BookmarkRules.ExpiryMs(BookmarkRules.Expiry4Hours, now));
         Assert.Equal(now + 48L * 3_600_000, BookmarkRules.ExpiryMs(BookmarkRules.Expiry2Days, now));
         Assert.Equal(now + 24L * 3_600_000, BookmarkRules.ExpiryMs(BookmarkRules.Expiry24Hours, now));
     }

@@ -47,6 +47,17 @@ public sealed partial class PersistenceStructureDirectoryReadModel(
     Eve.Services.Core.IStructureDirectoryReadCallbacks,
     Eve.Services.Core.IStructureSettingsReadCallbacks
 {
+    public sealed record JumpBridgeTravelState(
+        long StructureId,
+        int SolarSystemId,
+        long DestinationStructureId,
+        int DestinationSolarSystemId,
+        long OwnerCorporationId,
+        bool SourceServiceOnline,
+        bool DestinationServiceOnline,
+        bool CharacterHasAccess,
+        decimal IskPerLiquidOzone);
+
     public PersistenceStructureDirectoryReadModel(
         Func<string, CancellationToken, Task<JsonObject>> readTable,
         Func<long, CancellationToken, Task<Eve.Relations.Affiliation>> affiliationOf)
@@ -87,6 +98,45 @@ public sealed partial class PersistenceStructureDirectoryReadModel(
         return linked is { Id: > 0, SolarSystemId: > 0 }
             ? (linked.Id, linked.SolarSystemId)
             : null;
+    }
+
+    /// <summary>Resolves the live persisted Ansiblex pair, ACL and activation rate for one jump request.</summary>
+    public async ValueTask<JumpBridgeTravelState?> GetJumpBridgeTravelStateAsync(
+        ServiceCall call,
+        long structureId,
+        CancellationToken cancellationToken)
+    {
+        if (structureId <= 0)
+            return null;
+
+        var access = await ReadAccessContextAsync(call, cancellationToken);
+        var structures = await readTable("structures", cancellationToken);
+        var bridges = ReadBridges(structures);
+        var source = bridges.FirstOrDefault(candidate => candidate.Id == structureId);
+        if (source is null)
+            return null;
+
+        var destination = source.DestinationSolarSystemId > 0 ? bridges.FirstOrDefault(candidate =>
+            candidate.Id != source.Id &&
+            candidate.SolarSystemId == source.DestinationSolarSystemId &&
+            candidate.DestinationSolarSystemId == source.SolarSystemId) : null;
+
+        var profiles = await readTable("structureProfiles", cancellationToken);
+        var groups = await readTable("accessGroups", cancellationToken);
+        var ownerCorporationId = Integer(source.Value["ownerCorpID"]);
+        if (ownerCorporationId <= 0)
+            ownerCorporationId = Integer(source.Value["ownerID"]);
+
+        return new JumpBridgeTravelState(
+            source.Id,
+            checked((int)source.SolarSystemId),
+            destination?.Id ?? 0,
+            destination is null ? 0 : checked((int)destination.SolarSystemId),
+            ownerCorporationId,
+            IsJumpBridgeServiceOnline(source),
+            destination is not null && IsJumpBridgeServiceOnline(destination),
+            CanUseJumpBridge(source, access, profiles, groups),
+            JumpBridgeActivationRate(source, access, profiles, groups));
     }
 
     public async ValueTask<PyValue> GetJumpBridgesWithMyAccessAsync(ServiceCall call)

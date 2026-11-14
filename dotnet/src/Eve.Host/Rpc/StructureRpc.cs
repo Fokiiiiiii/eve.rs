@@ -11,6 +11,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using Eve.Inventory;
 using Eve.Ships;
+using Eve.Structures;
 using Eve.Marshal;
 using Eve.Npc;
 using Eve.Sde;
@@ -40,6 +41,23 @@ internal sealed partial class CharacterServicesComposition
     /// <summary>Structures: directory, moon extractions, travel, control, asset safety, settings and skyhooks.</summary>
     private async Task<JsonObject?> ReadMoonExtractionsAsync() => await moonExtractionStore.ReadLegacyAsync();
 
+    internal static StructureTravelRpcService CreateStructureJumpBridgeTravelService(
+        NpgsqlDataSource database,
+        StructureStore structures,
+        PgItemStore items,
+        DogmaStatic dogma,
+        PersistenceStructureDirectoryReadModel directory,
+        SpaceSessions? space,
+        SolarSystemCatalog systems,
+        WalletTransactions wallets,
+        Eve.Events.EventBus events,
+        Func<long> now) =>
+        new(
+            "structureJumpBridgeMgr",
+            new StructureJumpBridgeTravel(database, structures, items, dogma, directory, space, systems, wallets, events, now).TravelAsync,
+            jumpBridgeDestination: directory.GetJbStructureDestinationAsync,
+            linkedStructure: directory.GetLinkedStructureAsync);
+
     private ValueTask JettisonStructureFuelAsync(ServiceCall call, long structureId, IReadOnlyList<long> itemIds)
     {
         if (sim is null)
@@ -68,10 +86,9 @@ internal sealed partial class CharacterServicesComposition
             new Eve.Services.Space.AutoMoonMiningRpcService(
                 ReadAutoMoonMiningDetailsAsync,
                 ReadAutoMoonMiningCycleOutputAsync),
-            new Eve.Services.Space.StructureTravelRpcService(
-                "structureJumpBridgeMgr",
-                jumpBridgeDestination: structureDirectoryReadModel.GetJbStructureDestinationAsync,
-                linkedStructure: structureDirectoryReadModel.GetLinkedStructureAsync),
+            CreateStructureJumpBridgeTravelService(source, structureStore, items, dogma,
+                structureDirectoryReadModel, spaceSessions, solarSystems, economyWallets,
+                foundations.Events, now),
             new Eve.Services.Core.StructureRpcService("structureCargoDelivery", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureCompressionMgr", structureRpcCallbacks),
             new Eve.Services.Core.StructureRpcService("structureControl", structureRpcCallbacks),

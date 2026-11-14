@@ -439,6 +439,16 @@ public sealed partial class SpaceSessions
     private async Task<double> ShipMassAsync(Pilot pilot, CancellationToken cancellationToken) =>
         await FlownShipAsync(pilot, cancellationToken) is { } flown ? flown.World.Get(flown.Ship.Id, Eve.Services.Space.Effects.ModuleAttributes.Mass) : 0;
 
+    /// <summary>The flown ship's authoritative mass, including its fitting and active dogma modifiers.</summary>
+    public async ValueTask<double?> ActiveShipMassAsync(ClientSession session, CancellationToken cancellationToken)
+    {
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot) || pilot.CharacterId != session.CharacterId ||
+            await FlownShipAsync(pilot, cancellationToken) is not { } flown)
+            return null;
+        var mass = flown.World.Get(flown.Ship.Id, Eve.Services.Space.Effects.ModuleAttributes.Mass);
+        return double.IsFinite(mass) && mass > 0 ? mass : null;
+    }
+
     /// against the gate's list, and the emanation lock of the system it is in.</summary>
     private async Task CheckGateRulesAsync(Pilot pilot, long gateId, CancellationToken cancellationToken)
     {

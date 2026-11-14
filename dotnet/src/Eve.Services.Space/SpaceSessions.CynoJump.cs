@@ -7,6 +7,65 @@ namespace Eve.Services.Space;
 
 public sealed partial class SpaceSessions
 {
+    /// <summary>
+    /// Runs the accepted Ansiblex jump through the scene's ordinary jump-out and arrival path.
+    /// The caller has checked persisted link, access, fuel, fee, mass and range policy.
+    /// </summary>
+    public async Task<PyValue> StructureJumpAsync(
+        ClientSession session,
+        long structureId,
+        int destinationSystem,
+        long destinationStructureId,
+        string? boundObjectId,
+        CancellationToken cancellationToken,
+        Func<CancellationToken, ValueTask>? settle = null)
+    {
+        RequirePublicMoveSettled(session);
+        if (!_pilots.TryGetValue((ulong)session.SessionId, out var pilot))
+            throw JumpRefused("NOT_IN_SPACE");
+        if (await ShipAttributeAsync(pilot, Eve.Services.Space.Effects.ModuleAttributes.DisallowDriveJumping, cancellationToken))
+            throw Notify("You cannot jump at this time.");
+        var policy = await MovementPolicyAsync(pilot, PolicyAction.GateJump, cancellationToken);
+        if (!policy.Allowed)
+            throw MovementRefused(policy, "jump");
+
+        await PrepareSolarSystemAsync(destinationSystem, cancellationToken);
+        CommandReply reply;
+        try
+        {
+            reply = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.StructureJump,
+                [structureId, destinationSystem, destinationStructureId], cancellationToken);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"Ansiblex jump of session {session.SessionId} through {structureId}: {error.Message}");
+            throw JumpRefused("SCENE_NOT_FOUND");
+        }
+        if (!reply.Accepted || reply.DestinationSystem is not { } destination)
+        {
+            _log?.Invoke($"Ansiblex jump of session {session.SessionId} through {structureId} refused: {reply.Reason}");
+            throw StructureBridgeRefusal(reply.Reason);
+        }
+
+        if (settle is not null)
+            await settle(cancellationToken);
+        await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
+        SendJumpQueueUpdate(session, pilot.CharacterId, destination);
+        return Py.Tuple(boundObjectId is null ? None : new PyStr(boundObjectId),
+            new PyLong(Py.FileTimeFromUnixMs(_nowUnixMs() + SessionChangeCooldownMs)));
+    }
+
+    private static MachoWrappedException StructureBridgeRefusal(string? reason) => reason switch
+    {
+        "TOO_FAR_FROM_STRUCTURE" => Notify("You are too far away from the jump bridge."),
+        "WARP_DISRUPTED_BY_BUBBLE" => Notify("You cannot use an Ansiblex while inside a warp disruption field."),
+        "JUMP_DISRUPTED" => Notify("You cannot use an Ansiblex while warp disrupted."),
+        "IN_WARP" => Notify("You cannot use an Ansiblex while in warp."),
+        "STRUCTURE_NOT_FOUND" => Notify("That jump bridge is no longer available."),
+        "WRONG_SOLAR_SYSTEM" => Notify("You are not in the same solar system as that jump bridge."),
+        _ => JumpRefused(reason ?? "UNKNOWN"),
+    };
+
     /// <summary>The jump bridges the fleets open and pass through (set by the composition; null when the host has no space).</summary>
     public SpaceBridges? Bridges { get; set; }
 

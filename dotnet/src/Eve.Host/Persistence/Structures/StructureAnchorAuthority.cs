@@ -311,10 +311,10 @@ public sealed class StructureAnchorAuthority
         return objects;
     }
 
-    private static double Radius(TypeDef type) =>
+    internal static double Radius(TypeDef type) =>
         type.Attributes.TryGetValue(162, out var radius) && double.IsFinite(radius) && radius >= 0 ? radius : 0;
 
-    private static double DeploymentDistance(TypeDef type) =>
+    internal static double DeploymentDistance(TypeDef type) =>
         GroupDeploymentDistances.TryGetValue(type.GroupId, out var groupDistance)
             ? groupDistance
             : CategoryDeploymentDistances.GetValueOrDefault(type.CategoryId);

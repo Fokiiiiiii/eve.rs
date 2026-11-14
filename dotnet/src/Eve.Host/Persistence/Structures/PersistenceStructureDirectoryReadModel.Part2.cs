@@ -626,6 +626,52 @@ public sealed partial class PersistenceStructureDirectoryReadModel
             JumpBridgeAccessSettingId);
     }
 
+    private static decimal JumpBridgeActivationRate(
+        Bridge bridge,
+        (long CharacterId, Eve.Relations.Affiliation Affiliation) access,
+        JsonObject profileState,
+        JsonObject accessGroupState)
+    {
+        var ownerCorporationId = Integer(bridge.Value["ownerCorpID"]);
+        if (ownerCorporationId <= 0)
+            ownerCorporationId = Integer(bridge.Value["ownerID"]);
+        var profiles = profileState["profilesByID"] as JsonObject ?? profileState;
+        var requestedProfileId = Integer(bridge.Value["profileID"]);
+        JsonObject? profile = requestedProfileId > 0
+            ? profiles[requestedProfileId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject
+            : profiles.Select(pair => pair.Value)
+                .OfType<JsonObject>()
+                .FirstOrDefault(candidate =>
+                    Integer(candidate["corporationID"]) == ownerCorporationId && Truthy(candidate["isDefault"]));
+        if (profile is null || Integer(profile["corporationID"]) != ownerCorporationId)
+            return 0;
+
+        var settingGroups = (profile["settingsBySettingID"] as JsonObject)?
+            [JumpBridgeAccessSettingId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonArray;
+        if (settingGroups is null)
+            return 0;
+
+        var bestRank = 0;
+        var rate = 0m;
+        foreach (var entry in settingGroups.OfType<JsonObject>())
+        {
+            var groupId = Integer(entry["groupID"], -1);
+            var rank = groupId switch
+            {
+                0 when ownerCorporationId > 0 && access.Affiliation.Corporation == ownerCorporationId => 400,
+                > 0 => AccessGroupMatchRank(groupId, access, accessGroupState),
+                _ => 0,
+            };
+            if (rank <= bestRank || !decimal.TryParse(entry["value"]?.ToString(),
+                    System.Globalization.NumberStyles.Number,
+                    System.Globalization.CultureInfo.InvariantCulture, out var configuredRate))
+                continue;
+            bestRank = rank;
+            rate = Math.Clamp(configuredRate, 0m, 2_000m);
+        }
+        return rate;
+    }
+
     private static bool HasDockAccess(
         Bridge bridge,
         (long CharacterId, Eve.Relations.Affiliation Affiliation) access,

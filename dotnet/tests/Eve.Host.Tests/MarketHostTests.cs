@@ -225,9 +225,9 @@ public sealed class MarketHostTests : IAsyncLifetime
     }
 
     [PgFact]
-    public async Task The_host_refuses_an_off_tick_price_a_fast_modification_a_stale_view_and_a_repeat_on_the_wire()
+    public async Task The_host_refuses_an_off_tick_price_a_fast_modification_and_a_stale_view_but_accepts_identical_new_calls()
     {
-        // M2 (Q12, Q3, Q15, Q14): each refusal is the labelled CustomInfo the client shows, and a refused call changes nothing.
+        // M2 (Q12, Q3, Q15): each refusal is the labelled CustomInfo the client shows, and a refused call changes nothing.
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
         var host = await HostComposition.BuildAsync(Settings());
@@ -247,15 +247,17 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal("Order prices have at most four significant figures.", InfoText(tick));
         Assert.Equal(10000m, (await wallet.GetAsync(actor))!.Isk);
 
-        // a valid bid rests; a repeat of the same placement within five seconds is refused (Q14), and the balance shows one escrow only
+        // Independent client calls with identical terms create distinct orders and each escrow its own bid.
         await market.CallAsync(Call(session, "PlaceBuyOrder", 2, new PyInt(station.Id), new PyInt(Pyerite), new PyReal(1234), new PyInt(1),
             new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance));
-        var repeat = await Assert.ThrowsAsync<MachoWrappedException>(() => market.CallAsync(Call(session, "PlaceBuyOrder", 3, new PyInt(station.Id),
-            new PyInt(Pyerite), new PyReal(1234), new PyInt(1), new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance)).AsTask());
-        Assert.Equal("An identical order was placed a moment ago, so it was not placed again.", InfoText(repeat));
-        var order = Assert.Single(await marketStore.OwnOrdersAsync(actor, actor, false)).Order;
+        await market.CallAsync(Call(session, "PlaceBuyOrder", 3, new PyInt(station.Id), new PyInt(Pyerite), new PyReal(1234), new PyInt(1),
+            new PyInt(-1), new PyInt(1), new PyInt(90), PyBool.False, PyNone.Instance));
+        var placedOrders = await marketStore.OwnOrdersAsync(actor, actor, false);
+        Assert.Equal(2, placedOrders.Count);
+        Assert.NotEqual(placedOrders[0].Order.Id, placedOrders[1].Order.Id);
+        var order = placedOrders[0].Order;
         var escrowed = (await wallet.GetAsync(actor))!.Isk;
-        Assert.True(escrowed < 10000m && escrowed > 8000m, escrowed.ToString());
+        Assert.True(escrowed < 10000m && escrowed > 7000m, escrowed.ToString());
 
         // Q3: a modification inside the five-minute delay is refused with the seconds left
         var fileTime = Py.FileTimeFromUnixMs(order.IssuedMs);
@@ -270,8 +272,10 @@ public sealed class MarketHostTests : IAsyncLifetime
         Assert.Equal("That order has changed since it was shown. Reload the orders and try again.", InfoText(stale));
 
         // the refusals changed nothing: the order keeps its price and its escrow
-        var kept = Assert.Single(await marketStore.OwnOrdersAsync(actor, actor, false)).Order;
-        Assert.Equal(1234m, kept.Price);
+        var kept = await marketStore.OwnOrdersAsync(actor, actor, false);
+        Assert.Equal(2, kept.Count);
+        var keptOrder = Assert.Single(kept, owned => owned.Order.Id == order.Id);
+        Assert.Equal(1234m, keptOrder.Order.Price);
         Assert.Equal(escrowed, (await wallet.GetAsync(actor))!.Isk);
         await host.ShutdownAsync();
     }
@@ -629,7 +633,7 @@ public sealed class MarketHostTests : IAsyncLifetime
         var cancelledBids=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",25))));
         Assert.Empty(Lines(cancelledBids));
 
-        // A changed quote avoids the intentional five-second Q14 duplicate-placement refusal.
+        // A resting bid remains visible after the host restarts.
         await market.CallAsync(Call(buyerSession,"PlaceBuyOrder",26,new PyLong(structureId),new PyInt(Tritanium),
             new PyReal(6),new PyInt(1),new PyInt(-1),new PyInt(1),new PyInt(90),PyBool.False,PyNone.Instance));
         var openBidRows=Assert.IsType<PyObject>(Received(await market.CallAsync(Call(buyerSession,"GetCharOrders",27))));

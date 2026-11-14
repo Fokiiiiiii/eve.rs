@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace Eve.Host.PublicGateway;
 
 /// <summary>A decoded eve_public.Request: the correlation id, the request type (its full name in the Any type url) and the payload.</summary>
-internal sealed record GatewayRequest(byte[] CorrelationUuid, string TypeUrl, byte[] Payload, long? CharacterId)
+internal sealed record GatewayRequest(byte[] CorrelationUuid, string TypeUrl, byte[] Payload, long? CharacterId, string? PublicHost = null)
 {
     /// <summary>The request's full message name (the part of the type url after the last slash).</summary>
     public string TypeName => TypeUrl[(TypeUrl.LastIndexOf('/') + 1)..];
@@ -21,7 +21,7 @@ internal static class GatewayEnvelope
     /// Decodes eve_public.Request: correlation_uuid 2, payload Any 3, authoritative_context 6 whose identity 10 names the character
     /// (ActiveIdentity.character 1, an Identifier whose sequential 1 is the id).
     /// </summary>
-    public static GatewayRequest DecodeRequest(ReadOnlyMemory<byte> message)
+    public static GatewayRequest DecodeRequest(ReadOnlyMemory<byte> message, string? publicHost = null)
     {
         byte[] correlation = [];
         string typeUrl = "";
@@ -36,7 +36,7 @@ internal static class GatewayEnvelope
             else if (field.Number == 6 && field.WireType == 2)
                 character = IdentityCharacter(field.Bytes);
         }
-        return new GatewayRequest(correlation, typeUrl, payload, character);
+        return new GatewayRequest(correlation, typeUrl, payload, character, publicHost);
     }
 
     /// <summary>

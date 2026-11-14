@@ -104,6 +104,7 @@ public partial class HostServerTests
 
         var canLeave = Assert.IsType<PyTuple>(await Call(leaverWire, "CanLeaveCurrentCorporation"));
         Assert.Equal(new PyInt(1), canLeave.Items[0]);
+        Assert.Equal(new PyInt(1), await Call(leaverWire, "CanBeKickedOut", new PyLong(leaver)));
         _ = await Call(leaverWire, "KickOutMember", new PyLong(leaver));
         Assert.Contains(MachoMessage.SessionChangeNotification, lastCallPacketTypes);
         Assert.NotEqual(corporationA.Id, (await rig.Characters.GetAsync(leaver))!.CorporationId);

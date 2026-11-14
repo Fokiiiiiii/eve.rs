@@ -178,6 +178,16 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
             if (await Containers.CompleteControlTowerOnlineAsync(context.Connection, context.Transaction, due.DeployableId, due.StartedAtMs, token))
                 context.AfterCommit(_ => { Events.Wake(); return Task.CompletedTask; });
         });
+        Scheduler.Register(SpaceContainers.StarbaseModuleOnlineJob, async (context, token) =>
+        {
+            var due = context.Payload<SpaceContainers.StarbaseModuleOnlineDue>()!;
+            if (await Containers.CompleteStarbaseModuleOnlineAsync(context.Connection, context.Transaction, due, token) is { } online)
+                context.AfterCommit(_ =>
+                {
+                    Containers.PublishStarbaseModuleOnlineState(due.DeployableId, online);
+                    return Task.CompletedTask;
+                });
+        });
         Scheduler.Register(SpaceContainers.ControlTowerUnanchorJob, async (context, token) => await Containers.CompleteControlTowerUnanchorAsync(context.Payload<SpaceContainers.ControlTowerUnanchorDue>()!.DeployableId, token));
         Space.Probes = new Eve.Services.Space.SpaceProbes(Ships, statics, Probes, Space, Sim, () => Now);
         ProbeScans = new Eve.Services.Space.SpaceProbeScans(Space, Sim, statics, Probes, Ships, Skills, Scheduler, Space.Probes, () => Now, sites: null, random: new Random(7));

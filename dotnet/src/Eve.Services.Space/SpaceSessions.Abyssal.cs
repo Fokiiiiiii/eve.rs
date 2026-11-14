@@ -1151,7 +1151,6 @@ public sealed partial class SpaceSessions
             _abyssalOfflineResidents.TryRemove(snapshot.Ship.Id, out _);
             await RefreshEnvironmentAsync(session, characterId, snapshot.Ship.Id).ConfigureAwait(false);
             TellEnteredBuffs(sessionId, snapshot.Ship.Id, _nowUnixMs());
-            session.Set(LoginInventoryBootstrapPending, new PyInt(1));
             session.Closed += () => OnSessionClosed(session);
             if (_spaceItems is { } returnedItems) await returnedItems.RemoveAsync(snapshot.Ship.Id, cancellationToken).ConfigureAwait(false);
             await NotifyPilotEnteredAsync(session, characterId).ConfigureAwait(false);
@@ -1177,7 +1176,6 @@ public sealed partial class SpaceSessions
         _abyssalOfflineResidents.TryRemove(snapshot.Ship.Id, out _);
         await RefreshEnvironmentAsync(session, characterId, snapshot.Ship.Id).ConfigureAwait(false);
         TellEnteredBuffs(sessionId, snapshot.Ship.Id, _nowUnixMs());
-        session.Set(LoginInventoryBootstrapPending, new PyInt(1));
         session.Closed += () => OnSessionClosed(session);
         if (_spaceItems is { } items) await items.RemoveAsync(snapshot.Ship.Id, cancellationToken).ConfigureAwait(false);
         await NotifyPilotEnteredAsync(session, characterId).ConfigureAwait(false);

@@ -233,7 +233,6 @@ public sealed partial class SpaceSessions
     {
         var previousShipId = session.GetInt("shipid");
         CancelSafeLogoff(session);
-        session.Set(LoginInventoryBootstrapPending, None);
         session.Set("deferredDockedShipId", None);
         session.Set("structureControlSystemId", new PyInt(system));
         session.Set("structureControlOriginalShipId", new PyLong(originalShipId));

@@ -244,17 +244,23 @@ fn a_roll_a_little_over_one_percent_is_not_a_wrecking_shot() {
 }
 
 #[test]
-fn a_wrecking_shot_lands_when_the_positive_hit_chance_is_below_one_percent() {
+fn a_roll_above_a_sub_one_percent_hit_chance_misses_before_wrecking_quality_is_applied() {
     let attacker = ship([0.0; 3], [0.0; 3], 10.0, 0.0);
     let target = ship([6_000.0, 0.0, 0.0], [0.0; 3], 10.0, 50.0);
     let gun = turret([5.0; 4], 1.0, 40.0, 3_000.0, 1_000.0);
     let chance = chance_to_hit(&gun, &attacker, &target);
-    assert!(chance > 0.0 && chance < 0.01, "{chance}");
+    assert!(chance > 0.0 && chance < 0.005, "{chance}");
 
-    let shot = resolve_shot(&gun, &attacker, &target, 0.005);
-    assert!(shot.hit && shot.wrecking, "{shot:?}");
-    assert_eq!(shot.quality, 3.0);
-    assert_eq!(shot.damage, [15.0; 4]);
+    // EveJS rejects rolls at or above hitChance before assigning the wrecking quality.
+    let miss = resolve_shot(&gun, &attacker, &target, 0.005);
+    assert!(!miss.hit && !miss.wrecking, "{miss:?}");
+    assert_eq!(miss.quality, 0.0);
+    assert_eq!(miss.damage, [0.0; 4]);
+
+    let wreck = resolve_shot(&gun, &attacker, &target, chance / 2.0);
+    assert!(wreck.hit && wreck.wrecking, "{wreck:?}");
+    assert_eq!(wreck.quality, 3.0);
+    assert_eq!(wreck.damage, [15.0; 4]);
 }
 
 #[test]

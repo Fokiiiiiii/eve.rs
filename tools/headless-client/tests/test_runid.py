@@ -10,4 +10,4 @@ def test_default_run_tokens_are_unique_and_fit_character_names(monkeypatch):
 
     assert len(set(tokens)) == len(tokens)
     assert all(re.fullmatch(r"[0-9a-f]{21}", token) for token in tokens)
-    assert all(len(f"Recorded Pilot {token}d") <= 37 for token in tokens)
+    assert all(len(f"Recorded Pilot {token}{suffix}") <= 37 for token in tokens for suffix in ("a", "b"))

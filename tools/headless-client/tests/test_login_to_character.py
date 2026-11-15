@@ -1125,7 +1125,7 @@ def test_global_assets_moniker_resolves_and_lists_the_active_ship():
 
 
 def test_personal_calendar_event_notifies_an_online_invitee_after_commit():
-    run = uuid.uuid4().hex[:8]
+    run = run_token()
     creator_run, invitee_run = f"{run}a", f"{run}b"
     race = TRAINING["races"][0]
     creator, creator_id = training_client(f"walk-calendar-owner-{run}", race, RECORDED_TRAINING_RUN, creator_run, {})

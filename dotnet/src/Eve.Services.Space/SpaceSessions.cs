@@ -1259,6 +1259,9 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 case SimEcmBurst burst when _pilots.TryGetValue(burst.SessionId, out var burster) && burster.ShipId == burst.ShipId:
                     Background(() => RecordEcmBurstAsync(burster, burst.Reached));
                     break;
+                case SimSmartbombHit hit when _pilots.TryGetValue(hit.SessionId, out var bomber) && bomber.ShipId == hit.ShipId:
+                    Background(() => RecordSmartbombHitAsync(bomber, hit));
+                    break;
                 case SimModuleActivityRefresh refresh when _pilots.TryGetValue(refresh.SessionId, out var activePilot)
                     && activePilot.ActiveModules.ContainsKey(refresh.ModuleId):
                     if (ModuleCombatActivityUpdated is { } updateCombatActivity)

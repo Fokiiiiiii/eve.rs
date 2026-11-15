@@ -264,6 +264,11 @@ public sealed partial class SpaceSessions
         }
 
         var targetPilot = _pilots.Values.FirstOrDefault(other => other.ShipId == package.TargetId);
+        var attack = IsOffensive(package);
+        var offlineCombatTarget = !structureObserver && attack
+            ? await OfflineCombatLogoffShipOfAsync(package.TargetId, pilot.SolarSystemId, cancellationToken).ConfigureAwait(false)
+            : null;
+        var targetCharacterId = targetPilot?.CharacterId ?? offlineCombatTarget?.OwnerCharacterId ?? 0;
         var securityClass = _systems.Get(pilot.SolarSystemId) is { } system
             ? Security.ClassFromLevel(system.Security)
             : (SecurityClass?)null;
@@ -276,7 +281,7 @@ public sealed partial class SpaceSessions
                 or SimRemote.Disrupt { RangePercent: >= 0, FalloffPercent: >= 0, TrackingPercent: >= 0 }
         };
         // the target's type (a pilot's ship, or an NPC's) carries what it refuses; the attributes are the static data's, as the reference's targets' are
-        var targetTypeId = targetPilot?.TypeId;
+        var targetTypeId = targetPilot?.TypeId ?? offlineCombatTarget?.ShipTypeId;
         if (targetTypeId is null && _npcShips.TryGetValue(package.TargetId, out var npc))
         {
             targetTypeId = npc.TypeId;
@@ -375,10 +380,9 @@ public sealed partial class SpaceSessions
             }
         }
 
-        var attack = IsOffensive(package);
-        var victim = !structureObserver && attack && targetPilot is { CharacterId: > 0 } && targetPilot.CharacterId != characterId
-            ? targetPilot
-            : null;
+        var victimCharacterId = !structureObserver && attack && targetCharacterId > 0 && targetCharacterId != characterId
+            ? targetCharacterId
+            : (long?)null;
         if (structureObserver && attack && targetPilot is { CharacterId: > 0 } structureTarget
             && (securityClass is not { } structureSecurity
                 || !await StructureAllowsAttackAsync(snapshot, structureTarget, structureSecurity, cancellationToken)))
@@ -389,12 +393,12 @@ public sealed partial class SpaceSessions
         if (!structureObserver && securityClass is { } empire && (attack || package.Action is SimAction.Smartbomb or SimAction.StructureBurst))
         {
             var level = SafetyLevelOf is { } ask ? await ask(characterId, cancellationToken) : SafetyLevel.Full;
-            if (victim is not null)
+            if (victimCharacterId is { } victim)
             {
-                var targetIsCapsule = await IsCapsuleAsync(victim, empire, cancellationToken);
+                var targetIsCapsule = targetTypeId == CharacterShips.CapsuleTypeId;
                 if (WeaponSafety.RequiredLevel(empire, targetIsCapsule) is not null)
                 {
-                    var context = await WeaponSafetyContextAsync(characterId, victim.CharacterId, targetIsCapsule, cancellationToken);
+                    var context = await WeaponSafetyContextAsync(characterId, victim, targetIsCapsule, cancellationToken);
                     if (WeaponSafety.StopsFire(empire, level, context))
                     {
                         return ModuleResult.Refusal(WeaponSafety.Refusal, made.ModuleType, made.ModuleName);
@@ -519,13 +523,15 @@ public sealed partial class SpaceSessions
                     _log?.Invoke($"crimewatch could not record remote assistance by {characterId} on {remoteRequest.Target}: {error.Message}");
                 }
             }
-            if (victim is not null && securityClass is { } crimeWhere)
+            if (victimCharacterId is { } victim && securityClass is { } crimeWhere)
             {
                 // Crimewatch owns attack timers and flags; the module runs whatever it keeps
                 try
                 {
                     var security = _systems.Get(pilot.SolarSystemId)?.Security ?? 0;
-                    var request = new AggressionRequest(characterId, victim.CharacterId, victim.ShipId, pilot.SolarSystemId, security, crimeWhere, await IsCapsuleAsync(victim, crimeWhere, cancellationToken));
+                    var request = new AggressionRequest(
+                        characterId, victim, package.TargetId, pilot.SolarSystemId, security, crimeWhere,
+                        targetTypeId == CharacterShips.CapsuleTypeId);
                     if (ModuleAggression is { } recordModule)
                     {
                         await recordModule(request, moduleId, cancellationToken);
@@ -537,7 +543,7 @@ public sealed partial class SpaceSessions
                 }
                 catch (Exception error) when (error is not OperationCanceledException)
                 {
-                    _log?.Invoke($"crimewatch could not record the attack of {characterId} on {victim.CharacterId}: {error.Message}");
+                    _log?.Invoke($"crimewatch could not record the attack of {characterId} on {victim}: {error.Message}");
                 }
                 if (SecurityStatusOf is not null)
                 {
@@ -719,26 +725,83 @@ public sealed partial class SpaceSessions
         var where = Security.ClassFromLevel(system.Security);
         foreach (var reach in reached)
         {
-            if (_pilots.Values.FirstOrDefault(other => other.ShipId == reach.ShipId) is not { CharacterId: > 0 } victim
-                || victim.CharacterId == burster.CharacterId)
+            var victim = _pilots.Values.FirstOrDefault(other => other.ShipId == reach.ShipId);
+            var offline = victim is null
+                ? await OfflineCombatLogoffShipOfAsync(reach.ShipId, burster.SolarSystemId, CancellationToken.None).ConfigureAwait(false)
+                : null;
+            var victimCharacterId = victim?.CharacterId ?? offline?.OwnerCharacterId ?? 0;
+            if (victimCharacterId <= 0 || victimCharacterId == burster.CharacterId)
             {
                 continue;
             }
             try
             {
+                var capsule = victim is not null
+                    ? await IsCapsuleAsync(victim, where, CancellationToken.None).ConfigureAwait(false)
+                    : Security.IsLowSec(where) && offline is not null
+                        && _statics.Type(offline.ShipTypeId)?.GroupId == CapsuleGroup;
                 var request = new AggressionRequest(
                     burster.CharacterId,
-                    victim.CharacterId,
-                    victim.ShipId,
+                    victimCharacterId,
+                    reach.ShipId,
                     burster.SolarSystemId,
                     system.Security,
                     where,
-                    await IsCapsuleAsync(victim, where, CancellationToken.None));
+                    capsule);
                 await record(request, CancellationToken.None);
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                _log?.Invoke($"crimewatch could not record the ECM burst of {burster.CharacterId} on {victim.CharacterId}: {error.Message}");
+                _log?.Invoke($"crimewatch could not record the ECM burst of {burster.CharacterId} on {victimCharacterId}: {error.Message}");
+            }
+        }
+    }
+
+    /// <summary>The simulation reports the player ships a smartbomb actually hit; the Host applies Crimewatch once per victim.</summary>
+    private async Task RecordSmartbombHitAsync(Pilot bomber, SimSmartbombHit hit)
+    {
+        var recordModuleAggression = ModuleAggression;
+        var recordAggression = Aggression;
+        if (recordModuleAggression is null && recordAggression is null)
+            return;
+        if (_systems.Get(bomber.SolarSystemId) is not { } system)
+            return;
+        var where = Security.ClassFromLevel(system.Security);
+        foreach (var target in hit.Targets)
+        {
+            if (target.ShipId <= 0 || target.CharacterId <= 0 || target.TypeId <= 0 || target.ShipId == bomber.ShipId)
+                continue;
+
+            var victim = _pilots.Values.FirstOrDefault(other => other.ShipId == target.ShipId);
+            if (victim is not null && victim.CharacterId != target.CharacterId)
+                continue;
+            var offline = victim is null
+                ? await OfflineCombatLogoffShipOfAsync(target.ShipId, bomber.SolarSystemId, CancellationToken.None).ConfigureAwait(false)
+                : null;
+            if (offline is not null && (offline.OwnerCharacterId != target.CharacterId || offline.ShipTypeId != target.TypeId))
+                continue;
+
+            try
+            {
+                var capsule = victim is not null
+                    ? await IsCapsuleAsync(victim, where, CancellationToken.None).ConfigureAwait(false)
+                    : Security.IsLowSec(where) && _statics.Type(target.TypeId)?.GroupId == CapsuleGroup;
+                var request = new AggressionRequest(
+                    bomber.CharacterId,
+                    target.CharacterId,
+                    target.ShipId,
+                    bomber.SolarSystemId,
+                    system.Security,
+                    where,
+                    capsule);
+                if (recordModuleAggression is { } recordModule)
+                    await recordModule(request, hit.ModuleId, CancellationToken.None).ConfigureAwait(false);
+                else
+                    await recordAggression!(request, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception error) when (error is not OperationCanceledException)
+            {
+                _log?.Invoke($"crimewatch could not record the smartbomb hit of {bomber.CharacterId} on {target.CharacterId}: {error.Message}");
             }
         }
     }

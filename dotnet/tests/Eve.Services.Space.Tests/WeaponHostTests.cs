@@ -1,5 +1,6 @@
 using Eve.Macho;
 using Eve.Marshal;
+using Eve.Ships;
 using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
@@ -19,6 +20,61 @@ public class WeaponHostTests
 
     private static async Task<long> GunOfAsync(Rig rig, Eve.Characters.Created character) =>
         (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!.Fitted.Single(m => m.TypeId == 3638).Id;
+
+    [PgFact]
+    public async Task Attacking_a_combat_logoff_ship_refreshes_the_offline_owners_pvp_timer()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var attacker = await rig.NewCharacterAsync("Logoff Timer Attacker", 1);
+        var victim = await rig.NewCharacterAsync("Logoff Timer Victim", 2);
+        var attackerSession = await InSpaceAsync(rig, attacker, 1);
+        var victimSession = await InSpaceAsync(rig, victim, 2);
+        var targetShipId = victimSession.GetInt("shipid")!.Value;
+        var systemId = attackerSession.GetInt("solarsystemid")!.Value;
+        var schema = "cw_logoff_attack_" + Guid.NewGuid().ToString("N")[..12];
+        await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(rig.Source, schema);
+        try
+        {
+            using var timers = new Eve.Scheduler.LocalTimers(delay: static (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+            using var crimewatch = new Eve.Services.Crimewatch.CrimewatchRuntime(
+                new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema), rig.CharacterSessions, () => rig.Now,
+                new EmptyCrimewatchPersistence(), localTimers: timers);
+            var store = new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema);
+            var originalExpiresAt = rig.Now + Eve.Crimewatch.CombatState.PvpDurationMs;
+            await store.UpdateAsync(victim.CharacterId, state => state.FlagAsSuspect(rig.Now) with
+            {
+                PvpUntilMs = originalExpiresAt,
+                SolarSystemId = systemId,
+            }, rig.Now);
+            rig.Space.CrimewatchStateOf = crimewatch.StateOfAsync;
+            rig.Space.WeaponTargetContextOf = (_, _, _) => Task.FromResult(
+                new WeaponTargetContext(AttackerIsPlayer: true, TargetIsPlayerProperty: true, TargetIsSuspect: true));
+            rig.Space.ModuleAggression = (request, moduleId, token) =>
+                crimewatch.RecordModuleAggressionAsync(request, moduleId, token);
+
+            victimSession.Close();
+            await rig.Space.QuiesceAsync();
+            Assert.Equal(SpaceItemKind.CombatLogoffShip, (await rig.SpaceItems.GetAsync(targetShipId))?.Kind);
+            rig.Now += 10_000;
+
+            Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(
+                attackerSession, await GunOfAsync(rig, attacker), "targetAttack", targetShipId, 1000, CancellationToken.None));
+
+            var extendedUntil = rig.Now + Eve.Crimewatch.CombatState.PvpDurationMs;
+            Assert.Equal(extendedUntil,
+                (await crimewatch.StateOfAsync(victim.CharacterId)).PvpUntilMs);
+
+            rig.Now = originalExpiresAt;
+            await rig.Containers.SweepAsync();
+            var retained = Assert.IsType<SpaceItem>(await rig.SpaceItems.GetAsync(targetShipId));
+            Assert.Equal((SpaceItemKind.CombatLogoffShip, extendedUntil), (retained.Kind, retained.ExpiresAtMs));
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
 
     [PgFact]
     public async Task An_active_player_combat_module_holds_client_timers_and_its_limited_engagement_until_the_simulation_ends_it()
@@ -614,7 +670,7 @@ public class WeaponHostTests
         Assert.Equal(Eve.Crimewatch.Flag.None, decision.Consequence);
     }
 
-      private sealed class EmptyCrimewatchPersistence : Eve.Services.Crimewatch.ICrimewatchPersistenceCallbacks
+      internal sealed class EmptyCrimewatchPersistence : Eve.Services.Crimewatch.ICrimewatchPersistenceCallbacks
       {
           public Task<IReadOnlyList<Eve.Services.Crimewatch.SecurityStatusTransaction>> SecurityStatusTransactionsOfAsync(long characterId, CancellationToken cancellationToken) =>
               Task.FromResult<IReadOnlyList<Eve.Services.Crimewatch.SecurityStatusTransaction>>([]);

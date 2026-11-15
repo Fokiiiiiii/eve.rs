@@ -132,8 +132,7 @@ pub fn resolve_shot(turret: &Turret, attacker: &Kinematics, target: &Kinematics,
     let chance = chance_to_hit(turret, attacker, target);
     let roll = roll.clamp(0.0, 0.999_999_999);
     let total: f64 = turret.raw_damage.iter().sum();
-    let wrecking = chance > 0.0 && roll < 0.01;
-    if total <= 0.0 || (roll >= chance && !wrecking) {
+    if total <= 0.0 || roll >= chance {
         return Shot {
             hit: false,
             wrecking: false,
@@ -143,6 +142,7 @@ pub fn resolve_shot(turret: &Turret, attacker: &Kinematics, target: &Kinematics,
             damage: [0.0; 4],
         };
     }
+    let wrecking = roll < 0.01;
     let quality = if wrecking { 3.0 } else { round6(0.49 + roll) };
     Shot {
         hit: true,

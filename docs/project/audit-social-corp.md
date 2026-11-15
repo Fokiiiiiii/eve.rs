@@ -37,6 +37,16 @@ V24 の `mailSvc.OnMailSent` は、直接 recipient の `toCharacterIDs` に自�
 
 登録済み Host RPC / PostgreSQL / restart 回帰は、join後の`SyncMail`と手動broadcast後の保存message/statusに label 0 を期待する。修正前は両テストが actual 1 で失敗した。`MailComposition`はjoinおよびmanual broadcastのrecipient label maskを0にし、一般のcharacter/list/corp mailのlabel規則は変更しない。再実行後はmail Host flow 3件（expiry/join/broadcast）がすべてpassした。
 
+### FLEET-001 — 一括fleet招待がオフライン宛先を保存して成功扱いする — confirmed, fixed
+
+V24.01 の fleet UI は複数の `tryInvite` を `fleetObjectHandler.MassInvite` に送る（`/home/user/eve-logic/eve/client/script/parklife/fleetSvc.py:536-562,2034-2060`）。この経路の `FilterOutNonCharacters` は `IsNPC` / `IsCharacter` だけを検査し（同 `:571-572`）、drag/drop も TextLink からcharacter IDを取り出して `IsEvePlayerCharacter` だけを検査する（同 `:2121-2131`）。オンライン確認はなく、複数候補の `MassInvite` reply はUIで使わない。クライアントは `OnFleetInvite` の受信後に招待を表示・承諾する（同 `:1176-1200`）。
+
+Host の登録経路は `CharacterServicesComposition.FleetRpc` がPostgreSQL `FleetStore` と `FleetSessionForCharacter` を渡し、本番の `fleetObjectHandler` を作る（`dotnet/src/Eve.Host/Rpc/FleetRpc.cs:46-61`）。修正前の `FleetObjectService.MassInvite` は宛先sessionがない場合も `FleetStore.InviteAsync` を呼び、招待IDを成功replyへ含めた後、null sessionへのnotificationだけを無視していた。招待テーブルには行が残るが、`FleetLoginHook` はfleet session属性だけを復元し、ログイン時の招待配信をしない（`dotnet/src/Eve.Services.Space/FleetLoginHook.cs:7-31`）。したがってオフライン宛先は招待UIを受け取れず、保存済み招待を操作できない。
+
+V24 whole-client の drag/drop 経路が複数宛先に offline character ID を含められる一方、この状態では `OnFleetInvite` が送られないことを確認したため、意図的にEveJSの挙動から変更した。EveJS 261108.1 は `massInvite` が各IDを `inviteCharacter` へ渡し（`server/src/services/fleets/fleetRuntime.js:2997-3009`）、`inviteCharacter` はsessionの有無を調べる前に invite recordを作成し、sessionがなければnotificationを送らず成功する（同 `:1629-1641,1738-1751`）。一時的なfleet runtime stateをseedしてEveJS関数を直接実行した結果も、offline targetのIDを返し、invite recordを残し、target sessionなしと確認した。full EveJS Host起動はGameStoreの `incursionReplay` tableがないため実行できなかった。
+
+`FleetObjectService.MassInvite` は各宛先のactive sessionをDB mutation前に要求し、sessionがない・character IDが一致しない宛先を結果と保存対象の両方から除外する。online宛先には従来どおりtransaction commit後に `OnFleetInvite` を送る。新しい `Fleet_mass_invite_skips_offline_candidates_and_keeps_online_invites_over_host_wire` は登録済みHost dispatchとPostgreSQLでoffline/online候補を同じwire requestに含める。修正前はreplyが `[offlineID, onlineID]` となり失敗し、修正後はonlineIDだけが返ること、offline rowが0件、online invitation row・通知・AcceptInvite後のmember state・invitation削除を検査する。
+
 ## 調べたが不具合ではなかった項目
 
 ### FP-001 — `standing2` alias はV24 RPC互換性問題ではない — false positive
@@ -50,6 +60,14 @@ storeはUnix millisecondsを使うが、bookmark rowと `BookmarkStaticLocation`
 ### FP-003 — shared bookmark folderで権限を無視して作成する — false positive
 
 Host service はactor、folder、access listsを含む呼び出しをstoreへ渡す（`dotnet/src/Eve.Services.Core/AccessGroupBookmarkMgrService.cs:141-148`）。storeはcreate/update/move pathのtransaction内で `RequireLevel(..., FolderAccess.CanUse)` を呼ぶ（`dotnet/src/Eve.Bookmarks/BookmarkStore.cs:310-345,393,467-468`）。権限検査の欠落は確認できなかった。
+
+### FP-004 — `OnContractCreated` Host testのCI失敗は通知欠落ではなくpump競合 — false positive
+
+V24 `contracts` serviceは `OnContractCreated()` でescrow変更を通知し（`/home/user/eve-logic/eve/client/script/ui/shared/neocom/contracts/contracts.py:223-225`）、`CreateContract` の成功後にcacheを更新する（同 `:552-560`）。EveJSも契約保存後に `notifyContractCreated` を呼び、引数なしでowner sessionへ送る（`/home/user/evejs-261108.1/server/src/services/contracts/contractRuntimeState.js:1872-1874`; `contractNotifications.js:79-85`）。
+
+CI run 1805 の `ContractCorporateWalletDivisionHostTests` は作成成功後、`rig.Events.PumpAsync()` 直後に通知をassertしていた。HostのEventBusは同じsubscriber cursorを `FOR UPDATE SKIP LOCKED` で保護し、Host起動時のバックグラウンドloopとテストの手動pumpが同時に動く（`dotnet/src/Eve.Events/EventBus.cs:366-383`）。片方がcursor lockを持つ間、もう片方は何もdeliverせず返るため、テストが非同期callbackより先に通知を確認していた。CIで失敗した箇所はこの即時assertで、同じfocused DB testをローカルで4回実行したところ3回pass / 1回failと間欠的に再現した。
+
+テストは手動pumpの前にhost background pumpを停止するようにし、wire通知・permission拒否・永続状態のassertionは変えていない。これはgameplay bugではなく、非同期outboxを手動pumpと競合させたtest timingの誤検知。
 
 ## 先行監査から引き継ぐ領域
 
@@ -77,11 +95,19 @@ Host service はactor、folder、access listsを含む呼び出しをstoreへ渡
 - 変更対象の Release / warnings-as-errors build (`Eve.Bookmarks`, `Eve.Services.Core`, `Eve.Services.Corporations`, `Eve.Host`, `Eve.Host.Tests`, `Eve.Corporations.Tests`): 各0 warning / 0 error。
 - CIで更新漏れが判明した `Mail_host_adapter_commits_mail_before_returning_id_without_a_server_mail_notification`: Release focused test 1 passed, 0 failed, 0 skipped。`Eve.Host.Tests` Release warnings-as-errors rebuild: 0 warning / 0 error。
 - EveJS 261108.1 isolated `mailState` direct execution: automated join and list broadcast assertions passed。
+- `Eve.Services.Space.Tests.SpaceServiceTests` Release on `eve_p3`: 171 passed, 0 failed, 0 skipped。
+- `Eve.Host.Tests.HostServerTests` partial class Release on `eve_p3`: 513 passed, 0 failed, 0 skipped。
+- `Fleet_mass_invite_skips_offline_candidates_and_keeps_online_invites_over_host_wire`: pre-fix Host/PostgreSQL regression failed with the offline ID in the returned list; post-fix Release run passed 1/1, 0 skipped on `eve_p3`。
+- `Eve.Services.Space` and `Eve.Host.Tests` Release warnings-as-errors builds: 0 warnings, 0 errors。
+- EveJS `fleetRuntime.massInvite` direct runtime-state execution returned and stored the offline invitation without an online session. The separate full `createFleetRecord` attempt could not start because the supplied GameStore lacks `incursionReplay`.
+- `Corporate_contract_uses_selected_wallet_division_and_requires_its_take_permission`: 修正前はローカル4回中3 pass / 1 failで `OnContractCreated` immediate assertionの競合を再現。background pump停止後、`Eve.Host.Tests` Releaseで1 pass / 0 fail / 0 skip。
+- Host regressionのrace修正後 `Eve.Host.Tests` Release warnings-as-errors build: 0 warning / 0 error。
 
 ### 失敗・skip・未確認
 
 - `Eve.Host.Tests.CharacterHostTests` class全体を、開始時点から存在した無関係な未コミットSkill変更を含むdirty worktreeで実行した結果: 87 passed, 1 failed, 4 skipped。唯一の失敗は `Clone_jump_rebases_a_running_queue_when_implants_change_its_learning_rate` で、追加されたclone-jump notification assertionと実際の通知列が異なる（`CharacterHostTests.cs:537-584`）。このSkillコード・テストは今回のsocial/org差分に含めていない。今回追加・変更したbookmark/mail Host回帰は、この同じclassのfocused実行でpassした。
 - 4 skipは `RealAbyssalSimPgFact` のlive Rust simulation tests。`EVE_ABYSSAL_SIM_BINARY` と `EVE_ABYSSAL_SIM_SDE` が未設定のためskipされ、passとして数えていない。
-- push CI run 1803 は上記の古い welcome-mail mask assertionで `.NET (host tests 2/6)` が失敗した。期待値の修正をpushした後のCI rerunは未完了。
+- push CI run 1803 は古い welcome-mail mask assertionで `.NET (host tests 2/6)` が失敗した。修正済み commit `af957a233` の main CI run 1804 は required gate・build・テスト・E2E・Windowsを含め成功した。
+- commit `6350116ad7d3` の main CI run 1805 は `ContractCorporateWalletDivisionHostTests` の非同期pump raceにより `.NET (host tests 4/6)` が失敗し、上記のテスト競合を修正した。該当shardではAbyssal live simulation test 5件がskipされた。skipをpassとして数えていない。
 - V24 graphical client、live packet trace、GUI上のmail sender display / bookmark expiry UIは今回起動していない。
 - 先行監査に記した未確認項目と全social/org permission edge matrixは、本記録によって閉じない。

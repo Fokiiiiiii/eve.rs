@@ -64,6 +64,9 @@ public sealed class ContractCorporateWalletDivisionHostTests
         session.Set("corprole", new PyLong(roles));
         session.Set("corpAccountKey", new PyInt(selectedWalletKey));
         rig.Sessions.Enter(characterId, session);
+        // This test explicitly pumps the outbox below. Stop the host's background pump
+        // so the OnContractCreated assertion observes that deterministic flush.
+        await rig.Events.StopAsync();
 
         var dispatcher = new PacketDispatcher(rig.Registry, () => rig.NowUnixMs);
         var createResponse = await DispatchAsync(capture, dispatcher, session, 1, ContractInfo(rig.Station, firstItemId));

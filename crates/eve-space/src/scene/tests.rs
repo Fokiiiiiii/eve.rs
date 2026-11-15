@@ -2607,7 +2607,7 @@ fn distance_between(a: Vec3, b: Vec3) -> f64 {
 }
 
 #[test]
-fn a_cyno_jump_leaves_when_its_spool_is_over_and_appears_on_the_ring_round_the_field_it_lit() {
+fn a_cyno_jump_leaves_when_its_spool_is_over_and_appears_within_the_field_spawn_radius() {
     let mut scene = scene_by_a_gate();
     let destination = other_scene().solar_system_id();
     let told = scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON);
@@ -2629,7 +2629,20 @@ fn a_cyno_jump_leaves_when_its_spool_is_over_and_appears_on_the_ring_round_the_f
     there.arrive(traveller, NOON + seconds(302)).expect("the field is lit there");
     let ship = there.ship(SESSION, NOON + seconds(302)).unwrap().clone();
     let apart = distance_between(ship.position, field);
-    assert!((apart - super::jump::CYNO_ARRIVAL_RADIUS).abs() < 1e-6, "{apart} m from the field");
+    assert!(apart <= 5_000.0, "the SDE spawn radius is 5 km, got {apart} m");
+    assert!(apart > 2_455.0, "this deterministic arrival should not be on the 2,455 m ring, got {apart} m");
+    let outward = Vec3::new(
+        (ship.position.x - field.x) / apart,
+        (ship.position.y - field.y) / apart,
+        (ship.position.z - field.z) / apart,
+    );
+    assert!(
+        (ship.direction.x - outward.x).abs() < 1e-6
+            && (ship.direction.y - outward.y).abs() < 1e-6
+            && (ship.direction.z - outward.z).abs() < 1e-6,
+        "the ship's orientation follows the outward random spawn vector, as the reference uses: direction={:?}, outward={outward:?}",
+        ship.direction
+    );
     assert_eq!((ship.course, ship.speed_fraction), (Course::Stop, 0.0));
 }
 

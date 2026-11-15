@@ -451,19 +451,22 @@ impl Scene {
 }
 
 /// How far from a cynosural field a ship that jumped to it appears (the static data's cynosural field spawn radius, attribute 2455 of the generator).
-/// shortcut: one radius for every field type, the ring is at a random bearing and the ship faces the field; the reference's exact landing is not in the sources read.
-pub(crate) const CYNO_ARRIVAL_RADIUS: f64 = 2_455.0;
+/// SDE attribute 2455, cynosuralFieldSpawnRadius, on all V24.01 cyno generators.
+pub(crate) const CYNO_SPAWN_RADIUS: f64 = 5_000.0;
 
-/// Where a ship that jumped to a field appears and which way it faces: on the ring of [`CYNO_ARRIVAL_RADIUS`] around the field, at a random bearing,
-/// facing the field.
+/// Where a ship that jumped to a field appears and its orientation: uniformly within the SDE spawn-radius sphere, facing along the outward spawn vector.
+/// The reference uses the same uniform-volume distribution and orientation.
 fn cyno_arrival(field: Vec3, random: &mut PythonRandom) -> (Vec3, Vec3) {
-    let bearing = random.random() * std::f64::consts::TAU;
+    let mut draw = || random.random().clamp(0.0, 1.0);
+    let z = 2.0 * draw() - 1.0;
+    let azimuth = std::f64::consts::TAU * draw();
+    let planar = (1.0 - z * z).max(0.0).sqrt();
+    let direction = Vec3::new(planar * azimuth.cos(), planar * azimuth.sin(), z);
+    let distance = CYNO_SPAWN_RADIUS * draw().cbrt();
     let position = Vec3::new(
-        field.x + CYNO_ARRIVAL_RADIUS * bearing.cos(),
-        field.y,
-        field.z + CYNO_ARRIVAL_RADIUS * bearing.sin(),
+        field.x + direction.x * distance,
+        field.y + direction.y * distance,
+        field.z + direction.z * distance,
     );
-    let facing = motion::unit(Vec3::new(field.x - position.x, field.y - position.y, field.z - position.z))
-        .unwrap_or(Vec3::new(1.0, 0.0, 0.0));
-    (position, facing)
+    (position, direction)
 }

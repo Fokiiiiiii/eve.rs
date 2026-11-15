@@ -31,7 +31,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
-         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160}
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -823,6 +823,12 @@ def build(m):
     if k == "EcmBurst":
         return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + struct.pack("<I", len(m["reached"]))
                      + b"".join(i64(r["shipId"]) + bytes([1 if r["jammed"] else 0]) for r in m["reached"]))
+    # protocol 98: each player ship actually hit by a smartbomb, with its owner and type for Host Crimewatch.
+    if k == "SmartbombHit":
+        return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + i64(m["moduleId"])
+                     + struct.pack("<I", len(m["targets"]))
+                     + b"".join(i64(t["shipId"]) + i64(t["characterId"]) + struct.pack("<i", t["typeId"])
+                                 for t in m["targets"]))
     if k == "Destroy":
         return frame(k, i64(m["shipId"]) + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
     raise ValueError(k)
@@ -1437,6 +1443,10 @@ valid = [
      "fighterIds": ["9988400004100"], "point": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
     {"name": "an ECM burst that jammed one ship it reached and not another", "kind": "EcmBurst", "sessionId": "1790646377000015",
      "shipId": "9988400001939", "reached": [{"shipId": "9988400004100", "jammed": True}, {"shipId": "9988400004101", "jammed": False}]},
+     {"name": "a smartbomb reports each player ship it hit", "kind": "SmartbombHit", "sessionId": "1790646377000015",
+      "shipId": "9988400001939", "moduleId": "9988400001940",
+      "targets": [{"shipId": "9988400004100", "characterId": "2000001", "typeId": 638},
+                  {"shipId": "9988400004101", "characterId": "2000002", "typeId": 29}]},
     {"name": "destroy for a pilot to loot", "kind": "Destroy", "shipId": "980050000077", "characterId": "140000001",
      "corporationId": "1000006", "allianceId": "0", "warFactionId": "500001"},
     {"name": "respawn of a capsule where the ship was", "kind": "Respawn", "sessionId": "1790646377000015",
@@ -2050,7 +2060,11 @@ invalid = [
     {"name": "ECM burst that promises two ships and carries one", "reason": "truncated",
      "hex": frame("EcmBurst", u64(1) + i64(9) + struct.pack("<I", 2) + i64(10) + bytes([1])).hex()},
     {"name": "ECM burst cut short before its ship", "reason": "truncated",
-     "hex": frame("EcmBurst", u64(1) + bytes([0, 0, 0])).hex()},    {"name": "warp probe with no lifetime", "reason": "bad-value",
+      "hex": frame("EcmBurst", u64(1) + bytes([0, 0, 0])).hex()},
+     {"name": "smartbomb hit promises a target whose owner record is truncated", "reason": "truncated",
+      "hex": frame("SmartbombHit", u64(1) + i64(2) + i64(3) + struct.pack("<I", 1)
+                   + i64(4) + i64(5) + struct.pack("<i", 6)[:3]).hex()},
+     {"name": "warp probe with no lifetime", "reason": "bad-value",
      "hex": build(dict(named("activate an interdiction probe"), effect=dict(named("activate an interdiction probe")["effect"],
                        action=dict(named("activate an interdiction probe")["effect"]["action"], lifetimeMs=0.0)))).hex()},
     {"name": "bomb of an unknown kind", "reason": "bad-value",

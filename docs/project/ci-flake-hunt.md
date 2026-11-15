@@ -24,6 +24,16 @@ The recording generator creates `Recorded Pilot {run}`, checks that it is taken,
 - On the original EventBus implementation, `Stopping_finishes_an_in_flight_housekeeping_cursor_write_before_releasing_its_transaction` failed with the expected cursor at `1` but actual cursor at `0`. This confirms the regression test detects the cancellation window the fix closes.
 - Regular main CI run [43681977396](https://github.com/Fokiiiiiii/eve.rs/actions/runs/43681977396) passed on the same base commit. The earlier run 43678391981's four end-to-end failures were dogma ship-state expectation mismatches; the duplicate-name SQL line was not one of those failures.
 
+## Rescue re-verification on current main (2026-11-15)
+
+At re-verification, both `cx3` and `origin/main` were at `dcc92dc83354dc7214105ff5789b03ab62d048ff`. The requested EventBus, raffle, docking, run-token and trace-replay changes were already committed there, so no source change needed to be copied from `cx4`.
+
+- Release builds with `--warnaserror` passed with 0 warnings and 0 errors for `Eve.Events`, `Eve.Events.Tests`, `Eve.Host.Tests` and `Eve.Services.Space.Tests`.
+- On `eve_p3`, the two EventBus shutdown regressions passed 20/20 each, raffle expiry locking passed 20/20, and docking transition ordering passed 20/20. Full classes also passed with no skips: `EventBusTests` 22/22, `RafflePersistenceTests` 2/2 and `SpaceServiceTests` 171/171.
+- Headless name regressions passed 20/20 for `test_runid.py` and 20/20 for `test_scenario_character_names_are_unique_and_fit_the_client_limit`. Against the live eve.rs stack, `test_the_recorded_walk_replays` passed 20/20, named-argument character creation passed 20/20, and all four dogma race cases passed in each of 20 repetitions (80/80). The full `test_login_to_character.py` module passed with 67 passed and 3 skipped; the three skips are the recorded skill-training-speed cases and are not counted as passes.
+- `test_trace_replay.py` passed 12/12 against the live Host and simulation. An earlier non-live invocation had 11 passes and skipped its live-only case; the live run subsequently exercised that case successfully.
+- Main CI run [43723842818](https://github.com/Fokiiiiiii/eve.rs/actions/runs/43723842818) for this commit completed successfully with no failed tests or jobs. No graphical client or EveJS server was launched. The existing unstaged `RpcFuzzTests.cs` change in `cx3` was left untouched.
+
 ## Still open / not checked
 
 - Nightly run [43710241786](https://github.com/Fokiiiiiii/eve.rs/actions/runs/43710241786) on the base commit reported 26 failed jobs, including slow live-client jobs. Their individual root causes were not investigated here; the push-triggered regular CI run was green.

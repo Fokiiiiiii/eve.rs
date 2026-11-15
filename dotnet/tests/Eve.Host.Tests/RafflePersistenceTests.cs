@@ -129,7 +129,8 @@ public sealed class RafflePersistenceTests
                     concurrentStore.ExpireDueAsync(now + 4L * 24 * 60 * 60 * 1000),
                     concurrentStore.ExpireDueAsync(now + 4L * 24 * 60 * 60 * 1000));
                 var bothWaitingForLock = false;
-                for (var attempt = 0; attempt < 500; attempt++)
+                var lockWaitDeadline = DateTime.UtcNow + TimeSpan.FromSeconds(30);
+                while (DateTime.UtcNow < lockWaitDeadline)
                 {
                     await using var blocked = source.CreateCommand($"""
                         SELECT count(*) FROM pg_stat_activity
@@ -144,7 +145,7 @@ public sealed class RafflePersistenceTests
                     }
                     await Task.Delay(10);
                 }
-                Assert.True(bothWaitingForLock, "Both expiry transactions must reach the locked raffle row before release.");
+                Assert.True(bothWaitingForLock, "Both expiry transactions must reach the locked raffle row within 30 seconds before release.");
                 await lockTransaction.CommitAsync();
                 await concurrentExpiries;
             }

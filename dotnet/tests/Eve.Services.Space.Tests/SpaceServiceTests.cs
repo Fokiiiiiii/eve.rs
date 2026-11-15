@@ -3721,6 +3721,7 @@ public class SpaceServiceTests
         var (rig, _, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
+        await Rig.UntilAsync(() => !rig.Space.IsSessionChanging(session));
         var oid = await rig.BindBeyonceAsync(session);
 
         var answer = await rig.BeyonceCallAsync(session, "CmdDock", oid, new PyInt((int)Rig.Station), new PyLong(session.GetInt("shipid")!.Value));

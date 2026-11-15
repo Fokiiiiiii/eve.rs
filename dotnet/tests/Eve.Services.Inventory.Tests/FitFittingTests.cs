@@ -32,7 +32,7 @@ public class FitFittingTests
         }).AsTask();
 
     [PgFact]
-    public async Task Fitting_a_module_with_multiple_missing_skills_returns_all_prerequisites_in_the_client_error()
+    public async Task Fitting_a_module_without_its_skills_succeeds_but_onlining_it_is_refused()
     {
         await using var rig = await Rig.CreateAsync(activeShip: true);
         var ship = (await rig.Ships.LoadAsync(Rig.Character))!.Ship.Id;
@@ -40,14 +40,17 @@ public class FitFittingTests
         var session = Rig.Session();
         var shipInventory = Rig.OidOf(await rig.CallAsync(session, "GetInventoryFromId", null, new PyLong(ship)));
 
-        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => AddToShipAsync(rig, session, shipInventory, module, HighSlot));
+        Assert.Equal(InventoryWire.Id(module), await AddToShipAsync(rig, session, shipInventory, module, HighSlot));
 
-        Assert.Equal("FittingHasSkillPrerequisites", error.Error.UserErrorMessage);
-        var values = UserErrorArguments(error);
-        Assert.Equal(new PyStr("Small Energy Turret : Level 1, Gunnery : Level 1"), values["requiredSkills"]);
-        Assert.Equal(new PyInt(450), values["item"]);
-        Assert.Equal(new PyInt(2), values["skillCount"]);
-        Assert.Equal(Rig.Station, (await rig.Items.GetAsync(module))!.LocationId);
+        var fitted = (await rig.Items.GetAsync(module))!;
+        Assert.Equal((ship, HighSlot, 1L, true), (fitted.LocationId, fitted.Flag, fitted.Quantity, fitted.Singleton));
+        Assert.Equal(ItemState.Offline, (await rig.Ships.LoadAsync(Rig.Character))!.World.Item(module)!.State);
+
+        var online = Assert.IsType<ShipRefused>(await rig.Ships.SetOnlineAsync(Rig.Character, ship, module, true));
+        Assert.Equal(ShipRefusal.SkillRequired, online.Reason);
+        var afterOnlineRefusal = (await rig.Items.GetAsync(module))!;
+        Assert.Equal((ship, HighSlot), (afterOnlineRefusal.LocationId, afterOnlineRefusal.Flag));
+        Assert.Equal(ItemState.Offline, (await rig.Ships.LoadAsync(Rig.Character))!.World.Item(module)!.State);
     }
 
     [PgFact]
@@ -424,7 +427,7 @@ public class FitFittingTests
     }
 
     [PgFact]
-    public async Task A_module_stack_that_fails_fit_rules_stays_in_the_hangar_and_is_reported_missing()
+    public async Task Fitting_a_module_stack_without_its_skills_splits_one_offline_module_and_keeps_the_remainder()
     {
         await using var rig = await Rig.CreateAsync(activeShip: true);
         var ship = await rig.AddAsync(Ibis, Rig.Character, Rig.Station, singleton: true);
@@ -438,12 +441,17 @@ public class FitFittingTests
             Map((new PyInt(450), new PyList([new PyLong(stack)]))),
             Map((new PyInt(HighSlot), new PyInt(450))), Map(), Map(), true));
 
-        var missing = Assert.IsType<PyTuple>(Assert.Single(reply.Items));
-        Assert.Equal([new PyInt(450), new PyInt(1)], missing.Items);
+        Assert.Empty(reply.Items);
+        var fitted = Assert.Single(await rig.Items.InLocationAsync(ship, Rig.Character), item => item.TypeId == 450 && item.Flag == HighSlot);
+        Assert.Equal((1L, true), (fitted.Quantity, fitted.Singleton));
+        Assert.Equal(ItemState.Offline, (await rig.Ships.LoadShipAsync(Rig.Character, ship))!.World.Item(fitted.Id)!.State);
         var remainder = (await rig.Items.GetAsync(stack))!;
-        Assert.Equal((Rig.Station, 2L, false), (remainder.LocationId, remainder.Quantity, remainder.Singleton));
-        Assert.DoesNotContain(await rig.Items.InLocationAsync(ship, Rig.Character), item => item.TypeId == 450);
-        Assert.Empty(sink.Packets);
+        Assert.Equal((Rig.Station, 1L, false), (remainder.LocationId, remainder.Quantity, remainder.Singleton));
+        var itemMove = Assert.Single(sink.Packets, packet => RecordingSink.Mentions(packet, "OnItemsChanged"));
+        Assert.True(RecordingSink.ContainsId(RecordingSink.NotificationPayload(itemMove)!, fitted.Id));
+        Assert.False(RecordingSink.ContainsId(RecordingSink.NotificationPayload(itemMove)!, stack));
+        var stackChange = Assert.Single(sink.Packets, packet => RecordingSink.Mentions(packet, "OnItemChange"));
+        Assert.True(RecordingSink.ContainsId(RecordingSink.NotificationPayload(stackChange)!, stack));
     }
 
     [PgFact]

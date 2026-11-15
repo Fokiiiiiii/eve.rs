@@ -887,6 +887,18 @@ def set_attribute(attributes: list, attribute: int, value) -> None:
             return
     raise AssertionError(f"attribute {attribute} is not in the recording")
 
+def _client_ship_state_amounts(described):
+    """A GetAllInfo shipState row carries the same absolute amounts as shipInfo's condition attributes."""
+    fields = keyval(described)
+    ship_key, ship_info = pairs(fields["shipInfo"])[0]
+    ship_id = number(ship_key)
+    attributes = dict(pairs(keyval(ship_info)["attributes"]))
+    ship_state = fields["shipState"]["$tuple"][0]
+    state_row = next(row["$row"] for key, row in pairs(ship_state) if number(key) == ship_id)
+    for field, attribute in (("damage", 3), ("charge", 18), ("armorDamage", 266), ("shieldCharge", 264)):
+        if attribute in attributes:
+            state_row[field] = float(attributes[attribute])
+
 def _client_character_attributes(described):
     if isinstance(described, list):
         result = [_client_character_attributes(value) for value in described]
@@ -955,6 +967,12 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
         set_attribute(character_attributes, 443, 0.9)
         if race["raceID"] == 8:
             set_attribute(character_attributes, 428, 120)
+    # The original EveJS capture recorded ratios in shipState, while V24.01
+    # consumes its rows beside the absolute dogma amounts in shipInfo:
+    # baseDogmaLocation.GetDamageStateEx divides shieldCharge by shieldCapacity,
+    # armorDamage by armorHP, and damage by hp. EveJS v0.12.9 now derives these
+    # rows from the same attributes in shipConditionAmounts.readShipConditionAmounts.
+    _client_ship_state_amounts(expected_info)
     problems += differences(
         blank_times(expected_info), blank_times(actual_info), "GetAllInfo", volatile_keys=set(), float_tolerance=DOGMA_TOLERANCE)
 

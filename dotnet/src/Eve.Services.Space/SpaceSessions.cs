@@ -31,6 +31,7 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     /// <summary>The queue of a system the client is told of when its pilot jumps there: how many entries it can hold and how long one is kept.</summary>
     private const int JumpQueueSpace = 1000;
     private const int JumpQueueTimeoutSeconds = 180;
+    private const ulong SimUnpilotedSessionBase = 1UL << 61;
 
     private sealed class Pilot(ClientSession session, long characterId, long shipId, int typeId, int solarSystemId, long invulnerableUntil, long undockedFrom = 0, bool jumpCloak = false)
     {
@@ -180,8 +181,10 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         int SolarSystemId,
         ulong? StructureControlSessionId = null,
         long OwnerAllianceId = 0,
-        long OwnerWarFactionId = 0);
+        long OwnerWarFactionId = 0,
+        bool CombatLogoff = false);
     private readonly ConcurrentDictionary<long, EjectedShip> _ejectedShips = new();
+    private readonly ConcurrentDictionary<long, SemaphoreSlim> _combatLogoffGates = new();
 
 private readonly TransitionRuntime _transitions;
 
@@ -751,70 +754,80 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
             throw Notify("Space is not available right now. Try again in a moment.");
         }
 
-        var systemId = state.SolarSystemId;
-        await SyncBuffsAsync(snapshot.World, snapshot.Ship.Id, cancellationToken);
-        var ship = SimShips.Of(
-            snapshot,
-            _statics,
-            await SecurityStatusAsync(characterId, cancellationToken));
-        string? refusal;
+        var combatLogoffGate = await BeginCombatLogoffEntryAsync(state, cancellationToken).ConfigureAwait(false);
         try
         {
-            await PrepareSolarSystemAsync(systemId, cancellationToken);
-            refusal = await _sim.EnterAsync(
-                new SimEnter(
-                    sessionId,
-                    SimSceneKey.SolarSystem(systemId),
-                    EnterHow.InSpace,
-                    0,
-                    ship,
-                    state.Position,
-                    state.Direction),
-                cancellationToken);
-        }
-        catch (SimUnavailableException error)
-        {
-            refusal = error.Message;
-        }
-        if (refusal is not null)
-        {
-            _log?.Invoke($"space login for character {characterId} was refused: {refusal}");
-            throw Notify("Space is not available right now. Try again in a moment.");
-        }
-        TellEnteredBuffs(sessionId, snapshot.Ship.Id, _nowUnixMs());
-
-        try
-        {
-            await _sim.SetHeatProfileAsync(
-                sessionId,
-                SimShips.HeatProfileOf(snapshot, _statics),
-                cancellationToken);
-        }
-        catch (SimUnavailableException error)
-        {
-            _log?.Invoke($"heat profile restore for character {characterId}: {error.Message}");
-        }
-
-        _pilots[sessionId] = new Pilot(
-            session, characterId, snapshot.Ship.Id, snapshot.Ship.TypeId,
-            systemId, FileTimeNow(), snapshot.Character.StationId);
-        _log?.Invoke($"pilot {characterId} entered space in system {systemId} (session {sessionId})");
-        await RefreshTetherPolicyAsync(session, cancellationToken);
-        if (PilotEntered is { } entered)
-        {
+            var systemId = state.SolarSystemId;
+            await SyncBuffsAsync(snapshot.World, snapshot.Ship.Id, cancellationToken);
+            var ship = SimShips.Of(
+                snapshot,
+                _statics,
+                await SecurityStatusAsync(characterId, cancellationToken));
+            string? refusal;
             try
             {
-                await entered(session, characterId);
+                await PrepareSolarSystemAsync(systemId, cancellationToken);
+                refusal = await _sim.EnterAsync(
+                    new SimEnter(
+                        sessionId,
+                        SimSceneKey.SolarSystem(systemId),
+                        EnterHow.InSpace,
+                        0,
+                        ship,
+                        state.Position,
+                        state.Direction),
+                    cancellationToken);
             }
-            catch (Exception error) when (error is not OperationCanceledException)
+            catch (SimUnavailableException error)
             {
-                _log?.Invoke($"space login for character {characterId}: the squadrons in space could not be taken up: {error.Message}");
+                refusal = error.Message;
             }
-        }
-        session.Closed += () => OnSessionClosed(session);
-        await spaceItems.RemoveAsync(snapshot.Ship.Id, cancellationToken);
-        SystemEntered?.Invoke(systemId);
+            if (refusal is not null)
+            {
+                _log?.Invoke($"space login for character {characterId} was refused: {refusal}");
+                throw Notify("Space is not available right now. Try again in a moment.");
+            }
+            TellEnteredBuffs(sessionId, snapshot.Ship.Id, _nowUnixMs());
+
+            try
+            {
+                await _sim.SetHeatProfileAsync(
+                    sessionId,
+                    SimShips.HeatProfileOf(snapshot, _statics),
+                    cancellationToken);
+            }
+            catch (SimUnavailableException error)
+            {
+                _log?.Invoke($"heat profile restore for character {characterId}: {error.Message}");
+            }
+
+            _pilots[sessionId] = new Pilot(
+                session, characterId, snapshot.Ship.Id, snapshot.Ship.TypeId,
+                systemId, FileTimeNow(), snapshot.Character.StationId);
+            _log?.Invoke($"pilot {characterId} entered space in system {systemId} (session {sessionId})");
+            await RefreshTetherPolicyAsync(session, cancellationToken);
+            if (PilotEntered is { } entered)
+            {
+                try
+                {
+                    await entered(session, characterId);
+                }
+                catch (Exception error) when (error is not OperationCanceledException)
+                {
+                    _log?.Invoke($"space login for character {characterId}: the squadrons in space could not be taken up: {error.Message}");
+                }
+            }
+            session.Closed += () => OnSessionClosed(session);
+            await spaceItems.RemoveAsync(snapshot.Ship.Id, cancellationToken);
+            if (combatLogoffGate is not null)
+                _ejectedShips.TryRemove(snapshot.Ship.Id, out _);
+            SystemEntered?.Invoke(systemId);
             await NotifyPilotEnteredSystemAsync(characterId, (ulong)session.SessionId, systemId);
+        }
+        finally
+        {
+            combatLogoffGate?.Release();
+        }
     }
 
     private bool HasValidSpaceRestore(ShipSnapshot snapshot, SpaceItem state)
@@ -1201,6 +1214,10 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     });
                     break;
                 }
+                case SimDestroyed destroyed
+                    when destroyed.SessionId >= SimUnpilotedSessionBase && destroyed.SessionId < SimNpcSessionBase:
+                    Background(() => FinishPersistedCombatLogoffShipDeathAsync(destroyed));
+                    break;
                 case SimDestroyed destroyed when _npcShips.TryRemove(destroyed.ShipId, out var npc):
                     ForgetLockedTarget(destroyed.ShipId);
                     Background(() => FinishNpcDeathAsync(npc, destroyed));
@@ -1439,7 +1456,10 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
 
     private void OnSessionClosed(ClientSession session) => Background(() => OnSessionClosedAsync(session));
 
-    private async Task<bool> SaveSpaceStateAsync(Pilot pilot)
+    private async Task<bool> SaveSpaceStateAsync(
+        Pilot pilot,
+        long expiresAtMs = long.MaxValue,
+        SpaceItemKind kind = SpaceItemKind.ActiveShip)
     {
         if (_spaceItems is null)
             return false;
@@ -1481,9 +1501,9 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
             ship.CorporationId,
             ship.AllianceId,
             ship.WarFactionId,
-            // The active ship's pose must survive restarts until the next character entry consumes it.
-            long.MaxValue,
-            Kind: SpaceItemKind.ActiveShip);
+            // An ordinary active ship is kept until entry; a combat logoff is kept until its timer expires.
+            expiresAtMs,
+            Kind: kind);
         try
         {
             await _spaceItems.SaveAsync(state, CancellationToken.None);
@@ -1508,8 +1528,12 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         _transitions.EndSessionChange(id);
         _lockedTargets.TryRemove(id, out _);
         _targeting.TryRemove(id, out _); // not disposed: an order may still be waiting on it
-        if (!_pilots.TryRemove(id, out var pilot))
+        if (!_pilots.TryGetValue(id, out var currentPilot) || !ReferenceEquals(currentPilot.Session, session))
             return;
+        var combatLogoffUntil = abyssalResident ? null : await CombatLogoffUntilAsync(currentPilot.CharacterId).ConfigureAwait(false);
+        if (!((ICollection<KeyValuePair<ulong, Pilot>>)_pilots).Remove(new(id, currentPilot)))
+            return;
+        var pilot = currentPilot;
         await EndActiveModuleCombatActivitiesAsync(pilot).ConfigureAwait(false);
         try { await CancelShipSelfDestructAsync(pilot.ShipId, CancellationToken.None); }
         catch (Exception error) { _log?.Invoke($"self-destruct cleanup on disconnect failed: {error.Message}"); }
@@ -1544,7 +1568,21 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                 _log?.Invoke($"the rounds of character {pilot.CharacterId} could not be written on disconnect: {error.Message}");
             }
 
-            var spaceStateSaved = chargesSaved && !abyssalResident && await SaveSpaceStateAsync(pilot).ConfigureAwait(false);
+            var retainForCombatLogoff = combatLogoffUntil is { } until && until > _nowUnixMs();
+            var spaceStateSaved = chargesSaved && !abyssalResident && await SaveSpaceStateAsync(
+                pilot,
+                retainForCombatLogoff ? combatLogoffUntil!.Value : long.MaxValue,
+                retainForCombatLogoff ? SpaceItemKind.CombatLogoffShip : SpaceItemKind.ActiveShip).ConfigureAwait(false);
+            if (retainForCombatLogoff)
+            {
+                _ejectedShips[pilot.ShipId] = new EjectedShip(
+                    pilot.CharacterId,
+                    pilot.Session.GetInt("corpid") ?? 0,
+                    pilot.TypeId,
+                    pilot.SolarSystemId,
+                    OwnerAllianceId: pilot.Session.GetInt("allianceid") ?? 0,
+                    CombatLogoff: true);
+            }
             if (abyssalResident)
             {
                 if (pilot.AbyssalContentId is not { } contentId || AbyssalParticipantDisconnectedAsync is not { } disconnected)
@@ -1560,7 +1598,7 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
             _log?.Invoke(abyssalResident
                 ? $"Abyssal pilot {pilot.CharacterId} disconnected in run {pilot.AbyssalContentId}; the resident ship remains in its room scene"
                 : $"pilot {pilot.CharacterId} left space in system {pilot.SolarSystemId} (session {id}): position saved {spaceStateSaved}");
-            if (!abyssalResident && !spaceStateSaved && chargesSaved)
+            if (!abyssalResident && !spaceStateSaved && chargesSaved && !retainForCombatLogoff)
             {
                 _log?.Invoke($"pilot {pilot.CharacterId} (session {id}): the ship is recovered to its station, its position was not saved");
                 await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation, CancellationToken.None).ConfigureAwait(false);
@@ -1574,8 +1612,11 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         {
             if (!abyssalResident)
             {
-                _sim.Leave(id, LeaveWhy.LoggedOff);
+                _sim.Leave(id, combatLogoffUntil is { } until && until > _nowUnixMs()
+                    ? LeaveWhy.Ejected
+                    : LeaveWhy.LoggedOff);
             }
         }
     }
+
 }

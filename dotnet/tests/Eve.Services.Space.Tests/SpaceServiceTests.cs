@@ -3,6 +3,7 @@ using Eve.Inventory;
 using Eve.Macho;
 using Eve.Planets;
 using Eve.Marshal;
+using Eve.Ships;
 using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
@@ -3929,6 +3930,44 @@ public class SpaceServiceTests
         Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, ship.Flag);
         Assert.Equal(system, (await rig.SpaceItems.GetAsync(character.ShipId))?.SolarSystemId);
         Assert.False(rig.Space.IsInSpace(session));
+    }
+
+    [PgFact]
+    public async Task A_ship_disconnected_during_its_capsuleer_logoff_timer_stays_targetable_in_space()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var systemId = session.GetInt("solarsystemid")!.Value;
+        var pvpUntil = rig.Now + Eve.Crimewatch.CombatState.PvpDurationMs;
+        rig.Space.CrimewatchStateOf = (_, _) => Task.FromResult(
+            new Eve.Crimewatch.CombatState(0, pvpUntil, 0, 0, Eve.Crimewatch.Flag.None, 0, systemId));
+
+        session.Close();
+        await rig.Space.QuiesceAsync();
+
+        Assert.Contains(rig.Sim.Heard, message => message is SimLeave
+        {
+            SessionId: var sessionId,
+            Why: LeaveWhy.Ejected
+        } && sessionId == (ulong)session.SessionId);
+        Assert.DoesNotContain(rig.Sim.Heard, message => message is SimLeave
+        {
+            SessionId: var sessionId,
+            Why: LeaveWhy.LoggedOff
+        } && sessionId == (ulong)session.SessionId);
+        var saved = Assert.IsType<SpaceItem>(await rig.SpaceItems.GetAsync(character.ShipId));
+        Assert.Equal(SpaceItemKind.CombatLogoffShip, saved.Kind);
+        Assert.Equal(pvpUntil, saved.ExpiresAtMs);
+
+        rig.Now = pvpUntil;
+        await rig.Containers.SweepAsync();
+
+        Assert.Contains(rig.Sim.Heard, message => message is SimRemoveUnpilotedShip removal
+            && removal.ShipId == character.ShipId && removal.Scene.LocationId == systemId);
+        saved = Assert.IsType<SpaceItem>(await rig.SpaceItems.GetAsync(character.ShipId));
+        Assert.Equal(SpaceItemKind.ActiveShip, saved.Kind);
+        Assert.Equal(long.MaxValue, saved.ExpiresAtMs);
     }
 
     [PgFact]

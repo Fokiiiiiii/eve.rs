@@ -584,6 +584,11 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
             // The extraction's durable job removes the complete moon field and publishes its asteroid removal wire.
             if (due.MoonExtractionId > 0)
                 continue;
+            if (due.Kind == SpaceItemKind.CombatLogoffShip)
+            {
+                await _space.ExpireCombatLogoffShipAsync(due);
+                continue;
+            }
             await _ships.RemoveContainerAsync(due.ItemId, withContents: true);
             await ForgetAsync(due.ItemId);
             _sim.RemoveWreck(due.ItemId, 0);
@@ -710,6 +715,11 @@ private void OnReceived(SimMessage message)
                     {
                         continue;
                     }
+                    if (item.ExpiresAtMs <= now && stored is not null && item.Kind == SpaceItemKind.CombatLogoffShip)
+                    {
+                        await _space.ExpireCombatLogoffShipAsync(item);
+                        continue;
+                    }
                     if (item.ExpiresAtMs <= now || stored is null)
                     {
                         // out of time, or the item is gone: the row goes (an expired one with what is in it)
@@ -722,6 +732,12 @@ private void OnReceived(SimMessage message)
                     }
                     // Private-run items are restored/settled by their exact durable run scope, never as public solar-system balls.
                     if (stored.RunSpaceProvenance is not null) continue;
+                    if (item.Kind == SpaceItemKind.CombatLogoffShip)
+                    {
+                        if (!await _space.RestoreCombatLogoffShipAsync(item, CancellationToken.None))
+                            _placed.TryRemove(item.ItemId, out _);
+                        continue;
+                    }
                     await _statics.EnsureTypesAsync([stored.TypeId]);
                     var type = _statics.Type(stored.TypeId);
                     if (type is not null && _statics.CategoryName(type.CategoryId) == "Asteroid")

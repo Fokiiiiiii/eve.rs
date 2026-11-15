@@ -552,13 +552,14 @@ public sealed partial class SpaceSessions
         double aggressionRangeOverride = 0,
         List<long>? shipIds = null,
         bool stationary = false,
-        Action? sceneUnavailable = null)
+        Action? sceneUnavailable = null,
+        bool allowUnpilotedScene = false)
     {
         var composition = new List<(string Name, int Count)>();
         var unarmed = 0;
         for (var index = 0; index < profiles.Count; index++)
         {
-            if (!HasPilotsIn(anchor.SolarSystemId))
+            if (!allowUnpilotedScene && !HasPilotsIn(anchor.SolarSystemId))
             {
                 sceneUnavailable?.Invoke();
                 break;
@@ -792,8 +793,22 @@ public sealed partial class SpaceSessions
                 && candidate.SolarSystemId == solarSystemId
                 && candidate.TypeId != CharacterShips.CapsuleTypeId
                 && candidate.Session.GetInt("shipid") == candidate.ShipId);
-        if (pilot is null || pilot.TypeId == CharacterShips.CapsuleTypeId
-            || Npcs is not { } selector)
+        EjectedShip? offlineCombatShip = null;
+        if (pilot is null && _ejectedShips.TryGetValue(attackerShipId, out var abandoned)
+            && abandoned.CombatLogoff
+            && abandoned.OwnerCharacterId == attackerCharacterId
+            && abandoned.SolarSystemId == solarSystemId)
+        {
+            offlineCombatShip = abandoned;
+        }
+        else if (pilot is null && await FindOfflineCombatLogoffShipAsync(
+                     attackerCharacterId, solarSystemId, attackerShipId, cancellationToken).ConfigureAwait(false) is { } recovered)
+        {
+            attackerShipId = recovered.ItemId;
+            offlineCombatShip = _ejectedShips.GetValueOrDefault(recovered.ItemId);
+        }
+        if (pilot is null && offlineCombatShip is null ||
+            pilot?.TypeId == CharacterShips.CapsuleTypeId || Npcs is not { } selector)
         {
             return false;
         }
@@ -821,28 +836,42 @@ public sealed partial class SpaceSessions
             profileGroups.Add(plan.Profiles);
         }
 
-        var position = await PositionOfAsync(pilot.Session, pilot.ShipId, cancellationToken);
-        if (position is not { } targetPoint)
+        var shipId = pilot?.ShipId ?? attackerShipId;
+        IReadOnlyList<double>? targetPosition;
+        if (pilot is not null)
         {
-            return false;
+            targetPosition = await PositionOfAsync(pilot.Session, shipId, cancellationToken) is { } position
+                ? [position.X, position.Y, position.Z]
+                : null;
         }
+        else
+        {
+            var persisted = _spaceItems is null ? null : await _spaceItems.GetAsync(shipId, cancellationToken);
+            targetPosition = persisted is { Kind: SpaceItemKind.CombatLogoffShip } && persisted.SolarSystemId == solarSystemId
+                ? persisted.Position
+                : null;
+        }
+        if (targetPosition is not { Count: >= 3 })
+            return false;
+
         var (composition, _) = await SpawnGroupAsync(
             profileGroups[0],
             new SpawnAnchor(
-                pilot.SolarSystemId,
-                pilot.ShipId,
-                [targetPoint.X, targetPoint.Y, targetPoint.Z],
+                checked((int)solarSystemId),
+                shipId,
+                targetPosition.Take(3).ToArray(),
                 BaseDistance: 8_000,
                 Window: 4_000),
             cancellationToken,
             hostileResponseThreshold: 0,
-            aggressionRangeOverride: 50_000);
+            aggressionRangeOverride: 50_000,
+            allowUnpilotedScene: offlineCombatShip is not null);
         if (composition.Count == 0)
         {
             return false;
         }
 
-        var markedShip = pilot.ShipId;
+        var markedShip = shipId;
         _concordDestroyed[markedShip] = 0;
         _timers.Set($"space:concord:mark:{markedShip}", TimeSpan.FromMinutes(2), () =>
         {
@@ -871,13 +900,38 @@ public sealed partial class SpaceSessions
             && pilot.SolarSystemId == solarSystemId
             && pilot.TypeId != CharacterShips.CapsuleTypeId
             && pilot.Session.GetInt("shipid") == pilot.ShipId);
-        if (current is null)
+        var offline = current is null
+            ? _ejectedShips.FirstOrDefault(pair => pair.Value.CombatLogoff
+                && pair.Value.OwnerCharacterId == characterId
+                && pair.Value.SolarSystemId == solarSystemId)
+            : default;
+        if (current is null && offline.Value is null &&
+            await FindOfflineCombatLogoffShipAsync(characterId, solarSystemId, 0, CancellationToken.None).ConfigureAwait(false) is { } restored)
         {
+            offline = new KeyValuePair<long, EjectedShip>(restored.ItemId, _ejectedShips[restored.ItemId]);
+        }
+        if (current is null && offline.Value is null)
+        {
+            await RetryConcordPunishmentIfActiveAsync(characterId, solarSystemId, battleships, credit);
             return;
         }
 
-        var position = await PositionOfAsync(current.Session, current.ShipId, CancellationToken.None);
-        if (position is not { } targetPoint)
+        var shipId = current?.ShipId ?? offline.Key;
+        IReadOnlyList<double>? position;
+        if (current is not null)
+        {
+            position = await PositionOfAsync(current.Session, shipId, CancellationToken.None) is { } currentPosition
+                ? [currentPosition.X, currentPosition.Y, currentPosition.Z]
+                : null;
+        }
+        else
+        {
+            var persisted = _spaceItems is null ? null : await _spaceItems.GetAsync(shipId, CancellationToken.None);
+            position = persisted is { Kind: SpaceItemKind.CombatLogoffShip } && persisted.SolarSystemId == solarSystemId
+                ? persisted.Position
+                : null;
+        }
+        if (position is not { Count: >= 3 })
         {
             await RetryConcordPunishmentIfActiveAsync(characterId, solarSystemId, battleships, credit);
             return;
@@ -886,14 +940,15 @@ public sealed partial class SpaceSessions
         var (composition, _) = await SpawnGroupAsync(
             battleships,
             new SpawnAnchor(
-                current.SolarSystemId,
-                current.ShipId,
-                [targetPoint.X, targetPoint.Y, targetPoint.Z],
+                checked((int)solarSystemId),
+                shipId,
+                position.Take(3).ToArray(),
                 BaseDistance: 8_000,
                 Window: 4_000),
             CancellationToken.None,
             hostileResponseThreshold: 0,
-            aggressionRangeOverride: 50_000);
+            aggressionRangeOverride: 50_000,
+            allowUnpilotedScene: current is null && offline.Value is not null);
         if (composition.Count != 0)
         {
             await FinishConcordPunishmentAsync(characterId, solarSystemId, credit);
@@ -921,7 +976,7 @@ public sealed partial class SpaceSessions
             () => FinishConcordResponseAsync(characterId, solarSystemId, battleships, credit));
     }
 
-    private Task FinishConcordPunishmentAsync(long characterId, long solarSystemId, SimCredit credit)
+    private async Task FinishConcordPunishmentAsync(long characterId, long solarSystemId, SimCredit credit)
     {
         var current = _pilots.Values.FirstOrDefault(pilot =>
             pilot.CharacterId == characterId
@@ -930,11 +985,82 @@ public sealed partial class SpaceSessions
             && pilot.Session.GetInt("shipid") == pilot.ShipId);
         if (current is null)
         {
-            return Task.CompletedTask;
+            var offline = _ejectedShips.FirstOrDefault(pair => pair.Value.CombatLogoff
+                && pair.Value.OwnerCharacterId == characterId
+                && pair.Value.SolarSystemId == solarSystemId);
+            if (offline.Value is not null)
+            {
+                _concordDestroyed[offline.Key] = 0;
+                _sim.Destroy(offline.Key, credit);
+                return;
+            }
+            if (await FindOfflineCombatLogoffShipAsync(characterId, solarSystemId, 0, CancellationToken.None).ConfigureAwait(false) is { } persisted)
+            {
+                _concordDestroyed[persisted.ItemId] = 0;
+                _sim.Destroy(persisted.ItemId, credit);
+            }
+            return;
         }
         _concordDestroyed[current.ShipId] = 0;
         _sim.Destroy(current.ShipId, credit);
-        return Task.CompletedTask;
+    }
+
+    /// <summary>Rehydrates an offline combat ship's Host ownership after restart from its durable in-space item.</summary>
+    private async Task<SpaceItem?> FindOfflineCombatLogoffShipAsync(
+        long characterId,
+        long solarSystemId,
+        long shipId,
+        CancellationToken cancellationToken)
+    {
+        if (_spaceItems is null || characterId <= 0 || solarSystemId <= 0)
+            return null;
+
+        SpaceItem? state;
+        if (shipId > 0)
+        {
+            state = await _spaceItems.GetAsync(shipId, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            state = (await _spaceItems.InSystemAsync(checked((int)solarSystemId), cancellationToken).ConfigureAwait(false))
+                .FirstOrDefault(item => item.CharacterId == characterId && item.Kind == SpaceItemKind.CombatLogoffShip);
+        }
+        if (state is not { Kind: SpaceItemKind.CombatLogoffShip } ||
+            state.ItemId <= 0 || state.CharacterId != characterId || state.SolarSystemId != solarSystemId ||
+            state.ExpiresAtMs <= _nowUnixMs() || state.Position.Count < 3)
+            return null;
+
+        var snapshot = await _ships.LoadAsync(characterId, cancellationToken).ConfigureAwait(false);
+        if (snapshot is null || snapshot.Character.ShipId != state.ItemId ||
+            snapshot.Character.SolarSystemId != solarSystemId || snapshot.Ship.Id != state.ItemId ||
+            snapshot.Ship.LocationId != solarSystemId || snapshot.Ship.Flag != CharacterShips.InSpaceFlag)
+            return null;
+
+        _ejectedShips.GetOrAdd(state.ItemId, _ => new EjectedShip(
+            characterId,
+            state.CorporationId,
+            snapshot.Ship.TypeId,
+            checked((int)solarSystemId),
+            OwnerAllianceId: state.AllianceId,
+            OwnerWarFactionId: state.WarFactionId,
+            CombatLogoff: true));
+        return state;
+    }
+
+    private async Task<EjectedShip?> OfflineCombatLogoffShipOfAsync(long shipId, long solarSystemId, CancellationToken cancellationToken)
+    {
+        if (shipId <= 0 || solarSystemId <= 0)
+            return null;
+        if (_ejectedShips.TryGetValue(shipId, out var known) && known.CombatLogoff && known.SolarSystemId == solarSystemId)
+            return known;
+        if (_spaceItems is null)
+            return null;
+        var persisted = await _spaceItems.GetAsync(shipId, cancellationToken).ConfigureAwait(false);
+        if (persisted is not { Kind: SpaceItemKind.CombatLogoffShip } || persisted.SolarSystemId != solarSystemId)
+            return null;
+        if (await FindOfflineCombatLogoffShipAsync(persisted.CharacterId, solarSystemId, shipId, cancellationToken).ConfigureAwait(false) is null)
+            return null;
+        return _ejectedShips.GetValueOrDefault(shipId);
     }
 
     /// <summary>Spawns the configured CONCORD response fleet around an active criminal and schedules the ship loss after the response ships engage.</summary>

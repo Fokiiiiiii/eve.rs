@@ -31,6 +31,7 @@ from evecli import packet as p
 from evecli.client import Client
 from evecli.describe import describe, differences, type_name
 from evecli.observe import hangar_and_ship, notifications_of, ship_of, training_view, wait_for_events
+from tests.runid import run_token
 
 LIVE = os.environ.get("EVE_LIVE_HOST", "")
 SERVER = os.environ.get("EVE_LIVE_SERVER", "eve.rs")
@@ -137,7 +138,7 @@ def test_the_session_starts_with_the_recorded_keys_and_types():
     assert same_way(recorded, ours, "sessionInit", volatile=set(WALK["login"]["sessionInit"]) - not_sent) == []
 
 def test_the_recorded_walk_replays():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     walker = connect(f"walk-{run}")
     other = None
     ids: dict[int, int] = {}  # a recorded character id -> the id this server gave
@@ -231,7 +232,7 @@ def test_the_recorded_walk_replays():
     assert problems == [], "\n".join(problems)
 
 def test_new_account_enters_a_new_character_with_named_arguments():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-named-{run}") as client:
         assert m.plain(client.call("charUnboundMgr", "GetNumCharacters")) == 0
 
@@ -284,7 +285,7 @@ OMEGA_END_FILETIME = 157469184000000000  # 2100-01-01T00:00:00Z: the end time ev
 def test_a_new_account_is_omega_until_2100_on_every_answer():
     """The Omega state is one stored value per account (its subscription end time). A new account is Omega until 2100:
     the clone grade, the subscription time, the lapsed-Omega check and the selection screen's account row must agree."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-omega-{run}") as client:
         assert m.plain(client.call("subscriptionMgr", "GetCloneGrade")) == 1
         assert m.plain(client.call("subscriptionMgr", "GetSubscriptionTime")) == OMEGA_END_FILETIME
@@ -308,7 +309,7 @@ def test_a_new_account_is_omega_until_2100_on_every_answer():
 def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
     """The client's "log off character": userSvc.UserLogOffCharacter answers True, the connection stays open, the
     selection screen lists the character again, and selecting it enters the game again (the session's charid)."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-logoff-{run}") as client:
         creation = next(
             step
@@ -329,7 +330,7 @@ def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
 
 def test_search_query_and_quickquery_use_the_registered_host_route():
     """The client's item type lookup reads Query's category map and QuickQuery's flat ID list."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-search-{run}") as client:
         query = m.plain(client.call("search", "Query", "Rifter", [10], exact=2))
         quick = m.plain(client.call("search", "QuickQuery", "Rifter", [10], exact=2, machoVersion=496))
@@ -342,7 +343,7 @@ def test_search_query_and_quickquery_use_the_registered_host_route():
 
 def test_login_configuration_and_loyalty_rpc_routes_keep_their_wire_contracts():
     """The selection UI and wallet services use the registered Host methods, not local stubs."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-rpc-coverage-{run}") as client:
         creation = next(
             step
@@ -377,7 +378,7 @@ def test_login_configuration_and_loyalty_rpc_routes_keep_their_wire_contracts():
 def test_the_loyalty_point_wallet_answers_and_the_concord_exchange_is_refused():
     """LPSvc (the loyalty point wallet): a new character's balance rowset is answered (no source credits points yet), and
     ExchangeConcordLP is refused with the reason rather than answered as done (AG-1, DEVIATIONS.md)."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-lp-{run}") as client:
         creation = next(
             step
@@ -398,7 +399,7 @@ def test_the_population_cap_answers_through_its_moniker():
     """The selection screen's populationCap moniker: bind with (charID, groupCharacter) and a nested GetCharacterLoadSlot,
     then call the bound object. A new character's system has room, so one entry; a move to a system that was not offered is
     refused, and so is a move with a wrong slot key."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-cap-{run}") as client:
         creation = next(
             step
@@ -488,7 +489,7 @@ def test_name_validation_answers_as_recorded(entry):
 
 @pytest.mark.parametrize("starter", STARTERS, ids=lambda s: f"bloodline-{s['bloodlineID']}")
 def test_each_bloodline_starts_as_recorded(starter):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-bl{starter['bloodlineID']}-{run}") as client:
         service, method, *args = _call(starter["create"], run)
         kind, made = attempt(client, service, method, *args)
@@ -573,7 +574,7 @@ def _client_skill_totals(race):
 
 @pytest.mark.parametrize("race", SKILLS["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_character_has_the_skills_the_reference_gives(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     if not REFERENCE:
         recorded_total, client_total = _client_skill_totals(race)
@@ -671,7 +672,7 @@ def with_description(described, text: str):
 
 @pytest.mark.parametrize("race", INFO["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_character_is_described_as_the_reference_describes_it(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     with connect(f"walk-info-{run}") as client:
         service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_INFO_RUN) for a in race["create"]["call"][2]]]
@@ -771,7 +772,7 @@ def lines_dropped(rowset: dict) -> dict:
 
 @pytest.mark.parametrize("race", INVENTORY["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_characters_inventories_are_those_of_the_reference(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     with connect(f"walk-inventory-{run}") as client:
         service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_INVENTORY_RUN) for a in race["create"]["call"][2]]]
@@ -930,7 +931,7 @@ def _client_charisma_events(described, character_id):
 
 @pytest.mark.parametrize("race", DOGMA["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_characters_dogma_is_that_of_the_reference(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     with connect(f"walk-dogma-{run}") as client:
         service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_DOGMA_RUN) for a in race["create"]["call"][2]]]
@@ -998,7 +999,7 @@ RECORDED_FITTING_RUN = re.search(r"(\d{6,})$", FITTING["races"][0]["create"]["ca
 
 @pytest.mark.parametrize("race", FITTING["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_switching_and_moving_modules_is_what_the_reference_does(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     problems: list[str] = []
     with connect(f"walk-fitting-{run}") as client:
@@ -1100,7 +1101,7 @@ def training_client(name: str, recording: dict, recorded_run: str, run: str, ids
     return client, int(made)
 
 def test_project_discovery_availability_is_enabled_after_character_selection():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     race = TRAINING["races"][0]
     client, _character = training_client(f"walk-project-discovery-{run}", race, RECORDED_TRAINING_RUN, run, {})
     try:
@@ -1110,7 +1111,7 @@ def test_project_discovery_availability_is_enabled_after_character_selection():
 
 
 def test_global_assets_moniker_resolves_and_lists_the_active_ship():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     race = TRAINING["races"][0]
     client, character = training_client(f"walk-global-assets-{run}", race, RECORDED_TRAINING_RUN, run, {})
     try:
@@ -1161,7 +1162,7 @@ def speed_of(client: Client) -> float:
 
 @pytest.mark.parametrize("race", TRAINING["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_the_skill_queue_is_what_the_reference_does(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     problems: list[str] = []
     client, character = training_client(f"walk-training-{run}", race, RECORDED_TRAINING_RUN, run, ids)
@@ -1214,7 +1215,7 @@ def _history_problems(expected: list, actual: list, where: str) -> list[str]:
     return [] if form(expected) == form(actual) else [f"{where}: history {form(actual)} instead of {form(expected)}"]
 
 def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     problems: list[str] = []
     client, character = training_client(f"walk-swift-{run}", TRAINING_FAST, RECORDED_FAST_RUN, run, ids)
@@ -1258,7 +1259,7 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
 def test_authentication_age_gate_uses_verified_account_state():
     from tests import dbseed
 
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     user_name = f"underage-{run}"
     # Password-login headless sessions have no SSO JWT; exercise the RPC with its accepted Unicode token type.
     login_jwt = m.WString("test.header.signature")
@@ -1274,7 +1275,7 @@ def test_authentication_age_gate_uses_verified_account_state():
 
 
 def test_active_survey_id_uses_reference_default():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"survey-default-{run}") as client:
         kind, outcome = attempt(client, "survey", "GetActiveSurveyID")
         assert kind == "ok", brief(outcome)
@@ -1282,7 +1283,7 @@ def test_active_survey_id_uses_reference_default():
 
 
 def test_localization_text_changes_keep_the_reference_empty_shape():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     expected = {"$tuple": [{"$dict": []}, {"$dict": []}, {"$dict": []}]}
     with connect(f"localization-{run}") as client:
         kind, outcome = attempt(client, "localizationServer", "GetAllTextChanges", m.Dict([]))

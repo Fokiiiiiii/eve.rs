@@ -660,7 +660,7 @@ def _scenario_character_call() -> tuple[str, str, list[Any]]:
     recorded_name = next(step["call"][2][0] for step in walk["steps"] if step["call"][1] == "CreateCharacterWithDoll")
     match = re.search(r"(\d{6,})$", recorded_name)
     recorded_run = match.group(1) if match else ""
-    run = uuid.uuid4().hex[:10]
+    run = uuid.uuid4().hex[:22]
 
     def replace_run(value: Any) -> Any:
         if isinstance(value, str):

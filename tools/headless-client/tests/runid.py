@@ -13,5 +13,5 @@ _SEQUENCE = itertools.count(1)
 def run_token() -> str:
     base = os.environ.get("EVE_LIVE_RUN_ID")
     if not base:
-        return uuid.uuid4().hex[:10]
+        return uuid.uuid4().hex[:21]
     return f"{base}{next(_SEQUENCE):03d}"

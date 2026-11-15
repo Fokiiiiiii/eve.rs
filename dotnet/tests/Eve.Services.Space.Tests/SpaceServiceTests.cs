@@ -3164,6 +3164,57 @@ public class SpaceServiceTests
     }
 
     [PgFact]
+    public async Task Concord_punishment_retries_after_a_temporary_spawn_refusal()
+    {
+        var waits = new List<(TimeSpan After, TaskCompletionSource Done)>();
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (after, token) =>
+        {
+            var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            lock (waits) waits.Add((after, done));
+            return done.Task.WaitAsync(token);
+        });
+        var authority = Eve.Npc.NpcAuthority.Load();
+        var rig = await Rig.CreateAsync(localTimers: timers, npcAuthority: authority);
+        await using var _ = rig;
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        await InSpaceAsync(rig, session);
+        var witness = await rig.NewCharacterAsync("CONCORD Retry Witness", account: 2);
+        var witnessSession = await rig.SessionAsync(witness, id: 2);
+        await InSpaceAsync(rig, witnessSession);
+        var systemId = session.GetInt("solarsystemid")!.Value;
+        rig.Space.CrimewatchStateOf = (_, _) => Task.FromResult(
+            new Eve.Crimewatch.CombatState(0, 0, 0, long.MaxValue, Eve.Crimewatch.Flag.Criminal, 0, systemId));
+        rig.Sim.PositionAnswers[character.ShipId] = [0, 0, 0];
+
+        Assert.True(await rig.Space.RespondToCriminalAsync(character.CharacterId, systemId, character.ShipId));
+        rig.Sim.SpawnAnswer = new SimSpawnReply(0, null, "TEMPORARY_REFUSAL");
+        (TimeSpan After, TaskCompletionSource Done) punishment;
+        lock (waits)
+        {
+            punishment = Assert.Single(waits, wait => wait.After == TimeSpan.FromSeconds(15));
+        }
+        punishment.Done.TrySetResult();
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimSpawn>().Count() == 3);
+
+        (TimeSpan After, TaskCompletionSource Done) retry;
+        await Rig.UntilAsync(() =>
+        {
+            lock (waits)
+                return waits.Any(wait => wait.After == TimeSpan.FromSeconds(1));
+        });
+        lock (waits)
+        {
+            retry = Assert.Single(waits, wait => wait.After == TimeSpan.FromSeconds(1));
+        }
+        rig.Sim.SpawnAnswer = null;
+        rig.Now += 1_000;
+        retry.Done.TrySetResult();
+        await Rig.UntilAsync(() => rig.Sim.Heard.OfType<SimDestroy>().Any(destroy => destroy.ShipId == character.ShipId));
+        Assert.Equal(2, rig.Sim.Heard.OfType<SimSpawn>().Count(spawn => spawn.Ship.TypeId == 1912));
+    }
+
+    [PgFact]
     public async Task A_ship_that_is_in_warp_is_told_so_when_it_is_asked_to_warp_or_to_stop_and_is_not_otherwise_answered()
     {
         var (rig, _, session) = await DockedAsync();

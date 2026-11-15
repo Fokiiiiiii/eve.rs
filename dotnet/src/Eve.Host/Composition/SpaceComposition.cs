@@ -431,12 +431,7 @@ internal sealed partial class CharacterServicesComposition
                     Console.Error.WriteLine($"eve-host: faction standing of the kill of ship {kill.ShipId} could not be applied: {error}");
                 }
             };
-            crimewatchRuntime.ConcordResponseDue += async request =>
-            {
-                if (spaceSessions is not null)
-                    await spaceSessions.RespondToCriminalAsync(
-                        request.AttackerCharacterId, request.SolarSystemId, request.AttackerShipId).ConfigureAwait(false);
-            };
+            WireConcordResponseCallback(crimewatchRuntime, spaceSessions);
             crimewatchRuntime.Aggressed += result =>
             {
                 const string pvpTimer = "UI/Inflight/SafeLogoff/SafeLogoffCantHavePvpTimerBody";
@@ -711,4 +706,13 @@ internal sealed partial class CharacterServicesComposition
                 Key = $"player-bounty:{payoutId}",
                 Payload = new Eve.Services.Crimewatch.PlayerBountyPayoutDue(payoutId),
             }, cancellationToken);
+
+    internal static void WireConcordResponseCallback(
+        Eve.Services.Crimewatch.CrimewatchRuntime crimewatchRuntime,
+        Eve.Services.Space.SpaceSessions? spaceSessions)
+    {
+        crimewatchRuntime.ConcordResponseDue += async request =>
+            spaceSessions is not null && await spaceSessions.RespondToCriminalAsync(
+                request.AttackerCharacterId, request.SolarSystemId, request.AttackerShipId).ConfigureAwait(false);
+    }
 }

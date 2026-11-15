@@ -49,10 +49,11 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
     public event Func<KillRightCreated, Task>? KillRightGranted;
 
     /// <summary>Raised when a delayed high-security response is due. The host connects this to SpaceSessions/NPC dispatch.</summary>
-    public event Func<ConcordResponseRequest, Task>? ConcordResponseDue;
+    public event Func<ConcordResponseRequest, Task<bool>>? ConcordResponseDue;
 
     public const long LimitedEngagementDurationMs = 5 * 60_000;
     public const long LimitedEngagementTimeoutOngoing = -1;
+    private const long ConcordResponseRetryMs = 1_000;
 
     private static string Key(long characterId) => $"crimewatch.end:{characterId}";
 
@@ -877,28 +878,60 @@ public sealed class CrimewatchRuntime(PgCrimewatchStore store, CharacterSessions
 
     private async Task DispatchConcordResponseAsync(ConcordResponseRequest response)
     {
+        var retry = false;
         try
         {
             if (ConcordResponseDue is not { } handlers)
             {
                 log?.Invoke($"crimewatch has no CONCORD response handler for {response.AttackerCharacterId} in {response.SolarSystemId}");
-                return;
             }
-            foreach (var handler in handlers.GetInvocationList().Cast<Func<ConcordResponseRequest, Task>>())
+            else
             {
-                try
+                foreach (var handler in handlers.GetInvocationList().Cast<Func<ConcordResponseRequest, Task<bool>>>())
                 {
-                    await handler(response);
-                }
-                catch (Exception error)
-                {
-                    log?.Invoke($"CONCORD response for {response.AttackerCharacterId} in {response.SolarSystemId} failed: {error.Message}");
+                    try
+                    {
+                        retry |= !await handler(response);
+                    }
+                    catch (Exception error)
+                    {
+                        log?.Invoke($"CONCORD response for {response.AttackerCharacterId} in {response.SolarSystemId} failed: {error.Message}");
+                    }
                 }
             }
         }
         finally
         {
             _concordResponses.TryRemove((response.AttackerCharacterId, response.SolarSystemId), out _);
+        }
+
+        if (retry)
+        {
+            await RetryConcordResponseIfActiveAsync(response);
+        }
+    }
+
+    private async Task RetryConcordResponseIfActiveAsync(ConcordResponseRequest response)
+    {
+        var now = nowUnixMs();
+        CombatState state;
+        try
+        {
+            state = await store.StateOfAsync(response.AttackerCharacterId, CancellationToken.None);
+        }
+        catch (Exception error)
+        {
+            log?.Invoke($"CONCORD retry state for {response.AttackerCharacterId} could not be read: {error.Message}");
+            if (now < response.CrimeAtUnixMs + CombatState.FlagDurationMs)
+            {
+                ScheduleConcordResponse(response, now + ConcordResponseRetryMs, now);
+            }
+            return;
+        }
+
+        if (state.IsCriminal(now) && state.SolarSystemId == response.SolarSystemId)
+        {
+            ScheduleConcordResponse(response, now + ConcordResponseRetryMs, now);
         }
     }
 

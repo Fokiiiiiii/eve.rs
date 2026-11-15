@@ -79,9 +79,8 @@ impl Scene {
         out
     }
 
-    /// A drone's engagement with a structure of the system: the structure does not move, so the drone fights it where it is while it is in its engagement
-    /// range (a structure beyond it is out of reach: the drone waits; shortcut: no flight to a structure). Its shots are the drone's own, through `fire_turret`
-    /// (a structure's layers take them); no remote effect applies to a structure.
+    /// A drone pursues and orbits a structure until it is in engagement range, then fires its own weapon through `fire_turret`
+    /// (a structure's layers take the shots); no remote effect applies to a structure.
     pub(super) fn fight_structure(&mut self, session: SessionId, target: i64, now: i64) -> Vec<Out> {
         let (Some(attacker), Some(structure), Some(engagement)) = (
             self.kinematics_of(session),

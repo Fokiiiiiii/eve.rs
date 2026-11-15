@@ -1369,3 +1369,61 @@ fn a_drone_sent_at_a_structure_in_its_reach_fires_at_its_layers_and_the_host_is_
         "{told:?}"
     );
 }
+
+#[test]
+fn a_drone_sent_at_a_distant_structure_approaches_until_its_weapon_can_fire() {
+    const STRUCTURE_ID: i64 = 98_100_021;
+    let (mut scene, drone, _) = launched();
+    let here = scene.pilots[&drone].ship.position;
+    let mut placement = crate::scene::tests::structure_placement(&scene, LATER);
+    placement.structure_id = STRUCTURE_ID;
+    placement.position = [here.x + placement.radius + 10_000.0, here.y, here.z];
+    placement.vitals = crate::health::Vitals {
+        shield_capacity: 100.0,
+        armor_hp: 500.0,
+        structure_hp: 300.0,
+        ..Default::default()
+    };
+    placement.limits = crate::health::StructureLimits { per_second: [1e9; 3], repair_pause: [0.0; 3] };
+    scene.place_structure(placement, LATER);
+
+    let sent =
+        scene.drone_command(PLAYER, &[DRONE_SHIP], DroneCommand::Engage { target: STRUCTURE_ID }, LATER);
+    assert!(
+        sent.iter().any(
+            |out| matches!(out, Out::DroneResults { results, .. } if results == &vec![(DRONE_SHIP, None)])
+        )
+    );
+    let drone_updates = for_the_player(&sent);
+    assert_eq!(
+        actions_named(&drone_updates, "Orbit")[0][..],
+        [Value::Long(DRONE_SHIP), Value::Int(STRUCTURE_ID), Value::Int(700)]
+    );
+    assert_eq!(
+        actions_named(&drone_updates, "SetSpeedFraction")[0][..],
+        [Value::Long(DRONE_SHIP), Value::Real(1.0)]
+    );
+    assert!(
+        matches!(scene.pilots[&drone].ship.course, Course::Orbit { target: STRUCTURE_ID, .. }),
+        "the drone must receive a course toward an out-of-range structure"
+    );
+    assert_eq!(scene.activity_of(drone), PURSUIT);
+
+    let mut now = LATER;
+    let mut told = sent;
+    for _ in 0..120 {
+        now += SECOND / 4;
+        told.extend(scene.poll(now));
+        if told.iter().any(
+            |out| matches!(out, Out::StructureDamaged { structure_id, .. } if *structure_id == STRUCTURE_ID),
+        ) {
+            break;
+        }
+    }
+    assert!(
+        told.iter().any(
+            |out| matches!(out, Out::StructureDamaged { structure_id, .. } if *structure_id == STRUCTURE_ID)
+        ),
+        "the approaching drone should enter range and damage the structure: {told:?}"
+    );
+}

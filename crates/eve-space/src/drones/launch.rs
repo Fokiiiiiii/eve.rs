@@ -415,7 +415,7 @@ impl Scene {
                     out.extend(self.engage(session, target, now));
                 }
                 DroneCommand::Engage { target } => {
-                    // a structure of the system is a target as a ship is (the drone shoots it where it is; it does not fly to it)
+                    // A structure is a target like a ship; the drone flies to engagement range and attacks there.
                     if self.session_of(target).is_none() && self.struck_structure(target) {
                         out.extend(self.engage(session, target, now));
                         results.push((drone_id, None));

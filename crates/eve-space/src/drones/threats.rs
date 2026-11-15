@@ -200,12 +200,12 @@ impl Scene {
     }
 
     /// The drone is left in this scene under nobody's control; the host keeps it as the pilot's item and may reconnect it later.
-    /// A drone is set on a structure of the system: it fights it while the structure is in its engagement range, else it is approaching (see `fight_structure`).
+    /// A drone is set on a structure of the system: it pursues and approaches the structure before fighting it in engagement range.
     fn engage_structure(&mut self, session: SessionId, target: i64, now: i64) -> Vec<Out> {
-        let (Some(attacker), Some(structure), Some(engagement)) = (
+        let (Some(attacker), Some(structure), Some((engagement, movement, chase))) = (
             self.kinematics_of(session),
             self.target_kinematics(target),
-            self.drones.get(&session).map(|ai| ai.engagement_range),
+            self.drones.get(&session).map(|ai| (ai.engagement_range, ai.movement_range, ai.chase_range)),
         ) else {
             return Vec::new();
         };
@@ -215,9 +215,17 @@ impl Scene {
             ai.next_shot = now;
             ai.next_remote = now;
         }
-        let activity = if apart > engagement + 1.0 { APPROACHING } else { COMBAT };
+        let activity = if apart > chase + 1.0 {
+            PURSUIT
+        } else if apart > engagement + 1.0 {
+            APPROACHING
+        } else {
+            COMBAT
+        };
+        let mut out = self.circle(session, target, movement, 1.0, now);
         self.set_activity(session, activity);
-        self.told_state(session)
+        out.extend(self.told_state(session));
+        out
     }
 
     pub(crate) fn abandon(&mut self, session: SessionId, now: i64) -> Vec<Out> {

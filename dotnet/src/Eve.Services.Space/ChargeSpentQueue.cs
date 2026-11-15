@@ -13,10 +13,11 @@ namespace Eve.Services.Space;
 /// </summary>
 internal sealed class ChargeSpentQueue(Func<long, long, long, Task> persist, Action<string>? log)
 {
-    /// <summary>How long a flush waits for the database before it gives up and says so (the counts are not lost: the lane goes on).</summary>
-    private static readonly TimeSpan FlushTimeout = TimeSpan.FromSeconds(15);
+    /// <summary>How often a waiting flush reports that the lane is still waiting for the database.</summary>
+    private static readonly TimeSpan FlushLogInterval = TimeSpan.FromSeconds(15);
 
-    private const int Attempts = 4;
+    private const int InitialRetryDelayMilliseconds = 100;
+    private const int MaximumRetryDelayMilliseconds = 10_000;
 
     private readonly record struct Entry(long CharacterId, long ModuleId, long RoundsLeft, TaskCompletionSource? Flushed, Func<Task>? Work = null);
 
@@ -72,7 +73,7 @@ internal sealed class ChargeSpentQueue(Func<long, long, long, Task> persist, Act
         var flushed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         if (!lane.Channel.Writer.TryWrite(new Entry(0, 0, 0, flushed)))
         {
-            await lane.Worker.WaitAsync(FlushTimeout).ConfigureAwait(false); // closed: what it held is written when its worker ends
+            await WaitAsync(lane.Worker, session).ConfigureAwait(false); // closed: what it held is written when its worker ends
             return;
         }
         await WaitAsync(flushed.Task, session).ConfigureAwait(false);
@@ -100,13 +101,22 @@ internal sealed class ChargeSpentQueue(Func<long, long, long, Task> persist, Act
 
     private async Task WaitAsync(Task task, ulong session)
     {
-        try
+        while (true)
         {
-            await task.WaitAsync(FlushTimeout).ConfigureAwait(false);
-        }
-        catch (TimeoutException)
-        {
-            log?.Invoke($"the rounds spent by session {session} were not written within {FlushTimeout.TotalSeconds:0} seconds; they are written when the database answers");
+            try
+            {
+                await task.WaitAsync(FlushLogInterval).ConfigureAwait(false);
+                return;
+            }
+            catch (TimeoutException)
+            {
+                if (task.IsCompleted)
+                {
+                    await task.ConfigureAwait(false);
+                    return;
+                }
+                log?.Invoke($"the rounds spent by session {session} are still waiting for the database after {FlushLogInterval.TotalSeconds:0} seconds");
+            }
         }
     }
 
@@ -155,22 +165,19 @@ internal sealed class ChargeSpentQueue(Func<long, long, long, Task> persist, Act
 
     private async Task WriteAsync(long characterId, long moduleId, long roundsLeft)
     {
-        for (var attempt = 1; ; attempt++)
+        var retryDelayMilliseconds = InitialRetryDelayMilliseconds;
+        while (true)
         {
             try
             {
                 await persist(characterId, moduleId, roundsLeft).ConfigureAwait(false);
                 return;
             }
-            catch (Exception error) when (attempt < Attempts)
-            {
-                log?.Invoke($"the rounds of module {moduleId} could not be written (try {attempt}): {error.Message}");
-                await Task.Delay(TimeSpan.FromMilliseconds(100 * attempt)).ConfigureAwait(false);
-            }
             catch (Exception error)
             {
-                log?.Invoke($"the rounds of module {moduleId} could not be written: {error}");
-                return;
+                log?.Invoke($"the rounds of module {moduleId} could not be written; retrying in {retryDelayMilliseconds} ms: {error.Message}");
+                await Task.Delay(retryDelayMilliseconds).ConfigureAwait(false);
+                retryDelayMilliseconds = Math.Min(retryDelayMilliseconds * 2, MaximumRetryDelayMilliseconds);
             }
         }
     }

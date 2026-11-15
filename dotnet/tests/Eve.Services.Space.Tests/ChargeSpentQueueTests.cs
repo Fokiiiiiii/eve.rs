@@ -121,6 +121,18 @@ public class ChargeSpentQueueTests
     }
 
     [Fact]
+    public async Task A_closed_lane_keeps_retrying_until_the_last_round_count_is_persisted()
+    {
+        var store = new Store { FailuresLeft = 4 };
+        var queue = new ChargeSpentQueue(store.WriteAsync, null);
+        queue.Enqueue(1, 10, 100, 3);
+
+        await queue.CloseAsync(1);
+
+        Assert.Equal([(10L, 100L, 3L)], store.Written.ToArray());
+    }
+
+    [Fact]
     public async Task Stopping_the_host_writes_what_every_session_has_spent()
     {
         var store = new Store();

@@ -313,6 +313,92 @@ public class AmmoHostTests
     }
 
     [PgFact]
+    public async Task A_session_that_ends_keeps_its_ammo_spent_after_the_database_recovers_from_repeated_failures()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+        var attempts = 0;
+        rig.Space.ChargeWriter = async (owner, module, rounds) =>
+        {
+            if (Interlocked.Increment(ref attempts) <= 4)
+                throw new InvalidOperationException("temporary database outage");
+            await rig.Ships.SpendChargeAsync(owner, module, rounds);
+        };
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 70));
+
+        session.Close();
+        await rig.Space.QuiesceAsync();
+
+        Assert.Equal(70, (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!.Charges.Single().Quantity);
+        Assert.Equal(5, attempts);
+    }
+
+    [PgFact]
+    public async Task A_session_close_waits_for_ammunition_persistence_after_the_queue_wait_limit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, character, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+        var writerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writerGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writerFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Space.ChargeWriter = async (owner, module, rounds) =>
+        {
+            writerStarted.TrySetResult();
+            await writerGate.Task;
+            await rig.Ships.SpendChargeAsync(owner, module, rounds);
+            writerFinished.TrySetResult();
+        };
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 70));
+        await writerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        session.Close();
+        var closing = rig.Space.QuiesceAsync(TimeSpan.FromSeconds(25));
+        await Task.Delay(TimeSpan.FromSeconds(16));
+        var closeReturnedBeforeTheWrite = closing.IsCompleted;
+        var roundsBeforeRelease = (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!.Charges.Single().Quantity;
+        writerGate.TrySetResult();
+        await writerFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await closing;
+
+        Assert.False(closeReturnedBeforeTheWrite, "session close proceeded while the spent rounds were still pending");
+        Assert.Equal(80, roundsBeforeRelease);
+        Assert.Equal(70, (await rig.Ships.LoadAsync(character.CharacterId, CancellationToken.None))!.Charges.Single().Quantity);
+    }
+
+    [PgFact]
+    public async Task A_gun_activation_does_not_reload_stale_rounds_after_the_queue_wait_limit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, _, gun) = await ArmedInSpaceAsync(rig, loaded: true);
+        var writerStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writerGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var writerFinished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Space.ChargeWriter = async (owner, module, rounds) =>
+        {
+            writerStarted.TrySetResult();
+            await writerGate.Task;
+            await rig.Ships.SpendChargeAsync(owner, module, rounds);
+            writerFinished.TrySetResult();
+        };
+        rig.Sim.Say(new SimChargeSpent((ulong)session.SessionId, gun, 70));
+        await writerStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+
+        var activation = rig.Space.ActivateAsync(session, gun, "projectileFired", 980050000105, 1000, CancellationToken.None);
+        await Task.Delay(TimeSpan.FromSeconds(16));
+        var activationReturnedBeforeTheWrite = activation.IsCompleted;
+        var activationSentBeforeTheWrite = rig.Sim.Heard.OfType<SimActivate>().Any();
+        writerGate.TrySetResult();
+        await writerFinished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var answer = await activation.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.False(activationReturnedBeforeTheWrite, "activation read the charge before the spent rounds were persisted");
+        Assert.False(activationSentBeforeTheWrite, "activation sent stale rounds to the simulation");
+        Assert.Equal(ModuleResult.Done, answer);
+        var request = Assert.IsType<SimActivate>(rig.Sim.Heard.Last());
+        Assert.Equal(70, request.Effect.Turret!.Charge!.Rounds);
+    }
+
+    [PgFact]
     public async Task A_change_of_the_rounds_of_a_gun_that_runs_is_made_after_the_counts_told_before_the_answer_and_before_those_told_after_it()
     {
         await using var rig = await Rig.CreateAsync();

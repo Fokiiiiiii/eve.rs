@@ -2263,6 +2263,19 @@ private static void WriteStructureDamageCorrelation(
                     w.U8(reach.Jammed ? (byte)1 : (byte)0);
                 }
                 break;
+            case SimSmartbombHit m:
+                w.U8(Kind.SmartbombHit);
+                w.U64(m.SessionId);
+                w.I64(m.ShipId);
+                w.I64(m.ModuleId);
+                w.U32((uint)m.Targets.Count);
+                foreach (var target in m.Targets)
+                {
+                    w.I64(target.ShipId);
+                    w.I64(target.CharacterId);
+                    w.I32(target.TypeId);
+                }
+                break;
             case SimFighterLanded m:
                 w.U8(Kind.FighterLanded);
                 w.U64(m.SessionId);

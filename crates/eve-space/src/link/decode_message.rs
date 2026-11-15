@@ -2568,6 +2568,18 @@ impl Message {
                 }
                 Message::EcmBurst { session_id, ship_id, reached }
             }
+            kind::SMARTBOMB_HIT => {
+                let (session_id, ship_id, module_id) = (r.u64()?, r.i64()?, r.i64()?);
+                let count = r.u32()? as usize;
+                if count > r.data.len() / 20 {
+                    return Err(DecodeError::Truncated);
+                }
+                let mut targets = Vec::with_capacity(count);
+                for _ in 0..count {
+                    targets.push((r.i64()?, r.i64()?, r.i32()?));
+                }
+                Message::SmartbombHit { session_id, ship_id, module_id, targets }
+            }
             kind::REMOTE_REPAIR_CYCLE => {
                 let session_id = r.u64()?;
                 let module_id = r.i64()?;

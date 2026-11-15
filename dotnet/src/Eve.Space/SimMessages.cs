@@ -1110,6 +1110,10 @@ public sealed record SimFighterReleased(ulong SessionId, long FighterId, IReadOn
 /// <summary>One ship an ECM burst reached: its item id, and whether the roll of the burst jammed it.</summary>
 public readonly record struct SimBurstReach(long ShipId, bool Jammed);
 
+/// <summary>A pilot's smartbomb actually hit a ship in its blast: Host Crimewatch records the offense for that module and target.</summary>
+public readonly record struct SimSmartbombTarget(long ShipId, long CharacterId, int TypeId);
+public sealed record SimSmartbombHit(ulong SessionId, long ShipId, long ModuleId, IReadOnlyList<SimSmartbombTarget> Targets) : SimMessage;
+
 /// <summary>
 /// An ECM burst reached the ships about it on the simulation's account: the ship that runs it, and each ship reached (a cloaked ship is not reached), with whether its
 /// roll jammed it. The host records the attack on each pilot reached.

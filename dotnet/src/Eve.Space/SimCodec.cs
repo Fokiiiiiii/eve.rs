@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 97;
+    public const ushort ProtocolVersion = 98;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -983,6 +983,21 @@ public static partial class SimCodec
                         reached[i] = new SimBurstReach(target, jammed);
                     }
                     message = new SimEcmBurst(session, ship, reached);
+                    break;
+                }
+            case Kind.SmartbombHit:
+                {
+                    var session = r.U64();
+                    var ship = r.I64();
+                    var module = r.I64();
+                    var count = r.U32();
+                    if (count > r.Remaining / 20)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var targets = new SimSmartbombTarget[count];
+                    for (var i = 0; i < targets.Length; i++) targets[i] = new SimSmartbombTarget(r.I64(), r.I64(), r.I32());
+                    message = new SimSmartbombHit(session, ship, module, targets);
                     break;
                 }
             case Kind.FighterGotoPoint:

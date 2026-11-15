@@ -172,6 +172,26 @@ impl Scene {
             ],
         );
         let mut out = self.tell_all(session, vec![wave]);
+        if self.pilots.get(&session).is_some_and(|pilot| pilot.ship.spec.character_id > 0) {
+            let targets: Vec<_> = in_range
+                .iter()
+                .filter_map(|(target_session, target_ship_id)| {
+                    let pilot = self.pilots.get(target_session)?;
+                    (pilot.ship.spec.character_id > 0
+                        && pilot.protected_until <= at
+                        && !self.is_tethered_session(*target_session, at))
+                    .then_some((*target_ship_id, pilot.ship.spec.character_id, pilot.ship.spec.type_id))
+                })
+                .collect();
+            if !targets.is_empty() {
+                out.push(Out::SmartbombHit {
+                    session,
+                    ship_id: attacker_id,
+                    module_id: effect.module_id,
+                    targets,
+                });
+            }
+        }
         // the missiles on their way within its reach are hurt as well, by the damage the bomb does (their own hit points, not a ship's): the pilot's own are spared
         let (centre, reach) = {
             let ship = &self.pilots[&session].ship;

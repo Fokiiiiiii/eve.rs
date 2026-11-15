@@ -166,6 +166,8 @@ public const byte UpdateEffect = 61;
         public const byte RemoveAbyssalTraceReply = 109;
         public const byte RemoveAbyssalParticipant = 110;
         public const byte RemoveAbyssalParticipantReply = 111;
+        /// <summary>The simulation reports smartbomb victims to the Host for Crimewatch (protocol 98).</summary>
+        public const byte SmartbombHit = 164;
         public const byte GetAbyssalParticipantPose = 112;
         public const byte GetAbyssalParticipantPoseReply = 113;
         public const byte EnsureAbyssalSceneObject = 114;

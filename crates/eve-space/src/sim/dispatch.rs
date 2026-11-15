@@ -270,6 +270,9 @@ impl Sim {
             Out::EcmBurst { session, ship_id, reached } => {
                 Message::EcmBurst { session_id: session, ship_id, reached }
             }
+            Out::SmartbombHit { session, ship_id, module_id, targets } => {
+                Message::SmartbombHit { session_id: session, ship_id, module_id, targets }
+            }
             Out::FighterSize { session, fighter_id, size } => {
                 Message::FighterSize { session_id: session, fighter_id, size }
             }
@@ -1141,11 +1144,13 @@ impl Sim {
                     3 => Departure::Ejected,
                     _ => Departure::Boarded,
                 };
+                let preserve_client_ballpark = matches!(why, Departure::Ejected | Departure::Boarded)
+                    && self.scene_of(session_id).is_some_and(|scene| scene.is_bound(session_id));
                 let mut told = match self.scene_of(session_id) {
                     Some(scene) => scene.leave(session_id, why, now).unwrap_or_default(),
                     None => Vec::new(),
                 };
-                if matches!(why, Departure::Ejected | Departure::Boarded) {
+                if preserve_client_ballpark {
                     if let Some(system) = self.sessions.remove(&session_id) {
                         self.widowed.insert(session_id, system);
                     }

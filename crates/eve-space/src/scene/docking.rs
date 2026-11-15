@@ -128,16 +128,18 @@ impl Scene {
 
         if matches!(why, Departure::Ejected | Departure::Boarded) {
             // Preserve the client's ballpark while its active ship changes.
-            self.widowed.insert(
-                session,
-                Widow {
-                    bound: pilot.bound,
-                    sees: pilot.sees.clone(),
-                    sees_wrecks: pilot.sees_wrecks.clone(),
-                    sees_abyssal_traces: pilot.sees_abyssal_traces.clone(),
-                    sees_asteroids: pilot.sees_asteroids.clone(),
-                },
-            );
+            if pilot.bound {
+                self.widowed.insert(
+                    session,
+                    Widow {
+                        bound: pilot.bound,
+                        sees: pilot.sees.clone(),
+                        sees_wrecks: pilot.sees_wrecks.clone(),
+                        sees_abyssal_traces: pilot.sees_abyssal_traces.clone(),
+                        sees_asteroids: pilot.sees_asteroids.clone(),
+                    },
+                );
+            }
             // An ejected hull (or the capsule left when boarding) remains a moving,
             // targetable ship. Give it a simulation-only session until it is boarded.
             let fake_session = (1_u64 << 61).saturating_add(self.next_entry());

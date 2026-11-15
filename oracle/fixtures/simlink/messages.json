@@ -4543,6 +4543,18 @@
    "hex": "27000000434f2c3859955c060093b3089b150900000200000004bc089b150900000105bc089b1509000000"
   },
   {
+   "name": "a smartbomb reports each player ship it hit",
+   "kind": "SmartbombHit",
+   "sessionId": "1790646377000015",
+   "shipId": "9988400001939",
+   "moduleId": "9988400001940",
+   "targets": [
+    {"shipId": "9988400004100", "characterId": "2000001", "typeId": 638},
+    {"shipId": "9988400004101", "characterId": "2000002", "typeId": 29}
+   ],
+   "hex": "45000000a44f2c3859955c060093b3089b1509000094b3089b150900000200000004bc089b1509000081841e00000000007e02000005bc089b1509000082841e00000000001d000000"
+  },
+  {
    "name": "destroy for a pilot to loot",
    "kind": "Destroy",
    "shipId": "980050000077",
@@ -8028,6 +8040,11 @@
    "name": "ECM burst cut short before its ship",
    "reason": "truncated",
    "hex": "0c000000430100000000000000000000"
+  },
+  {
+   "name": "smartbomb hit promises a target whose owner record is truncated",
+   "reason": "truncated",
+   "hex": "30000000a40100000000000000020000000000000003000000000000000100000004000000000000000500000000000000060000"
   },
   {
    "name": "warp probe with no lifetime",

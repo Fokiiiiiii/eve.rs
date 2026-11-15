@@ -47,7 +47,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 97;
+pub const PROTOCOL_VERSION: u16 = 98;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -1618,6 +1618,13 @@ pub enum Message {
         ship_id: i64,
         reached: Vec<(i64, bool)>,
     },
+    /// A smartbomb hit ships on the simulation's account; the host records player targets for Crimewatch.
+    SmartbombHit {
+        session_id: u64,
+        ship_id: i64,
+        module_id: i64,
+        targets: Vec<(i64, i64, i32)>,
+    },
     /// The answer to `COMMAND_MEASURE`: metres from the centre of the ship to the surface of the wreck or can, or none when there is no such wreck.
     Measured {
         session_id: u64,
@@ -1824,6 +1831,7 @@ impl Message {
             Self::ModuleEnded { .. } => kind::MODULE_ENDED,
             Self::ModuleActivityRefresh { .. } => kind::MODULE_ACTIVITY_REFRESH,
             Self::EcmBurst { .. } => kind::ECM_BURST,
+            Self::SmartbombHit { .. } => kind::SMARTBOMB_HIT,
             Self::Measured { .. } => kind::MEASURED,
             Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,
             Self::UpdateEffect { .. } => kind::UPDATE_EFFECT,

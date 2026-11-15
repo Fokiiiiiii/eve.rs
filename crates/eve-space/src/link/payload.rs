@@ -1817,6 +1817,17 @@ impl Message {
                     out.push(u8::from(*jammed));
                 }
             }
+            Self::SmartbombHit { session_id, ship_id, module_id, targets } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.extend_from_slice(&(targets.len() as u32).to_le_bytes());
+                for (ship_id, character_id, type_id) in targets {
+                    out.extend_from_slice(&ship_id.to_le_bytes());
+                    out.extend_from_slice(&character_id.to_le_bytes());
+                    out.extend_from_slice(&type_id.to_le_bytes());
+                }
+            }
             Self::FighterReleased { session_id, fighter_id, position } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&fighter_id.to_le_bytes());

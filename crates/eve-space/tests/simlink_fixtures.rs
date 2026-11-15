@@ -2187,6 +2187,23 @@ fn message_of(case: &Value) -> Message {
                 .map(|r| (wide(r, "shipId"), r["jammed"].as_bool().unwrap()))
                 .collect(),
         },
+        "SmartbombHit" => Message::SmartbombHit {
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            module_id: wide(case, "moduleId"),
+            targets: case["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|target| {
+                    (
+                        wide(target, "shipId"),
+                        wide(target, "characterId"),
+                        target["typeId"].as_i64().unwrap() as i32,
+                    )
+                })
+                .collect(),
+        },
         "Destroy" => Message::Destroy {
             ship_id: wide(case, "shipId"),
             credit: Credit {

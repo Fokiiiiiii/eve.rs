@@ -981,6 +981,35 @@ fn scoop_removes_an_abandoned_ship_from_the_scene_before_acknowledging_it() {
 }
 
 #[test]
+fn an_unbound_ejected_staging_session_does_not_keep_a_ballpark_widow() {
+    let mut simulation = sim();
+    let scene_key = SceneKey::solar_system(SYSTEM);
+    let ship_id = spec().ship_id;
+    simulation
+        .handle(
+            Message::Enter(Box::new(Enter {
+                session_id: SESSION,
+                scene: scene_key,
+                how: How::InSpace,
+                station_id: 0,
+                ship: spec(),
+                position: Some([100.0, 0.0, 0.0]),
+                direction: Some([1.0, 0.0, 0.0]),
+            })),
+            NOON,
+        )
+        .unwrap();
+
+    simulation.handle(Message::Leave { session_id: SESSION, why: 3 }, NOON + SECOND).unwrap();
+
+    let scene = &simulation.scenes[&scene_key];
+    assert!(scene.unpiloted.contains_key(&ship_id), "the restored hull stays targetable");
+    assert!(!scene.awaiting_respawn(SESSION), "a synthetic session has no client ballpark to preserve");
+    assert!(!simulation.widowed.contains_key(&SESSION));
+    assert!(!simulation.sessions.contains_key(&SESSION));
+}
+
+#[test]
 fn host_wormhole_slim_updates_reach_bound_pilots_as_slim_item_changes() {
     let mut sim = undocked();
     sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
@@ -4989,5 +5018,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         )
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 97);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 98);
 }

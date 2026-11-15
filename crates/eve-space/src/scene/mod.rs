@@ -375,6 +375,8 @@ pub enum Out {
     FighterSize { session: SessionId, fighter_id: i64, size: i32 },
     /// An ECM burst reached the ships about it (not cloaked ones): the ship that runs it, and each ship reached with whether its roll jammed it.
     EcmBurst { session: SessionId, ship_id: i64, reached: Vec<(i64, bool)> },
+    /// A pilot's smartbomb hit the ships in its blast; the host records each player victim for Crimewatch.
+    SmartbombHit { session: SessionId, ship_id: i64, module_id: i64, targets: Vec<(i64, i64, i32)> },
     /// The answer to an order to drones: for each drone `None` when it took the order, the reason when it did not.
     DroneResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
     /// A completed drone work cycle waiting for authoritative inventory/cargo settlement by the host.
@@ -503,6 +505,7 @@ impl Out {
             | Out::FighterResults { session, .. }
             | Out::FighterSize { session, .. }
             | Out::EcmBurst { session, .. }
+            | Out::SmartbombHit { session, .. }
             | Out::TargetRefused { session, .. }
             | Out::DeployedLit { session, .. }
             | Out::Position { session, .. }
@@ -1133,6 +1136,10 @@ impl Scene {
 
     pub fn contains(&self, session: SessionId) -> bool {
         self.pilots.contains_key(&session)
+    }
+
+    pub(crate) fn is_bound(&self, session: SessionId) -> bool {
+        self.pilots.get(&session).is_some_and(|pilot| pilot.bound)
     }
 
     /// The ship of a session, as it is at `now`.

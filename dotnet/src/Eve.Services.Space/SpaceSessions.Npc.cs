@@ -19,6 +19,8 @@ namespace Eve.Services.Space;
 
 public sealed partial class SpaceSessions
 {
+    private const long ConcordPunishmentRetryMs = 1_000;
+
     /// <summary>The item id of the first hull of <c>/deathtest</c>: the reference numbers its transient ships from about here (the ids of the items in the database are far below).</summary>
     private const long HullIdBase = 4_200_000_000_000_000;
 
@@ -877,6 +879,7 @@ public sealed partial class SpaceSessions
         var position = await PositionOfAsync(current.Session, current.ShipId, CancellationToken.None);
         if (position is not { } targetPoint)
         {
+            await RetryConcordPunishmentIfActiveAsync(characterId, solarSystemId, battleships, credit);
             return;
         }
 
@@ -894,7 +897,28 @@ public sealed partial class SpaceSessions
         if (composition.Count != 0)
         {
             await FinishConcordPunishmentAsync(characterId, solarSystemId, credit);
+            return;
         }
+
+        await RetryConcordPunishmentIfActiveAsync(characterId, solarSystemId, battleships, credit);
+    }
+
+    private async Task RetryConcordPunishmentIfActiveAsync(
+        long characterId,
+        long solarSystemId,
+        IReadOnlyList<NpcProfile> battleships,
+        SimCredit credit)
+    {
+        if (CrimewatchStateOf is not { } readState)
+            return;
+        var state = await readState(characterId, CancellationToken.None);
+        if (!state.IsCriminal(_nowUnixMs()) || state.SolarSystemId != solarSystemId)
+            return;
+
+        _timers.Set(
+            $"space:concord:punishment:{characterId}:{solarSystemId}",
+            TimeSpan.FromMilliseconds(ConcordPunishmentRetryMs),
+            () => FinishConcordResponseAsync(characterId, solarSystemId, battleships, credit));
     }
 
     private Task FinishConcordPunishmentAsync(long characterId, long solarSystemId, SimCredit credit)

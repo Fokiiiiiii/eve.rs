@@ -323,7 +323,7 @@ public class RuntimeTests : IAsyncLifetime
         runtime.ConcordResponseDue += response =>
         {
             responses.Add(response);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         };
 
         var offense = Attack(1, 2, SecurityClass.HighSec, System, capsule: false);
@@ -349,6 +349,35 @@ public class RuntimeTests : IAsyncLifetime
     }
 
     [PgFact]
+    public async Task A_failed_concord_response_is_retried_while_the_criminal_timer_is_active()
+    {
+        Pilot(1, System);
+        Pilot(2, System);
+        using var runtime = Runtime();
+        var attempts = 0;
+        runtime.ConcordResponseDue += _ =>
+        {
+            attempts++;
+            return Task.FromResult(attempts > 1);
+        };
+
+        await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, capsule: false));
+        var firstWait = Assert.Single(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(10_005));
+        _now = Start + 10_005;
+        firstWait.Done.TrySetResult();
+        await Settle(() => _waits.Made.Any(wait => wait.After == TimeSpan.FromMilliseconds(1_005)));
+
+        Assert.Equal(1, attempts);
+        var retryWait = Assert.Single(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(1_005));
+        _now += 1_000;
+        retryWait.Done.TrySetResult();
+        await Settle(() => attempts == 2);
+
+        Assert.Equal(2, attempts);
+        Assert.Single(_waits.Made, wait => wait.After == TimeSpan.FromMilliseconds(1_005));
+    }
+
+    [PgFact]
     public async Task Low_security_grants_a_kill_right_only_for_a_criminal_capsule_attack_without_concord()
     {
         Pilot(1, System);
@@ -366,7 +395,7 @@ public class RuntimeTests : IAsyncLifetime
         runtime.ConcordResponseDue += response =>
         {
             responses.Add(response);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         };
 
         var shipAttack = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.LowSec, System, capsule: false));
@@ -388,7 +417,7 @@ public class RuntimeTests : IAsyncLifetime
         runtime.ConcordResponseDue += response =>
         {
             responses.Add(response);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         };
 
         await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.HighSec, System, capsule: false));
@@ -418,7 +447,7 @@ public class RuntimeTests : IAsyncLifetime
         runtime.ConcordResponseDue += response =>
         {
             responses.Add(response);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         };
 
         var criminal = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.LowSec, System, capsule: true));
@@ -444,7 +473,7 @@ public class RuntimeTests : IAsyncLifetime
         runtime.ConcordResponseDue += response =>
         {
             responses.Add(response);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         };
 
         var criminal = await runtime.RecordAggressionAsync(Attack(1, 2, SecurityClass.LowSec, System, capsule: true));
@@ -865,7 +894,7 @@ public class RuntimeTests : IAsyncLifetime
         resumed.ConcordResponseDue += response =>
         {
             responses.Add(response);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         };
 
         await resumed.ResumeAsync();
@@ -894,7 +923,7 @@ public class RuntimeTests : IAsyncLifetime
         resumed.ConcordResponseDue += response =>
         {
             responses.Add(response);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         };
 
         await resumed.ResumeAsync();

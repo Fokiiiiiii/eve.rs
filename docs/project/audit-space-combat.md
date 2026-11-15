@@ -4,6 +4,22 @@
 
 ## 確認済み、修正
 
+### 一時的なスポーン拒否で CONCORD 応答と船の処罰が失われる
+
+V24.01 client の `eve/client/script/ui/services/crimewatchSvc.py:96-103` は session change 時に `GetClientStates` から犯罪タイマーを読み、`:240-253` は `OnCriminalTimerUpdate` と `OnSystemCriminalFlagUpdates` を表示状態へ反映する。CONCORD 出現は server 側の応答であり、client の timer notification は応答完了を意味しない。EveJS `server/src/services/security/crimewatchState.js:3266-3342` は応答 record を保ち、`:5169-5185` で responder が0隻なら `dueAtMs = now + 1_000` として再試行する。
+
+旧 eve.rs は `CrimewatchRuntime.DispatchConcordResponseAsync` が一度だけ Host callback を呼び、完了・例外どちらでも dedup key を消していた。Host の `SpaceComposition.cs` は `RespondToCriminalAsync` の結果を破棄していたため、pilot / profile / position が一時的に見つからないか sim が spawn を拒否した場合、犯罪 timer が続いていても responder の再試行は登録されなかった。また最初の cruiser spawn 後に15秒で行う battleship spawn が拒否された場合も `composition.Count == 0` のまま終了し、CONCORD による船の破壊まで進まなかった。修正前に追加した Runtime と Space の DB-backed regression test はどちらも再試行 timer が無いことで失敗した。
+
+Host callback が受理結果 (`bool`) を返すようにし、明示的な拒否の場合だけ Crimewatch が1秒後の再試行を登録する。再試行前に DB state が同じ system の有効な criminal flag であることを確認し、期限切れや system 移動後は止める。結果が曖昧な例外は二重 spawn を避けるため自動再試行しない。15秒後の battleship spawn も position 不在または明示的拒否のとき、同じ flag / system 条件を見て1秒後に再試行し、受理後に船を破壊する。
+
+`RuntimeTests.A_failed_concord_response_is_retried_while_the_criminal_timer_is_active` は初回拒否後に callback が再度呼ばれること、`SpaceServiceTests.Concord_punishment_retries_after_a_temporary_spawn_refusal` は拒否した battleship spawn の再受理後に offender の `SimDestroy` が送られることを検証する。`ConcordResponseHostTests.Host_wiring_reports_a_rejected_concord_spawn_so_crimewatch_retries_it` は production Host callback 登録から DB-backed Crimewatch timer までを確認する。テスト DB は `eve_p5`。
+
+### 命中率1%未満で命中率より大きいrollがwrecking hitになる
+
+V24.01 client の `eve/client/script/environment/godma.py:502-533` は server の `OnDamageMessage` の `hitQuality` を turret / damage 表示へ渡し、`eve/client/script/ui/shared/uilog.py:210-220,278-305` は同じ値を combat log 文言にする。client は命中判定を再計算しないため、server の hit / miss と quality が authoritative である。EveJS `server/src/space/combat/laserTurrets.js:138-175` はまず `roll >= hitChance` を miss にし、命中した roll のみ `roll < 0.01` なら wrecking quality にする。二次資料の [EVE University turret mechanics](https://wiki.eveuniversity.org/Turret_mechanics) も hit には random roll が hit chance を下回る必要があると記している。
+
+旧 Rust `weapons::math::resolve_shot` は `chance < 0.01` でも `roll < 0.01` を先に wrecking と判定し、`roll >= chance` を通していた。修正前に境界テストを実行すると、chance `0.002122`、roll `0.005` で `hit: true, wrecking: true` となり失敗した。miss の判定を先にし、残った hit のみ wrecking quality を付けるようにした。回帰テストはこのmissと、同じ低命中率でも chance を下回るrollがwreckすることの両方を検査する。
+
 ### 遠方の構造物を攻撃するドローンが接近しない
 
 V24.01 の `eveCommands.py:1252-1261` は `CmdDronesEngage` から `PerformPrimaryAction` を呼び、`droneFunctions.py:59-98` は安全判定後に entity の `CmdEngage(droneIDs, targetID)` を送る。Host は `EntityService.cs:50-53` で bound RPC を登録し、`SpaceDrones.cs:413-428` から制御距離込みで simulator に渡す。したがって遠方の対象でも、受理後にドローンが対象へ移動して攻撃距離へ入る必要がある。EveJS `droneRuntime.js:5312-5387` は対象 / 制御距離 / 攻撃可能性を検査し、`:4221-4268` は pursuit / approaching / combat の状態を設定、`:3668-3725` は pursuit の移動を開始する。
@@ -30,6 +46,12 @@ retry を最大10秒の指数 backoff で成功まで続ける。flush / close �
 
 ## 誤検出
 
+### 切断で15秒後の CONCORD 処罰が失われる
+
+この疑いは、ログアウトした船に対する処罰がそのまま失われるという範囲では誤検出。eve.rs は通常の切断で `OnSessionClosedAsync` から保存後に `LeaveWhy.LoggedOff` を sim へ送り、15秒 callback 時に `_pilots` から対象が消えていれば何もせず戻る (`SpaceSessions.cs:1511-1512,1547-1578`; `SpaceSessions.Npc.cs:863-878`)。ただし reconnect 後の宇宙 entry は `SpaceSessions.cs:814-817` から `NotifyPilotEnteredSystemAsync` を通り、`CrimewatchRuntime.OnSystemEnteredAsync` が有効な criminal timer と high-sec entry を確認して新しい response を予約する (`SpaceSessions.Modules.cs:608-621`; `CrimewatchRuntime.cs:829-864`)。
+
+EveJS も切断時の通常 detach では ship entity を grid から外す (`server/src/space/runtime/scene/sessions.js:1423-1429`)。一方、Crimewatch は response record を保持し、offender 不在時は responder を止めて次回の retask を予約し、active criminal の response を回復する (`server/src/services/security/crimewatchState.js:4996-5055,5092-5166`)。したがって通常切断中の ship は空間上に残らず、criminal timer 中の再 entry で eve.rs は response を再予約する。ログアウトした pilot の ship をその場で破壊する必要があるという根拠はなく、修正は行わなかった。実 reconnect GUI シナリオは未実行。
+
 ### Abyssal 転送時に旧 session の pending Destiny 通知を新 session へ付け替える必要がある
 
 この疑いは誤検出。V24.01 `michelle.py:482-485` は ballpark が無い間の `DoDestinyUpdate` を無視し、`:968-987` の `SetState` は `DoBallClear` の後に全 state を読み直してから有効化する。EveJS `runtime/scene/presentation.js:772-815,928-956` も新 session 向けの `SetState` と bootstrap updates を作り、その後に one-shot updates を送る。Host `SpaceSessions.cs:1104-1113` は通知の `SessionId` に一致する現在の pilot にだけ送るため、旧 session の通知を新 session に再割当てしない。
@@ -52,3 +74,6 @@ retry を最大10秒の指数 backoff で成功まで続ける。flush / close �
 - .NET `Eve.Services.Space` Release build は 0 warnings / 0 errors。`ChargeSpentQueueTests` と PostgreSQL-backed `AmmoHostTests` は `eve_p5` で合計22 passed、0 failed、0 skipped。追加前に実行した `DroneHostTests` は29 passed、0 failed、0 skipped。
 - Rust `cargo fmt --package eve-space -- --check`、`cargo check -p eve-space`、`cargo clippy -p eve-space --all-targets -- -D warnings` は成功。focused drone tests は4 passed、cyno arrival test は1 passed。
 - 全 suite、実 client、再起動をまたぐ未flush queue の crash recovery は未確認。EveJS の全 end-to-end flow も実行していない。
+- 今回の Crimewatch Runtime class は Release で42 passed、SpaceServiceTests class は172 passed、Host 配線 test は1 passed。すべて `eve_p5` のDB付き、0 failed / 0 skipped。
+- 今回の Rust weapon slice は91 passed、0 failed。`cargo fmt --package eve-space -- --check`、`cargo check -p eve-space`、`cargo clippy -p eve-space --all-targets -- -D warnings` はすべて成功。
+- current `origin/main` の CI run 1807 (`467fdde6`) は Host の Release build で `OmegaLicenses.TrainingHistory` 不在により失敗。これは今回の space 変更ではない。red gate のため push は保留し、実 V24.01 GUI と EveJS の全 server flow は今回実行していない。

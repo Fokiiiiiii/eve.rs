@@ -80,7 +80,7 @@ def test_zlib_wrapped_payloads_are_inflated_and_recorded_as_zlib():
     (record,) = records_of([wrapped])
     assert record["encoding"] == "zlib" and record["type"] == "CallReq"
 
-def test_client_notification_keeps_the_existing_capture_record_shape():
+def test_client_notification_capture_keeps_the_method_name_and_wire_parts():
     released = [("N=65450:6", m.BigUnsigned(134391092820280000))]
     payload = ((1, m.SubStream(value=(released, "ClientHasReleasedTheseObjects", (), m.Dict([("machoVersion", 1)])))),)
     named = m.Dict([("OID-", m.Dict(released))])
@@ -95,12 +95,11 @@ def test_client_notification_keeps_the_existing_capture_record_shape():
 
     (record,) = records_of([raw])
 
-    # The existing decoder records the broadcast ID here and retains the body under $unknown.
-    assert record["method"] == 65450
-    assert set(record) == {
-        "seq", "t", "dir", "conn", "stage", "encoding", "type", "service", "call_id", "method", "args"
-    }
-    assert isinstance(record["args"].get("$unknown"), str)
+    assert record["method"] == "ClientHasReleasedTheseObjects"
+    assert record["args"] == {"$tuple": []}
+    assert record["kwargs"] == {"$dict": [["machoVersion", 1]]}
+    assert record["prefix"] == {"$tuple": [[{"$tuple": ["N=65450:6", {"$bigunsigned": 134391092820280000}]}]]}
+    assert record["named_payload"] == {"$dict": [["OID-", {"$dict": [["N=65450:6", {"$bigunsigned": 134391092820280000}]]}]]}
 
 def test_bound_call_keeps_the_existing_capture_record_shape():
     handle = ("N=65450:6", m.Long(134391092820280000))
@@ -210,14 +209,24 @@ def result(seq, value, service="machoNet", call_id=1, conn=1):
     return {"seq": seq, "dir": "s2c", "conn": conn, "stage": "macho", "encoding": "marshal", "type": "CallRsp",
             "service": service, "call_id": call_id, "result": value}
 
+def error(seq, code, payload, service="machoNet", call_id=1, conn=1):
+    return {"seq": seq, "dir": "s2c", "conn": conn, "stage": "macho", "encoding": "marshal", "type": "ErrorResponse",
+            "service": service, "call_id": call_id, "error": {"code": code, "payload": payload}}
+
+def notice(seq, method, args=None, conn=1):
+    return {"seq": seq, "dir": "s2c", "conn": conn, "stage": "macho", "encoding": "marshal", "type": "Notification",
+            "service": "notificationMgr", "call_id": None, "method": method, "args": args or {"$tuple": []}}
+
 def write(path, records):
     path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
     return path
 
-def diff(tmp_path, reference, candidate, *, ignore, extra=()):
+def diff(tmp_path, reference, candidate, *, ignore, extra=(), all_calls=False):
     a = write(tmp_path / "a.jsonl", reference)
     b = write(tmp_path / "b.jsonl", candidate)
     args = ["diff", str(a), str(b)] + (["--ignore-volatile"] if ignore else []) + list(extra)
+    if not all_calls:
+        args.append("--first")
     return mitm.main(args)
 
 def test_identical_calls_are_identical(tmp_path, capsys):
@@ -231,6 +240,80 @@ def test_a_different_call_order_is_the_first_divergence(tmp_path, capsys):
     assert diff(tmp_path, a, b, ignore=True) == 1
     out = capsys.readouterr().out
     assert "first divergence at event 0" in out and "call order" in out
+
+def test_full_diff_reports_each_call_reply_error_and_notification_order(tmp_path, capsys):
+    ref = [
+        call(1, "GetBalance", call_id=1),
+        result(2, {"$long": 15}, call_id=1),
+        call(3, "PlaceOrder", call_id=2),
+        error(4, {"$unicode": "UserError"}, {"$tuple": ["MktInvalidPrice", {"$dict": [["info", {"$unicode": "Bad price"}]]}]}, call_id=2),
+        notice(5, "OnWalletChanged"),
+        notice(6, "OnOrderChanged"),
+    ]
+    got = [
+        call(1, "GetBalance", call_id=11),
+        call(2, "PlaceOrder", call_id=12),
+        error(3, {"$unicode": "MachoFailed"}, {"$tuple": ["MktInvalidPrice", {"$dict": [["info", {"$unicode": "Price rejected"}]]}]}, call_id=12),
+        notice(4, "OnOrderChanged"),
+        notice(5, "OnWalletChanged"),
+        error(6, {"$unicode": "MachoFailed"}, {"$tuple": ["Unmatched"]}, call_id=99),
+    ]
+
+    assert diff(tmp_path, ref, got, ignore=True, all_calls=True) == 1
+    out = capsys.readouterr().out
+    assert "GetBalance" in out and "reply presence differs" in out
+    assert "PlaceOrder" in out and "error code differs" in out and "error text differs" in out
+    assert "notification name/order differs" in out
+    assert "OnWalletChanged" in out and "OnOrderChanged" in out
+    assert "candidate orphan reply" in out and "call_id=99" in out
+
+def test_full_diff_checks_reply_shapes_but_ignores_changed_leaf_values(tmp_path, capsys):
+    ref = [call(1, "GetState"), result(2, {"$tuple": [{"$long": 15}, {"$dict": [["balance", {"$long": 90}]]}]})]
+    same_shape = [call(1, "GetState"), result(2, {"$tuple": [{"$long": 99}, {"$dict": [["balance", {"$long": 500}]]}]})]
+    assert diff(tmp_path, ref, same_shape, ignore=True, all_calls=True) == 0
+    assert "identical" in capsys.readouterr().out
+
+    changed_shape = [call(1, "GetState"), result(2, {"$tuple": [{"$long": 99}, {"$dict": [["balance", {"$long": 500}]]}, {"$none": None}]})]
+    assert diff(tmp_path, ref, changed_shape, ignore=True, all_calls=True) == 1
+    assert "reply marshal shape differs" in capsys.readouterr().out
+
+def test_full_diff_reports_one_sided_calls_without_replies(tmp_path, capsys):
+    ref = [call(1, "GetBalance"), call(2, "GetOrders", call_id=2)]
+    got = [call(1, "GetBalance")]
+    assert diff(tmp_path, ref, got, ignore=True, all_calls=True) == 1
+    out = capsys.readouterr().out
+    assert "GetOrders" in out and "request missing from candidate; reply=missing" in out
+
+def test_full_diff_aligns_later_sessions_by_handshake_account_after_extra_retry(tmp_path, capsys):
+    def login(seq, conn, user):
+        value = {"$tuple": [{"$buffer": "challenge"}, {"$dict": [["user_name", user]]}]}
+        return {"seq": seq, "dir": "c2s", "conn": conn, "stage": "handshake", "encoding": "marshal", "value": value}
+
+    ref = [login(1, 1, "evecli-live"), call(2, "GetTime", call_id=1, conn=1),
+           login(3, 2, "evecli-main-aaaaaaaaaa"), call(4, "GetInitVals", call_id=1, conn=2)]
+    got = [login(1, 1, "evecli-live"), call(2, "GetTime", call_id=1, conn=1),
+           login(3, 2, "evecli-retry-bbbbbbbbbb"), call(4, "GetBalance", call_id=1, conn=2),
+           login(5, 3, "evecli-main-cccccccccc"), call(6, "GetInitVals", call_id=1, conn=3)]
+    assert diff(tmp_path, ref, got, ignore=True, all_calls=True) == 1
+    out = capsys.readouterr().out
+    assert "SAME user=evecli-live" in out and "SAME user=evecli-main-*" in out
+    assert "candidate-only #1 machoNet.GetBalance" in out
+
+def test_full_diff_pairs_the_scenario_socket_after_an_identity_setup_login(tmp_path, capsys):
+    def login(seq, conn):
+        value = {"$tuple": [{"$buffer": "challenge"}, {"$dict": [["user_name", "evecli-agent"]]}]}
+        return {"seq": seq, "dir": "c2s", "conn": conn, "stage": "handshake", "encoding": "marshal", "value": value}
+
+    ref = [login(1, 1), call(2, "GetServiceInfo", call_id=1, conn=1),
+           call(3, "CreateCharacter", call_id=2, conn=1)]
+    got = [login(1, 1), call(2, "GetServiceInfo", call_id=1, conn=1),
+           login(3, 2), call(4, "GetServiceInfo", call_id=1, conn=2),
+           call(5, "CreateCharacter", call_id=2, conn=2)]
+    assert diff(tmp_path, ref, got, ignore=True, all_calls=True) == 1
+    out = capsys.readouterr().out
+    assert "SAME user=evecli-agent connection#1 #2 machoNet.CreateCharacter" in out
+    assert "candidate-only #1 machoNet.GetServiceInfo" in out
+    assert "reference-only" not in out
 
 def test_a_result_shape_change_is_reported_even_when_volatile_fields_are_ignored(tmp_path, capsys):
     a = [call(1, "GetInitVals"), result(2, {"$tuple": [{"$long": 1}]})]

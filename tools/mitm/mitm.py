@@ -14,6 +14,7 @@ A payload that does not decode is logged as raw hex and forwarded all the same.
 from __future__ import annotations
 
 import argparse
+import difflib
 import gzip
 import json
 import os
@@ -24,6 +25,8 @@ import sys
 import threading
 import time
 import zlib
+from collections import defaultdict
+from difflib import SequenceMatcher
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "headless-client"))
@@ -68,6 +71,52 @@ def _is_macho_packet(name):
     return text.startswith("macho.") or "machoNetPacket." in text
 
 
+def _notification_parts(packet):
+    """Return the method, arguments, kwargs and any release prefix in a decoded notification body."""
+    payload = packet.payload
+    if isinstance(payload, (tuple, list)) and len(payload) == 1:
+        payload = payload[0]
+    if isinstance(payload, (tuple, list)) and len(payload) == 2 and isinstance(payload[0], int):
+        payload = payload[1]
+    if isinstance(payload, m.SubStream):
+        payload = payload.value if payload.raw is None else m.decode(bytes(payload.raw))
+    if isinstance(payload, (bytes, bytearray)):
+        payload = m.decode(bytes(payload))
+    if not isinstance(payload, (tuple, list)):
+        return None
+
+    # Ordinary notification streams start with the call marker at index 0; broadcast
+    # streams can prefix the call with released object handles. In both forms the
+    # method is the string immediately before the argument tuple.
+    for index in (1, 2, 0):
+        if index + 1 >= len(payload):
+            continue
+        method = _text(payload[index])
+        if method is not None and isinstance(payload[index + 1], (tuple, list, m.List)):
+            kwargs = payload[index + 2] if index + 2 < len(payload) else None
+            return method, payload[index + 1], kwargs, payload[:index]
+    return None
+
+
+def _notification_record(packet):
+    parts = _notification_parts(packet)
+    if parts is None:
+        event = _notification_event(packet)
+        record = {"method": event.get("name"), "args": describe(event.get("args"))}
+        if event.get("kwargs") is not None:
+            record["kwargs"] = describe(event["kwargs"])
+    else:
+        method, args, kwargs, prefix = parts
+        record = {"method": method, "args": describe(args)}
+        if kwargs is not None:
+            record["kwargs"] = describe(kwargs)
+        if prefix:
+            record["prefix"] = describe(prefix)
+    if packet.named_payload is not None:
+        record["named_payload"] = describe(packet.named_payload)
+    return record
+
+
 def macho_record(pk, encoding):
     """One decoded MachoNet packet as a JSON-serialisable record (no timestamps: see Journal.write)."""
     kind = MACHO_NAMES.get(pk.command, f"type{pk.command}")
@@ -75,8 +124,7 @@ def macho_record(pk, encoding):
     rec["service"] = pk.destination.service if pk.destination.service is not None else pk.source.service
     rec["call_id"] = next((c for c in (pk.source.call_id, pk.destination.call_id) if c is not None), None)
     if kind == "Notification":  # the client's decoder: server notifications carry their call in the address, not payload
-        event = _notification_event(pk)
-        rec["method"], rec["args"] = event.get("name"), describe(event.get("args"))
+        rec.update(_notification_record(pk))
     elif kind == "CallReq":
         rec["method"], args, kwargs = _call_body(pk.payload)
         rec["args"] = describe(args)
@@ -398,10 +446,360 @@ def compare(reference, candidate, ignore_volatile):
     return None
 
 
+def _canonical_shape(value, ignore_key_order):
+    return shape(_sort_dicts(value) if ignore_key_order else value)
+
+
+def _string_leaves(value):
+    """Strings carried by an ErrorResponse, including localized text and reason names."""
+    if isinstance(value, str):
+        return [] if value.startswith("$bytes:") else [value]
+    if isinstance(value, list):
+        return [leaf for item in value for leaf in _string_leaves(item)]
+    if isinstance(value, dict):
+        if "$buffer" in value or "$pickle" in value:
+            return []
+        return [leaf for item in value.values() for leaf in _string_leaves(item)]
+    return []
+
+
+def _named_value(value, key):
+    if isinstance(value, dict):
+        pairs = value.get("$dict")
+        if isinstance(pairs, list):
+            for pair in pairs:
+                if isinstance(pair, list) and len(pair) == 2 and pair[0] == key:
+                    return pair[1]
+                if isinstance(pair, list) and len(pair) == 2:
+                    found = _named_value(pair[1], key)
+                    if found is not None:
+                        return found
+        for child in value.values():
+            found = _named_value(child, key)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for child in value:
+            found = _named_value(child, key)
+            if found is not None:
+                return found
+    return None
+
+
+def _connection_groups(records):
+    first_seq, usernames, groups = {}, {}, defaultdict(list)
+    for record in records:
+        conn = record.get("conn")
+        first_seq[conn] = min(first_seq.get(conn, record.get("seq", 0)), record.get("seq", 0))
+        groups[conn].append(record)
+        if record.get("stage") == "handshake" and record.get("dir") == "c2s":
+            name = _named_value(record.get("value"), "user_name")
+            if isinstance(name, str) and name:
+                usernames[conn] = re.sub(r"-[0-9a-f]{8,}$", "-*", name, flags=re.IGNORECASE)
+    return first_seq, usernames, groups
+
+
+def _connection_signatures(records):
+    return [(_normal_service(record.get("service"), True), record.get("method"))
+            for record in records if record.get("stage") == "macho" and record.get("type") == "CallReq"]
+
+
+def _comparison_connections(reference_records, candidate_records):
+    """Pair same-account sockets by call sequence so setup logins do not shift the actual scenario."""
+    ref_first, ref_names, ref_groups = _connection_groups(reference_records)
+    got_first, got_names, got_groups = _connection_groups(candidate_records)
+    ref_aliases, got_aliases = {}, {}
+    names = set(ref_names.values()) | set(got_names.values())
+    for conn, first in ref_first.items():
+        if conn not in ref_names:
+            names.add(f"conn-{conn}")
+    for conn, first in got_first.items():
+        if conn not in got_names:
+            names.add(f"conn-{conn}")
+
+    for name in names:
+        ref_conns = sorted((conn for conn in ref_first if ref_names.get(conn, f"conn-{conn}") == name),
+                           key=lambda conn: ref_first[conn])
+        got_conns = sorted((conn for conn in got_first if got_names.get(conn, f"conn-{conn}") == name),
+                           key=lambda conn: got_first[conn])
+        scores = []
+        for ri, ref_conn in enumerate(ref_conns):
+            left = _connection_signatures(ref_groups[ref_conn])
+            for gi, got_conn in enumerate(got_conns):
+                right = _connection_signatures(got_groups[got_conn])
+                matcher = SequenceMatcher(None, left, right, autojunk=False)
+                common = sum(block.size for block in matcher.get_matching_blocks())
+                score = (common, matcher.ratio(), -abs(len(left) - len(right)))
+                scores.append((score, ri, gi))
+        matched_ref, matched_got, pairs = set(), set(), []
+        for score, ri, gi in sorted(scores, key=lambda item: (item[0], -item[1], -item[2]), reverse=True):
+            if ri in matched_ref or gi in matched_got or score[0] == 0 and score[1] == 0:
+                continue
+            matched_ref.add(ri)
+            matched_got.add(gi)
+            pairs.append((ri, gi))
+
+        ordinal = 0
+        for ri, gi in sorted(pairs):
+            ordinal += 1
+            alias = (name, ordinal)
+            ref_aliases[ref_conns[ri]] = alias
+            got_aliases[got_conns[gi]] = alias
+        for ri, conn in enumerate(ref_conns):
+            if ri not in matched_ref:
+                ordinal += 1
+                ref_aliases[conn] = (f"{name} [reference-only]", ordinal)
+        for gi, conn in enumerate(got_conns):
+            if gi not in matched_got:
+                ordinal += 1
+                got_aliases[conn] = (f"{name} [candidate-only]", ordinal)
+
+    ref = [{**record, "_compare_conn": ref_aliases.get(record.get("conn"), (f"conn-{record.get('conn')}", 1))}
+           for record in reference_records]
+    got = [{**record, "_compare_conn": got_aliases.get(record.get("conn"), (f"conn-{record.get('conn')}", 1))}
+           for record in candidate_records]
+    return ref, got
+
+
+def _connection_label(conn):
+    if isinstance(conn, tuple) and len(conn) == 2:
+        name, index = conn
+        if name.startswith("conn-"):
+            return f"conn={name[5:]}"
+        return f"user={name} connection#{index}"
+    return f"conn={conn}"
+
+
+def _capture_calls(records):
+    calls = defaultdict(list)
+    replies = defaultdict(list)
+    for rec in records:
+        if rec.get("stage") != "macho":
+            continue
+        conn = rec.get("_compare_conn", rec.get("conn"))
+        key = (conn, rec.get("call_id"))
+        if rec.get("type") == "CallReq":
+            calls[conn].append(rec)
+        elif rec.get("type") in ("CallRsp", "ErrorResponse"):
+            replies[key].append(rec)
+    for conn in calls:
+        calls[conn].sort(key=lambda rec: rec.get("seq", 0))
+    return calls, replies
+
+
+def _call_signature(record, ignore_volatile):
+    return (_normal_service(record.get("service"), ignore_volatile), record.get("method"))
+
+
+def _reply_summary(reply):
+    if reply is None:
+        return "missing"
+    return reply.get("type", "unknown")
+
+
+def _compare_call_reply(ref_reply, got_reply, *, ignore_key_order, label, issues):
+    if ref_reply is None or got_reply is None:
+        if (ref_reply is None) != (got_reply is None):
+            issues.append(f"{label}: reply presence differs (reference={_reply_summary(ref_reply)}, candidate={_reply_summary(got_reply)})")
+        return
+    if ref_reply.get("type") != got_reply.get("type"):
+        issues.append(f"{label}: reply kind differs (reference={_reply_summary(ref_reply)}, candidate={_reply_summary(got_reply)})")
+        return
+    if ref_reply["type"] == "CallRsp":
+        ref_result, got_result = ref_reply.get("result"), got_reply.get("result")
+        if _canonical_shape(ref_result, ignore_key_order) != _canonical_shape(got_result, ignore_key_order):
+            delta = differences(_canonical_shape(ref_result, ignore_key_order), _canonical_shape(got_result, ignore_key_order))
+            issues.append(f"{label}: reply marshal shape differs: " + "; ".join(delta[:8]))
+        return
+
+    ref_error, got_error = ref_reply.get("error", {}), got_reply.get("error", {})
+    if ref_error.get("code") != got_error.get("code"):
+        issues.append(f"{label}: error code differs (reference={_brief(ref_error.get('code'))}, candidate={_brief(got_error.get('code'))})")
+    ref_payload, got_payload = ref_error.get("payload"), got_error.get("payload")
+    if _canonical_shape(ref_payload, ignore_key_order) != _canonical_shape(got_payload, ignore_key_order):
+        delta = differences(_canonical_shape(ref_payload, ignore_key_order), _canonical_shape(got_payload, ignore_key_order))
+        issues.append(f"{label}: error payload marshal shape differs: " + "; ".join(delta[:8]))
+    ref_text, got_text = _string_leaves(ref_payload), _string_leaves(got_payload)
+    if ref_text != got_text:
+        issues.append(f"{label}: error text differs (reference={_brief(ref_text)}, candidate={_brief(got_text)})")
+
+
+def _notification_payload(record):
+    if record.get("type") == "Notification":
+        return {key: record[key] for key in ("args", "kwargs", "prefix", "named_payload") if key in record}
+    value = record.get("payload")
+    if record.get("type") in SESSION_TYPES and isinstance(value, dict) and value.get("$tuple"):
+        # The first value is the session id. Its exact value may differ between runs.
+        value = {"$tuple": [shape(value["$tuple"][0]), *value["$tuple"][1:]]}
+    return {"payload": value}
+
+
+def _notification_signature(record, ignore_volatile):
+    return (record.get("type"), _normal_service(record.get("service"), ignore_volatile), record.get("method"))
+
+
+def compare_all(reference_records, candidate_records, *, ignore_volatile, ignore_key_order=False, ignore_notification_order=False):
+    """Report every per-call reply difference and every ordered notification difference."""
+    reference_records, candidate_records = _comparison_connections(reference_records, candidate_records)
+    ref_calls, ref_replies = _capture_calls(reference_records)
+    got_calls, got_replies = _capture_calls(candidate_records)
+    issues = []
+    total_ref = sum(map(len, ref_calls.values()))
+    total_got = sum(map(len, got_calls.values()))
+    print(f"calls: reference={total_ref}, candidate={total_got}")
+
+    for conn in sorted(set(ref_calls) | set(got_calls), key=lambda item: (item is None, item)):
+        ref = ref_calls.get(conn, [])
+        got = got_calls.get(conn, [])
+        ref_sigs = [_call_signature(rec, ignore_volatile) for rec in ref]
+        got_sigs = [_call_signature(rec, ignore_volatile) for rec in got]
+        matcher = SequenceMatcher(None, ref_sigs, got_sigs, autojunk=False)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "equal":
+                pairs = zip(range(i1, i2), range(j1, j2))
+            elif tag == "replace":
+                paired = min(i2 - i1, j2 - j1)
+                pairs = zip(range(i1, i1 + paired), range(j1, j1 + paired))
+            else:
+                pairs = ()
+            for ri, gi in pairs:
+                ref_call, got_call = ref[ri], got[gi]
+                ref_signature, got_signature = ref_sigs[ri], got_sigs[gi]
+                call_label = f"{_connection_label(conn)} #{ri + 1} {ref_signature[0]}.{ref_signature[1]}"
+                local = []
+                if ref_signature != got_signature:
+                    local.append(f"call identity/order differs (reference={ref_signature}, candidate={got_signature})")
+                ref_args, got_args = ref_call.get("args"), got_call.get("args")
+                if _canonical_shape(ref_args, ignore_key_order) != _canonical_shape(got_args, ignore_key_order):
+                    delta = differences(_canonical_shape(ref_args, ignore_key_order), _canonical_shape(got_args, ignore_key_order))
+                    local.append("request argument marshal shape differs: " + "; ".join(delta[:8]))
+
+                ref_key = (conn, ref_call.get("call_id"))
+                got_key = (conn, got_call.get("call_id"))
+                ref_for_call = ref_replies.get(ref_key, [])
+                got_for_call = got_replies.get(got_key, [])
+                if len(ref_for_call) != len(got_for_call):
+                    local.append(f"reply count differs (reference={len(ref_for_call)}, candidate={len(got_for_call)})")
+                for index in range(max(len(ref_for_call), len(got_for_call))):
+                    _compare_call_reply(
+                        ref_for_call[index] if index < len(ref_for_call) else None,
+                        got_for_call[index] if index < len(got_for_call) else None,
+                        ignore_key_order=ignore_key_order,
+                        label=f"{call_label} reply #{index + 1}",
+                        issues=local,
+                    )
+                if local:
+                    issues.extend(f"{call_label}: {detail}" for detail in local)
+                    print(f"  DIFF {call_label}")
+                    for detail in local:
+                        print(f"    - {detail}")
+                else:
+                    reply_kind = ",".join(_reply_summary(reply) for reply in ref_for_call) or "missing"
+                    print(f"  SAME {call_label} reply={reply_kind}")
+
+            if tag in ("delete", "replace"):
+                for ri in range(i1 + (min(i2 - i1, j2 - j1) if tag == "replace" else 0), i2):
+                    rec = ref[ri]
+                    label = f"{_connection_label(conn)} reference-only #{ri + 1} {ref_sigs[ri][0]}.{ref_sigs[ri][1]}"
+                    packets = ref_replies.get((conn, rec.get("call_id")), [])
+                    detail = f"request missing from candidate; reply={_reply_summary(packets[0] if packets else None)}"
+                    issues.append(f"{label}: {detail}")
+                    print(f"  DIFF {label}\n    - {detail}")
+            if tag in ("insert", "replace"):
+                for gi in range(j1 + (min(i2 - i1, j2 - j1) if tag == "replace" else 0), j2):
+                    rec = got[gi]
+                    label = f"{_connection_label(conn)} candidate-only #{gi + 1} {got_sigs[gi][0]}.{got_sigs[gi][1]}"
+                    packets = got_replies.get((conn, rec.get("call_id")), [])
+                    detail = f"unexpected request; reply={_reply_summary(packets[0] if packets else None)}"
+                    issues.append(f"{label}: {detail}")
+                    print(f"  DIFF {label}\n    - {detail}")
+
+    for side, calls, replies in (("reference", ref_calls, ref_replies), ("candidate", got_calls, got_replies)):
+        request_keys = {
+            (conn, record.get("call_id"))
+            for conn, records in calls.items()
+            for record in records
+        }
+        for key, packets in sorted(replies.items(), key=lambda item: (item[0][0] is None, item[0][0], item[0][1] is None, item[0][1])):
+            if key in request_keys:
+                continue
+            for index, packet in enumerate(packets, start=1):
+                detail = f"{side} orphan reply #{index} {_connection_label(key[0])} call_id={key[1]} type={_reply_summary(packet)}"
+                print(f"  DIFF {detail}")
+                issues.append(detail)
+
+    ref_notices = defaultdict(list)
+    got_notices = defaultdict(list)
+    for records, target in ((reference_records, ref_notices), (candidate_records, got_notices)):
+        for rec in records:
+            if rec.get("stage") == "macho" and rec.get("type") in NOTIFICATION_TYPES:
+                target[rec.get("_compare_conn", rec.get("conn"))].append(rec)
+        for conn in target:
+            target[conn].sort(key=lambda rec: rec.get("seq", 0))
+
+    print("notifications:")
+    notice_diffs = 0
+    for conn in sorted(set(ref_notices) | set(got_notices), key=lambda item: (item is None, item)):
+        ref = ref_notices.get(conn, [])
+        got = got_notices.get(conn, [])
+        if ignore_notification_order:
+            key = lambda rec: json.dumps([_notification_signature(rec, ignore_volatile),
+                                          _canonical_shape(_notification_payload(rec), ignore_key_order)],
+                                         sort_keys=True, default=str)
+            ref, got = sorted(ref, key=key), sorted(got, key=key)
+        count = max(len(ref), len(got))
+        for index in range(count):
+            ref_rec = ref[index] if index < len(ref) else None
+            got_rec = got[index] if index < len(got) else None
+            if ref_rec is None or got_rec is None:
+                side = "reference" if got_rec is None else "candidate"
+                record = ref_rec if ref_rec is not None else got_rec
+                sig = _notification_signature(record, ignore_volatile)
+                print(f"  DIFF {_connection_label(conn)} notification #{index + 1}: {side} only {sig}")
+                issues.append(f"{_connection_label(conn)} notification #{index + 1}: {side} only {sig}")
+                notice_diffs += 1
+                continue
+            ref_sig = _notification_signature(ref_rec, ignore_volatile)
+            got_sig = _notification_signature(got_rec, ignore_volatile)
+            label = f"{_connection_label(conn)} notification #{index + 1} {ref_sig[2] or ref_sig[0]}"
+            if ref_sig != got_sig:
+                detail = f"notification name/order differs (reference={ref_sig}, candidate={got_sig})"
+                print(f"  DIFF {label}: {detail}")
+                issues.append(f"{label}: {detail}")
+                notice_diffs += 1
+                continue
+            ref_payload = _canonical_shape(_notification_payload(ref_rec), ignore_key_order)
+            got_payload = _canonical_shape(_notification_payload(got_rec), ignore_key_order)
+            if ref_payload != got_payload:
+                delta = differences(ref_payload, got_payload)
+                detail = "notification marshal shape differs: " + "; ".join(delta[:8])
+                print(f"  DIFF {label}: {detail}")
+                issues.append(f"{label}: {detail}")
+                notice_diffs += 1
+            else:
+                print(f"  SAME {label}")
+
+    if issues:
+        print(f"differences: {len(issues)} call/reply or notification issue(s)")
+        return 1
+    print(f"identical: {total_ref} calls, notification names/order and marshal shapes match")
+    return 0
+
+
 def cmd_diff(args):
     options = {"ignore_key_order": args.ignore_key_order, "ignore_notification_order": args.ignore_notification_order}
-    reference = events(load(args.reference), args.ignore_volatile, **options)
-    candidate = events(load(args.candidate), args.ignore_volatile, **options)
+    reference_records, candidate_records = load(args.reference), load(args.candidate)
+    if not args.first:
+        return compare_all(
+            reference_records,
+            candidate_records,
+            ignore_volatile=args.ignore_volatile,
+            ignore_key_order=args.ignore_key_order,
+            ignore_notification_order=args.ignore_notification_order,
+        )
+
+    reference = events(reference_records, args.ignore_volatile, **options)
+    candidate = events(candidate_records, args.ignore_volatile, **options)
     mode = "volatile fields ignored" if args.ignore_volatile else "exact values"
     found = compare(reference, candidate, args.ignore_volatile)
     if found is None:
@@ -460,7 +858,7 @@ def main(argv=None):
     filters(show)
     show.set_defaults(run=cmd_show)
 
-    diff = sub.add_parser("diff", help="compare two captures by call order, argument and result shape, then values")
+    diff = sub.add_parser("diff", help="compare every call reply and notification in two captures")
     diff.add_argument("reference", help="the reference capture (EVE.js)")
     diff.add_argument("candidate", help="the capture to check (eve.rs)")
     diff.add_argument("--ignore-volatile", action="store_true",
@@ -469,6 +867,8 @@ def main(argv=None):
                       help="compare marshal dictionaries by key, not by the order of their pairs (the client reads them by key)")
     diff.add_argument("--ignore-notification-order", action="store_true",
                       help="compare the server's notifications as a set, after the results (independent notices may race)")
+    diff.add_argument("--first", action="store_true",
+                      help="report only the first stream divergence, including exact non-volatile leaf values")
     diff.set_defaults(run=cmd_diff)
 
     replay = sub.add_parser("replay", help="replay client CallReq and Notification requests against a live eve.rs server")

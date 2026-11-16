@@ -1305,6 +1305,11 @@ fn message_of(case: &Value) -> Message {
             request_id: number("requestId"),
             scene: scene_key(&case["scene"]),
             ship_id: wide(case, "shipId"),
+            following: case.get("following").map(|following| eve_space::link::AbyssalFollowApproach {
+                target_id: following["targetId"].as_str().unwrap().parse().unwrap(),
+                follow_range_meters: following["followRangeMeters"].as_f64().unwrap(),
+                max_velocity_meters_per_second: following["maxVelocityMetersPerSecond"].as_f64().unwrap(),
+            }),
             deployment: case.get("deployment").map(|snapshot| eve_space::link::AbyssalDeploymentSnapshot {
                 warping: snapshot["warping"].as_bool().unwrap(),
                 cloaked: snapshot["cloaked"].as_bool().unwrap(),
@@ -2624,7 +2629,8 @@ fn abyssal_scene_object_and_content_keyed_spawn_fixtures_roundtrip() {
                 || case.get("settledNpcIds").is_some()
         })
         .collect();
-    assert_eq!(selected.len(), 18);
+    // The v99 committed-approach pose receipt is now part of this roundtrip set.
+    assert_eq!(selected.len(), 19);
 
     for case in selected {
         let message = message_of(case);

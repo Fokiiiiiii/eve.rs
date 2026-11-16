@@ -29,12 +29,33 @@ public static class MissionViews
 
     private static PyValue IdOrNone(long? value) => value is > 0 ? new PyInt(value.Value) : PyNone.Instance;
 
+    private static PyValue MissionTitle(HeldMissionView view) => view.Mission.NameId > 0
+        ? new PyInt(view.Mission.NameId)
+        : view.Mission.NameEn.Length > 0 ? new PyStr(view.Mission.NameEn) : PyNone.Instance;
+
+    private static PyValue? Briefing(HeldMissionView view) => view.BriefingMessageId is > 0 and var id
+        ? new PyInt(id)
+        : view.Mission.EnglishMessages.TryGetValue(ClientMissionMessages.BriefingKey, out var text) && text.Length > 0
+            ? new PyStr(text)
+            : null;
+
+    private static PyValue MissionImage(HeldMissionView view)
+    {
+        var image = AgentMissionKindRules.MissionKindOf(view.Record.Content.MissionTypeLabel) switch
+        {
+            "mining" => "miningmission.png",
+            "courier" => "couriermission.png",
+            _ => "killmission.png",
+        };
+        return new PyStr($"<img src=\"res:/UI/netres/mission_content/{image}\" align=center hspace=4 vspace=4>");
+    }
+
     public static PyDict Briefing(AgentMissionAgentData agent, HeldMissionView view, DateTimeOffset now) => new(
     [
         Field("Mission Keywords", Keywords(agent, view)),
-        Field("Mission Title ID", IdOrNone(view.Mission.NameId)),
+        Field("Mission Title ID", MissionTitle(view)),
         Field("ContentID", PyNone.Instance),
-        Field("Mission Image", PyNone.Instance),
+        Field("Mission Image", MissionImage(view)),
         Field("Decline Time", view.Record.State == AgentMissionState.Accepted
             ? PyNone.Instance
             : view.Record.DeclineUntil is { } declineUntil && declineUntil > now
@@ -46,7 +67,7 @@ public static class MissionViews
         Field("Expiration Time", view.Record.ExpiresAt is { } expiration
             ? new PyLong(expiration.ToFileTime())
             : PyNone.Instance),
-        Field("Mission Briefing ID", IdOrNone(view.BriefingMessageId)),
+        Field("Mission Briefing ID", Briefing(view) ?? PyNone.Instance),
     ]);
 
     private static PyValue DungeonLocation(HeldMissionView view)
@@ -77,9 +98,15 @@ public static class MissionViews
         {
             var dungeon = new List<KeyValuePair<PyValue, PyValue>>
             {
-                Field("briefingMessage", IdOrNone(view.BriefingMessageId)),
                 Field("dungeonID", new PyInt(dungeonId)),
             };
+            if (Briefing(view) is { } briefing)
+            {
+                var contentId = new PyInt(view.Record.Content.MissionId);
+                dungeon.Insert(0, Field("briefingMessage", briefing is PyInt id
+                    ? new PyTuple([id, contentId])
+                    : briefing));
+            }
             if (completed) dungeon.Add(Field("completed", new PyInt(1)));
             dungeon.AddRange(
             [
@@ -141,7 +168,6 @@ public static class MissionViews
                 : new PyList([])),
 
             Field("importantStandings", new PyInt(view.Record.Content.Important ? 1 : 0)),
-            Field("missionExtra", PyNone.Instance),
             Field("contentID", IdOrNone(view.Record.Content.MissionId)),
             Field("agentGift", new PyList([])),
             Field("normalRewards", new PyList(rewards)),
@@ -149,28 +175,64 @@ public static class MissionViews
             Field("researchPoints", new PyInt(0)),
             Field("missionState", new PyInt((int)view.Record.State)),
             Field("loyaltyPoints", new PyInt(view.LoyaltyPoints)),
-            Field("missionTitleID", IdOrNone(mission.NameId)),
+            Field("missionTitleID", MissionTitle(view)),
         ]);
     }
 
     public static PyDict JournalInfo(HeldMissionView view) => new(
     [
-        Field("missionNameID", IdOrNone(view.Mission.NameId)),
+        Field("missionNameID", MissionTitle(view)),
         Field("contentID", IdOrNone(view.Record.Content.MissionId)),
-        Field("briefingTextID", IdOrNone(view.BriefingMessageId)),
-        Field("missionImage", PyNone.Instance),
+        Field("briefingTextID", Briefing(view) ?? PyNone.Instance),
+        Field("missionImage", MissionImage(view)),
         Field("expirationTime", view.Record.ExpiresAt is { } expires ? new PyLong(expires.ToFileTime()) : PyNone.Instance),
         Field("missionState", new PyInt((int)view.Record.State)),
         Field("objectives", Objective(view)),
-        Field("bookmarks", new PyList([])),
+        Field("bookmarks", Bookmarks(view)),
         Field("iconID", view.Courier is not null ? new PyInt(16) : PyNone.Instance),
     ]);
+
+    /// <summary>
+    /// The client turns these mission bookmark keyvals into synthetic bookmarks (bookmarkSvc.py:122-137). A kill mission has
+    /// a warpable objective only after its dungeon runtime has a real origin; before that, do not invent coordinates.
+    /// </summary>
+    public static PyList Bookmarks(HeldMissionView view)
+    {
+        if (view.Mission.Kill?.DungeonId is null || view.DungeonLocation is not
+            { SolarSystemId: > 0, X: { } x, Y: { } y, Z: { } z } location)
+            return new PyList([]);
+
+        var createdAt = view.Record.OfferedAt ?? view.Record.AcceptedAt ?? DateTimeOffset.UnixEpoch;
+        return new PyList(
+        [
+            Py.KeyVal(
+            [
+                Field("itemID", new PyInt(location.SolarSystemId)),
+                Field("typeID", new PyInt(5)),
+                Field("agentID", new PyInt(view.Record.AgentId)),
+                Field("hint", new PyStr("UI/Agents/Bookmarks/Encounter/Encounter")),
+                Field("locationType", new PyStr("dungeon")),
+                Field("memo", new PyStr("")),
+                Field("isAgentBase", new PyInt(0)),
+                Field("locationNumber", new PyInt(0)),
+                Field("created", Py.FileTimeLong(createdAt.ToFileTime())),
+                Field("flag", PyNone.Instance),
+                Field("locationID", new PyInt(location.SolarSystemId)),
+                Field("ownerID", new PyInt(view.Record.CharacterId)),
+                Field("y", new PyReal(y)),
+                Field("x", new PyReal(x)),
+                Field("solarsystemID", new PyInt(location.SolarSystemId)),
+                Field("z", new PyReal(z)),
+            ]),
+        ]);
+    }
 
     public static PyDict Keywords(AgentMissionAgentData agent, string missionName) => new(
     [
         Field("agentName", new PyStr(agent.AgentName is { Length: > 0 } name ? name : "Unknown Agent")),
         Field("missionName", new PyStr(missionName)),
-        Field("missionTypeLabel", new PyStr(agent.MissionTypeLabel)),
+        Field("missionTypeLabel", new PyStr(AgentMissionKindRules.ClientMissionTypeLabel(
+            agent.AgentTypeId, agent.MissionKind, agent.MissionTypeLabel))),
     ]);
 
     public static PyDict Keywords(AgentMissionAgentData agent, HeldMissionView view)
@@ -179,7 +241,8 @@ public static class MissionViews
         {
             Field("agentName", new PyStr(agent.AgentName is { Length: > 0 } name ? name : "Unknown Agent")),
             Field("missionName", new PyStr(view.Record.Content.Title.Length > 0 ? view.Record.Content.Title : view.Mission.NameEn)),
-            Field("missionTypeLabel", new PyStr(agent.MissionTypeLabel)),
+            Field("missionTypeLabel", new PyStr(AgentMissionKindRules.ClientMissionTypeLabel(
+                agent.AgentTypeId, agent.MissionKind, agent.MissionTypeLabel))),
         };
         if (view.Courier is { } courier)
         {
@@ -194,6 +257,11 @@ public static class MissionViews
             fields.Add(Field("objectiveDestinationID", new PyInt(fetch.StationId)));
             fields.Add(Field("quantity", new PyInt(fetch.Quantity)));
             fields.Add(Field("typeID", new PyInt(fetch.TypeId)));
+        }
+        if (view.Mission.Kill?.DungeonId is not null && view.DungeonLocation is { SolarSystemId: > 0 } dungeon)
+        {
+            fields.Add(Field("dungeonSolarSystemID", new PyInt(dungeon.SolarSystemId)));
+            fields.Add(Field("dungeonLocationID", new PyInt(dungeon.SolarSystemId)));
         }
         if (view.Mission.Reward is { RewardTypeId: > 0, RewardQuantity: > 0 } reward)
         {

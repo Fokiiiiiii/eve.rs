@@ -333,6 +333,9 @@ public const byte UpdateEffect = 61;
 
     private static bool IsAbyssalPoseReply(SimGetAbyssalParticipantPoseReply reply) =>
         reply.RequestId > 0 && reply.Scene.IsValid && reply.ShipId > 0 &&
+        (reply.Following is null || reply.Error is null && reply.Following.TargetId > 0 &&
+            double.IsFinite(reply.Following.FollowRangeMeters) && reply.Following.FollowRangeMeters >= 0 &&
+            double.IsFinite(reply.Following.MaxVelocityMetersPerSecond) && reply.Following.MaxVelocityMetersPerSecond > 0) &&
         (reply.Error is not null ||
          IsVector(reply.Position) && IsVector(reply.Direction) && reply.Direction.Any(value => value != 0));
 

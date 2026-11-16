@@ -91,7 +91,8 @@ public sealed record AgentDialogueSources(
     Func<AgentMissionChange, CancellationToken, ValueTask>? OnAccepted = null,
     Func<long, long, CancellationToken, ValueTask>? OnQuit = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? OnMissionTurnIn = null,
-    Func<long, AgentMissionAgentData, DateTimeOffset, string, CancellationToken, ValueTask>? OnMissionDecline = null);
+    Func<long, AgentMissionAgentData, DateTimeOffset, string, CancellationToken, ValueTask>? OnMissionDecline = null,
+    Func<long, string, long?>? ReadMissionMessageId = null);
 
 
 public sealed record AgentDialogueReply(PyValue AgentSays, IReadOnlyList<(long ActionId, int ButtonType)> Actions, PyDict LastActionInfo)
@@ -160,6 +161,7 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
         var button = ButtonOfArgument(action);
         var standing = await ReadAccessAsync(characterId, agent, cancellationToken);
         var mission = await sources.Store.ReadAsync(characterId, agent.AgentId, cancellationToken);
+        var acceptedByThisAction = false;
 
         switch (button)
         {
@@ -183,8 +185,12 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                 {
                     var accepted = await sources.Store.AcceptAsync(characterId, agent.AgentId, now,
                         $"accept:{characterId}:{agent.AgentId}:{now.ToUnixTimeMilliseconds()}", cancellationToken);
-                    if (accepted is not null && sources.OnAccepted is { } onAccepted)
-                        await onAccepted(accepted, cancellationToken);
+                    if (accepted is not null)
+                    {
+                        acceptedByThisAction = true;
+                        if (sources.OnAccepted is { } onAccepted)
+                            await onAccepted(accepted, cancellationToken);
+                    }
                 }
                 catch (AgentMissionRefusedException)
                 {
@@ -282,7 +288,8 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
                     ("info", new PyStr("This agent service is not available on this server yet.")));
         }
 
-        return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken, LastInfo()));
+        return AgentDialogueStep.Of(await ConversationAsync(characterId, agent, standing, atAgentLocation, cancellationToken,
+            LastInfo(), actionResponse: acceptedByThisAction));
     }
 
     /// <summary>What the window is told when a prompt could not be answered (a client call that failed or raised).</summary>
@@ -307,27 +314,46 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
 
     /// <summary>The conversation the window shows after an action: the held mission's, or the greeting and what can be asked.</summary>
     private async ValueTask<AgentDialogueReply> ConversationAsync(
-        long characterId, AgentMissionAgentData agent, AccessReading standing, bool atAgentLocation, CancellationToken cancellationToken, PyDict lastInfo)
+        long characterId, AgentMissionAgentData agent, AccessReading standing, bool atAgentLocation, CancellationToken cancellationToken, PyDict lastInfo,
+        bool actionResponse = false)
     {
         var now = sources.Now();
         var mission = await sources.Store.ReadAsync(characterId, agent.AgentId, cancellationToken);
         if (mission?.State == AgentMissionState.Offered)
         {
             return new AgentDialogueReply(
-                Greeting(mission.Content.MissionId),
-                [(AgentDialogueToken.Accept, AgentDialogueButton.Accept), (AgentDialogueToken.Decline, AgentDialogueButton.Decline)],
-                lastInfo);
+                MissionMessage(mission.Content,
+                    ClientMissionMessages.OfferedAgentSaysKey,
+                    ClientMissionMessages.BriefingKey),
+                [
+                    (AgentDialogueToken.Accept, AgentDialogueButton.Accept),
+                    (AgentDialogueToken.Decline, AgentDialogueButton.Decline),
+                    (AgentDialogueToken.Defer, AgentDialogueButton.Defer),
+                ],
+                ActiveLastInfo());
         }
         if (mission?.State == AgentMissionState.Accepted)
         {
             var heldActions = new List<(long ActionId, int ButtonType)>();
-            if (mission.ObjectiveCompleted && atAgentLocation && sources.OnMissionTurnIn is not null)
-                heldActions.Add((AgentDialogueToken.CompleteReady, AgentDialogueButton.Complete));
-            if (atAgentLocation) heldActions.Add((AgentDialogueToken.Quit, AgentDialogueButton.Quit));
+            if (actionResponse || mission.ObjectiveCompleted && atAgentLocation && sources.OnMissionTurnIn is not null)
+                heldActions.Add((actionResponse ? AgentDialogueToken.Complete : AgentDialogueToken.CompleteReady, AgentDialogueButton.Complete));
+            if (atAgentLocation)
+                heldActions.Add((actionResponse ? AgentDialogueToken.Quit : AgentDialogueToken.QuitReady, AgentDialogueButton.Quit));
+            var message = mission.ObjectiveCompleted
+                ? MissionMessage(mission.Content,
+                    ClientMissionMessages.CompletedAgentSaysKey,
+                    ClientMissionMessages.CompletedNextMissionAgentSaysKey,
+                    ClientMissionMessages.InProgressAgentSaysKey,
+                    ClientMissionMessages.AcceptedAgentSaysKey,
+                    ClientMissionMessages.BriefingKey)
+                : MissionMessage(mission.Content,
+                    ClientMissionMessages.InProgressAgentSaysKey,
+                    ClientMissionMessages.AcceptedAgentSaysKey,
+                    ClientMissionMessages.BriefingKey);
             return new AgentDialogueReply(
-                Greeting(mission.Content.MissionId),
+                message,
                 heldActions,
-                lastInfo);
+                ActiveLastInfo());
         }
         if (!standing.CanUse)
         {
@@ -626,6 +652,19 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
 
     private static PyTuple Label(string label) => new([new PyStr(label), EmptyDict()]);
 
+    private PyValue MissionMessage(AgentMissionContent content, params string[] keys)
+    {
+        if (sources.ReadMissionMessageId is { } readMessageId)
+        {
+            foreach (var key in keys)
+            {
+                if (readMessageId(content.MissionId, key) is > 0 and var messageId)
+                    return new PyTuple([new PyInt(messageId), new PyInt(content.MissionId)]);
+            }
+        }
+        return Greeting(content.MissionId);
+    }
+
     private static PyDict Dict(params (string Key, PyValue Value)[] entries) => new(entries
         .Select(entry => new KeyValuePair<PyValue, PyValue>(new PyStr(entry.Key), entry.Value)).ToList());
 
@@ -685,12 +724,21 @@ public sealed class AgentDialogueMachine(AgentDialogueSources sources)
     private static PyDict EmptyDict() => new(new List<KeyValuePair<PyValue, PyValue>>());
 
 
-    private static PyDict LastInfo(bool quit = false, bool declined = false, bool completed = false) => new(
+    private static PyValue Flag(bool? value) => value switch
+    {
+        true => PyBool.True,
+        false => PyBool.False,
+        null => PyNone.Instance,
+    };
+
+    private static PyDict ActiveLastInfo() => LastInfo(quit: false, declined: false, completed: false);
+
+    private static PyDict LastInfo(bool? quit = null, bool? declined = null, bool? completed = null) => new(
     [
-        new KeyValuePair<PyValue, PyValue>(new PyStr("missionCompleted"), completed ? PyBool.True : PyNone.Instance),
-        new KeyValuePair<PyValue, PyValue>(new PyStr("missionQuit"), quit ? PyBool.True : PyNone.Instance),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("missionCompleted"), Flag(completed)),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("missionQuit"), Flag(quit)),
         new KeyValuePair<PyValue, PyValue>(new PyStr("missionCantReplay"), PyNone.Instance),
         new KeyValuePair<PyValue, PyValue>(new PyStr("loyaltyPoints"), new PyInt(0)),
-        new KeyValuePair<PyValue, PyValue>(new PyStr("missionDeclined"), declined ? PyBool.True : PyNone.Instance),
+        new KeyValuePair<PyValue, PyValue>(new PyStr("missionDeclined"), Flag(declined)),
     ]);
 }

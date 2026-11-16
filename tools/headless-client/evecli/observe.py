@@ -7,7 +7,7 @@ import time
 from . import marshal as m
 from . import packet as p
 from .client import Client
-from .describe import buffer_bytes, decode_marshaled, describe, destiny_state_header
+from .describe import buffer_bytes, decode_marshaled, describe, destiny_state_fields, destiny_state_header
 
 def _sequence(value):
     if isinstance(value, (list, tuple)):
@@ -172,18 +172,34 @@ def _destiny_update_view(args):
     if len(payload) > 2:
         view["dogmaMessages"] = payload[2]
     resets = []
+    ball_updates = []
     for action in actions:
-        if action.get("name") != "SetState":
-            continue
-        fields = _set_state_fields(action.get("args"))
-        resets.append({
-            "stamp": action.get("stamp"),
-            "ego": fields.get("ego"),
-            "stateHeader": destiny_state_header(fields.get("state")),
-            "slimCount": len(_sequence(fields.get("slims")) or []),
-        })
+        action_name = action.get("name")
+        action_args = _sequence(action.get("args"))
+        state = None
+        if action_name == "SetState":
+            fields = _set_state_fields(action.get("args"))
+            state = fields.get("state")
+            resets.append({
+                "stamp": action.get("stamp"),
+                "ego": fields.get("ego"),
+                "stateHeader": destiny_state_header(state),
+                "ballFields": destiny_state_fields(state),
+                "slimCount": len(_sequence(fields.get("slims")) or []),
+            })
+        elif action_name == "AddBalls2" and action_args:
+            state = action_args[0]
+            extra_ball_data = action_args[1] if len(action_args) > 1 else None
+            ball_updates.append({
+                "stamp": action.get("stamp"),
+                "name": action_name,
+                "ballFields": destiny_state_fields(state),
+                "extraBallDataCount": len(_sequence(extra_ball_data) or []),
+            })
     if resets:
         view["ballparkResets"] = resets
+    if ball_updates:
+        view["ballUpdates"] = ball_updates
     return view
 
 def notifications_of(client: Client) -> list[dict]:

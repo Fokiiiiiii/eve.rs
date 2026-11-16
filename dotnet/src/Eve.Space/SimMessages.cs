@@ -173,11 +173,15 @@ public sealed record SimAbyssalDeploymentSnapshot(
     bool Warping, bool Cloaked, bool CynoActive, bool UndockInvulnerable, bool WarpScrambled,
     IReadOnlyList<SimAbyssalDeploymentObject> NearbyObjects);
 
+/// <summary>The resident ship's current FOLLOW command, if it is approaching a target.</summary>
+public sealed record SimAbyssalFollowApproach(long TargetId, double FollowRangeMeters, double MaxVelocityMetersPerSecond);
+
 public sealed record SimGetAbyssalParticipantPoseReply(
     ulong RequestId, SimSceneKey Scene, long ShipId,
     IReadOnlyList<double> Position, IReadOnlyList<double> Direction, string? Error) : SimMessage
 {
     public SimAbyssalDeploymentSnapshot? Deployment { get; init; }
+    public SimAbyssalFollowApproach? Following { get; init; }
 }
 
 public sealed record SimHello(ushort Version) : SimMessage;

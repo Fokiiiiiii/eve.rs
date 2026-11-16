@@ -17,6 +17,7 @@ public class CommandBurstHostTests
     private const int ShieldCommandBurstI = 42529, ShieldHarmonizing = 42695;
     private const int ShieldResistance = 10;
     private const long FleetId = 701;
+    private const long TestControlTowerId = 9_988_500_000_099L;
     private const long BuffMs = 60_000;
     /// <summary>The Pulse Activated Nexus Invulnerability Core (42522) and its duration (panicDuration, 240 s), and the collections it grants.</summary>
     private const int PanicCore = 42522, ShieldInvulnerability = 8, DisallowWeapons = 59;
@@ -151,6 +152,106 @@ public class CommandBurstHostTests
         Assert.True(result.Accepted, result.Reason);
         Assert.Empty(rig.Space.Buffs.StateOf(ShipIdOf(outsider), rig.Now));
         Assert.DoesNotContain(rig.Sim.BuffStates, told => told.ShipId == ShipIdOf(outsider) && told.Entries.Count > 0);
+    }
+
+    [PgFact]
+    public async Task A_fleet_ship_inside_an_online_control_tower_force_field_does_not_receive_a_command_burst()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var source = await FlyingWithAsync(rig, ShieldCommandBurstI);
+        var ally = await DroneHostTests.FlyingWithADroneAsync(
+            rig, characterName: $"FieldMate{Guid.NewGuid().ToString("N")[..8]}", sessionId: 2);
+        rig.Space.FleetIdOfAsync = (_, _) => Task.FromResult<long?>(FleetId);
+        await LoadChargeAsync(rig, source, ShieldHarmonizing);
+        rig.Space.StartModuleForTest((ulong)source.Session.SessionId, source.Module);
+
+        var shieldRadius = await AddOnlineControlTowerAsync(rig, source);
+        rig.Sim.PositionAnswers[ShipIdOf(source)] = [shieldRadius + 4_000, 0, 0];
+        rig.Sim.PositionAnswers[ShipIdOf(ally)] = [shieldRadius - 4_000, 0, 0];
+
+        var result = await ModuleFuelHostTests.SettleAsync(
+            rig,
+            BurstCycle(source, 11, ShipIdOf(source), ShipIdOf(ally)));
+
+        Assert.True(result.Accepted, result.Reason);
+        Assert.Contains(rig.Space.Buffs.StateOf(ShipIdOf(source), rig.Now), state => state.CollectionId == ShieldResistance);
+        Assert.Empty(rig.Space.Buffs.StateOf(ShipIdOf(ally), rig.Now));
+        Assert.DoesNotContain(rig.Sim.BuffStates, told => told.ShipId == ShipIdOf(ally) && told.Entries.Count > 0);
+        var boosted = Assert.Single(Events.Of(source.Session), notification => notification.Name == "OnFleetBoosted");
+        Assert.Equal(new PyValue[] { new PyInt(ShieldCommandBurstI), new PyInt(1) }, boosted.Args);
+    }
+
+    [PgFact]
+    public async Task A_burst_source_inside_an_online_control_tower_force_field_stops_its_cycle()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var source = await FlyingWithAsync(rig, ShieldCommandBurstI);
+        await LoadChargeAsync(rig, source, ShieldHarmonizing);
+        rig.Space.StartModuleForTest((ulong)source.Session.SessionId, source.Module);
+
+        var shieldRadius = await AddOnlineControlTowerAsync(rig, source);
+        rig.Sim.PositionAnswers[ShipIdOf(source)] = [shieldRadius - 4_000, 0, 0];
+        Events.Of(source.Session);
+
+        var result = await ModuleFuelHostTests.SettleAsync(rig, BurstCycle(source, 12, ShipIdOf(source)));
+
+        Assert.False(result.Accepted);
+        Assert.Equal("FORCE_FIELD", result.Reason);
+        Assert.Empty(rig.Space.Buffs.StateOf(ShipIdOf(source), rig.Now));
+        Assert.DoesNotContain(Events.Of(source.Session), notification => notification.Name == "OnFleetBoosted");
+    }
+
+    [PgFact]
+    public async Task A_command_burst_inside_an_online_control_tower_force_field_does_not_start()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var source = await FlyingWithAsync(rig, ShieldCommandBurstI);
+        await LoadChargeAsync(rig, source, ShieldHarmonizing);
+        var shieldRadius = await AddOnlineControlTowerAsync(rig, source);
+        rig.Sim.PositionAnswers[ShipIdOf(source)] = [shieldRadius - 4_000, 0, 0];
+
+        var result = await rig.Space.ActivateAsync(
+            source.Session, source.Module, "moduleBonusWarfareLinkShield", 0, 1, CancellationToken.None);
+
+        Assert.False(result?.Ok);
+        Assert.Equal("SHIP_IN_FORCE_FIELD", result?.Reason);
+        Assert.Empty(rig.Sim.Heard.OfType<SimActivate>());
+        Assert.False(rig.Space.IsModuleActive((ulong)source.Session.SessionId, source.Module));
+    }
+
+    [PgFact]
+    public async Task A_command_burst_outside_an_online_control_tower_force_field_starts()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var source = await FlyingWithAsync(rig, ShieldCommandBurstI);
+        await LoadChargeAsync(rig, source, ShieldHarmonizing);
+        var shieldRadius = await AddOnlineControlTowerAsync(rig, source);
+        rig.Sim.PositionAnswers[ShipIdOf(source)] = [shieldRadius + 4_000, 0, 0];
+
+        var result = await rig.Space.ActivateAsync(
+            source.Session, source.Module, "moduleBonusWarfareLinkShield", 0, 1, CancellationToken.None);
+
+        Assert.Equal(ModuleResult.Done, result);
+        Assert.Single(rig.Sim.Heard.OfType<SimActivate>());
+        Assert.True(rig.Space.IsModuleActive((ulong)source.Session.SessionId, source.Module));
+    }
+
+    [PgFact]
+    public async Task A_command_burst_inside_an_offline_control_tower_force_field_starts()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var source = await FlyingWithAsync(rig, ShieldCommandBurstI);
+        await LoadChargeAsync(rig, source, ShieldHarmonizing);
+        var shieldRadius = await AddOnlineControlTowerAsync(rig, source);
+        await rig.Deployed.SetTowerStateAsync(TestControlTowerId, "offline");
+        rig.Sim.PositionAnswers[ShipIdOf(source)] = [shieldRadius - 4_000, 0, 0];
+
+        var result = await rig.Space.ActivateAsync(
+            source.Session, source.Module, "moduleBonusWarfareLinkShield", 0, 1, CancellationToken.None);
+
+        Assert.Equal(ModuleResult.Done, result);
+        Assert.Single(rig.Sim.Heard.OfType<SimActivate>());
+        Assert.True(rig.Space.IsModuleActive((ulong)source.Session.SessionId, source.Module));
     }
 
     [PgFact]
@@ -327,6 +428,21 @@ public class CommandBurstHostTests
         await rig.Modules.SetAsync(connection, transaction, moduleId, ItemState.Online);
         await transaction.CommitAsync();
         return flying with { Module = moduleId };
+    }
+
+    private static async Task<double> AddOnlineControlTowerAsync(Rig rig, DroneHostTests.Flying source)
+    {
+        const int AmarrControlTower = 12235;
+        await rig.Statics.EnsureTypesAsync([AmarrControlTower]);
+        var towerType = Assert.IsType<TypeDef>(rig.Statics.Type(AmarrControlTower));
+        var shieldRadius = towerType.Attributes.GetValueOrDefault(680);
+        Assert.True(shieldRadius > 10_000, "the SDE tower shield must reach around the test ships");
+        await rig.Deployed.SaveAsync(new DeployedRecord(
+            TestControlTowerId, "control_tower", source.System, towerType.Name, towerType.TypeId, towerType.GroupId,
+            [0, 0, 0], towerType.Attributes.GetValueOrDefault(162), source.Character, 98000001, 0,
+            source.Session.GetInt("shipid")!.Value, long.MaxValue, rig.Now));
+        await rig.Deployed.SetTowerStateAsync(TestControlTowerId, "online");
+        return shieldRadius;
     }
 
     /// <summary>The invulnerability core's grant as the simulation sends it at the start: the ships it found in reach, the source among them.</summary>

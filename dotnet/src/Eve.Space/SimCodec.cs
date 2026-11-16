@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 98;
+    public const ushort ProtocolVersion = 99;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -514,6 +514,17 @@ public static partial class SimCodec
                             objects.Add(item);
                         }
                         reply = reply with { Deployment = new(flags[0], flags[1], flags[2], flags[3], flags[4], objects) };
+                    }
+                    var followingFlag = r.U8();
+                    if (followingFlag > 1) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal FOLLOW state flag");
+                    if (followingFlag == 1)
+                    {
+                        if (reply.Error is not null) throw new SimLinkException(SimLinkError.BadValue, "Abyssal FOLLOW state without pose");
+                        var following = new SimAbyssalFollowApproach(r.I64(), r.F64(), r.F64());
+                        if (following.TargetId <= 0 || !double.IsFinite(following.FollowRangeMeters) || following.FollowRangeMeters < 0 ||
+                            !double.IsFinite(following.MaxVelocityMetersPerSecond) || following.MaxVelocityMetersPerSecond <= 0)
+                            throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal FOLLOW state");
+                        reply = reply with { Following = following };
                     }
                     message = reply;
                     break;

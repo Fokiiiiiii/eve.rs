@@ -523,6 +523,10 @@ def build(m):
             body += struct.pack("<I", len(deployment["nearbyObjects"]))
             for obj in deployment["nearbyObjects"]:
                 body += i64(obj["itemId"]) + struct.pack("<id", obj["typeId"], obj["centerDistanceMeters"])
+        following = m.get("following")
+        body += bytes([1 if following else 0])
+        if following:
+            body += i64(following["targetId"]) + struct.pack("<2d", following["followRangeMeters"], following["maxVelocityMetersPerSecond"])
         return frame(k, body)
     if k in ("EnsureAbyssalSceneReply", "MoveAbyssalParticipantReply", "RebindAbyssalSessionReply", "RemoveAbyssalSceneReply"):
         return frame(k, abyssal_result(m))
@@ -957,6 +961,10 @@ valid = [
      "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "error": None,
      "deployment": {"warping": True, "cloaked": False, "cynoActive": True, "undockInvulnerable": False, "warpScrambled": True,
         "nearbyObjects": [{"itemId": "400000001", "typeId": 23, "centerDistanceMeters": 1000000.0}]}},
+    {"name": "private pose receipt carries the committed FOLLOW approach", "kind": "GetAbyssalParticipantPoseReply", "requestId": "52",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1}, "shipId": "9988400001940",
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "error": None,
+     "following": {"targetId": "9988400001942", "followRangeMeters": 2500.0, "maxVelocityMetersPerSecond": 339.25}},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter ship with a weapon bank", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,

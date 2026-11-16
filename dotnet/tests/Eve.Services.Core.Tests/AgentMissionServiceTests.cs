@@ -135,7 +135,7 @@ public sealed class AgentMissionServiceTests
         Assert.Equal(10, offered.Items.Count);
         Assert.Equal(new PyInt(1), offered.Items[0]);
         Assert.Equal(new PyInt(1), offered.Items[1]);
-        Assert.Equal(new PyStr("UI/Agents/StandardMission/Courier"), offered.Items[2]);
+        Assert.Equal(new PyStr("UI/Agents/MissionTypes/Courier"), offered.Items[2]);
         Assert.Equal(new PyStr("Courier Assignment"), offered.Items[3]);
         Assert.Equal(new PyInt(firstAgentId), offered.Items[4]);
         Assert.Equal(new PyLong(missionFileTime), offered.Items[5]);
@@ -286,7 +286,7 @@ public sealed class AgentMissionServiceTests
 
         Assert.Equal(10, result.Items.Count);
         Assert.Equal(new PyInt(2), result.Items[0]);
-        Assert.Equal(new PyStr("UI/Agents/StandardMission/Encounter"), result.Items[2]);
+        Assert.Equal(new PyStr("UI/Agents/MissionTypes/Encounter"), result.Items[2]);
         Assert.Equal(new PyInt(123458), result.Items[3]);
         Assert.Equal(new PyInt(agentId), result.Items[4]);
         Assert.Equal(new PyStr("mission-4"), result.Items[9]);
@@ -442,7 +442,7 @@ public sealed class AgentMissionServiceTests
         }));
         Assert.Equal(new PyStr("Unknown Agent"), DictField(fallbackKeywords, "agentName"));
         Assert.Equal(new PyStr("93031"), DictField(fallbackKeywords, "missionName"));
-        Assert.Equal(new PyStr(agent.MissionTypeLabel), DictField(fallbackKeywords, "missionTypeLabel"));
+        Assert.Equal(new PyStr("UI/Agents/MissionTypes/Courier"), DictField(fallbackKeywords, "missionTypeLabel"));
         Assert.Empty(Assert.IsType<PyDict>(await service.CallAsync(new ServiceCall
         {
             Method = "GetStandingGainsForMission", Args = [new PyInt(999999)], Session = session, BoundObjectId = oid,
@@ -487,7 +487,7 @@ public sealed class AgentMissionServiceTests
         }));
         var keywords = Assert.IsType<PyDict>(DictField(briefing, "Mission Keywords"));
         Assert.Equal(new PyStr("Courier Briefing"), DictField(keywords, "missionName"));
-        Assert.Equal(new PyStr(agent.MissionTypeLabel), DictField(keywords, "missionTypeLabel"));
+        Assert.Equal(new PyStr("UI/Agents/MissionTypes/Courier"), DictField(keywords, "missionTypeLabel"));
         Assert.Equal(new PyInt(6000032), DictField(keywords, "objectiveDestinationID"));
         Assert.Equal(new PyInt(1500), DictField(keywords, "rewardQuantity"));
         Assert.Equal(new PyInt(93032), DictField(briefing, "Mission Title ID"));
@@ -745,6 +745,9 @@ public sealed class AgentMissionServiceTests
             (1202, activeArcMissions));
         Assert.Equal(expectedArcStatus, await service.CallAsync(RpcCall("GetMyEpicArcStatus", session)));
 
+        var cachedMessages = Assert.IsType<PyObject>(await service.CallAsync(RpcCall("GetMessagesForEpicArcMissions", session)));
+        Assert.Equal(ObjectCaching.ResultClass, JsSemantics.StringValue(cachedMessages.Name));
+        var cachedParts = Assert.IsType<PyTuple>(cachedMessages.Args).Items;
         Assert.Equal(new PyDict([
             new KeyValuePair<PyValue, PyValue>(
                 new PyStr("start"),
@@ -752,7 +755,7 @@ public sealed class AgentMissionServiceTests
                     (430001, new PyStr("UI/Agent/EpicArc/Start")),
                     (430002, new PyInt(123)))
             ),
-        ]), await service.CallAsync(RpcCall("GetMessagesForEpicArcMissions", session)));
+        ]), Assert.IsType<PySubStream>(cachedParts[1]).Decoded);
     }
 
     private static AgentMissionService CreateAgentRpcService(

@@ -1140,7 +1140,37 @@ impl Message {
                 } else {
                     None
                 };
-                Message::GetAbyssalParticipantPoseReply { request_id, scene, ship_id, outcome, deployment }
+                let following = if read_flag(&mut r, "Abyssal FOLLOW state")? {
+                    if outcome.is_err() {
+                        return Err(DecodeError::BadValue("Abyssal FOLLOW state without pose"));
+                    }
+                    let target_id = r.i64()?;
+                    let follow_range_meters = r.f64()?;
+                    let max_velocity_meters_per_second = r.f64()?;
+                    if target_id <= 0
+                        || !follow_range_meters.is_finite()
+                        || follow_range_meters < 0.0
+                        || !max_velocity_meters_per_second.is_finite()
+                        || max_velocity_meters_per_second <= 0.0
+                    {
+                        return Err(DecodeError::BadValue("Abyssal FOLLOW state"));
+                    }
+                    Some(AbyssalFollowApproach {
+                        target_id,
+                        follow_range_meters,
+                        max_velocity_meters_per_second,
+                    })
+                } else {
+                    None
+                };
+                Message::GetAbyssalParticipantPoseReply {
+                    request_id,
+                    scene,
+                    ship_id,
+                    outcome,
+                    deployment,
+                    following,
+                }
             }
             kind::ENTER => {
                 let session_id = r.u64()?;

@@ -189,14 +189,47 @@ fn the_actor_that_binds_is_given_both_ships_and_the_numbers_of_both_as_the_refer
     assert_eq!(names(&out[4]), recorded_names(&recorded[2]));
     assert_eq!(names(&out[5]), ["SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
 
-    // the ships of the first update, watcher then actor, with their slim items
+    // Compare the player ship rows separately; the servers place their sentry scenery in different AddBalls2 updates.
     let (ours, theirs) = (out_args(&out[2]), event_args(&recorded[0]));
     let slims = |v: &Value| v["$tuple"][0][0]["$tuple"][1]["$tuple"][1]["$tuple"][0]["$tuple"][1].clone();
     let (mut mine, mut recorded_slims) = (slims(&ours), slims(&theirs));
     blank_times(&mut mine);
     blank_times(&mut recorded_slims);
     absent_affiliations(&mut recorded_slims);
-    assert_eq!(mine, recorded_slims);
+    let player_ship_ids = [r.watcher.ship_id, r.actor.ship_id];
+    let player_slims = |items: &Value| {
+        items
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| {
+                let fields = item["$tuple"][0]["$dict"].as_array().unwrap();
+                fields.iter().any(|pair| pair[0] == "itemID" && player_ship_ids.contains(&number(&pair[1])))
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let mine_players = player_slims(&mine);
+    let recorded_players = player_slims(&recorded_slims);
+    assert_eq!(mine_players.len(), 2, "both recorded player ships are present");
+    assert_eq!(recorded_players.len(), 2, "the reference has both player ships");
+    assert_eq!(mine_players, recorded_players);
+    let sentry_types: Vec<i64> = mine
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| {
+            let fields = item["$tuple"][0]["$dict"].as_array().unwrap();
+            let item_id = fields.iter().find(|pair| pair[0] == "itemID").map(|pair| number(&pair[1]));
+            if item_id.is_some_and(|id| player_ship_ids.contains(&id)) {
+                return None;
+            }
+            let field = |name| fields.iter().find(|pair| pair[0] == name).map(|pair| number(&pair[1]));
+            (field("groupID") == Some(99)).then(|| field("typeID").unwrap())
+        })
+        .collect();
+    assert_eq!(sentry_types, [3740, 3741, 3739, 3740, 3741, 3739, 3740, 3741]);
+    assert_eq!(mine.as_array().unwrap().len(), mine_players.len() + sentry_types.len());
     assert_eq!(theirs["$tuple"][1], ours["$tuple"][1], "wait");
 
     // The watcher is primed separately; the actor's numbers are in its ball.
@@ -335,17 +368,49 @@ fn a_warp_is_shown_as_a_turn_then_the_warp_and_the_ship_is_taken_from_view_when_
     assert_eq!(turn.len(), 1);
     assert_eq!(action_names_of(&out_args(turn[0])), recorded_names(&seen[0]));
 
+    let actor_events = destiny_events(recorded, "events");
+    let reference_dropout = actor_events
+        .iter()
+        .find(|event| recorded_names(event).iter().any(|name| name == "SetBallMassive"))
+        .unwrap()["at"]
+        .as_f64()
+        .unwrap();
+    let reference_rest = actor_events
+        .iter()
+        .find(|event| {
+            recorded_names(event) == ["SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"]
+        })
+        .unwrap()["at"]
+        .as_f64()
+        .unwrap();
     let mut entered = None;
     let mut removed = None;
+    let mut dropout = None;
+    let mut rest = None;
+    let mut actor_updates = Vec::new();
     let mut t = at;
-    while t < at + 60 * SECOND && (entered.is_none() || removed.is_none()) {
+    while t < at + 120 * SECOND && (entered.is_none() || removed.is_none() || rest.is_none()) {
         t += SECOND / 4;
         for out in scene.poll(t) {
-            let Out::Notify { session: WATCHER, .. } = out else { continue };
-            match names(&out).first().map(String::as_str) {
-                Some("OnSpecialFX") => entered = Some((out_args(&out), (t - at) as f64 / SECOND as f64)),
-                Some("PackagedAction") => removed = Some((out_args(&out), (t - at) as f64 / SECOND as f64)),
-                _ => {}
+            let Out::Notify { session, .. } = &out else { continue };
+            let args = out_args(&out);
+            let actions = action_names_of(&args);
+            let elapsed = (t - at) as f64 / SECOND as f64;
+            if *session == ACTOR {
+                if actions.contains(&"SetBallMassive".to_string()) && dropout.is_none() {
+                    dropout = Some(elapsed);
+                }
+                if actions == ["SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"] {
+                    rest = Some(elapsed);
+                }
+                actor_updates.push(args.clone());
+            }
+            if *session == WATCHER {
+                match actions.first().map(String::as_str) {
+                    Some("OnSpecialFX") => entered = Some((args, elapsed)),
+                    Some("PackagedAction") => removed = Some((args, elapsed)),
+                    _ => {}
+                }
             }
         }
     }
@@ -367,4 +432,21 @@ fn a_warp_is_shown_as_a_turn_then_the_warp_and_the_ship_is_taken_from_view_when_
         (removed_after - recorded_removal).abs() < 2.5,
         "removed after {removed_after} s, recorded {recorded_removal} s"
     );
+
+    let (dropout, rest) =
+        (dropout.expect("the pilot drops out of warp"), rest.expect("the pilot comes to rest"));
+    // The live walk uses this three-second tolerance for the same Destiny timing comparison.
+    assert!(
+        (dropout - reference_dropout).abs() <= 3.0,
+        "dropped out after {dropout} s, recorded {reference_dropout} s"
+    );
+    assert!((rest - reference_rest).abs() <= 3.0, "rested after {rest} s, recorded {reference_rest} s");
+    let massless: Vec<&Value> =
+        actor_updates.iter().filter(|args| action_names_of(args) == ["SetBallMassive"]).collect();
+    assert_eq!(massless.len(), 2);
+    let stamp = |args: &Value| args["$tuple"][0][0]["$tuple"][0].as_i64().unwrap();
+    assert_eq!(stamp(massless[1]) - stamp(massless[0]), 2);
+    let ship = scene.ship(ACTOR, t).unwrap();
+    assert_eq!(ship.course, eve_space::ship::Course::Stop);
+    assert!(ship.velocity.x.abs() + ship.velocity.y.abs() + ship.velocity.z.abs() < 0.05, "at rest");
 }

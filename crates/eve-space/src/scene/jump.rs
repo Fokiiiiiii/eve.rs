@@ -173,9 +173,6 @@ impl Scene {
         if pilot.docking.is_some() {
             return refused("DOCKING");
         }
-        if pilot.flight.is_some() {
-            return refused("IN_WARP");
-        }
         if destination_system <= 0 || destination_system == system.id {
             return refused("WRONG_SOLAR_SYSTEM");
         }
@@ -284,9 +281,6 @@ impl Scene {
         if pilot.docking.is_some() {
             return refused("DOCKING");
         }
-        if pilot.flight.is_some() {
-            return refused("IN_WARP");
-        }
         if destination_system == self.system.id {
             return refused("WRONG_SOLAR_SYSTEM");
         }
@@ -301,6 +295,8 @@ impl Scene {
         let mut out = self.clear_tether_policy(session, now);
         let stamp = self.next_stamp(now);
         let pilot = self.pilots.get_mut(&session).expect("checked above");
+        pilot.flight = None;
+        pilot.warp_target = None;
         let (before, after) = match pilot.modules.capacitor.as_mut() {
             Some(capacitor) => capacitor.draw(now, need),
             None => (0.0, 0.0),

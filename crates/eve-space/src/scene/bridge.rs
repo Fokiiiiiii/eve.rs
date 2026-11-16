@@ -5,7 +5,7 @@ use super::*;
 
 pub(crate) const CONDUIT_RANGE_METERS: f64 = 10_000.0;
 
-/// The reason a ship cannot start a jump now, by the rules the stargate and cynosural jumps share (immobile, cloaked, disrupted, spooling, docking, in warp).
+/// The reason a ship cannot start a jump now, by the rules the stargate and cynosural jumps share.
 fn jump_block(pilot: &Pilot, now: i64) -> Option<&'static str> {
     if pilot.immobile_until > now {
         Some("IMMOBILE")
@@ -17,8 +17,6 @@ fn jump_block(pilot: &Pilot, now: i64) -> Option<&'static str> {
         Some("STARGATE_JUMP_IN_PROGRESS")
     } else if pilot.docking.is_some() {
         Some("DOCKING")
-    } else if pilot.flight.is_some() {
-        Some("IN_WARP")
     } else {
         None
     }
@@ -223,6 +221,8 @@ impl Scene {
     ) -> Vec<Out> {
         let mut out = self.clear_tether_policy(session, now);
         let pilot = self.pilots.get_mut(&session).expect("checked by the caller");
+        pilot.flight = None;
+        pilot.warp_target = None;
         let ship = &mut pilot.ship;
         if !matches!(ship.course, Course::Stop) || ship.speed_fraction > 0.0 || speed_of(ship.velocity) > 0.5
         {

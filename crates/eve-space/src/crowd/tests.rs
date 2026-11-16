@@ -288,7 +288,7 @@ fn a_ship_is_told_to_those_who_watch_as_a_turn_when_it_asks_for_a_warp_and_as_th
     let mut scene = both();
     let at = NOON + 2 * SECOND;
     let out = scene.command(B, Command::WarpTo { target_id: PLANET, range: 0.0 }, at);
-    assert_eq!(names(&out[0]), ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"]);
+    assert_eq!(names(&out[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
     assert_eq!((recipient(&out[1]), names(&out[1])), (A, vec!["GotoDirection".to_string()]));
 
     let mut entered = None;

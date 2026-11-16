@@ -40,7 +40,7 @@ impl Scene {
         if source.incoming.jammed() && !source.incoming.jammers().contains(&target.id) {
             return Err(Refusal::of("TARGET_JAMMED"));
         }
-        if source.flight.as_ref().is_some_and(|f| f.is_warping()) {
+        if source.flight.as_ref().is_some_and(|f| f.is_in_warp_mode()) {
             return Err(Refusal::of("SOURCE_WARPING"));
         }
         if target.warping {

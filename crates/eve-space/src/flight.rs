@@ -44,6 +44,8 @@ pub enum Milestone {
     Entered { at: i64 },
     /// The ship is about to drop out (two seconds before it does): the client is told the ball is massless again.
     Dropout { at: i64 },
+    /// The ship has left warp; it is coasting, and the client can issue a new movement order.
+    Dropped { at: i64 },
     /// The ship has slowed to a stop.
     Rest { at: i64, position: Vec3, velocity: Vec3 },
 }
@@ -91,6 +93,12 @@ impl Flight {
     /// Whether the ship is in warp itself, not still lining up.
     pub fn is_warping(&self) -> bool {
         matches!(self.phase, Phase::Warping { .. })
+    }
+
+    /// Whether the Destiny ball is still in WARP mode. The client enters that mode when WarpTo applies,
+    /// including while it aligns, and leaves it at dropout while the ship coasts.
+    pub fn is_in_warp_mode(&self) -> bool {
+        !self.is_coasting()
     }
 
     /// Whether the ship has dropped out of warp and is decelerating.
@@ -202,6 +210,7 @@ impl Flight {
                         direction.z * there.speed,
                     );
                     ship.direction = *direction;
+                    milestones.push(Milestone::Dropped { at: at_dropout });
                     self.phase = Phase::Coasting { since: at_dropout, position, velocity };
                     at = at_dropout;
                 }

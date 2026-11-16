@@ -484,7 +484,7 @@ impl Scene {
             if pilot.no_jump_until > now {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_JUMP_OR_CLOAK" }];
             }
-            if pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()) {
+            if pilot.flight.as_ref().is_some_and(|flight| flight.is_in_warp_mode()) {
                 return vec![Out::Refused { session, command: CODE, reason: "CLOAK_WARP_BLOCKED" }];
             }
             if !self.targeters_of(pilot.ship.spec.ship_id).is_empty() {

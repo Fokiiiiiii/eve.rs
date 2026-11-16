@@ -58,7 +58,7 @@ impl Scene {
             })
             .collect();
         Some(AbyssalDeploymentSnapshot {
-            warping: own.flight.as_ref().is_some_and(|flight| flight.is_warping()),
+            warping: own.flight.as_ref().is_some_and(|flight| flight.is_in_warp_mode()),
             cloaked: own.cloak != crate::visibility::CloakState::Uncloaked,
             cyno_active: self.deployables.values().any(|item| {
                 item.ship_id == ship_id

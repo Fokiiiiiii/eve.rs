@@ -10,7 +10,7 @@ impl Scene {
         if let Some(pilot) = self.pilots.get(&session) {
             return Some(Presence {
                 position: pilot.ship.position,
-                warping: pilot.flight.as_ref().is_some_and(|f| f.is_warping()),
+                warping: pilot.flight.as_ref().is_some_and(|f| f.is_in_warp_mode()),
             });
         }
         let observer = self.controlled_structures.get(&session)?;

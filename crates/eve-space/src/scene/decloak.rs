@@ -46,7 +46,7 @@ impl Scene {
             .pilots
             .iter()
             .filter(|(other, pilot)| {
-                **other != session && !pilot.flight.as_ref().is_some_and(|flight| flight.is_warping())
+                **other != session && !pilot.flight.as_ref().is_some_and(|flight| flight.is_in_warp_mode())
             })
             .filter_map(|(_, pilot)| {
                 let other = &pilot.ship;
@@ -110,7 +110,7 @@ impl Scene {
             .filter(|session| {
                 let pilot = &self.pilots[session];
                 pilot.cloak == crate::visibility::CloakState::Cloaked
-                    && !pilot.flight.as_ref().is_some_and(|flight| flight.is_warping())
+                    && !pilot.flight.as_ref().is_some_and(|flight| flight.is_in_warp_mode())
             })
             .filter_map(|session| Some((session, self.cloak_trigger(session, CLOAK_PROXIMITY_METERS)?)))
             .collect();

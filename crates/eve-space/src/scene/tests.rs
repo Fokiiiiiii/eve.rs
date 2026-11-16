@@ -1346,10 +1346,119 @@ fn a_fleet_member_ship_is_a_warp_target_in_its_system() {
 }
 
 #[test]
+fn a_visible_control_tower_is_a_warp_target_at_the_entity_stop_distance() {
+    use crate::link::DisruptorPlacement;
+
+    const CONTROL_TOWER: i64 = 990_000_000_610;
+    const TOWER_RADIUS: f64 = 20_000.0;
+
+    let mut scene = scene_with_a_planet();
+    scene.bind(SESSION, NOON);
+    let ship = scene.ship(SESSION, NOON).unwrap().clone();
+    let target = Vec3::new(ship.position.x + 300_000.0, ship.position.y, ship.position.z);
+    let placed = scene.place_control_tower(
+        DisruptorPlacement {
+            deployable_id: CONTROL_TOWER,
+            solar_system_id: scene.solar_system_id(),
+            name: "Control Tower".to_string(),
+            type_id: 12_235,
+            group_id: 365,
+            position: [target.x, target.y, target.z],
+            radius: TOWER_RADIUS,
+            range: 0.0,
+            active: false,
+            owner_id: spec().owner_id,
+            corporation_id: spec().corporation_id as i32,
+            alliance_id: 0,
+            ship_id: spec().ship_id,
+        },
+        NOON,
+    );
+    assert!(placed.iter().any(|out| format!("{out:?}").contains("AddBalls2")));
+
+    let stop_distance = TOWER_RADIUS + ship.spec.radius * 2.0;
+    let resolved =
+        scene.command(SESSION, Command::ResolveWarpTarget { target_id: CONTROL_TOWER, range: 0.0 }, NOON);
+    assert!(
+        matches!(resolved.last(), Some(Out::Position { command: 22, position, .. })
+            if *position == Vec3::new(target.x - stop_distance, target.y, target.z)),
+        "the visible tower resolves using EveJS's entity stop distance: {resolved:?}"
+    );
+
+    let warp = scene.command(SESSION, Command::WarpTo { target_id: CONTROL_TOWER, range: 0.0 }, NOON);
+    assert!(matches!(warp.last(), Some(Out::Accepted { command: 8, .. })), "{warp:?}");
+    assert!(matches!(
+        scene.ship(SESSION, NOON).unwrap().course,
+        Course::Warp { raw_destination, stop_distance: actual, .. }
+            if raw_destination == target && actual == stop_distance
+    ));
+}
+
+#[test]
+fn a_ship_can_follow_a_control_tower_after_dropping_out_of_warp() {
+    use crate::link::DisruptorPlacement;
+
+    const CONTROL_TOWER: i64 = 990_000_000_611;
+    let mut scene = scene_with_a_planet();
+    scene.bind(SESSION, NOON);
+    let initial = scene.ship(SESSION, NOON).unwrap().position;
+    let target = Vec3::new(initial.x + 300_000.0, initial.y, initial.z);
+    scene.place_control_tower(
+        DisruptorPlacement {
+            deployable_id: CONTROL_TOWER,
+            solar_system_id: scene.solar_system_id(),
+            name: "Control Tower".to_string(),
+            type_id: 12_235,
+            group_id: 365,
+            position: [target.x, target.y, target.z],
+            radius: 20_000.0,
+            range: 0.0,
+            active: false,
+            owner_id: spec().owner_id,
+            corporation_id: spec().corporation_id as i32,
+            alliance_id: 0,
+            ship_id: spec().ship_id,
+        },
+        NOON,
+    );
+
+    let (_, first_drop) = warp_until_drop(&mut scene, PLANET);
+    let warp = scene.command(SESSION, Command::WarpTo { target_id: CONTROL_TOWER, range: 0.0 }, first_drop);
+    assert!(matches!(warp.last(), Some(Out::Accepted { command: 8, .. })), "{warp:?}");
+    let (_, tower_drop) = warp_until_drop(&mut scene, CONTROL_TOWER);
+    let before = scene.ship(SESSION, tower_drop).unwrap().position;
+    let before_distance =
+        ((before.x - target.x).powi(2) + (before.y - target.y).powi(2) + (before.z - target.z).powi(2))
+            .sqrt();
+    let follow_standoff = 1_000.0 * 0.999 + spec().radius + 20_000.0;
+    let before_error = (before_distance - follow_standoff).abs();
+
+    let follow = scene.command(
+        SESSION,
+        Command::FollowBall { target_id: CONTROL_TOWER, range: 1_000.0 },
+        tower_drop + seconds(1),
+    );
+    assert!(matches!(follow.last(), Some(Out::Accepted { command: 5, .. })), "{follow:?}");
+    assert!(scene.pilots[&SESSION].flight.is_none(), "a follow order replaces the coast after warp drop");
+
+    let now = tower_drop + seconds(21);
+    scene.update_state(SESSION, now);
+    let after = scene.ship(SESSION, now).unwrap().position;
+    let after_distance =
+        ((after.x - target.x).powi(2) + (after.y - target.y).powi(2) + (after.z - target.z).powi(2)).sqrt();
+    let after_error = (after_distance - follow_standoff).abs();
+    assert!(
+        after_error < before_error,
+        "the ship did not approach the FollowBall standoff: {before_distance} -> {after_distance}, expected {follow_standoff}"
+    );
+}
+
+#[test]
 fn a_ship_lining_up_for_warp_or_in_it_takes_no_orders() {
     let mut scene = scene_with_a_planet();
     let out = scene.command(SESSION, Command::WarpTo { target_id: PLANET, range: 0.0 }, NOON);
     assert_eq!(action_names(&out[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
+    assert!(scene.pilots[&SESSION].flight.as_ref().unwrap().is_in_warp_mode());
     for command in [
         Command::Stop,
         Command::SetSpeedFraction(0.5),
@@ -1411,6 +1520,81 @@ fn a_warp_ends_with_the_ship_at_rest_by_the_planet_and_the_pilot_may_order_it_ab
     assert_eq!(action_names(&told[0]), ["SetSpeedFraction"]);
     let told = scene.command(SESSION, Command::WarpTo { target_id: PLANET, range: 0.0 }, t + seconds(1));
     assert_eq!(told, [Out::Refused { session: SESSION, command: 8, reason: "WARP_DISTANCE_TOO_CLOSE" }]);
+}
+
+fn warp_until_drop(scene: &mut Scene, destination: i64) -> (Vec<Out>, i64) {
+    scene.command(SESSION, Command::WarpTo { target_id: destination, range: 0.0 }, NOON);
+    let mut told = Vec::new();
+    let mut now = NOON;
+    while now < NOON + seconds(300)
+        && !scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_coasting())
+    {
+        now += seconds(1);
+        told.extend(scene.poll(now));
+    }
+    assert!(
+        scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_coasting()),
+        "warp did not drop out by {now}"
+    );
+    (told, now)
+}
+
+#[test]
+fn a_ship_can_follow_a_target_after_the_warp_drop_while_it_is_still_coasting() {
+    let mut scene = scene_with_a_planet();
+    let (told, dropped_at) = warp_until_drop(&mut scene, PLANET);
+    assert!(told.contains(&Out::WarpExited { session: SESSION }), "{told:?}");
+
+    let now = dropped_at + seconds(1);
+    let before = scene.ship(SESSION, now).unwrap().clone();
+    assert_eq!(before.course, Course::Stop, "the client has left WARP mode");
+    assert!(scene.pilots[&SESSION].flight.as_ref().unwrap().is_coasting());
+    assert!(!scene.pilots[&SESSION].flight.as_ref().unwrap().is_in_warp_mode());
+    let target = scene.command(SESSION, Command::FollowBall { target_id: STATION, range: 1_000.0 }, now);
+
+    assert!(!target.iter().any(|out| matches!(out, Out::Refused { reason: "IN_WARP", .. })), "{target:?}");
+    let after = scene.ship(SESSION, now).unwrap();
+    assert_eq!(after.position, before.position);
+    assert_eq!(after.velocity, before.velocity, "the warp exit preserves the ship's coast velocity");
+    assert!(matches!(after.course, Course::Follow { target: STATION, range } if range == 1_000.0));
+    assert!(scene.pilots[&SESSION].flight.is_none());
+}
+
+#[test]
+fn a_ship_can_dock_after_warp_drop_without_waiting_for_its_coast_to_stop() {
+    let mut scene = scene_with_a_planet();
+    scene.pilots.get_mut(&SESSION).unwrap().ship.position = Vec3::new(1_301_047.0, 0.0, 0.0);
+    let (_, dropped_at) = warp_until_drop(&mut scene, STATION);
+    let ship = scene.ship(SESSION, dropped_at).unwrap().clone();
+    assert!(scene.pilots[&SESSION].flight.as_ref().unwrap().is_coasting());
+    assert!(
+        crate::gate::surface_distance(scene.system().body(STATION).unwrap(), ship.position, ship.spec.radius)
+            <= docking_range(BodyKind::Station)
+    );
+
+    let out = scene.command(SESSION, Command::Dock { station_id: STATION }, dropped_at);
+    assert!(out.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })), "{out:?}");
+    assert!(scene.pilots[&SESSION].flight.is_none());
+    assert_eq!(scene.pilots[&SESSION].ship.velocity, Vec3::ZERO);
+    let position = scene.ship(SESSION, dropped_at).unwrap().position;
+    scene.poll(dropped_at + seconds(1));
+    assert_eq!(scene.ship(SESSION, dropped_at + seconds(1)).unwrap().position, position);
+}
+
+#[test]
+fn a_ship_can_start_another_warp_after_the_drop_without_waiting_for_its_coast_to_stop() {
+    let mut scene = scene_with_a_planet();
+    let (told, dropped_at) = warp_until_drop(&mut scene, PLANET);
+    assert!(told.contains(&Out::WarpExited { session: SESSION }), "{told:?}");
+    let before = scene.ship(SESSION, dropped_at).unwrap().clone();
+
+    let next = scene.command(SESSION, Command::WarpTo { target_id: STATION, range: 0.0 }, dropped_at);
+    assert!(matches!(next.last(), Some(Out::Accepted { command: 8, .. })), "{next:?}");
+    let ship = scene.ship(SESSION, dropped_at).unwrap();
+    assert!(matches!(ship.course, Course::Warp { .. }));
+    assert_eq!(ship.position, before.position);
+    assert_eq!(ship.velocity, before.velocity, "the next warp starts from the coast's current motion");
+    assert!(!scene.pilots[&SESSION].flight.as_ref().unwrap().is_coasting());
 }
 
 #[test]
@@ -2805,6 +2989,28 @@ fn a_cyno_jump_leaves_when_its_spool_is_over_and_appears_within_the_field_spawn_
 }
 
 #[test]
+fn a_cynosural_jump_stops_and_replaces_a_warp_in_progress() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    let origin = scene.ship(SESSION, NOON).unwrap().position;
+    let warp = scene.command(
+        SESSION,
+        Command::WarpToPoint {
+            destination: Vec3::new(origin.x + 1_000_000.0, origin.y, origin.z),
+            range: 0.0,
+        },
+        NOON,
+    );
+    assert!(matches!(warp.last(), Some(Out::Accepted { command: 21, .. })), "{warp:?}");
+    assert!(scene.pilots[&SESSION].flight.as_ref().unwrap().is_in_warp_mode());
+
+    let jump = scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON + seconds(1));
+    assert!(jump.iter().any(|out| matches!(out, Out::Jumping { command: 26, .. })), "{jump:?}");
+    assert!(scene.pilots[&SESSION].flight.is_none());
+    assert_eq!(scene.pilots[&SESSION].ship.velocity, Vec3::ZERO);
+}
+
+#[test]
 fn a_cyno_jump_takes_its_share_of_the_capacitor_when_the_drive_spools() {
     let mut scene = scene_by_a_gate();
     let destination = other_scene().solar_system_id();
@@ -2959,6 +3165,30 @@ fn a_fleet_ship_in_range_passes_through_the_bridge_and_leaves_at_once_for_the_fi
     let traveller =
         travellers.into_iter().find(|t| t.session == passenger).expect("the passenger leaves at once");
     assert_eq!((traveller.to_system, traveller.to_field), (destination, Some(CYNO_FIELD)));
+}
+
+#[test]
+fn a_fleet_bridge_jump_stops_and_replaces_a_warp_in_progress() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 60_000.0, 60_000.0), NOON);
+    let origin = scene.ship(passenger, NOON).unwrap().position;
+    let warp = scene.command(
+        passenger,
+        Command::WarpToPoint {
+            destination: Vec3::new(origin.x + 1_000_000.0, origin.y, origin.z),
+            range: 0.0,
+        },
+        NOON + seconds(1),
+    );
+    assert!(matches!(warp.last(), Some(Out::Accepted { command: 21, .. })), "{warp:?}");
+    assert!(scene.pilots[&passenger].flight.as_ref().unwrap().is_in_warp_mode());
+
+    let jump =
+        scene.command(passenger, bridge_jump(spec().ship_id, CYNO_FIELD, destination), NOON + seconds(1));
+    assert!(jump.iter().any(|out| matches!(out, Out::Jumping { .. })), "{jump:?}");
+    assert!(scene.pilots[&passenger].flight.is_none());
 }
 
 #[test]

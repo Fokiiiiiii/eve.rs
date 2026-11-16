@@ -223,7 +223,7 @@ impl Scene {
         if pilot.jump.is_some() {
             return Some("JUMPING");
         }
-        if pilot.flight.is_some() {
+        if pilot.flight.as_ref().is_some_and(|flight| !flight.is_coasting()) {
             return Some("IN_WARP");
         }
         dock_refusal(station, pilot.ship.spec.group_id)
@@ -233,9 +233,12 @@ impl Scene {
     pub(super) fn accept_docking(&mut self, session: SessionId, station_id: i64, now: i64) -> Vec<Out> {
         let stamp = self.next_stamp(now);
         let pilot = self.pilots.get_mut(&session).expect("the caller checked");
+        pilot.flight = None;
+        pilot.warp_target = None;
         let ship = &mut pilot.ship;
         ship.speed_fraction = 0.0;
         ship.course = Course::Stop;
+        ship.velocity = Vec3::ZERO;
         pilot.docking = Some(PendingDock { station_id, accepted_at: now, ready: false });
         let ship_id = id(ship.spec.ship_id);
         let mut out = vec![Self::notify_charid(session, "OnDockingAccepted", vec![id(station_id)])];

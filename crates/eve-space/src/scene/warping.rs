@@ -64,7 +64,7 @@ impl Scene {
         if pilot.jump.is_some() {
             return refused("JUMPING");
         }
-        if pilot.flight.is_some() {
+        if pilot.flight.as_ref().is_some_and(|flight| !flight.is_coasting()) {
             return refused("IN_WARP");
         }
         if pilot.immobile_until > now {
@@ -186,6 +186,10 @@ impl Scene {
         range: f64,
         now: i64,
     ) -> Option<(Vec3, f64)> {
+        let ship_radius = pilot.ship.spec.radius.max(0.0);
+        let entity_stop_distance =
+            |radius: f64| 1_000.0f64.max(radius.max(0.0)).max(range.max(0.0)) + ship_radius * 2.0;
+
         if let Some(body) = self.system.body(target_id) {
             let ship = &pilot.ship;
             return Some(match warp::warp_in_point(body) {
@@ -200,16 +204,27 @@ impl Scene {
 
         // a dungeon room's acceleration gate is a deployable ball of the scene: a warp to it ends at the range from its centre (the gate's radius is its
         // reach for a transit, not a stop: a stop a radius away would leave the pilot outside the complex's presence)
-        if let Some(gate) = self
-            .deployables
-            .get(&target_id)
-            .filter(|gate| gate.role == crate::deployable::Role::AccelerationGate)
-        {
-            return Some((gate.position, range.max(0.0) + pilot.ship.spec.radius));
+        if let Some(deployable) = self.deployables.get(&target_id) {
+            return match &deployable.role {
+                crate::deployable::Role::AccelerationGate => {
+                    Some((deployable.position, range.max(0.0) + ship_radius))
+                }
+                // These scene records have no client ball to target.
+                crate::deployable::Role::DeadspacePocket | crate::deployable::Role::JumpBridge { .. } => None,
+                // The other deployables are visible balls. EveJS resolves any live entity id and uses its
+                // ordinary entity stop distance for these, including an unanchored control tower.
+                _ => Some((deployable.position, entity_stop_distance(deployable.spec.radius))),
+            };
         }
-        self.pilots.values().find(|target| target.ship.spec.ship_id == target_id).map(|target| {
-            (target.ship.position, range.max(0.0) + target.ship.spec.radius + pilot.ship.spec.radius)
-        })
+
+        if let Some(wreck) = self.wrecks.get(&target_id) {
+            return Some((wreck.position, entity_stop_distance(wreck.radius)));
+        }
+
+        self.pilots
+            .values()
+            .find(|target| target.ship.spec.ship_id == target_id)
+            .map(|target| (target.ship.position, entity_stop_distance(target.ship.spec.radius)))
     }
 
     pub(super) fn resolve_warp_target(

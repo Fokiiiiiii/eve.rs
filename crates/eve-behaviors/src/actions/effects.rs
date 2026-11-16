@@ -266,7 +266,9 @@ enter_task!(
             if scalar.truthy() { scalar } else { Value::Float(1.0) }
         };
         let Some(scalar) = scalar.as_float() else {
-            t.raise(BehaviorError::Task("TypeError: unsupported operand type(s) for *: 'float' and 'NoneType'".to_string()));
+            t.raise(BehaviorError::Task(
+                "TypeError: unsupported operand type(s) for *: 'float' and 'NoneType'".to_string(),
+            ));
             return;
         };
         let Some(value_address) = t.required_address("valueAddress") else { return };
@@ -516,7 +518,11 @@ enter_task!(
                 attribute_error_on_item(t, "charID");
                 return;
             };
-            t.world().singlecast_by_char_id(slim.char_id, "OnReplaceNebula", &[Value::Str(NEBULA_PATH.to_string())]);
+            t.world().singlecast_by_char_id(
+                slim.char_id,
+                "OnReplaceNebula",
+                &[Value::Str(NEBULA_PATH.to_string())],
+            );
         }
     }
 );

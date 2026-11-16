@@ -22,7 +22,7 @@ from tests.runid import run_token
 from evecli import marshal as m
 from evecli import packet as p
 from evecli.describe import describe, differences, shape
-from evecli.observe import _expand_destiny_actions, wait_quietly
+from evecli.observe import _expand_destiny_actions, collection_items, wait_quietly
 from tests import test_login_to_character as base
 
 UNDOCK = base.load("undock.json")
@@ -158,7 +158,7 @@ def compare_state(recorded: dict, ours: dict, where: str, mapping: dict) -> list
         out.append(f"{where}: only {len(actual['slims'])} slim items")
     return out
 
-def compare_actions(recorded: list, ours: list, where: str, mapping: dict) -> list[str]:
+def compare_actions(recorded: list, ours: list, where: str, mapping: dict, state_comparator=None) -> list[str]:
     """The destiny actions of one update: the same names in the same order at the same steps of the stamp, and the same values (the ship's
     numbers, not where it is: DEVIATION #15)."""
     out: list[str] = []
@@ -190,14 +190,21 @@ def compare_actions(recorded: list, ours: list, where: str, mapping: dict) -> li
             if shape(expected) != shape(actual):
                 out.append(f"{where}.{name}: shape {shape(actual)} in place of {shape(expected)}")
         elif name == "SetState":
-            out += compare_state(expected, actual, f"{where}.SetState", mapping)
+            out += (state_comparator or compare_state)(expected, actual, f"{where}.SetState", mapping)
         elif name == "AddBalls2":
             out += compare_add_balls(expected, actual, f"{where}.AddBalls2", mapping)
         else:
             out += differences(base.blank_times(expected), base.blank_times(actual), f"{where}.{name}")
     return out
 
-def compare_destiny_updates(recorded: list, ours: list, where: str, mapping: dict) -> list[str]:
+def compare_destiny_updates(
+    recorded: list,
+    ours: list,
+    where: str,
+    mapping: dict,
+    state_comparator=None,
+    ignored_actions: frozenset[str] = frozenset(),
+) -> list[str]:
     """Compare what the client's FlushState sees, independent of notification packet boundaries."""
     def groups(events: list) -> list[tuple[list, bool]]:
         by_stamp: dict[int, dict] = {}
@@ -219,9 +226,9 @@ def compare_destiny_updates(recorded: list, ours: list, where: str, mapping: dic
     out: list[str] = []
     if [wait for _, wait in expected] != [wait for _, wait in actual]:
         out.append(f"{where}: wait groups {[wait for _, wait in actual]} in place of {[wait for _, wait in expected]}")
-    expected_actions = [action for actions, _ in expected for action in actions]
-    actual_actions = [action for actions, _ in actual for action in actions]
-    return out + compare_actions(expected_actions, actual_actions, where, mapping)
+    expected_actions = [action for actions, _ in expected for action in actions if action[1] not in ignored_actions]
+    actual_actions = [action for actions, _ in actual for action in actions if action[1] not in ignored_actions]
+    return out + compare_actions(expected_actions, actual_actions, where, mapping, state_comparator)
 
 def compare_add_balls(recorded: dict, ours: dict, where: str, mapping: dict) -> list[str]:
     """Compare ball IDs and SDE identity; EveJS sends visual sentries while eve.rs sends active sentry NPCs."""
@@ -274,7 +281,7 @@ def compare_add_balls(recorded: dict, ours: dict, where: str, mapping: dict) -> 
         for field in ("typeID", "groupID", "categoryID"):
             if expected_fields.get(field) != actual_fields.get(field):
                 out.append(f"{where}.sentries.{item_id}.{field}: {actual_fields.get(field)!r} in place of {expected_fields.get(field)!r}")
-    mapping["_sentry_slims"] = actual_sentry_rows
+    mapping.setdefault("_sentry_slims", {}).update(actual_sentry_rows)
 
     expected_other = {}
     for entry in expected_entries:
@@ -338,16 +345,26 @@ def _session_changes(recorded, ours, where, mapping) -> list[str]:
         out += differences(ids(expected_changes, mapping), actual_changes, f"{where}.changes")
     return out
 
-def compare_events_by_source(recorded: list[dict], ours: list[dict], where: str, mapping: dict) -> list[str]:
-    """Compare ordered streams while allowing simulation and inventory notifications to interleave."""
-    problems: list[str] = []
-    for is_simulation in (True, False):
-        problems.extend(compare_events(
-            [event for event in recorded if (event["name"] == "DoDestinyUpdate") == is_simulation],
-            [event for event in ours if (event["name"] == "DoDestinyUpdate") == is_simulation],
-            f"{where} ({'simulation' if is_simulation else 'session'})",
-            mapping,
-        ))
+def compare_events_by_source(
+    recorded: list[dict],
+    ours: list[dict],
+    where: str,
+    mapping: dict,
+    state_comparator=None,
+    ignored_actions: frozenset[str] = frozenset(),
+) -> list[str]:
+    """Keep each source's order while comparing Destiny updates as the client applies them."""
+    recorded_destiny = [event for event in recorded if event["name"] == "DoDestinyUpdate"]
+    ours_destiny = [event for event in ours if event["name"] == "DoDestinyUpdate"]
+    problems = compare_destiny_updates(
+        recorded_destiny, ours_destiny, f"{where} (simulation)", mapping, state_comparator, ignored_actions,
+    )
+    problems.extend(compare_events(
+        [event for event in recorded if event["name"] != "DoDestinyUpdate"],
+        [event for event in ours if event["name"] != "DoDestinyUpdate"],
+        f"{where} (session)",
+        mapping,
+    ))
     return problems
 
 
@@ -401,10 +418,16 @@ def arrive(who, race: dict, run: str, before_select=None) -> tuple[int, int, lis
     character = int(made)
     if before_select is not None:
         before_select(character)
-    assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
+    assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, base.REFERENCE) == ("ok", None)
     manager = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    ship_id = int(who.call_bound(hangar, "List")[0].fields()["itemID"])
+    listed = who.call_bound(hangar, "List")
+    rows = collection_items(listed)
+    if not rows:
+        raise AssertionError("the station hangar inventory did not contain the starter ship")
+    first = rows[0]
+    fields = first.fields() if isinstance(first, m.PackedRow) else first
+    ship_id = int(fields["itemID"])
     info = who.call("dogmaIM", "MachoBindObject", (STATION, 15), ("GetAllInfo", (True, True, None), None))
     fitted = [number(k) for k, _ in keyval(describe(info[1]))["shipInfo"]["$dict"]][1:]
     mapping = {int(race["characterID"]): character, int(race["shipID"]): ship_id, **dict(zip(race["moduleIDs"], fitted))}

@@ -21,7 +21,7 @@ import uuid
 import pytest
 
 from evecli.describe import describe, shape
-from evecli.observe import ego_state, timed_events, wait_quietly
+from evecli.observe import collection_items, ego_state, timed_events, wait_quietly
 from evecli import marshal as m
 from tests import test_login_to_character as base
 from tests.test_undock import UNDOCK, STATION, SYSTEM, actions_of, arrive, compare_answer, compare_destiny_updates, compare_events, keyval, number, outcome
@@ -114,18 +114,11 @@ def arrive_for_docking(who, race: dict, run: str) -> tuple[int, int, list, dict]
     kind, made = base.attempt(who, service, method, *args)
     assert kind == "ok", base.brief(made)
     character = int(made)
-    assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, False) == ("ok", None)
+    assert base.attempt(who, "charUnboundMgr", "SelectCharacterID", character, None, base.REFERENCE) == ("ok", None)
 
     manager = who.call("invbroker", "MachoBindObject", (STATION, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
-    rows = who.call_bound(hangar, "List")
-    if isinstance(rows, m.ObjectEx):
-        header = m.plain(rows.header)
-        assert isinstance(header, tuple) and header[0] == "__builtin__.set", (
-            f"unexpected ObjectEx inventory reply header: {header!r}"
-        )
-        assert len(header) == 2 and len(header[1]) == 1, f"unexpected built-in set header: {header!r}"
-        rows = header[1][0]
+    rows = collection_items(who.call_bound(hangar, "List"))
     assert isinstance(rows, (m.List, list)), f"unexpected station hangar List reply: {type(rows).__name__}"
     assert rows, "new character's station hangar contains its starter ship"
     first_row = rows[0]

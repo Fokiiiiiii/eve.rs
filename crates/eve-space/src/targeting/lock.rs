@@ -179,15 +179,16 @@ impl Scene {
         pilot.targeting.pending.retain(|p| p.target != subject.id);
         pilot.targeting.locked.push(Locked { target: subject.id, sequence });
         let source_id = pilot.ship.spec.ship_id;
-        let mut out = vec![on_target(session, "add", Some(subject.id))];
+        let mut out = Vec::new();
+        if subject.has_damage_state {
+            out.extend(self.announce_damage_state(&subject, now));
+        }
+        out.push(on_target(session, "add", Some(subject.id)));
         if origin.tells_target()
             && let Some(target_session) = subject.session
             && target_session != session
         {
             out.push(on_target(target_session, "otheradd", Some(source_id)));
-        }
-        if subject.has_damage_state {
-            out.extend(self.announce_damage_state(&subject, now));
         }
         out
     }

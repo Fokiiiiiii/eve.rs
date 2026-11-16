@@ -33,7 +33,12 @@ public sealed class CharacterDogmaSync(DogmaStatic statics, CharacterShips ships
         {
             session.SendNotification("OnModuleAttributeChanges", "clientID", events);
         }
-        session.SendNotification("OnServerBrainUpdated", "clientID", Info.BrainUpdate(snapshot, version, brain));
+        SendBrain(session, snapshot, version, brain);
+    }
+
+    private void SendBrain(ClientSession session, ShipSnapshot snapshot, int version, Brain? brain = null)
+    {
+        session.SendNotification("OnServerBrainUpdated", "charid", Info.BrainUpdate(snapshot, version, brain));
     }
 
     private const string FittingBootstrapShipId = "loginFittingBootstrapShipId";

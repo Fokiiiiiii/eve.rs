@@ -2145,9 +2145,9 @@ public async Task Notification_manager_mutations_persist_and_notify_after_the_co
         Assert.Contains(await new PgSkillStore(rig.Source, rig.SkillsSchema).ForCharacterAsync(character),
             saved => saved.TypeId == skill.TypeId && saved.Level == 0 && saved.SkillPoints == 0);
         var notifications = Notifications(sink);
-        Assert.Equal(["OnServerSkillsChanged", "OnSkillsChanged"], notifications.Select(notification => notification.Name).Take(2));
+        Assert.Equal("OnServerSkillsChanged", notifications[0].Name);
         Assert.Equal(new PyInt(skill.TypeId), Assert.Single(Assert.IsType<PyDict>(notifications[0].Args[0]).Entries).Key);
-        Assert.Equal(new PyInt(skill.TypeId), Assert.Single(Assert.IsType<PyDict>(notifications[1].Args[0]).Entries).Key);
+        Assert.Equal("OnItemChange", notifications[1].Name);
         Assert.Equal("OnItemChange", notifications.Last().Name);
         var itemChange = notifications.Last().Args;
         Assert.Equal(3, itemChange.Length);

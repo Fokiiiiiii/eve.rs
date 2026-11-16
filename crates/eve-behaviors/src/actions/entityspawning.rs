@@ -313,14 +313,23 @@ enter_task!(
     SetSelfEntityRespawn,
     |t| {
         let Some(slim) = t.ctx().my_slim_item.clone() else {
-            t.raise(BehaviorError::Task("AttributeError: 'NoneType' object has no attribute 'typeID'".to_string()));
+            t.raise(BehaviorError::Task(
+                "AttributeError: 'NoneType' object has no attribute 'typeID'".to_string(),
+            ));
             return;
         };
         let Some(ball) = get_my_ball(t) else { return };
         let Some(range) = t.required_float("deploymentRangeMeters") else { return };
         let behavior_id = t.behavior_id();
-        let data = t.world().spawn_data_for_entities(&[(slim.type_id, 1)], Some(ball.position), range, Some(&behavior_id));
-        let (Some(min), Some(max)) = (t.required("minRespawnDelaySeconds"), t.required("maxRespawnDelaySeconds")) else {
+        let data = t.world().spawn_data_for_entities(
+            &[(slim.type_id, 1)],
+            Some(ball.position),
+            range,
+            Some(&behavior_id),
+        );
+        let (Some(min), Some(max)) =
+            (t.required("minRespawnDelaySeconds"), t.required("maxRespawnDelaySeconds"))
+        else {
             return;
         };
         let group = t.ctx().my_entity_group_id;

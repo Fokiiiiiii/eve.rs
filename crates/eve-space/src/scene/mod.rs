@@ -1166,28 +1166,11 @@ impl Scene {
         Out::Notify { session, name, id_type: "clientID", args }
     }
 
-    /// What is told of a milestone of a warp: to the pilot, and to the ones who watch it.
+    /// What is told of a client-visible milestone of a warp.
     fn tell(&mut self, session: SessionId, milestone: Milestone) -> Vec<Out> {
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let ship_id = id(pilot.ship.spec.ship_id);
         match milestone {
-            Milestone::Entered { at } => {
-                // the ship is in warp: those who watch it are told now (the pilot was told when it asked for the warp)
-                let Course::Warp { raw_destination: r, stop_distance, factor, .. } = pilot.ship.course else {
-                    return Vec::new();
-                };
-                let stamp = self.next_stamp(at);
-                let watchers = vec![
-                    warping_effect(stamp, &ship_id),
-                    payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(1.0)]),
-                    payload::action(
-                        stamp,
-                        "WarpTo",
-                        [ship_id, real(r.x), real(r.y), real(r.z), real(stop_distance), int(factor)],
-                    ),
-                ];
-                self.tell_split(session, Vec::new(), watchers)
-            }
             Milestone::Dropout { at } => {
                 // the ship is set massless again, told twice: at the stamp and two on
                 let stamp = self.next_stamp(at);

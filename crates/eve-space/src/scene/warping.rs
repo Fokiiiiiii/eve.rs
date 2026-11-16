@@ -114,7 +114,6 @@ impl Scene {
 
         let profile = warp::Profile::new(total, ship.spec.warp_speed_au, ship.spec.max_velocity);
         let ship_id = id(ship.spec.ship_id);
-        let boosted = ship.spec.max_velocity * warp::START_SPEED_SCALE;
         let mut out = self.break_tether(session, now);
         let stamp = self.next_stamp(now);
         let pilot = self.pilots.get_mut(&session).expect("checked above");
@@ -131,21 +130,17 @@ impl Scene {
         pilot.flight = Some(Flight::begin(now, raw, stop));
         pilot.warp_target = target_id;
         let own = vec![
-            payload::action(stamp, "SetMaxSpeed", [ship_id.clone(), real(boosted)]),
+            warping_effect(stamp, &ship_id),
+            payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(1.0)]),
             payload::action(
                 stamp,
                 "WarpTo",
                 [ship_id.clone(), real(raw.x), real(raw.y), real(raw.z), real(stop), int(profile.factor)],
             ),
-            warping_effect(stamp, &ship_id),
-            payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(1.0)]),
         ];
-        let watchers = vec![payload::action(
-            stamp,
-            "GotoDirection",
-            with_id(&ship_id, vector(toward.x, toward.y, toward.z)),
-        )];
-        out.extend(self.tell_split(session, own, watchers));
+        // The warp request is one Destiny order for the pilot and all current observers. The ship's
+        // later transition into the warp phase is local simulation state, not a second WarpTo order.
+        out.extend(self.tell_all(session, own));
         out.push(Out::Accepted { session, command: code, at: now });
         out
     }

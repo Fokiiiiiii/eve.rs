@@ -4,7 +4,11 @@ enter_task!(
     /// The faction that holds the solar system, put on a channel; fails for a system with none.
     GetSolarSystemFactionID,
     |t| {
-        let faction = t.ctx().solar_system_id.and_then(|system| t.world().solar_system_faction_id(system)).filter(|f| *f != 0);
+        let faction = t
+            .ctx()
+            .solar_system_id
+            .and_then(|system| t.world().solar_system_faction_id(system))
+            .filter(|f| *f != 0);
         match faction {
             Some(faction_id) => {
                 let Some(address) = t.required_address("messageAddress") else { return };

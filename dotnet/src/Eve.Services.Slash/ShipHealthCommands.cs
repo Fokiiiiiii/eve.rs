@@ -11,7 +11,7 @@ namespace Eve.Services.Slash;
 /// <summary>
 /// <c>/dmg [light|medium|heavy]</c> hurts the ship in the hangar (and its fitted modules) so that repairs can be tried, and <c>/heal</c> mends the ship, in
 /// the hangar or in space. The client is told what the reference tells it: the ship's item and its modules as they are, and the numbers of the modules
-/// that changed.
+/// that changed. These health operations do not change the ship's name or its location-name cache.
 /// </summary>
 public sealed class ShipHealthCommands(CharacterShips ships, DogmaStatic statics, Func<long> nowUnixMs, ISpaceHealth? space = null)
 {
@@ -145,15 +145,11 @@ public sealed class ShipHealthCommands(CharacterShips ships, DogmaStatic statics
         }
     }
 
-    /// <summary>The ship's item and what the client knows of its name, then the items of the modules that changed.</summary>
+    /// <summary>The ship's item, then the items of the modules that changed.</summary>
     private void SendItems(ClientSession session, ConditionChanged changed, IReadOnlyList<ModuleConditionChanged> modules)
     {
         var ship = changed.Ship;
-        var type = statics.Type(ship.TypeId);
         session.SendNotification("OnItemChange", "clientID", Row(ship, statics), new PyDict([]), PyNone.Instance);
-        session.SendNotification(
-            "OnCfgDataChanged", "charid", new PyStr("evelocations"),
-            new PyList([InventoryWire.Id(ship.Id), new PyStr(ship.CustomName ?? type?.Name ?? ""), new PyInt(changed.SolarSystemId), new PyInt(0), new PyInt(0), new PyInt(0), PyNone.Instance]));
         foreach (var module in modules)
         {
             session.SendNotification("OnItemChange", "clientID", Row(module.Module, statics), new PyDict([]), PyNone.Instance);

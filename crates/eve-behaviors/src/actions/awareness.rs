@@ -167,7 +167,8 @@ enter_task!(
         match t.world().fleet_awareness_lacks_enemy_cluster_generator(&spawn_pool_id) {
             None => {
                 t.raise(BehaviorError::Task(
-                    "AttributeError: 'NoneType' object has no attribute 'get_enemy_cluster_generator'".to_string(),
+                    "AttributeError: 'NoneType' object has no attribute 'get_enemy_cluster_generator'"
+                        .to_string(),
                 ));
                 return;
             }

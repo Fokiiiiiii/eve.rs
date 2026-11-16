@@ -5,6 +5,7 @@ use eve_destiny::Vec3;
 use super::*;
 use crate::scene::tests::{NOON, STATION, spec, system};
 use crate::scene::{Command, Departure};
+use crate::ship::Course;
 use crate::world::{Body, BodyKind, Detail};
 
 const A: SessionId = 7;
@@ -171,15 +172,21 @@ fn added_ships(out: &Out) -> Vec<i64> {
 }
 
 #[test]
-fn a_ship_that_undocks_is_shown_to_the_pilot_that_has_bound_the_ballpark_with_its_numbers_in_one_update() {
+fn a_ship_that_undocks_is_shown_to_the_bound_pilot_with_its_numbers_and_movement_prime() {
     let mut scene = watcher();
     let told = scene.undock(B, other_spec(), STATION, NOON + SECOND).unwrap();
-    assert_eq!(told.len(), 1);
+    assert_eq!(told.len(), 2);
     assert_eq!(recipient(&told[0]), A);
     assert_eq!(names(&told[0]), ["AddBalls2", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
-    let stamps = stamps(&told[0]);
-    assert!(stamps.iter().all(|s| *s == stamps[0]), "one stamp: {stamps:?}");
     assert_eq!(added_ships(&told[0]), [other_spec().ship_id]);
+    assert_eq!(recipient(&told[1]), A);
+    assert_eq!(names(&told[1]), ["SetBallMassive", "SetBallMass", "SetBallVelocity", "GotoDirection"]);
+    let first_stamp = stamps(&told[0])[0];
+    assert!(stamps(&told[0]).iter().all(|stamp| *stamp == first_stamp));
+    assert!(
+        stamps(&told[1]).iter().all(|stamp| *stamp == first_stamp),
+        "prime shares the introduction stamp"
+    );
 }
 
 #[test]
@@ -196,24 +203,13 @@ fn a_pilot_that_has_not_bound_the_ballpark_is_told_nothing_and_is_given_the_ship
 }
 
 #[test]
-fn binding_gives_the_ships_in_view_in_the_order_they_came_and_the_numbers_of_each() {
+fn binding_gives_the_ships_in_view_in_the_order_they_came_with_full_ball_state() {
     let mut scene = watcher();
     scene.undock(B, other_spec(), STATION, NOON + SECOND).unwrap();
     let bound = scene.bind(B, NOON + SECOND);
-    assert_eq!(
-        bound.len(),
-        6,
-        "the time, the clock, the ships, the ship's own start, the state, the numbers"
-    );
+    assert_eq!(bound.len(), 5, "the time, the clock, the ships, the ship's own start, then the full state");
     assert_eq!(added_ships(&bound[2]), [spec().ship_id, other_spec().ship_id]);
-    assert_eq!(
-        names(&bound[5]),
-        [
-            "SetBallAgility",
-            "SetBallMass",
-            "SetMaxSpeed", // the other ship's
-        ]
-    );
+    assert_eq!(names(&bound[4]), ["SetState"]);
     // the state holds the balls of both ships
     let buffer = state_buffer(&bound[4]);
     assert!(holds_ball_of(&buffer, spec().ship_id) && holds_ball_of(&buffer, other_spec().ship_id));
@@ -284,23 +280,26 @@ fn a_pilot_that_has_not_bound_the_ballpark_is_told_nothing_of_the_others_orders(
 }
 
 #[test]
-fn a_ship_is_told_to_those_who_watch_as_a_turn_when_it_asks_for_a_warp_and_as_the_warp_when_it_enters_it() {
+fn a_warp_order_is_sent_once_to_the_pilot_and_current_observers_when_it_is_accepted() {
     let mut scene = both();
     let at = NOON + 2 * SECOND;
     let out = scene.command(B, Command::WarpTo { target_id: PLANET, range: 0.0 }, at);
-    assert_eq!(names(&out[0]), ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"]);
-    assert_eq!((recipient(&out[1]), names(&out[1])), (A, vec!["GotoDirection".to_string()]));
+    assert_eq!(names(&out[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
+    assert_eq!((recipient(&out[0]), recipient(&out[1])), (B, A));
+    assert_eq!(names(&out[1]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
 
-    let mut entered = None;
+    let mut entered = false;
     let mut t = at;
-    while t < at + 30 * SECOND && entered.is_none() {
+    while t < at + 30 * SECOND && !entered {
         t += SECOND / 4;
-        entered =
-            scene.poll(t).into_iter().find(|o| names(o).first().map(String::as_str) == Some("OnSpecialFX"));
+        let told = scene.poll(t);
+        assert!(
+            told.iter().all(|out| !names(out).contains(&"WarpTo".to_string())),
+            "entering the warp phase does not resend the WarpTo order: {told:?}"
+        );
+        entered = matches!(scene.ship(B, t).unwrap().course, Course::Warp { active: true, .. });
     }
-    let entered = entered.expect("the ship enters warp");
-    assert_eq!(recipient(&entered), A, "the pilot was told at the command");
-    assert_eq!(names(&entered), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
+    assert!(entered, "the ship enters warp");
 }
 
 #[test]

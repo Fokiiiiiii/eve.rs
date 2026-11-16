@@ -935,15 +935,14 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     {
         if (notify.Name != "OnTarget"
             || MarshalCodec.Decode(notify.Args.ToArray()) is not PyTuple tuple
-            || tuple.Items.Count < 2
-            || tuple.Items[1] is not PyTuple envelope
-            || envelope.Items.Count < 2
-            || envelope.Items[1] is not PyTuple args
-            || args.Items.Count == 0)
+            || tuple.Items.Count == 0)
         {
             return;
         }
 
+        // SimNotify contains positional arguments only. ClientSession adds the
+        // Macho notification envelope after this simulator callback.
+        var args = tuple;
         var action = JsSemantics.StringValue(args.Items[0]);
         if (action is null)
             return;
@@ -1332,8 +1331,36 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
     private void Forward(ClientSession session, SimNotify notify)
     {
         var args = MarshalCodec.Decode(notify.Args.ToArray()) is PyTuple tuple ? tuple.Items : [];
+        if (notify.Name == "OnTarget" && TryTargetDogmaEvent(notify, out var targetEvent, out var targetArgs))
+        {
+            var action = targetArgs.Items.Count > 0 ? JsSemantics.StringValue(targetArgs.Items[0]) : null;
+            var reason = targetArgs.Items.Count > 2 ? JsSemantics.StringValue(targetArgs.Items[2]) : null;
+            // TQ sends only the exploding locker's "otherlost" event as a plain
+            // notification. The other target events are Dogma events batched
+            // through OnMultiEvent for godma.OnMultiEvent to dispatch.
+            if (action != "otherlost" || reason != "Exploding")
+            {
+                session.SendNotification("OnMultiEvent", "clientID", new PyList(
+                    [Py.Tuple(targetEvent, new PyLong(FileTimeNow()))]));
+                return;
+            }
+        }
         session.SendNotification(notify.Name, notify.IdType, [.. args]);
         if (!IsStructureObserver(session) && (notify.Name == "SetState" || notify.Name == "DoDestinyUpdate" && args.Any(HasBallparkState))) ReplayTetherFx(session);
+    }
+
+    private static bool TryTargetDogmaEvent(SimNotify notify, out PyTuple targetEvent, out PyTuple targetArgs)
+    {
+        targetEvent = new PyTuple([]);
+        targetArgs = new PyTuple([]);
+        if (MarshalCodec.Decode(notify.Args.ToArray()) is not PyTuple values || values.Items.Count == 0)
+        {
+            return false;
+        }
+
+        targetArgs = values;
+        targetEvent = Py.Tuple([new PyStr("OnTarget"), .. values.Items]);
+        return true;
     }
 
     private static void Forward(ClientSession session, SimServiceNotify notify)

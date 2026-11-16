@@ -420,7 +420,7 @@ def record_training(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
         who = rec.login(f"training{bloodline}")
         created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Trained {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
         char_id = int(created["ok"])
-        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
         before = training_view(who)
         speed = describe(who.call("skillHandler", "GetAttributes"))["$dict"][0][1] / 20
         ship_id = ship_of(who)
@@ -432,15 +432,16 @@ def record_training(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
         item = char_id * 100000 + first
         queue = m.Dict([(0, (first, first_level + 1)), (1, (first, first_level + 2)), (2, (second, before["skills"][second]["level"] + 1))])
         reordered = m.Dict([(0, (second, before["skills"][second]["level"] + 1)), (1, (first, first_level + 1))])
+        one_skill_queue = m.Dict([(0, (first, first_level + 1))])
         plan = [
             ("empty queue", "skillHandler", "GetSkillQueue", (), {}),
             ("empty queue and free points", "skillHandler", "GetSkillQueueAndFreePoints", (), {}),
-            ("start by type", "skillHandler", "CharStartTrainingSkillByTypeID", (first,), {}),
-            ("start by type again", "skillHandler", "CharStartTrainingSkillByTypeID", (first,), {}),
-            ("start two levels ahead", "skillHandler", "CharStartTrainingSkillByTypeID", (first, first_level + 2), {}),
-            ("start unknown type", "skillHandler", "CharStartTrainingSkillByTypeID", (99,), {}),
-            ("start by item", "skillHandler", "CharStartTrainingSkill", (item,), {}),
-            ("start by unknown item", "skillHandler", "CharStartTrainingSkill", (12345,), {}),
+            ("save one", "skillHandler", "SaveNewQueue", (one_skill_queue,), {}),
+            ("save the same one again", "skillHandler", "SaveNewQueue", (one_skill_queue,), {}),
+            ("queue two levels ahead", "skillHandler", "SaveNewQueue", (m.Dict([(0, (first, first_level + 2))]),), {}),
+            ("queue unknown type", "skillHandler", "SaveNewQueue", (m.Dict([(0, (99, 1))]),), {}),
+            ("start by item", "skillHandler", "CharStartTrainingSkill", (item, 60015249), {}),
+            ("start by unknown item", "skillHandler", "CharStartTrainingSkill", (12345, 60015249), {}),
             ("save three", "skillHandler", "SaveNewQueue", (queue,), {}),
             ("save the same again", "skillHandler", "SaveNewQueue", (queue,), {}),
             ("save reordered", "skillHandler", "SaveNewQueue", (reordered,), {}),
@@ -455,7 +456,7 @@ def record_training(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
             ("abort", "skillHandler", "AbortTraining", (), {}),
             ("abort again", "skillHandler", "AbortTraining", (), {}),
             ("stop while stopped", "skillHandler", "CharStopTrainingSkill", (), {}),
-            ("start again", "skillHandler", "CharStartTrainingSkillByTypeID", (second,), {}),
+            ("start again", "skillHandler", "CharStartTrainingSkill", (char_id * 100000 + second, 60015249), {}),
             ("stop", "skillHandler", "CharStopTrainingSkill", (), {}),
             ("save empty", "skillHandler", "SaveNewQueue", (m.Dict([]),), {}),
             ("history", "skillHandler", "GetSkillHistory", (), {}),
@@ -488,19 +489,22 @@ def record_training_fast(rec: Recorder, out: str, meta: dict, ancestry: dict, ru
     who = rec.login("trainfast")
     created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Swift {run}", 1, 1, ancestry[1]))
     char_id = int(created["ok"])
-    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
     before = training_view(who)
     speed = describe(who.call("skillHandler", "GetAttributes"))["$dict"][0][1] / 20
     ship_id = ship_of(who)
     notifications_of(who)
+    time.sleep(1)
+    if training_view(who) != before:
+        raise AssertionError("training changed while the new character's selection was settling")
+    notifications_of(who)
     if speed < 1000:
         raise SystemExit(f"the reference trains at speed {speed}: start it with EVEJS_SKILL_TRAINING_SPEED=60000 to record this")
     skills = before["skills"]
-    ranked = {t: v for t, v in skills.items() if v["level"] == 1}
     plan = [
         ("two levels in a queue", "SaveNewQueue", (m.Dict([(0, (3301, 2)), (1, (3301, 3))]),), 2),
-        ("a rank five skill", "CharStartTrainingSkillByTypeID", (3317,), 1),
-        ("a rank one skill from level three", "CharStartTrainingSkillByTypeID", (3327,), 1),
+        ("a rank five skill", "SaveNewQueue", (m.Dict([(0, (3317, skills[3317]["level"] + 1))]),), 1),
+        ("a rank one skill from level three", "SaveNewQueue", (m.Dict([(0, (3327, skills[3327]["level"] + 1))]),), 1),
     ]
     steps = []
     for label, method, args, levels in plan:
@@ -520,9 +524,12 @@ def record_training_fast(rec: Recorder, out: str, meta: dict, ancestry: dict, ru
     who.close()
     time.sleep(4)
     back = rec.login("trainfast")
-    back.notifications.clear()
+    notifications_of(back)
     rec.call(back, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
-    step["notifications"] = notifications_of(back)
+    received = notifications_of(back)
+    if not received or received[0].get("name") != "OnSubscriptionTimeUpdateServer":
+        raise AssertionError("character selection did not send OnSubscriptionTimeUpdateServer first")
+    step["notifications"] = received[1:]
     step["after"] = training_view(back)
     steps.append(step)
     back.close()
@@ -666,7 +673,7 @@ def record_movement(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
     who = rec.login(f"movement{bloodline}")
     created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Mover {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
     char_id = int(created["ok"])
-    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
     manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
     ship_id = hangar_ship_id(who, hangar)
@@ -715,7 +722,7 @@ def record_warp(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     who = rec.login(f"warp{bloodline}")
     created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Warper {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
     char_id = int(created["ok"])
-    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
     manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
     ship_id = hangar_ship_id(who, hangar)
@@ -784,7 +791,7 @@ def record_jump(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     who = rec.login(f"jump{bloodline}")
     created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Jumper {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
     char_id = int(created["ok"])
-    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
     manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
     ship_id = hangar_ship_id(who, hangar)
@@ -859,7 +866,7 @@ def record_others(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         who = rec.login(name)
         created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"{name} {run}", 1, 1, ancestry[1]))
         char_id = int(created["ok"])
-        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
         manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
         ship_id = hangar_ship_id(who, hangar)
@@ -950,7 +957,7 @@ def record_target(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         who = rec.login(name)
         created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"{name} {run}", 1, 1, ancestry[1]))
         char_id = int(created["ok"])
-        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
         manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
         ship_id = hangar_ship_id(who, hangar)
@@ -1059,7 +1066,7 @@ def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         who = rec.login(name)
         created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"{name} {run}", 1, 1, ancestry[1]))
         char_id = int(created["ok"])
-        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
         manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
         ship_id = hangar_ship_id(who, hangar)
@@ -1962,7 +1969,7 @@ def record_health(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     who = rec.login("Damaged")
     created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Damaged {run}", 1, 1, ancestry[1]))
     char_id = int(created["ok"])
-    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
     ship_id = hangar_ship_id(who, hangar)

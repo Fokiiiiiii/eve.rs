@@ -37,11 +37,9 @@ enum Phase {
     Coasting { since: i64, position: Vec3, velocity: Vec3 },
 }
 
-/// Something that happened to the ship in a warp, for the scene to tell the client of.
+/// A client-visible change as a ship moves through a warp.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Milestone {
-    /// The ship has lined up and entered warp: the ones watching it are told (the pilot was told when the warp was asked for).
-    Entered { at: i64 },
     /// The ship is about to drop out (two seconds before it does): the client is told the ball is massless again.
     Dropout { at: i64 },
     /// The ship has slowed to a stop.
@@ -152,7 +150,6 @@ impl Flight {
                             factor: profile.factor,
                             active: true,
                         };
-                        milestones.push(Milestone::Entered { at: check });
                         self.phase = Phase::Warping {
                             started_at: check,
                             origin: ship.position,

@@ -87,12 +87,13 @@ public sealed class PgTrainingStore
         {
             any = true;
             await using var insert = new NpgsqlCommand(
-                $"INSERT INTO {_schema}.skill_history (character_id, log_date, event_type, type_id, absolute_points, level) VALUES ($1, $2, $3, $4, $5, $6)", connection, transaction)
+                $"INSERT INTO {_schema}.skill_history (character_id, log_date, event_type, type_id, relative_points, absolute_points, level) VALUES ($1, $2, $3, $4, $5, $6, $7)", connection, transaction)
             {
                 Parameters =
                 {
                     new() { Value = characterId }, new() { Value = entry.LogDate }, new() { Value = entry.EventType }, new() { Value = entry.TypeId },
-                    new() { Value = Math.Max(0, entry.Points) }, new() { Value = (short)Math.Max(0, entry.Level) },
+                    new() { Value = Math.Max(0, entry.RelativePoints) }, new() { Value = Math.Max(0, entry.Points) },
+                    new() { Value = (short)Math.Max(0, entry.Level) },
                 },
             };
             await insert.ExecuteNonQueryAsync(cancellationToken);
@@ -115,14 +116,14 @@ public sealed class PgTrainingStore
     public async Task<IReadOnlyList<HistoryEntry>> HistoryAsync(long characterId, int maxResults, CancellationToken cancellationToken = default)
     {
         var limit = Math.Clamp(maxResults, 0, HistoryLimit);
-        await using var command = _source.CreateCommand($"SELECT log_date, event_type, type_id, absolute_points, level FROM {_schema}.skill_history WHERE character_id = $1 ORDER BY id DESC LIMIT $2");
+        await using var command = _source.CreateCommand($"SELECT log_date, event_type, type_id, absolute_points, level, relative_points FROM {_schema}.skill_history WHERE character_id = $1 ORDER BY id DESC LIMIT $2");
         command.Parameters.Add(new NpgsqlParameter { Value = characterId });
         command.Parameters.Add(new NpgsqlParameter { Value = limit });
         var list = new List<HistoryEntry>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
         {
-            list.Add(new HistoryEntry(reader.GetInt64(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt64(3), reader.GetInt16(4)));
+            list.Add(new HistoryEntry(reader.GetInt64(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt64(3), reader.GetInt16(4), reader.GetInt64(5)));
         }
         return list;
     }

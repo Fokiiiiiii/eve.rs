@@ -13,6 +13,7 @@ while the ship is in warp, DEVIATIONS.md #16) is left out. It takes a minute and
 from __future__ import annotations
 
 import copy
+import math
 import os
 import time
 import uuid
@@ -24,7 +25,7 @@ from evecli.observe import timed_events, wait_quietly
 from tests import test_login_to_character as base
 from tests.test_undock import (
     FIRST_BALL_ID, STATION, SYSTEM, UNDOCK, actions_of, add_ball_slim, arrive,
-    compare_destiny_updates, compare_events, keyval, number, outcome,
+    compare_actions, compare_destiny_updates, compare_events, keyval, number, outcome,
 )
 
 WARP = base.load("warp.json")
@@ -37,6 +38,8 @@ WAITS = {"bind the ship service": 0.5, "undock": 2.0, "bind the ballpark": 2.5}
 # how far the seconds of a milestone may be from the recording's: both servers work them out from a ship that lines up as the physics of the
 # integrator says, and a tick of theirs is a second
 TOLERANCE = 3.0
+WARP_ORDER = ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]
+RECORDED_WARP_ORDER = ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"]
 
 def names(event: dict) -> list:
     if event["name"] != "DoDestinyUpdate":
@@ -74,6 +77,48 @@ def without_ballpark_noise(events: list, reference_props: set[int] | frozenset[i
 
 def in_order(events: list) -> list:
     return sorted(events, key=lambda e: e.get("at", 0.0))
+
+def tuple_items(value):
+    return value.get("$tuple") if isinstance(value, dict) and "$tuple" in value else value
+
+def compare_warp_start(recorded: dict, actual: dict, where: str, ship_id: int, mapping: dict) -> list[str]:
+    """Check the current EveJS warp order against the older recorded packet and its values."""
+    expected, expected_wait = actions_of(recorded)
+    observed, observed_wait = actions_of(actual)
+    out: list[str] = []
+    if [action[1] for action in expected] != RECORDED_WARP_ORDER:
+        return [f"{where}: recorded warp order {[action[1] for action in expected]} differs from the known legacy fixture"]
+    if [action[1] for action in observed] != WARP_ORDER:
+        return [f"{where}: warp order {[action[1] for action in observed]} in place of {WARP_ORDER}"]
+    if expected_wait != observed_wait:
+        out.append(f"{where}: wait flag {observed_wait} in place of {expected_wait}")
+    if len({action[0] for action in expected}) != 1 or len({action[0] for action in observed}) != 1:
+        out.append(f"{where}: warp order actions do not share one destiny stamp")
+
+    expected_by_name = {action[1]: action for action in expected}
+    observed_by_name = {action[1]: action for action in observed}
+    out += compare_actions(
+        [expected_by_name[name] for name in WARP_ORDER[:2]],
+        [observed_by_name[name] for name in WARP_ORDER[:2]],
+        f"{where} (FX and speed)", mapping,
+    )
+
+    expected_warp = tuple_items(expected_by_name["WarpTo"][2])
+    observed_warp = tuple_items(observed_by_name["WarpTo"][2])
+    if len(expected_warp) != 6 or len(observed_warp) != 6:
+        return out + [f"{where}: WarpTo argument counts {len(observed_warp)} in place of {len(expected_warp)}"]
+    expected_ship = mapping.get(number(expected_warp[0]), number(expected_warp[0]))
+    if number(observed_warp[0]) != ship_id or expected_ship != ship_id:
+        out.append(f"{where}: WarpTo did not name ship {ship_id}")
+    if [number(value) for value in observed_warp[4:]] != [number(value) for value in expected_warp[4:]]:
+        out.append(f"{where}: WarpTo stop distance or warp factor changed")
+    distance = math.dist(
+        [number(value) for value in observed_warp[1:4]],
+        [number(value) for value in expected_warp[1:4]],
+    )
+    if distance > 2_500:
+        out.append(f"{where}: WarpTo landing point differs by {distance:.1f} m, beyond EveJS's 2,500 m jitter")
+    return out
 
 @pytest.mark.parametrize("race", WARP["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_ship_warps_to_a_planet_as_the_reference_did(race):
@@ -142,7 +187,17 @@ def test_a_ship_warps_to_a_planet_as_the_reference_did(race):
                             reference_props.add(item_id)
         ours = without_ballpark_noise(in_order(events))
         theirs = without_ballpark_noise(in_order(recorded["events"]), reference_props)
-        problems += compare_events(theirs, ours, where, mapping)
+        reference_warp_events = [event for event in theirs if "WarpTo" in names(event)]
+        actual_warp_events = [event for event in ours if "WarpTo" in names(event)]
+        if len(reference_warp_events) != 1 or len(actual_warp_events) != 1:
+            problems.append(f"{where}: {len(actual_warp_events)} warp-order updates in place of {len(reference_warp_events)}")
+        else:
+            problems += compare_warp_start(reference_warp_events[0], actual_warp_events[0], where, ship_id, mapping)
+        problems += compare_events(
+            [event for event in theirs if "WarpTo" not in names(event)],
+            [event for event in ours if "WarpTo" not in names(event)],
+            f"{where} (after the warp order)", mapping,
+        )
         got, expected = milestones(ours), milestones(theirs)
         for name in ("dropout", "rest"):
             if name not in got:

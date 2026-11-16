@@ -21,6 +21,7 @@ import json
 import math
 import os
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -1097,7 +1098,10 @@ def training_client(name: str, recording: dict, recorded_run: str, run: str, ids
     service, method, *args = [recording["create"]["call"][0], recording["create"]["call"][1], *[revive(a, run, ids, recorded_run) for a in recording["create"]["call"][2]]]
     kind, made = attempt(client, service, method, *args)
     assert kind == "ok", brief(made)
-    assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
+    # This walk exercises skills, not first-login onboarding. EveJS otherwise
+    # enters the tutorial in space; the V24 creation path also skips it when
+    # AIR NPE is disabled (characterCreationContainer.CheckSkipTutorial).
+    assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, REFERENCE) == ("ok", None)
     return client, int(made)
 
 def test_project_discovery_availability_is_enabled_after_character_selection():
@@ -1157,8 +1161,9 @@ def id_mapping(recorded_character: int, character: int, skills) -> dict[int, int
     return {recorded_character: character, **{recorded_character * 100000 + int(t): character * 100000 + int(t) for t in skills}}
 
 def speed_of(client: Client) -> float:
-    """How fast this server trains: its learning attributes over the game's 20 (the server's multiplier is in them)."""
-    return describe(client.call("skillHandler", "GetAttributes"))["$dict"][0][1] / 20
+    """How fast this server trains: Intelligence starts at 20, so its value isolates the server multiplier."""
+    attributes = dict(describe(client.call("skillHandler", "GetAttributes"))["$dict"])
+    return attributes[165] / 20
 
 @pytest.mark.parametrize("race", TRAINING["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_the_skill_queue_is_what_the_reference_does(race):
@@ -1178,16 +1183,14 @@ def test_the_skill_queue_is_what_the_reference_does(race):
         for step in race["steps"]:
             service, method, recorded_args, kwargs = step["call"]
             args = [revive(a, run, mapping, RECORDED_TRAINING_RUN) for a in recorded_args]
-            if step["label"] == "start by item":
-                args = [character * 100000 + race["skills"]["first"]]
             where = f"race {race['raceID']} {step['label']}"
             expected_events = step["notifications"]
             expected_after = step.get("after")
             if step["label"] == "start by item" and not REFERENCE:
                 # DEVIATION (starting a skill by its item): the reference cannot find a skill's item and does nothing; eve.rs starts the skill,
-                # which for the skill that is training already is the same queue told again (DEVIATIONS.md #13)
-                expected_events = recorded_steps["start by type again"]["notifications"]
-                expected_after = recorded_steps["start by type again"]["after"]
+                # which here is the same one-skill queue told again (DEVIATIONS.md #13)
+                expected_events = recorded_steps["save the same one again"]["notifications"]
+                expected_after = recorded_steps["save the same one again"]["after"]
             try:
                 outcome = describe(client.call(service, method, *args, **kwargs))
                 error = None
@@ -1200,8 +1203,11 @@ def test_the_skill_queue_is_what_the_reference_does(race):
                 problems.append(f"{where}: error {brief(error)}")
             else:
                 problems += differences(blank_times(step["ok"]), blank_times(outcome), f"{where}: answer") if method != "GetSkillHistory" else _history_problems(step["ok"], outcome, where)
+            expected_events = events_form(substitute(expected_events, mapping))
+            if not REFERENCE:
+                expected_events = _client_charisma_events(expected_events, character)
             problems += differences(
-                blank_times(events_form(substitute(expected_events, mapping))), blank_times(events_form(sent)), f"{where}: events", float_tolerance=DOGMA_TOLERANCE)
+                blank_times(expected_events), blank_times(events_form(sent)), f"{where}: events", float_tolerance=DOGMA_TOLERANCE)
             if expected_after is not None:
                 problems += view_problems(expected_after, training_view(client), f"{where}: after")
                 notifications_of(client)
@@ -1211,8 +1217,80 @@ def test_the_skill_queue_is_what_the_reference_does(race):
 def _history_problems(expected: list, actual: list, where: str) -> list[str]:
     """What the history lists, without its dates."""
     def form(entries):
-        return [{k: v for k, v in e["args"]["$dict"] if k != "logDate"} for e in entries]
+        if isinstance(entries, dict) and "$objectex" in entries:
+            # The reference returns a CRowset whose rows are packed-row
+            # members; eve.rs currently returns the same rows as KeyVals.
+            entries = entries.get("list", [])
+        rows = []
+        for entry in entries:
+            if isinstance(entry, dict) and "$row" in entry:
+                values = entry["$row"]
+            elif isinstance(entry, dict) and entry.get("$object") == "util.KeyVal":
+                values = dict(entry["args"]["$dict"])
+            else:
+                raise AssertionError(f"unexpected skill history row in {where}: {entry!r}")
+            rows.append({key: value for key, value in values.items() if key != "logDate"})
+        return rows
     return [] if form(expected) == form(actual) else [f"{where}: history {form(actual)} instead of {form(expected)}"]
+
+def _training_notification_payload(event: dict) -> list:
+    return event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
+
+def _training_tuple(value):
+    if isinstance(value, dict) and isinstance(value.get("$tuple"), list):
+        return value["$tuple"]
+    return value
+
+def _training_skill_update(event: dict) -> dict[int, tuple[int, int]]:
+    entries = _training_notification_payload(event)[0]["$dict"]
+    result = {}
+    for type_id, value in entries:
+        header = value["$objectex"]["$tuple"][1]["$tuple"]
+        result[int(type_id)] = (int(header[1]), int(header[2]))
+    return result
+
+def _training_queue_update(event: dict) -> list[tuple[int, int]]:
+    result = []
+    for value in _training_notification_payload(event)[0]:
+        fields = dict(value["args"]["$dict"])
+        result.append((int(fields["trainingTypeID"]), int(fields["trainingToLevel"])))
+    return result
+
+def _training_attribute_update(event: dict) -> list[tuple[int, int, int, int | float]]:
+    return [
+        (int(row[1]), int(row[2]), int(row[3]), row[5])
+        for row in (_training_tuple(value) for value in _training_notification_payload(event)[0])
+    ]
+
+def _training_rank(type_id: int) -> int:
+    path = os.path.join(os.environ["EVE_SDE_DIR"], "typeDogma.jsonl")
+    with open(path, encoding="utf-8") as source:
+        for line in source:
+            type_data = json.loads(line)
+            if type_data.get("_key") == type_id:
+                return int(next(attribute["value"] for attribute in type_data["dogmaAttributes"] if attribute["attributeID"] == 275))
+    raise AssertionError(f"skill type {type_id} is absent from the pinned SDE")
+
+def _fast_training_oracle(events: list[dict], character: int, speed: float) -> list[dict]:
+    """EVE.js's test speed scales dogma learning attributes; the client receives raw attributes from eve.rs."""
+    normalized = json.loads(json.dumps(events))
+    for event in normalized:
+        if event["name"] == "OnModuleAttributeChanges":
+            for encoded_row in _training_notification_payload(event)[0]:
+                row = _training_tuple(encoded_row)
+                if row[0] == "OnModuleAttributeChange" and row[1] == character and row[2] == character and row[3] in (164, 165, 166, 167, 168):
+                    value = row[5] / speed
+                    row[5] = int(value) if float(value).is_integer() else value
+        elif event["name"] == "OnServerBrainUpdated":
+            _training_notification_payload(event)[0] = "$brain-version"
+    return normalized
+
+def _blank_brain_versions(events: list[dict]) -> list[dict]:
+    normalized = json.loads(json.dumps(events))
+    for event in normalized:
+        if event["name"] == "OnServerBrainUpdated":
+            _training_notification_payload(event)[0] = "$brain-version"
+    return normalized
 
 def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level():
     run = run_token()
@@ -1225,6 +1303,9 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
         mapping = {**id_mapping(int(TRAINING_FAST["characterID"]), character, TRAINING_FAST["before"]["skills"]), int(TRAINING_FAST["shipID"]): ship_of(client)}
         problems += view_problems(TRAINING_FAST["before"], training_view(client), "before")
         notifications_of(client)
+        time.sleep(1)
+        problems += view_problems(TRAINING_FAST["before"], training_view(client), "before after character selection settled")
+        notifications_of(client)
 
         for step in TRAINING_FAST["steps"][:-1]:
             service, method, recorded_args, kwargs = step["call"]
@@ -1232,8 +1313,63 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
             where = step["label"]
             problems += differences(step["ok"], describe(client.call(service, method, *args, **kwargs)), f"{where}: answer")
             sent = wait_for_events(client, lambda seen: any(e["name"] == "OnSkillQueuePausedServer" for e in seen))
-            problems += differences(
-                blank_times(events_form(substitute(step["notifications"], mapping))), blank_times(events_form(sent)), f"{where}: events", float_tolerance=DOGMA_TOLERANCE)
+            if not REFERENCE and step["label"] == "two levels in a queue":
+                # eve.rs publishes each completed level before the next queue row starts. The reference settles both overdue levels
+                # together; V24 skillsvc.py and skillQueueSvc.py consume both forms and expose the same level sequence locally.
+                expected_names = [
+                    "OnNewSkillQueueSaved", "OnServerSkillsChanged", "OnModuleAttributeChanges", "OnModuleAttributeChanges",
+                    "OnServerBrainUpdated", "OnNewSkillQueueSaved", "OnServerSkillsChanged", "OnModuleAttributeChanges",
+                    "OnModuleAttributeChanges", "OnServerBrainUpdated", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer",
+                ]
+                assert [event["name"] for event in sent] == expected_names
+                assert [event["idType"] for event in sent] == [
+                    "charid", "charid", "clientID", "clientID", "charid", "charid",
+                    "charid", "clientID", "clientID", "charid", "charid", "clientID",
+                ]
+
+                skill_rank = _training_rank(3301)
+                level_two_points = math.ceil(250 * skill_rank * 2 ** (2.5 * (2 - 1)))
+                assert [_training_skill_update(event) for event in sent if event["name"] == "OnServerSkillsChanged"] == [
+                    {3301: (2, level_two_points)}, {3301: (3, 8000)},
+                ]
+                queues = [_training_queue_update(event) for event in sent if event["name"] == "OnNewSkillQueueSaved"]
+                assert queues == [[(3301, 2), (3301, 3)], [(3301, 3)], []]
+
+                expected = _fast_training_oracle(substitute(step["notifications"], mapping), character, TRAINING_FAST["trainingSpeed"])
+                expected = _client_charisma_events(expected, character)
+                final_level_expected = [expected[0], *expected[6:]]
+                actual = [sent[index] for index in (0, 6, 7, 8, 9, 10, 11)]
+                problems += differences(
+                    blank_times(events_form(final_level_expected)), blank_times(events_form(_blank_brain_versions(actual))),
+                    f"{where}: final-level wire events", float_tolerance=DOGMA_TOLERANCE)
+
+                skill_event = substitute([next(event for event in step["notifications"] if event["name"] == "OnServerSkillsChanged")], mapping)[0]
+                header = _training_notification_payload(skill_event)[0]["$dict"][0][1]["$objectex"]["$tuple"][1]["$tuple"]
+                header[1], header[2] = 2, level_two_points
+                problems += differences(
+                    blank_times(events_form([skill_event])), blank_times(events_form([sent[1]])),
+                    f"{where}: first-level skill update", float_tolerance=DOGMA_TOLERANCE)
+
+                expected_attributes = [event for event in step["notifications"] if event["name"] == "OnModuleAttributeChanges"]
+                expected_attributes = _fast_training_oracle(substitute(expected_attributes, mapping), character, TRAINING_FAST["trainingSpeed"])
+                expected_attributes = _client_charisma_events(expected_attributes, character)
+                expected_groups = [_training_attribute_update(event) for event in expected_attributes]
+                actual_groups = [_training_attribute_update(event) for event in sent[2:4] + sent[7:9]]
+                assert actual_groups == expected_groups
+                assert _training_queue_update(sent[5]) == [(3301, 3)]
+                brains = [event for event in sent if event["name"] == "OnServerBrainUpdated"]
+                versions = [_training_tuple(_training_notification_payload(event)[0])[0] for event in brains]
+                assert len(versions) == 2 and versions[0] > 0 and versions[1] == versions[0] + 1
+            else:
+                expected_events = substitute(step["notifications"], mapping)
+                actual_events = sent
+                if not REFERENCE:
+                    expected_events = _fast_training_oracle(expected_events, character, TRAINING_FAST["trainingSpeed"])
+                    expected_events = _client_charisma_events(expected_events, character)
+                    actual_events = _blank_brain_versions(actual_events)
+                problems += differences(
+                    blank_times(events_form(expected_events)), blank_times(events_form(actual_events)), f"{where}: events", float_tolerance=DOGMA_TOLERANCE)
+            problems += view_problems(step["after"], training_view(client), f"{where}: after")
             # V24.01 applies these skill and queue notifications locally after each level; it does not fetch a full snapshot here.
             notifications_of(client)
 
@@ -1241,7 +1377,6 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
         away = TRAINING_FAST["steps"][-1]
         client.call("skillHandler", "SaveNewQueue", m.Dict([(0, (3319, 2))]))
         notifications_of(client)
-    import time
     time.sleep(4)
     with connect(f"walk-swift-{run}") as back:
         notifications_of(back)
@@ -1250,8 +1385,14 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
         assert received[0]["name"] == "OnSubscriptionTimeUpdateServer"
         assert "OnCharacterSelected" not in [event["name"] for event in received]
         received = received[1:]
+        expected_events = substitute(away["notifications"], mapping)
+        actual_events = received
+        if not REFERENCE:
+            expected_events = _fast_training_oracle(expected_events, character, TRAINING_FAST["trainingSpeed"])
+            expected_events = _client_charisma_events(expected_events, character)
+            actual_events = _blank_brain_versions(actual_events)
         problems += differences(
-            blank_times(events_form(substitute(away["notifications"], mapping))), blank_times(events_form(received)), "finished while away: events", float_tolerance=DOGMA_TOLERANCE)
+            blank_times(events_form(expected_events)), blank_times(events_form(actual_events)), "finished while away: events", float_tolerance=DOGMA_TOLERANCE)
         problems += view_problems(away["after"], training_view(back), "finished while away: after")
     assert problems == [], "\n".join(problems[:30])
 

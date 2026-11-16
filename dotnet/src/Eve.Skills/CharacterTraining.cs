@@ -279,7 +279,9 @@ public sealed class CharacterTraining(
 
         var historyTime = Now;
         await store.AppendHistoryAsync(connection, transaction, characterId,
-            [.. plan.After.Select(skill => new HistoryEntry(historyTime, SkillEvents.FreeSkillPointsUsed, skill.TypeId, skill.SkillPoints, skill.Level))],
+            [.. plan.After.Select(skill => new HistoryEntry(
+                historyTime, SkillEvents.FreeSkillPointsUsed, skill.TypeId, skill.SkillPoints, skill.Level,
+                plan.Applied[skill.TypeId]))],
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         await RaiseSettledAsync(new TrainingUpdate(
@@ -367,7 +369,7 @@ public sealed class CharacterTraining(
         }
 
         await store.AppendHistoryAsync(connection, transaction, characterId,
-            [new HistoryEntry(Now, SkillEvents.FreeSkillPointsUsed, updatedSkill.TypeId, updatedSkill.SkillPoints, updatedSkill.Level)],
+            [new HistoryEntry(Now, SkillEvents.FreeSkillPointsUsed, updatedSkill.TypeId, updatedSkill.SkillPoints, updatedSkill.Level, points)],
             cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         await RaiseSettledAsync(new TrainingUpdate(
@@ -770,7 +772,9 @@ public sealed class CharacterTraining(
             changed = rebased != running;
             owned[line.TypeId] = rebased;
             await skills.GrantAsync(connection, transaction, characterId, [rebased], cancellationToken, trackRecentChanges: true);
-            await store.AppendHistoryAsync(connection, transaction, characterId, [new HistoryEntry(now, SkillEvents.TrainingCancelled, line.TypeId, rebased.SkillPoints, line.ToLevel)], cancellationToken);
+            await store.AppendHistoryAsync(connection, transaction, characterId,
+                [new HistoryEntry(now, SkillEvents.TrainingCancelled, line.TypeId, rebased.SkillPoints, line.ToLevel,
+                    Math.Max(0, rebased.SkillPoints - line.StartPoints))], cancellationToken);
         }
         var stopped = state with { Active = false, ActiveStart = null };
         await store.SaveAsync(connection, transaction, characterId, stopped, cancellationToken);

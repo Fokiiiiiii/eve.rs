@@ -10,9 +10,11 @@ enter_task!(
         let Some(site_id) = t.required("operationSiteId") else { return };
         let position = t.world().operation_spawnpoint_position(character.as_int(), site_id.as_int());
         let Some((solar_system_id, spawn_id, x, y, z)) = t.ok(position) else { return };
-        let (Some(system), Some(spawn), Some(coordinates)) =
-            (t.required_address("siteSolarSystemIdAddress"), t.required_address("siteSpawnIdAddress"), t.required_address("siteCoordinatesAddress"))
-        else {
+        let (Some(system), Some(spawn), Some(coordinates)) = (
+            t.required_address("siteSolarSystemIdAddress"),
+            t.required_address("siteSpawnIdAddress"),
+            t.required_address("siteCoordinatesAddress"),
+        ) else {
             return;
         };
         t.send_blackboard_value(&system, Value::Int(solar_system_id));

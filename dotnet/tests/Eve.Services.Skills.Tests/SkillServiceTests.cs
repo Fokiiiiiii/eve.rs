@@ -651,7 +651,7 @@ public class SkillHandlerTests
             new PyLong(extractor),
             new PyList([Py.Tuple(new PyInt(target.TypeId), new PyLong(long.MaxValue - 5)), Py.Tuple(new PyInt(target.TypeId), new PyLong(10))])));
         var notifications = Notes.Of(sink);
-        Assert.Equal(["OnServerSkillsChanged", "OnSkillsChanged", "OnItemChange", "OnItemChange"],
+        Assert.Equal(["OnServerSkillsChanged", "OnItemChange", "OnItemChange"],
             notifications.Select(note => note.Name));
         Assert.Contains(Assert.IsType<PyDict>(notifications[0].Args[0]).Entries,
             entry => Notes.Number(entry.Key) == target.TypeId);
@@ -1415,8 +1415,10 @@ public class SkillHandlerTests
         Assert.Equal(new PyInt(1_415), await Rig.CallAsync(rig.Handler, session, "GetSkillPoints"));
         var history = ((PyList)await Rig.CallAsync(rig.Handler, session, "GetSkillHistory")).Items.Select(Notes.Fields).ToArray();
         var row = Assert.Single(history);
-        Assert.Equal((SkillEvents.FreeSkillPointsUsed, 3301L, 1_415L, 2L),
-            (Notes.Number(row["eventTypeID"]), Notes.Number(row["skillTypeID"]), Notes.Number(row["absolutePoints"]), Notes.Number(row["level"])));
+        Assert.Equal((SkillEvents.FreeSkillPointsUsed, 3301L, 1_165L, 1_415L),
+            (Notes.Number(row["eventTypeID"]), Notes.Number(row["skillTypeID"]),
+                Notes.Number(row["relativePoints"]), Notes.Number(row["absolutePoints"])));
+        Assert.DoesNotContain("level", row.Keys);
         Assert.IsType<PyLong>(row["logDate"]);
 
         var info = ((PyDict)((PyObject)await Rig.CallAsync(rig.Handler, session, "GetMySkillInfo")).Args)
@@ -1719,8 +1721,8 @@ public class SkillHandlerTests
         var result = Assert.IsType<PyTuple>(await Rig.CallAsync(rig.Handler, session, "PurchaseSkills", requested));
         Assert.Equal([new PyInt(3300)], result.Items);
         var notes = Notes.Of(sink);
-        Assert.Equal(["OnServerSkillsChanged", "OnSkillsChanged"], notes.Select(n => n.Name));
-        Assert.Equal(["charid", "clientID"], notes.Select(n => n.IdType));
+        Assert.Equal(["OnServerSkillsChanged"], notes.Select(n => n.Name));
+        Assert.Equal(["charid"], notes.Select(n => n.IdType));
         Assert.Equal(3300, Notes.Number(Assert.Single(Assert.IsType<PyDict>(notes[0].Args[0]).Entries).Key));
         Assert.Equal(3, Assert.IsType<PyTuple>(Assert.IsType<PyObjectEx>(Assert.IsType<PyDict>(notes[0].Args[0]).Entries[0].Value).Header).Items.Count);
         Assert.Single(walletChanges);
@@ -1843,7 +1845,7 @@ public class SkillHandlerTests
         }
         var outcomes = await Task.WhenAll(TryPurchase(), TryPurchase());
         Assert.Single(outcomes, success => success);
-        Assert.Equal(["OnServerSkillsChanged", "OnSkillsChanged"], Notes.Of(sink).Select(n => n.Name));
+        Assert.Equal(["OnServerSkillsChanged"], Notes.Of(sink).Select(n => n.Name));
         Assert.Single(changes);
         Assert.Single(await rig.Wallet.JournalAsync(character));
         var after = await rig.Training.ViewAsync(character, 34);

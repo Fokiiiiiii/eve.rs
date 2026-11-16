@@ -187,6 +187,10 @@ impl Scene {
     /// `AddBalls2` of a ship followed by its numbers, as a watcher is sent a ship that has come into view.
     pub(crate) fn introduction(&mut self, subject: SessionId, now: i64) -> Option<Vec<Value>> {
         let stamp = self.next_stamp(now);
+        self.introduction_at(subject, stamp, now)
+    }
+
+    fn introduction_at(&self, subject: SessionId, stamp: u32, now: i64) -> Option<Vec<Value>> {
         let ship = &self.pilots.get(&subject)?.ship;
         let ship_id = id(ship.spec.ship_id);
         let added = payload::add_ships(stamp, &[ship], now).ok()?;
@@ -208,11 +212,16 @@ impl Scene {
         if watchers.is_empty() {
             return Vec::new();
         }
-        let Some(actions) = self.introduction(subject, now) else { return Vec::new() };
+        let stamp = self.next_stamp(now);
+        let Some(actions) = self.introduction_at(subject, stamp, now) else { return Vec::new() };
+        let movement_prime = self.station_undock_movement_prime(subject, stamp);
         let mut out = Vec::new();
         for watcher in watchers {
             self.set_sees_ship(watcher, subject, true);
             out.push(Self::update(watcher, actions.clone()));
+            if let Some(prime) = movement_prime.as_ref() {
+                out.push(Self::update(watcher, prime.clone()));
+            }
         }
         out
     }

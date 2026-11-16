@@ -36,6 +36,17 @@ impl Scene {
     /// A ship lets go of everything: what is going is given up, what is held is let go and the ship is told once (`clear`); the ships that were
     /// locked are told they are not.
     pub(crate) fn clear_locks(&mut self, session: SessionId, notify_target: bool, now: i64) -> Vec<Out> {
+        self.clear_locks_with_reason(session, notify_target, None, now)
+    }
+
+    /// A ship entering warp clears its target list with the reason the V24 client receives from Tranquility.
+    pub(crate) fn clear_locks_with_reason(
+        &mut self,
+        session: SessionId,
+        notify_target: bool,
+        self_clear_reason: Option<&'static str>,
+        now: i64,
+    ) -> Vec<Out> {
         let Some(pilot) = self.pilots.get_mut(&session) else { return Vec::new() };
         let pending = pilot.targeting.pending_targets();
         pilot.targeting.pending.clear();
@@ -54,7 +65,11 @@ impl Scene {
             }
         }
         if !held.is_empty() {
-            out.push(on_target(session, "clear", None));
+            if let Some(reason) = self_clear_reason {
+                out.push(on_target_reason(session, "clear", Some(source_id), Some(reason)));
+            } else {
+                out.push(on_target(session, "clear", None));
+            }
         }
         out
     }

@@ -16,8 +16,6 @@ pub const MINIMUM_WARP_DISTANCE: f64 = 150_000.0;
 pub const ENTRY_SPEED_FRACTION: f64 = 0.75;
 /// How far off dead ahead the ship's heading may be (as `1 - cosine`) when it enters warp.
 pub const ENTRY_ALIGNMENT: f64 = 0.01;
-/// What the ship's top speed is set to at the start of a warp, as a share of what it was.
-pub const START_SPEED_SCALE: f64 = 1.1;
 /// The speed under which a ship that has dropped out of warp counts as at rest.
 pub const REST_SPEED: f64 = 0.01;
 /// The fastest a ship may be going when it drops out of warp, in metres a second.

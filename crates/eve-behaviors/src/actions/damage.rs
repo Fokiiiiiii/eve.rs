@@ -188,7 +188,11 @@ enter_task!(
             default_distance
         };
         let system = t.ctx().solar_system_id;
-        t.world().singlecast_by_solar_system_id(system, "OnCholesterolFieldActivated", &[Value::Int(me), distance]);
+        t.world().singlecast_by_solar_system_id(
+            system,
+            "OnCholesterolFieldActivated",
+            &[Value::Int(me), distance],
+        );
     }
 );
 

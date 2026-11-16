@@ -7,15 +7,33 @@ namespace Eve.Services.Ships;
 /// <summary>What the client is told when its ship or an item changes: the events dogma reports, and the items that moved.</summary>
 public static class ShipNotifications
 {
+    private static bool IsCharacterAttribute(int attributeId) => attributeId is >= 164 and <= 168;
+
+    private static PyValue AttributeNumber(int attributeId, double value, bool characterAttribute) =>
+        attributeId is 2 or 805 || (characterAttribute && IsCharacterAttribute(attributeId))
+            ? Py.Number(value)
+            : new PyReal(value);
+
     /// <summary>How the client is told an attribute of a module or ship has a new value (the client keeps the old one to show the change).</summary>
     public static PyValue AttributeChange(long characterId, long itemId, int attributeId, long fileTime, double? old, double now) => Py.Tuple(
         new PyStr("OnModuleAttributeChange"), InventoryWire.Id(characterId), InventoryWire.Id(itemId), new PyInt(attributeId), new PyLong(fileTime),
-        Py.Number(now), old is { } value ? Py.Number(value) : PyNone.Instance, new PyLong(fileTime));
+        AttributeNumber(attributeId, now, itemId == characterId),
+        old is { } value ? AttributeNumber(attributeId, value, itemId == characterId) : PyNone.Instance,
+        new PyLong(fileTime));
 
     /// <summary>The same for an item the client knows by a key of its own (a charge in a slot: the ship, the slot's flag and the type).</summary>
     public static PyValue AttributeChange(long characterId, PyValue itemKey, int attributeId, long fileTime, double? old, double now) => Py.Tuple(
         new PyStr("OnModuleAttributeChange"), InventoryWire.Id(characterId), itemKey, new PyInt(attributeId), new PyLong(fileTime),
-        Py.Number(now), old is { } value ? Py.Number(value) : PyNone.Instance, new PyLong(fileTime));
+        AttributeNumber(attributeId, now, IsCharacterItem(characterId, itemKey)),
+        old is { } value ? AttributeNumber(attributeId, value, IsCharacterItem(characterId, itemKey)) : PyNone.Instance,
+        new PyLong(fileTime));
+
+    private static bool IsCharacterItem(long characterId, PyValue itemKey) => itemKey switch
+    {
+        PyInt id => id.Value == characterId,
+        PyLong id => id.Value == characterId,
+        _ => false,
+    };
 
     /// <summary>An effect on a module that started or stopped: who and what it is on, and whether it is running.</summary>
     public static PyValue ShipEffect(long characterId, long shipId, long moduleId, int effectId, long fileTime, bool started) => Py.Tuple(

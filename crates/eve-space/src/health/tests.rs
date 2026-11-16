@@ -380,8 +380,8 @@ fn a_hit_tells_the_pilot_what_changed_and_everyone_who_can_see_the_ship_its_dama
     assert!(applied.is_some());
     assert_eq!(
         attribute_lists(&out, A),
-        [vec![(i64::from(SHIELD_CHARGE), Value::Real(201.855437), Value::Int(220))]],
-        "the pilot is told the shield's charge, a whole number as an integer"
+        [vec![(i64::from(SHIELD_CHARGE), Value::Real(201.855437), Value::Real(220.0))]],
+        "the pilot is told the shield's charge as Dogma real values"
     );
     assert!(attribute_lists(&out, B).is_empty(), "the other pilot is not told the ship's attributes");
     let states = damage_states(&out);

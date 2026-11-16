@@ -45,7 +45,10 @@ enter_task!(
     /// The sum of two vectors on channels.
     AddVectorsInBlackboard,
     |t| {
-        let (Some(a), Some(b)) = (vector_at(t, "firstVectorAddress"), vector_at(t, "secondVectorAddress")) else { return };
+        let (Some(a), Some(b)) = (vector_at(t, "firstVectorAddress"), vector_at(t, "secondVectorAddress"))
+        else {
+            return;
+        };
         send_vector(t, [a[0] + b[0], a[1] + b[1], a[2] + b[2]]);
     }
 );
@@ -54,7 +57,10 @@ enter_task!(
     /// The difference of two vectors on channels.
     SubtractVectorsInBlackboard,
     |t| {
-        let (Some(a), Some(b)) = (vector_at(t, "firstVectorAddress"), vector_at(t, "secondVectorAddress")) else { return };
+        let (Some(a), Some(b)) = (vector_at(t, "firstVectorAddress"), vector_at(t, "secondVectorAddress"))
+        else {
+            return;
+        };
         send_vector(t, [a[0] - b[0], a[1] - b[1], a[2] - b[2]]);
     }
 );

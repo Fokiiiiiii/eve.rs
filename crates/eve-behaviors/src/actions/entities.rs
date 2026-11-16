@@ -31,8 +31,16 @@ enter_task!(
         let type_id = t.get_last_blackboard_value(&address);
         if let Some(type_id) = type_id.as_int() {
             let Some(ball) = get_my_ball(t) else { return };
-            let (Some(amount), Some(allow_overload)) = (t.required("amount"), t.required("allowOverload")) else { return };
-            t.world().add_type_and_amount_to_additional_loot(ball.id, type_id, Some(&amount), Some(&allow_overload));
+            let (Some(amount), Some(allow_overload)) = (t.required("amount"), t.required("allowOverload"))
+            else {
+                return;
+            };
+            t.world().add_type_and_amount_to_additional_loot(
+                ball.id,
+                type_id,
+                Some(&amount),
+                Some(&allow_overload),
+            );
         }
         t.set_status_to_success();
     }
@@ -42,7 +50,8 @@ enter_task!(
     /// Adds the amount of the blackboard of a type of it to the loot my entity will drop.
     AddBlackboardTypeAndBlackboardAmountToAdditionalLoot,
     |t| {
-        let (Some(type_address), Some(amount_address)) = (t.required_address("typeIdAddress"), t.required_address("amountAddress"))
+        let (Some(type_address), Some(amount_address)) =
+            (t.required_address("typeIdAddress"), t.required_address("amountAddress"))
         else {
             return;
         };
@@ -51,7 +60,12 @@ enter_task!(
         if let (Some(type_id), false) = (type_id.as_int(), amount.is_none()) {
             let Some(ball) = get_my_ball(t) else { return };
             let Some(allow_overload) = t.required("allowOverload") else { return };
-            t.world().add_type_and_amount_to_additional_loot(ball.id, type_id, Some(&amount), Some(&allow_overload));
+            t.world().add_type_and_amount_to_additional_loot(
+                ball.id,
+                type_id,
+                Some(&amount),
+                Some(&allow_overload),
+            );
         }
         t.set_status_to_success();
     }
@@ -106,7 +120,9 @@ enter_task!(
             return;
         };
         let Some(group_leader_id) = members.iter().min().copied() else {
-            t.raise(BehaviorError::Unrecoverable("Unable to get own group members: min() arg is an empty sequence".to_string()));
+            t.raise(BehaviorError::Unrecoverable(
+                "Unable to get own group members: min() arg is an empty sequence".to_string(),
+            ));
             return;
         };
         let Some(address) = t.required_address("groupLeaderIdAddress") else { return };
@@ -194,7 +210,8 @@ enter_task!(
     UpdateStandingThresholdsForEntity,
     |t| {
         let Some(me) = t.my_item_id() else { return };
-        let (Some(hostile), Some(friendly)) = (t.required("hostileResponseThreshold"), t.required("friendlyResponseThreshold"))
+        let (Some(hostile), Some(friendly)) =
+            (t.required("hostileResponseThreshold"), t.required("friendlyResponseThreshold"))
         else {
             return;
         };
@@ -231,7 +248,10 @@ enter_task!(
         let Some(types_to_count) = t.required("typeIDsToCount") else { return };
         let mut count = 0;
         for entry_key in t.world().behavior_entry_keys() {
-            if t.world().slim_item(entry_key).is_some_and(|slim| types_to_count.contains(&Value::Int(slim.type_id))) {
+            if t.world()
+                .slim_item(entry_key)
+                .is_some_and(|slim| types_to_count.contains(&Value::Int(slim.type_id)))
+            {
                 count += 1;
             }
         }
@@ -305,7 +325,9 @@ enter_task!(
         let Some(has_cargo) = has_cargo_bay(t) else { return };
         if has_cargo {
             let (Some(type_id), Some(amount)) = (t.required("typeId"), t.required("amount")) else { return };
-            if let (Some(type_id), Some(amount), Some(me)) = (type_id.as_int(), amount.as_int(), t.my_item_id()) {
+            if let (Some(type_id), Some(amount), Some(me)) =
+                (type_id.as_int(), amount.as_int(), t.my_item_id())
+            {
                 add_type_to_cargo(t, me, type_id, amount);
             }
         }

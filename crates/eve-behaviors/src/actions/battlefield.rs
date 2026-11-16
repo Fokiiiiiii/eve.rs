@@ -95,7 +95,10 @@ enter_task!(
                 for (at, result) in results.iter().enumerate() {
                     // `_get_match_result_weight`: at least 1
                     let mut threat = 0.0;
-                    for item_id in result.dict_get(&Value::Str("item_ids".to_string())).map_or(Vec::new(), |ids| ids.int_items()) {
+                    for item_id in result
+                        .dict_get(&Value::Str("item_ids".to_string()))
+                        .map_or(Vec::new(), |ids| ids.int_items())
+                    {
                         threat += evaluate_target(t, item_id, THREAT_WINDOW_IN_SECONDS);
                     }
                     weighted.push((at, threat.max(1.0)));
@@ -104,7 +107,8 @@ enter_task!(
             } else {
                 results.first().cloned()
             };
-            let fleet_type = chosen.and_then(|result| result.dict_get(&Value::Str("fleet_type".to_string())).cloned());
+            let fleet_type =
+                chosen.and_then(|result| result.dict_get(&Value::Str("fleet_type".to_string())).cloned());
             let Some(fleet_type) = fleet_type else {
                 t.raise(crate::env::WorldError::Key("fleet_type".to_string()).into());
                 return;

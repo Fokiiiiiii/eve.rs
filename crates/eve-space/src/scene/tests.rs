@@ -1341,7 +1341,7 @@ fn a_fleet_member_ship_is_a_warp_target_in_its_system() {
 fn a_ship_lining_up_for_warp_or_in_it_takes_no_orders() {
     let mut scene = scene_with_a_planet();
     let out = scene.command(SESSION, Command::WarpTo { target_id: PLANET, range: 0.0 }, NOON);
-    assert_eq!(action_names(&out[0]), ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"]);
+    assert_eq!(action_names(&out[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
     for command in [
         Command::Stop,
         Command::SetSpeedFraction(0.5),
@@ -2275,11 +2275,7 @@ fn a_warp_to_a_gate_ends_within_jump_range_of_it_and_the_jump_is_accepted() {
     scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
     let warp_at = NOON + seconds(1);
     let told = scene.command(SESSION, Command::WarpTo { target_id: FAR_GATE, range: 0.0 }, warp_at);
-    assert_eq!(
-        action_names(&told[0]),
-        ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"],
-        "{told:?}"
-    );
+    assert_eq!(action_names(&told[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"], "{told:?}");
     let refused = scene.command(SESSION, jump(FAR_GATE, 0), warp_at);
     assert!(
         refused.iter().any(|out| matches!(out, Out::Refused { reason: "TOO_FAR_FROM_STARGATE", .. })),
@@ -4256,11 +4252,7 @@ fn a_warp_to_a_wormhole_end_under_the_minimum_warp_distance_is_refused_and_one_b
     );
     let told =
         scene.command(SESSION, Command::WarpTo { target_id: WORMHOLE_END, range: 0.0 }, NOON + seconds(1));
-    assert_eq!(
-        action_names(&told[0]),
-        ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"],
-        "{told:?}"
-    );
+    assert_eq!(action_names(&told[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"], "{told:?}");
     let mut t = NOON + seconds(1);
     while t < NOON + seconds(300) {
         t += 2_500_000;

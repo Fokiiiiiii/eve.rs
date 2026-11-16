@@ -114,7 +114,12 @@ enter_task!(
     SelectDockableStructure,
     |t| {
         t.set_status_to_failed();
-        let slim_items: Vec<SlimItem> = t.world().slim_items().into_iter().filter(|s| s.category_id == CATEGORY_STRUCTURE || s.category_id == CATEGORY_STATION).collect();
+        let slim_items: Vec<SlimItem> = t
+            .world()
+            .slim_items()
+            .into_iter()
+            .filter(|s| s.category_id == CATEGORY_STRUCTURE || s.category_id == CATEGORY_STATION)
+            .collect();
         if slim_items.is_empty() {
             return;
         }

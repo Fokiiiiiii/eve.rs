@@ -55,7 +55,7 @@ public class SkillAdminCommandTests
         Assert.Equal(3, Assert.Single(await rig.Skills.ForCharacterAsync(target.CharacterId), skill => skill.TypeId == 3300).Level);
         Assert.Empty(Events.Of(callerSession));
         Assert.Equal(
-            ["OnServerSkillsChanged", "OnSkillLevelsTrained", "OnSkillsChanged", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"],
+            ["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"],
             Events.Of(targetSession).Select(notice => notice.Name));
 
         Assert.StartsWith($"Set Small Hybrid Turret(3301) for character({target.CharacterId})",
@@ -70,7 +70,7 @@ public class SkillAdminCommandTests
         var removed = Events.Of(targetSession);
         Assert.Equal("OnServerSkillsRemoved", removed[0].Name);
         Assert.Equal("clientID", removed[0].IdType);
-        Assert.Contains("OnSkillsChanged", removed.Select(notice => notice.Name));
+        Assert.Contains("OnNewSkillQueueSaved", removed.Select(notice => notice.Name));
 
         rig.SetOffline(target.CharacterId);
         Assert.StartsWith($"Set Gunnery(3300) for character({target.CharacterId})",
@@ -105,7 +105,7 @@ public class SkillAdminCommandTests
         Assert.Empty(afterLower.State.Entries);
         Assert.False(afterLower.State.Running);
         Assert.Equal(
-            ["OnServerSkillsChanged", "OnSkillsChanged", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"],
+            ["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"],
             Events.Of(targetSession).Select(notice => notice.Name));
 
         await GrantAsync(rig, target.CharacterId, Skill(rig, 3300, 1), Skill(rig, 3301, 0));
@@ -115,7 +115,7 @@ public class SkillAdminCommandTests
         Assert.Empty(afterRemove.State.Entries);
         Assert.False(afterRemove.State.Running);
         Assert.Equal(
-            ["OnServerSkillsRemoved", "OnSkillsChanged", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"],
+            ["OnServerSkillsRemoved", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"],
             Events.Of(targetSession).Select(notice => notice.Name));
     }
 

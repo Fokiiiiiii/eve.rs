@@ -236,7 +236,7 @@ public class SpaceServiceTests
             ? Py.Tuple(new PyStr(action), new PyLong(id))
             : Py.Tuple(new PyStr(action));
         return new SimNotify((ulong)session.SessionId, "OnTarget", "shipid",
-            MarshalCodec.Encode(Py.Tuple(new PyInt(0), Py.Tuple(new PyInt(1), args))));
+            MarshalCodec.Encode(args));
     }
 
     private static Eve.Scheduler.LocalTimers CooldownElapsedTimers() => new(delay: (duration, token) =>
@@ -560,7 +560,8 @@ public class SpaceServiceTests
 
         rig.Sim.Say(TargetNotification(session, "add", target));
         var added = Assert.Single(Events.Of(session));
-        Assert.Equal(("OnTarget", "shipid"), (added.Name, added.IdType));
+        Assert.Equal(("OnMultiEvent", "clientID"), (added.Name, added.IdType));
+        AssertTargetDogmaEvent(added, "add", target);
         Assert.NotEmpty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
 
         rig.Sim.Say(TargetNotification(session, "lost", target));
@@ -3716,8 +3717,10 @@ public class SpaceServiceTests
         {
             var sent = ((PyTuple)args).Items;
             rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnTarget", "shipid",
-                MarshalCodec.Encode(Py.Tuple(sent[0], sent[1]))));
+                MarshalCodec.Encode((PyTuple)((PyTuple)sent[1]).Items[1])));
         }
+        var exploding = Py.Tuple(new PyStr("otherlost"), new PyLong(other), new PyStr("Exploding"));
+        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnTarget", "shipid", MarshalCodec.Encode(exploding)));
         var damage = Py.Tuple(
             Py.Tuple(new PyReal(0.5), new PyReal(110000.0), new PyLong(134351527136350000)), new PyReal(1.0), new PyReal(0.25));
         var action = Py.Tuple(new PyInt(1790679103), Py.Tuple(new PyStr("OnDamageStateChange"), Py.Tuple(new PyLong(other), damage)));
@@ -3725,15 +3728,37 @@ public class SpaceServiceTests
             MarshalCodec.Encode(Py.Tuple(new PyList([action]), PyBool.False))));
 
         var events = Events.Of(session);
-        Assert.Equal(["OnTarget", "OnTarget", "OnTarget", "DoDestinyUpdate"], events.Select(e => e.Name));
-        Assert.All(events.Take(3), e => Assert.Equal("shipid", e.IdType));
+        Assert.Equal(["OnMultiEvent", "OnMultiEvent", "OnMultiEvent", "OnTarget", "DoDestinyUpdate"], events.Select(e => e.Name));
+        Assert.All(events.Take(3), e => Assert.Equal("clientID", e.IdType));
+        Assert.Equal("shipid", events[3].IdType);
         Assert.Equal(
             ["lost", "otherlost", "clear"],
-            events.Take(3).Select(e => JsSemantics.StringValue(((PyTuple)((PyTuple)e.Args[1]).Items[1]).Items[0])));
-        Assert.Equal(other, Id(((PyTuple)((PyTuple)events[0].Args[1]).Items[1]).Items[1]));
-        var delivered = (PyTuple)((PyTuple)((PyList)events[3].Args[0]).Items.Single()).Items[1];
+            events.Take(3).Select(e => JsSemantics.StringValue(TargetEvent(e).Items[0])));
+        Assert.Equal(other, Id(TargetEvent(events[0]).Items[1]));
+        Assert.Equal(3, events[3].Args.Length);
+        Assert.Equal("otherlost", JsSemantics.StringValue(events[3].Args[0]));
+        Assert.Equal(other, Id(events[3].Args[1]));
+        Assert.Equal("Exploding", JsSemantics.StringValue(events[3].Args[2]));
+        var delivered = (PyTuple)((PyTuple)((PyList)events[4].Args[0]).Items.Single()).Items[1];
         Assert.Equal("OnDamageStateChange", JsSemantics.StringValue(delivered.Items[0]));
         Assert.Equal(damage, ((PyTuple)delivered.Items[1]).Items[1]);
+    }
+
+    private static PyTuple TargetEvent(Events.Event notification)
+    {
+        var pair = Assert.Single(Assert.IsType<PyList>(Assert.Single(notification.Args)).Items);
+        var timedEvent = Assert.IsType<PyTuple>(pair);
+        Assert.True(Id(timedEvent.Items[1]) > 0);
+        var words = (PyTuple)timedEvent.Items[0];
+        Assert.Equal("OnTarget", JsSemantics.StringValue(words.Items[0]));
+        return new PyTuple(words.Items.Skip(1).ToArray());
+    }
+
+    private static void AssertTargetDogmaEvent(Events.Event notification, string action, long target)
+    {
+        var words = TargetEvent(notification);
+        Assert.Equal(action, JsSemantics.StringValue(words.Items[0]));
+        Assert.Equal(target, Id(words.Items[1]));
     }
 
     [PgFact]

@@ -10,7 +10,13 @@ enter_task!(
         let Some(reward_id) = t.required("rewardId") else { return };
         let tale_id = t.ctx().my_tale_id.unwrap_or(0);
         let dungeon_id = t.ctx().my_dungeon_id.unwrap_or(0);
-        t.world().register_payment_on_explosion(me, mine.new_bubble_id, reward_id.as_int(), tale_id, dungeon_id);
+        t.world().register_payment_on_explosion(
+            me,
+            mine.new_bubble_id,
+            reward_id.as_int(),
+            tale_id,
+            dungeon_id,
+        );
     }
 );
 

@@ -568,7 +568,8 @@ impl Health {
 
 use eve_marshal::Value;
 
-use crate::modules::{SAMPLE_EVERY, attribute_change, number};
+use crate::modules::{SAMPLE_EVERY, attribute_change};
+use crate::wire::real;
 
 use crate::scene::{Out, Pilot, Scene, SessionId};
 

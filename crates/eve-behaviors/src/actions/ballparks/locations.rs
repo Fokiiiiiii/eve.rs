@@ -53,8 +53,11 @@ enter_task!(
             return;
         };
         let solar_system_id = t.world().solar_system_id();
-        let location =
-            t.world().random_placement_near_random_planet(solar_system_id, min_distance_au * AU, max_distance_au * AU);
+        let location = t.world().random_placement_near_random_planet(
+            solar_system_id,
+            min_distance_au * AU,
+            max_distance_au * AU,
+        );
         if let Some(location) = location {
             let Some(address) = t.required_address("locationAddress") else { return };
             t.send_blackboard_value(&address, Value::from_vec3(location));

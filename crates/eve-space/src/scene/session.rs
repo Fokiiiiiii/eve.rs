@@ -2,6 +2,28 @@ use super::docking::{is_dock_body, surface_distance};
 use super::*;
 
 impl Scene {
+    /// The movement prime of a ship entering space, on the same stamp as its initial AddBalls2.
+    pub(crate) fn movement_prime(&self, session: SessionId, stamp: u32) -> Option<Vec<Value>> {
+        let ship = &self.pilots.get(&session)?.ship;
+        let ship_id = id(ship.spec.ship_id);
+        Some(vec![
+            payload::action(stamp, "SetBallMassive", [ship_id.clone(), int(0)]),
+            payload::action(stamp, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]),
+            payload::action(
+                stamp,
+                "SetBallVelocity",
+                with_id(&ship_id, vector(ship.velocity.x, ship.velocity.y, ship.velocity.z)),
+            ),
+            payload::action(stamp, heading_name(ship), heading_args(ship)),
+        ])
+    }
+
+    /// A station undock's movement prime is also sent to views that already have the ship in their ballpark.
+    pub(crate) fn station_undock_movement_prime(&self, session: SessionId, stamp: u32) -> Option<Vec<Value>> {
+        self.pilots.get(&session)?.leaving_station?;
+        self.movement_prime(session, stamp)
+    }
+
     pub(crate) fn controlled_structure_id(&self, session: SessionId) -> Option<i64> {
         self.controlled_structures.get(&session).map(|observer| observer.structure_id)
     }
@@ -295,8 +317,6 @@ impl Scene {
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let ship = &pilot.ship;
         let ship_id = id(ship.spec.ship_id);
-        let heading =
-            |action_stamp: u32| payload::action(action_stamp, heading_name(ship), heading_args(ship));
 
         let mut added_actions = Vec::new();
         if pilot.jumped_in {
@@ -362,16 +382,7 @@ impl Scene {
                     ),
                 ]);
             }
-            actions.extend([
-                payload::action(first, "SetBallMassive", [ship_id.clone(), int(0)]),
-                payload::action(first, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]),
-                payload::action(
-                    first,
-                    "SetBallVelocity",
-                    with_id(&ship_id, vector(ship.velocity.x, ship.velocity.y, ship.velocity.z)),
-                ),
-                heading(first),
-            ]);
+            actions.extend(self.movement_prime(session, first).unwrap_or_default());
             told.push(update(actions));
         }
         told.push(update(vec![state]));
@@ -379,16 +390,6 @@ impl Scene {
             && let Some(added) = added
         {
             told.push(update(added));
-        }
-        let mut numbers = Vec::new();
-        for other in &ships {
-            // The undocked ego's numbers are in SetState; fixed SDE sentries do not move.
-            if (other.spec.ship_id != ship.spec.ship_id || pilot.jumped_in) && other.spec.max_velocity > 0.0 {
-                numbers.extend(Self::numbers_of(other, second));
-            }
-        }
-        if !numbers.is_empty() {
-            told.push(update(numbers));
         }
         self.with_backlog(told)
     }

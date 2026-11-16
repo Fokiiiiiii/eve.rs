@@ -98,7 +98,7 @@ impl Scene {
         for session in sessions {
             let Some(pilot) = self.pilots.get(&session) else { continue };
             if pilot.flight.as_ref().is_some_and(|f| f.is_warping()) {
-                out.extend(self.clear_locks(session, true, now));
+                out.extend(self.clear_locks_with_reason(session, true, Some("WarpingOut"), now));
                 continue;
             }
             let mut due: Vec<Pending> = pilot.targeting.pending.clone();

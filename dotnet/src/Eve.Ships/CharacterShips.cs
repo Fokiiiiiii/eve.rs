@@ -36,9 +36,9 @@ public sealed partial class CharacterShips(
     private const double OnlineCapacitorRemainder = 0.33;
     private const double Tolerance = 1e-9;
 
-    /// <summary>How fast the character learns as dogma shows it: its attributes times the server's training speed (the client works its estimates out from them).</summary>
+    /// <summary>The character's unscaled learning attributes in dogma; only the skill handler's training estimate includes server speed.</summary>
     private Func<int, double>? LearningOf(long characterId) =>
-        training is null ? null : attribute => training.Settings.Attribute(characterId, attribute) * training.Settings.Speed;
+        training is null ? null : attribute => training.Settings.Attribute(characterId, attribute);
 
     /// <summary>The skill levels the character's installed expert systems grant now (none without expert systems in this host).</summary>
     private async Task<IReadOnlyDictionary<int, int>?> GrantsOfAsync(long characterId, CancellationToken cancellationToken) =>

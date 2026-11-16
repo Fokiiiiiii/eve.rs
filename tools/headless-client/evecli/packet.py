@@ -15,7 +15,7 @@ its kind (the field order of the client's `machoNetAddress.__getstate__`):
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from . import marshal as m
@@ -146,6 +146,7 @@ class Packet:
     sample_rate: Any = None
     cut_parent: Any = None
     compressed_part: int = 0
+    received_at: float | None = field(default=None, compare=False, repr=False)
 
     @staticmethod
     def parse(value) -> "Packet":

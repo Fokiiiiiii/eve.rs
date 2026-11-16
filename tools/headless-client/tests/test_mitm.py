@@ -80,7 +80,7 @@ def test_zlib_wrapped_payloads_are_inflated_and_recorded_as_zlib():
     (record,) = records_of([wrapped])
     assert record["encoding"] == "zlib" and record["type"] == "CallReq"
 
-def test_client_notification_keeps_the_existing_capture_record_shape():
+def test_client_notification_retains_its_decode_status_in_the_capture():
     released = [("N=65450:6", m.BigUnsigned(134391092820280000))]
     payload = ((1, m.SubStream(value=(released, "ClientHasReleasedTheseObjects", (), m.Dict([("machoVersion", 1)])))),)
     named = m.Dict([("OID-", m.Dict(released))])
@@ -95,12 +95,14 @@ def test_client_notification_keeps_the_existing_capture_record_shape():
 
     (record,) = records_of([raw])
 
-    # The existing decoder records the broadcast ID here and retains the body under $unknown.
+    # The broadcast's body has already been decoded by observe._notification_event; keep that structure instead
+    # of wrapping its JSON description in an opaque $unknown repr.
     assert record["method"] == 65450
     assert set(record) == {
         "seq", "t", "dir", "conn", "stage", "encoding", "type", "service", "call_id", "method", "args"
     }
-    assert isinstance(record["args"].get("$unknown"), str)
+    assert record["args"].get("$decodeError") == "TypeError"
+    assert "$unknown" not in record["args"]
 
 def test_bound_call_keeps_the_existing_capture_record_shape():
     handle = ("N=65450:6", m.Long(134391092820280000))
@@ -117,8 +119,9 @@ def test_bound_call_keeps_the_existing_capture_record_shape():
 
     assert record["service"] is None
     assert record["method"] == "List"
+    assert record["bound_object"] == {"$tuple": ["N=65450:6", {"$long": 134391092820280000}]}
     assert set(record) == {
-        "seq", "t", "dir", "conn", "stage", "encoding", "type", "service", "call_id", "method", "args"
+        "seq", "t", "dir", "conn", "stage", "encoding", "type", "service", "call_id", "method", "args", "bound_object"
     }
 
 def test_a_frame_split_across_reads_is_reassembled():
@@ -202,9 +205,14 @@ def test_the_proxy_forwards_bytes_unchanged_and_logs_both_directions(tmp_path):
     assert [r["dir"] for r in records if r.get("type") == "CallReq"] == ["c2s"] * 5
     assert [r["dir"] for r in records if r.get("type") == "CallRsp"] == ["s2c"] * 5
 
-def call(seq, method, service="machoNet", call_id=1, args=None, conn=1):
-    return {"seq": seq, "dir": "c2s", "conn": conn, "stage": "macho", "encoding": "marshal", "type": "CallReq",
-            "service": service, "method": method, "call_id": call_id, "args": args or {"$tuple": []}}
+def call(seq, method, service="machoNet", call_id=1, args=None, kwargs=None, conn=1, bound_object=None):
+    record = {"seq": seq, "dir": "c2s", "conn": conn, "stage": "macho", "encoding": "marshal", "type": "CallReq",
+              "service": service, "method": method, "call_id": call_id, "args": args or {"$tuple": []}}
+    if kwargs is not None:
+        record["kwargs"] = kwargs
+    if bound_object is not None:
+        record["bound_object"] = bound_object
+    return record
 
 def result(seq, value, service="machoNet", call_id=1, conn=1):
     return {"seq": seq, "dir": "s2c", "conn": conn, "stage": "macho", "encoding": "marshal", "type": "CallRsp",
@@ -322,3 +330,330 @@ def test_a_missing_notice_is_still_a_divergence_when_notices_are_a_set(tmp_path)
     a = [call(1, "GetInitVals"), result(2, {"$dict": []}), notice(3, "OnA"), notice(4, "OnB")]
     b = [call(1, "GetInitVals"), result(2, {"$dict": []}), notice(3, "OnA")]
     assert diff(tmp_path, a, b, ignore=False, extra=["--ignore-notification-order"]) == 1
+
+
+def core_reply(seq, call_id, *, kind="CallRsp", result_value=None, error=None, conn=1):
+    record = {"seq": seq, "dir": "s2c", "conn": conn, "stage": "macho", "type": kind,
+              "service": "machoNet", "call_id": call_id}
+    if kind == "CallRsp":
+        record["result"] = result_value
+    else:
+        record["error"] = error
+    return record
+
+
+def core_notice(seq, method, args):
+    return {"seq": seq, "dir": "s2c", "conn": 1, "stage": "macho", "type": "Notification",
+            "service": "notificationMgr", "method": method, "args": args}
+
+
+def core_session_change(seq, session_id, attributes):
+    return {"seq": seq, "dir": "s2c", "conn": 1, "stage": "macho", "type": "SessionChangeNotification",
+            "service": None, "call_id": None,
+            "payload": {"$tuple": [{"$long": session_id}, {"$tuple": [0, attributes]}, []]}}
+
+
+def test_diff_core_reports_each_call_reply_presence_and_reply_shape(tmp_path):
+    requests = [call(1, "GetInitVals", call_id=1), call(2, "GetTime", call_id=2)]
+    reference = requests + [
+        core_reply(3, 1, result_value={"$dict": []}),
+        core_reply(4, 2, kind="ErrorResponse", error={"code": "Unavailable", "payload": "clock unavailable"}),
+    ]
+    candidate = requests + [core_reply(3, 1, result_value={"$dict": [["service", "machoNet"]]})]
+
+    report = mitm.diff_core(reference, candidate)
+
+    assert [row["method"] for row in [call["reference"] for call in report["calls"]]] == ["GetInitVals", "GetTime"]
+    assert report["calls"][0]["reply"]["reference"]["presence"] == "present"
+    assert report["calls"][0]["reply"]["candidate"]["presence"] == "present"
+    assert any(issue["kind"] == "reply_shape" for issue in report["call_differences"][0]["issues"])
+    assert report["calls"][1]["reply"]["reference"]["presence"] == "present"
+    assert report["calls"][1]["reply"]["candidate"]["presence"] == "missing"
+    assert report["calls"][1]["issues"][0]["kind"] == "reply_presence"
+    assert report["summary"]["unanswered_calls"] == 1
+
+
+def test_diff_core_reports_error_codes_text_notification_order_and_session_attributes():
+    request = call(1, "SelectCharacterID", service="charUnboundMgr", call_id=1)
+    error = lambda seq, code, text: core_reply(
+        seq, 1, kind="ErrorResponse", error={"code": code, "payload": {"$dict": [["info", text]]}},
+    )
+    attributes_a = {"$dict": [["charid", {"$long": 100}], ["stationid", {"$long": 60000001}]]}
+    attributes_b = {"$dict": [["charid", {"$long": 200}], ["stationid", {"$long": 60000002}]]}
+    reference = [request, error(2, "CustomInfo", "Character is unavailable."),
+                 core_notice(3, "OnA", {"$tuple": []}), core_session_change(4, 11, attributes_a),
+                 core_notice(5, "OnB", {"$tuple": []})]
+    candidate = [request, error(2, "CharacterUnavailable", "Try again later."),
+                 core_notice(3, "OnB", {"$tuple": []}), core_session_change(4, 99, attributes_b),
+                 core_notice(5, "OnA", {"$tuple": []})]
+
+    report = mitm.diff_core(reference, candidate)
+
+    error_issue = report["call_differences"][0]["issues"][0]
+    assert error_issue["kind"] == "error_value"
+    assert any("CustomInfo" in difference and "CharacterUnavailable" in difference
+               for difference in error_issue["differences"])
+    assert [row["kind"] for row in report["calls"][0]["reply"]["reference"]["replies"]] == ["ErrorResponse"]
+    assert any(issue["kind"] == "notification_order_or_name"
+               for row in report["notification_differences"] for issue in row["issues"])
+    session = report["session_changes"][0]
+    assert session["reference_attribute_keys"] == session["candidate_attribute_keys"] == ["charid", "stationid"]
+    assert session["attribute_difference"]["kind"] == "value"
+    assert any("stationid" in difference for difference in session["attribute_difference"]["differences"])
+    assert not any("charid" in difference for difference in session["attribute_difference"]["differences"])
+
+
+def test_diff_core_masks_random_names_and_bound_handles_but_keeps_reply_shapes():
+    reference = [
+        call(1, "GetValidRandomName", service="charUnboundMgr", args={"$tuple": [1]}),
+        call(2, "MachoBindObject", service="ship", call_id=2, args={"$tuple": [60015249, 15]}),
+        core_reply(3, 1, result_value="A random pilot name"),
+        core_reply(
+            4,
+            2,
+            result_value={"$tuple": [{"$substream": {"$tuple": ["N=65450:6", {"$long": 134393100758480000}]}}]},
+        ),
+    ]
+    candidate = [
+        call(1, "GetValidRandomName", service="charUnboundMgr", args={"$tuple": [1]}),
+        call(2, "MachoBindObject", service="ship", call_id=2, args={"$tuple": [60015249, 15]}),
+        core_reply(3, 1, result_value="Another random pilot name"),
+        core_reply(
+            4,
+            2,
+            result_value={"$tuple": [{"$substream": {"$tuple": ["N=65450:7", {"$long": 134393096149190000}]}}]},
+        ),
+    ]
+
+    report = mitm.diff_core(reference, candidate)
+
+    assert report["call_differences"] == []
+    assert report["summary"]["compared_calls"] == 2
+
+    candidate[-1] = core_reply(4, 2, result_value={"$none": None})
+    shape_report = mitm.diff_core(reference, candidate)
+
+    assert any(
+        issue["kind"] == "reply_shape"
+        for row in shape_report["call_differences"]
+        for issue in row["issues"]
+    )
+
+
+def test_diff_core_aligns_calls_by_service_and_method_around_an_inserted_call():
+    reference = [
+        call(1, "GetTime", call_id=1),
+        call(2, "SelectCharacterID", service="charUnboundMgr", call_id=2),
+        core_reply(3, 1, result_value={"$long": 100}),
+        core_reply(4, 2, result_value=None),
+    ]
+    candidate = [
+        call(1, "GetTime", call_id=11),
+        call(2, "GetInitVals", call_id=12),
+        call(3, "SelectCharacterID", service="charUnboundMgr", call_id=13),
+        core_reply(4, 11, result_value={"$long": 200}),
+        core_reply(5, 12, result_value={"$dict": []}),
+        core_reply(6, 13, result_value=None),
+    ]
+
+    report = mitm.diff_core(reference, candidate)
+
+    assert len(report["calls"]) == 3
+    assert report["calls"][0]["reference"]["method"] == "GetTime"
+    assert report["calls"][1]["reference"] is None
+    assert report["calls"][1]["candidate"]["method"] == "GetInitVals"
+    assert report["calls"][2]["reference"]["method"] == "SelectCharacterID"
+    assert report["calls"][2]["reply"]["reference"]["presence"] == "present"
+    assert report["calls"][2]["reply"]["candidate"]["presence"] == "present"
+    assert [issue["kind"] for issue in report["call_differences"][0]["issues"]] == [
+        "call_presence", "reply_presence",
+    ]
+
+
+def test_diff_core_pairs_connection_streams_when_one_side_has_an_extra_login():
+    reference = [
+        call(1, "GetServiceInfo", call_id=1, conn=4),
+        call(2, "CreateCharacterWithDoll", service="charUnboundMgr", call_id=2, conn=4),
+        core_reply(3, 1, result_value={"$dict": []}, conn=4),
+        core_reply(4, 2, result_value=140000001, conn=4),
+    ]
+    candidate = [
+        call(1, "GetServiceInfo", call_id=10, conn=2),  # role-seeding login opened an extra client connection
+        core_reply(2, 10, result_value={"$dict": []}, conn=2),
+        call(3, "GetServiceInfo", call_id=11, conn=9),
+        call(4, "CreateCharacterWithDoll", service="charUnboundMgr", call_id=12, conn=9),
+        core_reply(5, 11, result_value={"$dict": []}, conn=9),
+        core_reply(6, 12, result_value=140000010, conn=9),
+    ]
+
+    report = mitm.diff_core(reference, candidate)
+
+    matched_creation = next(row for row in report["calls"] if row["reference"] and row["reference"]["method"] == "CreateCharacterWithDoll")
+    assert (matched_creation["reference_conn"], matched_creation["candidate_conn"]) == (4, 9)
+    assert matched_creation["reply"]["reference"]["presence"] == "present"
+    assert matched_creation["reply"]["candidate"]["presence"] == "present"
+    extra_login = next(row for row in report["calls"] if row["reference"] is None)
+    assert extra_login["candidate_conn"] == 2
+    assert [issue["kind"] for issue in extra_login["issues"]] == ["call_presence", "reply_presence"]
+    assert report["summary"]["unanswered_calls"] == 0
+    assert report["summary"]["reply_presence_differences"] == 1
+
+
+def test_diff_core_pairs_single_call_connections_to_report_a_method_change():
+    reference = [call(1, "GetTime", call_id=1, conn=3), result(2, {"$long": 100}, call_id=1, conn=3)]
+    candidate = [call(1, "GetServerTime", call_id=5, conn=8), result(2, {"$long": 100}, call_id=5, conn=8)]
+
+    report = mitm.diff_core(reference, candidate)
+
+    assert len(report["calls"]) == 1
+    assert [issue["kind"] for issue in report["calls"][0]["issues"]] == ["call_order"]
+
+
+def test_diff_core_treats_an_unobserved_bound_service_as_unknown():
+    reference_call = call(1, "List", call_id=1, service=None, args={"$tuple": [4]})
+    reference_call["bound_service"] = "invbroker"
+    candidate_call = call(1, "List", call_id=11, service=None, args={"$tuple": [4]})
+    candidate_call["bound_service"] = None
+    reference = [
+        reference_call,
+        core_reply(2, 1, result_value={"$list": []}),
+    ]
+    candidate = [
+        candidate_call,
+        core_reply(2, 11, result_value={"$list": []}),
+    ]
+
+    report = mitm.diff_core(reference, candidate)
+
+    assert report["identical"] is True
+    assert report["calls"][0]["reference"]["service"] == "invbroker"
+    assert report["calls"][0]["candidate"]["service"] is None
+    assert report["calls"][0]["issues"] == []
+
+
+def test_diff_core_masks_a_created_character_id_result_only_by_default():
+    request = call(1, "CreateCharacterWithDoll", service="charUnboundMgr", call_id=1)
+    reference = [request, core_reply(2, 1, result_value=140000005)]
+    candidate = [request, core_reply(2, 1, result_value=140000001)]
+
+    assert mitm.diff_core(reference, candidate)["identical"] is True
+    assert mitm.diff_core(reference, candidate, strict_volatile=True)["identical"] is False
+
+
+def test_diff_core_masks_only_the_dynamic_positional_character_and_ship_ids():
+    methods = [
+        ("CreateCharacterWithDoll", "charUnboundMgr", ["Ref Pilot", 4, 5]),
+        ("SelectCharacterID", "charUnboundMgr", [140000001, None, False]),
+        ("Undock", None, [1990000010, False]),
+        ("CmdDock", None, [60015249, 1990000010]),
+        ("CmdStargateJump", None, [50016630, 50016839, 1990000010]),
+    ]
+    reference = []
+    candidate = []
+    for index, (method, service, args) in enumerate(methods, start=1):
+        reference.append(call(index, method, service=service, call_id=index, args={"$tuple": args}))
+        candidate_args = list(args)
+        if method == "CreateCharacterWithDoll":
+            candidate_args[0] = "Candidate Pilot"
+        elif method == "SelectCharacterID":
+            candidate_args[0] = 140000099
+        elif method == "Undock":
+            candidate_args[0] = 1990000099
+        elif method == "CmdDock":
+            candidate_args[1] = 1990000099
+        else:
+            candidate_args[2] = 1990000099
+        candidate.append(call(index, method, service=service, call_id=index, args={"$tuple": candidate_args}))
+        reference.append(result(index + len(methods), None, call_id=index))
+        candidate.append(result(index + len(methods), None, call_id=index))
+
+    report = mitm.diff_core(reference, candidate)
+
+    assert report["identical"] is True
+    assert mitm.diff_core(reference, candidate, strict_volatile=True)["identical"] is False
+
+
+def test_diff_core_masks_online_module_ids_but_keeps_the_map_shape_and_flags():
+    request = call(
+        1,
+        "Undock",
+        args={"$tuple": [{"$long": 9988400000171}, False]},
+        kwargs={"$dict": [["onlineModules", {"$dict": [[27, {"$long": 9988400000173}], [28, {"$long": 9988400000174}]]}]]},
+    )
+    reply = result(2, None, call_id=1)
+    candidate_request = call(
+        1,
+        "Undock",
+        args={"$tuple": [{"$long": 1990000032}, False]},
+        kwargs={"$dict": [["onlineModules", {"$dict": [[27, {"$long": 1990000034}], [28, {"$long": 1990000035}]]}]]},
+    )
+    candidate_reply = result(2, None, call_id=1)
+
+    assert mitm.diff_core([request, reply], [candidate_request, candidate_reply])["identical"] is True
+
+    changed_flag = call(
+        1,
+        "Undock",
+        args={"$tuple": [{"$long": 1990000032}, False]},
+        kwargs={"$dict": [["onlineModules", {"$dict": [[29, {"$long": 1990000034}], [28, {"$long": 1990000035}]]}]]},
+    )
+    diff = mitm.diff_core([request, reply], [changed_flag, candidate_reply])
+    assert diff["identical"] is False
+    assert any("onlineModules" in str(issue) or "29" in str(issue) for issue in diff["call_differences"][0]["issues"])
+
+
+def test_diff_core_keeps_a_marshal_type_difference_in_a_volatile_id_visible():
+    reference = [call(1, "Undock", args={"$tuple": [{"$long": 9988400000171}, False]}), result(2, None, call_id=1)]
+    candidate = [call(1, "Undock", args={"$tuple": [1990000032, False]}), result(2, None, call_id=1)]
+
+    report = mitm.diff_core(reference, candidate)
+
+    assert report["identical"] is False
+    assert report["call_differences"][0]["issues"][0]["kind"] == "request_args_shape"
+
+
+def test_capture_associates_remote_object_calls_with_the_service_that_bound_them(tmp_path):
+    path = tmp_path / "bound-service.jsonl"
+    journal = mitm.Journal(str(path))
+    journal.write({"stage": "macho", "conn": 2, "type": "CallReq", "call_id": 5,
+                   "service": "ship", "method": "MachoBindObject", "args": {"$tuple": [[60015249, 15], None]}})
+    journal.write({"stage": "macho", "conn": 2, "type": "CallRsp", "call_id": 5, "service": "ship",
+                   "result": {"$tuple": [{"$substruct": {"$substream": {"$tuple": ["N=65450:15", {"$long": 123}]}}}, None]}})
+    journal.write({"stage": "macho", "conn": 2, "type": "CallReq", "call_id": 6, "service": None,
+                   "method": "Undock", "bound_object": {"$substruct": {"$substream": {"$tuple": ["N=65450:15", {"$long": 123}]}}},
+                   "args": {"$tuple": [{"$long": 9988400000171}, False]}})
+    journal.close()
+
+    records = mitm.load(path)
+    assert records[2]["bound_service"] == "ship"
+    signature = mitm._core_request_signature(records[2], ignore_volatile=True)
+    assert signature["service"] == "ship" and signature["method"] == "Undock"
+
+
+def test_diff_core_keeps_later_notices_aligned_after_an_inserted_notice():
+    reference = [core_notice(1, "OnA", {"$tuple": []}), core_notice(2, "OnB", {"$tuple": []})]
+    candidate = [
+        core_notice(1, "OnA", {"$tuple": []}),
+        core_notice(2, "OnExtra", {"$tuple": []}),
+        core_notice(3, "OnB", {"$tuple": []}),
+    ]
+
+    report = mitm.diff_core(reference, candidate)
+
+    assert len(report["notification_differences"]) == 1
+    issue = report["notification_differences"][0]["issues"][0]
+    assert issue["kind"] == "notification_presence"
+    assert report["notification_differences"][0]["candidate"][2] == "OnExtra"
+
+
+def test_diff_core_command_emits_all_call_rows_and_can_write_json(tmp_path, capsys):
+    records = [call(1, "GetInitVals"), result(2, {"$dict": []})]
+    left = write(tmp_path / "reference.jsonl", records)
+    right = write(tmp_path / "candidate.jsonl", records)
+
+    assert mitm.main(["diff-core", str(left), str(right), "--all-calls"]) == 0
+    assert '"method":"GetInitVals"' in capsys.readouterr().out
+    assert mitm.main(["diff-core", str(left), str(right), "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["identical"] is True
+    assert len(report["calls"]) == 1

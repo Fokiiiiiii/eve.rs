@@ -1,6 +1,7 @@
 using System.Reflection;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Data;
 using Eve.Marshal;
 using Eve.Macho;
 using Eve.Identity;
@@ -84,7 +85,6 @@ public sealed class RpcFuzzTests
             var random = new Random(Seed);
             var total = 0;
             var methodCount = 0;
-            var overviewPresetWriteAccepted = false;
             snapshotSource = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
             var databaseBefore = await SnapshotAsync(snapshotSource, schemas);
             snapshotBeforeElapsed = elapsed.ElapsedMilliseconds - compositionElapsed;
@@ -143,9 +143,6 @@ public sealed class RpcFuzzTests
                         Assert.All(packets.Where(packet => packet!.Type is not (MachoMessage.CallRsp or MachoMessage.ErrorResponse)),
                             packet => Assert.True(packet!.Type is MachoMessage.Notification or MachoMessage.SessionChangeNotification,
                                 $"{service.Name}.{method} input {index} emitted unexpected packet type {packet.TypeName} ({packet.Type})."));
-                        if (service.Name == "overviewPresetMgr" && method == "StoreLinkAndGetID" &&
-                            responses[0]!.Type == MachoMessage.CallRsp)
-                            overviewPresetWriteAccepted = true;
                         var allocated = GC.GetTotalAllocatedBytes(precise: false) - allocatedBefore;
                         Assert.True(allocated <= 64L * 1024 * 1024,
                             $"{service.Name}.{method} input {index} allocated {allocated} bytes during dispatch.");
@@ -162,7 +159,6 @@ public sealed class RpcFuzzTests
             var unexpectedChanges = changedTables.Where(table =>
             {
                 var tableName = table[(table.LastIndexOf('.') + 1)..];
-                if (tableName == "overviewSharedPresets") return !overviewPresetWriteAccepted;
                 return tableName is not ("_persistence_owners" or "industryRuntime" or "industry_cost_index_state" or
                     "industry_cost_indices" or "jobs");
             }).ToArray();
@@ -352,9 +348,11 @@ public sealed class RpcFuzzTests
     {
         var snapshot = new Dictionary<string, string>(StringComparer.Ordinal);
         await using var connection = await source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync(IsolationLevel.RepeatableRead);
         foreach (var schema in schemas)
         {
             await using var tables = connection.CreateCommand();
+            tables.Transaction = transaction;
             tables.CommandText = "SELECT table_name FROM information_schema.tables WHERE table_schema = $1 AND table_type = 'BASE TABLE' ORDER BY table_name";
             tables.Parameters.AddWithValue(schema);
             await using var reader = await tables.ExecuteReaderAsync();
@@ -365,10 +363,12 @@ public sealed class RpcFuzzTests
             {
                 var qualified = $"\"{schema.Replace("\"", "\"\"", StringComparison.Ordinal)}\".\"{table.Replace("\"", "\"\"", StringComparison.Ordinal)}\"";
                 await using var digest = connection.CreateCommand();
+                digest.Transaction = transaction;
                 digest.CommandText = $"SELECT md5(coalesce(string_agg(to_jsonb(row_data)::text, E'\\n' ORDER BY to_jsonb(row_data)::text), '')) FROM {qualified} AS row_data";
                 snapshot[$"{schema}.{table}"] = (string?)await digest.ExecuteScalarAsync() ?? "";
             }
         }
+        await transaction.CommitAsync();
         return snapshot;
     }
 

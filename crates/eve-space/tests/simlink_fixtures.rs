@@ -2629,7 +2629,8 @@ fn abyssal_scene_object_and_content_keyed_spawn_fixtures_roundtrip() {
                 || case.get("settledNpcIds").is_some()
         })
         .collect();
-    assert_eq!(selected.len(), 18);
+    // The v99 committed-approach pose receipt is now part of this roundtrip set.
+    assert_eq!(selected.len(), 19);
 
     for case in selected {
         let message = message_of(case);

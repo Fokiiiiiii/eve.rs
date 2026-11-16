@@ -96,6 +96,161 @@ def destiny_state_header(value: Any) -> dict | None:
         "stamp": int.from_bytes(data[1:5], "little"),
     }
 
+def destiny_state_fields(value: Any) -> dict | None:
+    """Decode ball fields from the concatenated Destiny state buffer.
+
+    This follows the free/rigid ball writers used by EveJS and eve.rs. Unknown
+    or truncated records are reported with their offset; the original buffer
+    remains in the capture, so the decoder never hides wire bytes.
+    """
+    data = buffer_bytes(value)
+    header = destiny_state_header(data)
+    if data is None or header is None:
+        return None
+    result = dict(header)
+    result["balls"] = []
+    offset = 5
+    try:
+        while offset < len(data):
+            ball, offset = _destiny_ball(data, offset)
+            result["balls"].append(ball)
+    except ValueError as error:
+        result["decodeError"] = str(error)
+    return result
+
+def _destiny_ball(data: bytes, offset: int) -> tuple[dict, int]:
+    start = offset
+
+    def read(fmt: str, field: str):
+        nonlocal offset
+        import struct
+
+        size = struct.calcsize(fmt)
+        if offset + size > len(data):
+            raise ValueError(f"truncated {field} at offset {offset}")
+        values = struct.unpack_from(fmt, data, offset)
+        offset += size
+        return values[0] if len(values) == 1 else values
+
+    def vec3(field: str) -> tuple[float, float, float]:
+        return read("<3d", field)
+
+    import struct
+
+    item_id = read("<q", "ball itemID")
+    mode = read("<B", "ball mode")
+    radius = read("<f", "ball radius")
+    position = vec3("ball position")
+    flags = read("<B", "ball flags")
+    ball = {
+        "itemID": item_id,
+        "mode": mode,
+        "modeName": _BALL_MODES.get(mode, "unknown"),
+        "radius": radius,
+        "position": position,
+        "flags": flags,
+        "free": bool(flags & 0x01),
+    }
+
+    if flags & 0x01:
+        ball["mass"] = read("<d", "free ball mass")
+        ball["cloakMode"] = read("<B", "free ball cloak mode")
+        ball["harmonic"] = read("<q", "free ball harmonic")
+        ball["corporationID"] = read("<i", "free ball corporationID")
+        ball["allianceID"] = read("<i", "free ball allianceID")
+        ball["maxVelocity"] = read("<f", "free ball max velocity")
+        ball["velocity"] = vec3("free ball velocity")
+        ball["inertia"] = read("<f", "free ball inertia")
+        ball["speedFraction"] = read("<f", "free ball speed fraction")
+        ball["headerTerminator"] = read("<B", "free ball header terminator")
+    else:
+        if mode != 11:
+            ball["mass"] = read("<d", "rigid ball mass")
+            ball["unknownByte"] = read("<B", "rigid ball unknown byte")
+            ball["allianceID"] = read("<q", "rigid ball allianceID")
+            ball["corporationID"] = read("<i", "rigid ball corporationID")
+            ball["unknownInt32"] = read("<i", "rigid ball unknown int32")
+        # Collision tails are type-specific and opaque. Preserve them as bytes
+        # up to the writer's 0xff separator rather than assigning guessed fields.
+        tail_start = offset
+        if offset < len(data) and data[offset] == 0xFF:
+            offset += 1
+            ball["staticTail"] = ""
+        else:
+            terminator = data.find(b"\xff", offset)
+            if terminator < 0:
+                raise ValueError(f"missing rigid ball terminator at offset {offset}")
+            ball["staticTail"] = data[tail_start:terminator].hex()
+            offset = terminator + 1
+        if flags & 0x40:
+            count = read("<H", "mini ball count")
+            ball["miniBalls"] = [
+                {"center": vec3("mini ball center"), "radius": read("<f", "mini ball radius")}
+                for _ in range(count)
+            ]
+        if flags & 0x80:
+            count = read("<H", "mini capsule count")
+            ball["miniCapsules"] = [
+                {"a": vec3("mini capsule endpoint"), "b": vec3("mini capsule endpoint"), "radius": read("<f", "mini capsule radius")}
+                for _ in range(count)
+            ]
+        if flags & 0x20:
+            count = read("<H", "mini box count")
+            ball["miniBoxes"] = [
+                {
+                    "corner": vec3("mini box corner"),
+                    "localX": vec3("mini box local X"),
+                    "localY": vec3("mini box local Y"),
+                    "localZ": vec3("mini box local Z"),
+                }
+                for _ in range(count)
+            ]
+
+    if flags & 0x01:
+        _decode_free_mode(ball, read, vec3)
+    ball["wireOffset"] = {"start": start, "end": offset}
+    return ball, offset
+
+_BALL_MODES = {
+    0: "goto", 1: "follow", 2: "stop", 3: "warp", 4: "orbit",
+    5: "missile", 6: "mushroom", 7: "boid", 8: "troll", 9: "miniball",
+    10: "field", 11: "rigid", 12: "formation",
+}
+
+def _decode_free_mode(ball, read, vec3):
+    mode = ball["mode"]
+    if mode == 0:
+        ball["targetPosition"] = vec3("goto target position")
+    elif mode in (1, 4):
+        ball["followTarget"] = read("<q", "follow target")
+        ball["followRange"] = read("<f", "follow range")
+    elif mode == 12:
+        ball["followTarget"] = read("<q", "formation target")
+        ball["followRange"] = read("<f", "formation range")
+        ball["effectStamp"] = read("<i", "formation effect stamp")
+    elif mode == 5:
+        ball["followTarget"] = read("<q", "missile target")
+        ball["followRange"] = read("<f", "missile range")
+        ball["modeOwner"] = read("<q", "missile mode owner")
+        ball["effectStamp"] = read("<i", "missile effect stamp")
+        ball["targetPosition"] = vec3("missile target position")
+    elif mode == 3:
+        ball["targetPosition"] = vec3("warp target position")
+        ball["effectStamp"] = read("<i", "warp effect stamp")
+        ball["totalDistance"] = read("<d", "warp total distance")
+        ball["stopDistance"] = read("<d", "warp stop distance")
+        ball["warpFactor"] = read("<q", "warp factor")
+    elif mode == 6:
+        ball["followRange"] = read("<f", "mushroom range")
+        ball["mushroomSpan"] = read("<d", "mushroom span")
+        ball["effectStamp"] = read("<i", "mushroom effect stamp")
+        ball["modeOwner"] = read("<q", "mushroom mode owner")
+    elif mode == 8:
+        ball["effectStamp"] = read("<i", "troll effect stamp")
+
+    if mode not in _BALL_MODES:
+        raise ValueError(f"unknown free ball mode {mode}")
+
 def _text(data: bytes) -> str:
     try:
         return data.decode("utf-8")

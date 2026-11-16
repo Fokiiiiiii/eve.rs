@@ -1,5 +1,27 @@
 # ライブシナリオのトリアージ (2026-11-16)
 
+## Completed re-run on the assigned worktree (2026-11-16)
+
+The single completed run used `eve_p3` with `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p3`, `EVE_MARKET_SEED=skip`, and `KEEP_LOGS=1`. `run-eve-live.sh` also set `EVE_LP_STORE_SEED=skip` and `EVE_ADJUSTED_PRICE_SEED=skip`. `EVE_LIVE_SLOW` and `EVE_SKILL_TRAINING_SPEED` were unset. The worktree revision was `2f175c699`; the pre-existing uncommitted `RpcFuzzTests.cs` edit did not participate in the live Host, network front, or simulation paths.
+
+The runner log is `/tmp/eve-cx3-live.log`; process logs are in `/tmp/eve-cx3-live-processes/`. The Host reported static data build `3396210`, the `eve-net` front listened on `127.0.0.1:26100`, and `eve-sim` read static data and connected to the Host. The Host Release build completed with 0 warnings and 0 errors; the runner's Rust Release build of `eve-net` and `eve-sim` also completed successfully. The market seed was explicitly skipped to avoid the external ESI dependency described below.
+
+The runner selected the 16 modules listed at `tools/dev/run-eve-live.sh:177-179`. Pytest reached `[100%]` and exited 0. Its configured `addopts=-q` plus the runner's `-q` suppressed the numeric pass summary, so the progress marks were counted from the preserved log: **119 `.` pass marks, 10 `s` skip marks, 0 `F` failure marks, 0 `E` error marks**. The skips are not counted as passes.
+
+### Failure verdicts for this run
+
+1. **V24.01-visible server bugs:** none observed. There was no failed test name, assertion, exception, or failure traceback to map to a Host or client path. No Host-level regression test or server change was warranted by this run.
+2. **Timing or test-data failures:** none observed. There were no failed assertions to classify as flaky or stale.
+3. **Live setup gaps:** 10 scenarios were skipped because optional conditions were not configured:
+   - Two race cases of `test_login_to_character.py::test_the_skill_queue_is_what_the_reference_does` skipped at `tools/headless-client/tests/test_login_to_character.py:1171` because the server did not train at the recorded speed `1.0`.
+   - `test_login_to_character.py::test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level` skipped at line 1224 because the recorded speed `60000.0` was not configured.
+   - Seven simulation timing scenarios skipped because `EVE_LIVE_SLOW=1` was not set: `test_movement.py::test_a_station_dock_from_beyond_the_range_is_accepted_on_arrival_without_a_second_command` (line 149), `test_warp.py::test_a_ship_warps_to_a_planet_as_the_reference_did` (line 78), `test_jump.py::test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did` (line 104), `test_others.py::test_two_ships_see_each_other_as_they_did_in_the_reference` (line 84), `test_target.py::test_a_ship_locks_others_as_it_did_in_the_reference` (line 93), `test_module.py::test_a_ship_works_its_afterburner_as_it_did_in_the_reference` (line 66), and `test_health.py::test_a_ship_is_damaged_flown_hurt_and_mended_as_it_was_in_the_reference` (line 125).
+   - The suite used the Python `evecli.client.Client` (`tools/headless-client/tests/test_live.py:19-28`); the unmodified graphical V24.01 client binary was not launched. The simulation was present and connected, so a missing simulation was not a gap in this run.
+
+The Host log also contains two `UNKNOWN_TARGET` simulation refusals, one `IN_WARP` refusal, and a `ClientStatLogger` message about waiting for a valid ballpark. None was accompanied by a pytest failure. The `IN_WARP` refusal is an expected retry condition documented by `test_fw_battlefield_walk.py:54`; V24.01 emits the ballpark message in `/home/user/eve-logic/eve/client/script/remote/michelle.py:352`, and the prior undock trace records it before the later bind at `docs/project/live-fix-ballpark-undock.md:36`. This quiet pytest run did not retain test IDs alongside those Host log lines, so no more specific test mapping is claimed.
+
+The earlier report of roughly twelve `F` marks still cannot be adjudicated case by case: its test names and tracebacks were not preserved. That report did not reproduce in this completed run. An initial detached `nohup` launch exited before producing output; it started no pytest process and is not counted as a suite run. The completed run above is the one full suite execution for this triage.
+
 ## 実行結果
 
 作業開始時にバックグラウンドで動作していた `tools/dev/run-eve-live.sh` の実行を最後まで追跡した。実行環境は `eve_p3`、コードは `96c0d04c0f36c0b4345d53f100bb15e2eafcbef9`、ログは `/tmp/cx3-live-logs/complete3.log` と `/tmp/cx3-live-logs/complete3/`。Host はSDE 3396210、mission data 3405148を読み、Rust simulation も起動して Host に接続した。native market seed は `EVE_MARKET_SEED=skip` だった。

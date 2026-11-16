@@ -18,7 +18,7 @@
 
 ### 2. タイミングまたはテストデータ依存の失敗
 
-完了したライブ実行では、タイミング依存または古い期待値によるpytest失敗はなかった。assertionの緩和やテスト変更は行っていない。
+完了したライブ実行では、タイミング依存または古い期待値によるpytest失敗はなかった。assertionの緩和やテスト変更は行っていない。push後に別のHostテストで見つかった月境界依存は、下の「push後のCI red gate」に記録した。
 
 以前の起動ログ `complete.log` では、テスト開始前のmarket seedがESIのregion 10000002 / page 117 / row 510で不正値を受け取り、Hostが停止した。例外は `MarketSeedV4.ParseOrders`（`dotnet/src/Eve.Market/MarketCatalog.cs:406-408`）から発生しており、pytestの期待値失敗ではない。これは外部ESIデータに依存する起動時データ問題として3にも記録する。成功した実行は `EVE_MARKET_SEED=skip` でこの依存を避けている。
 
@@ -41,6 +41,16 @@
 - `test_login_to_character.py::test_the_skill_queue_is_what_the_reference_does` の2 race cases（`tools/headless-client/tests/test_login_to_character.py:1163-1171`）: 実測skill speedがrecorded value `1.0` と一致しないためskip。Hostの既定値は `EVE_SKILL_TRAINING_SPEED=1`（`dotnet/src/Eve.Host/Composition/CharacterComposition.cs:51`）だが、実行時のspeed値はログに残っておらず原因は未確定。
 - `test_login_to_character.py::test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level`（line 1224）: recorded speed `60000.0` が設定されていないためskip。専用のnightly jobは `EVE_SKILL_TRAINING_SPEED=60000` と `EVE_LIVE_SLOW=1` を指定する（`.github/workflows/ci-nightly.yml:69-73,109-117`）。
 - `test_movement.py::test_a_station_dock_from_beyond_the_range_is_accepted_on_arrival_without_a_second_command`（line 149）、`test_warp.py::test_a_ship_warps_to_a_planet_as_the_reference_did`（line 78）、`test_jump.py::test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did`（line 104）、`test_others.py::test_two_ships_see_each_other_as_they_did_in_the_reference`（line 84）、`test_target.py::test_a_ship_locks_others_as_it_did_in_the_reference`（line 93）、`test_module.py::test_a_ship_works_its_afterburner_as_it_did_in_the_reference`（line 66）、`test_health.py::test_a_ship_is_damaged_flown_hurt_and_mended_as_it_was_in_the_reference`（line 125）: 各シナリオが要求する時間を待つ `EVE_LIVE_SLOW=1` が未設定。
+
+## push後のCI red gate
+
+文書だけの最初のcommitは `ci.yml` のpath filter対象外なので、run 1814をmainで手動起動した。Host shard 3/6で `AccountWalletHostRpcTests.Account_wallet_rpcs_route_real_wire_calls_persist_balances_and_notify` が失敗し、line 244は `PyReal(1)` を期待して `PyReal(-40.25)` を受け取った。
+
+原因は月境界に対するテストデータだった。元の `historicalMonth = DateTimeOffset.UtcNow.AddDays(-15)` は2026-11-16に2026-11-01となり、作成した125件の履歴と後続の現月取引が同じ月に入る。`GetTransactions(year, month)` はその月の両方を返し、最新のwallet journal entry `-40.25` が先頭になる。V24.01の `eve/client/script/ui/services/accountsvc.py:115-122` は選択月をRPCへ渡し、`eve/client/script/ui/shared/neocom/wallet/panels/transactionsPanel.py:126-145` は返却順のまま一覧を作る。`baseTransactionsPanel.py:42-45,69-76` では初期状態で明示的なsortがないため、配列順が維持される。EveJS `server/src/services/account/walletState.js:300-313,315-324` は新しいjournal entryを先頭へ追加し、`:487-505` が月で絞って順序を保つ。eve.rsも `dotnet/src/Eve.Wallet/WalletTransactions.cs:253` で `id DESC` を使う。同月時に `-40.25` が先頭となるのはクライアント/EveJSと合致しており、サーバーの期待値やRPC動作を変える理由はない。
+
+回帰テストを決定的にするため、同テストの基準時刻を一度だけ取得し、履歴をその45日前に置くよう変更した。現月の直近30日一覧は3件、月指定の履歴一覧は125件と厳密に確認し、履歴先頭の `amount=1` assertionも維持する。最初に日付だけ移動したローカル試行では直近30日件数が旧期待128に対して3となったため、直近30日assertionも3件に更新した。これは古い履歴が30日窓から除外されることを直接検証する。
+
+最終確認: `dotnet build tests/Eve.Host.Tests/Eve.Host.Tests.csproj -c Release -warnaserror` は0 warning / 0 error。`EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p3 dotnet test ... --filter FullyQualifiedName~Eve.Host.Tests.AccountWalletHostRpcTests` は1 passed / 0 failed / 0 skipped。Host実装は変更していない。
 
 ## 未確認事項
 

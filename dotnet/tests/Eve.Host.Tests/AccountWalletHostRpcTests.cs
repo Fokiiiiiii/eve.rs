@@ -43,7 +43,9 @@ public sealed class AccountWalletHostRpcTests
             long sender;
             long recipient;
             long walletlessRecipient;
-            var historicalMonth = DateTimeOffset.UtcNow.AddDays(-15);
+            var now = DateTimeOffset.UtcNow;
+            // Keep the historical rows outside the current month regardless of the day of the month.
+            var historicalMonth = now.AddDays(-45);
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
             {
@@ -215,7 +217,7 @@ public sealed class AccountWalletHostRpcTests
             Assert.Equal(new PyReal(28), await Call(9, "GetCashBalance", new PyInt(1), new PyInt(1000)));
             var personalJournal = Assert.IsType<PyList>(await Call(10, "GetTransactions", new PyInt(1000),
                 PyNone.Instance, PyNone.Instance, PyBool.False));
-            Assert.Equal(128, personalJournal.Items.Count);
+            Assert.Equal(3, personalJournal.Items.Count);
             Assert.Equal(new PyReal(-40.25), Field(personalJournal.Items[0], "amount"));
             Assert.Equal(new PyReal(4_834), Field(personalJournal.Items[0], "balance"));
             Assert.Equal(new PyReal(-125.75), Field(personalJournal.Items[1], "amount"));
@@ -230,17 +232,15 @@ public sealed class AccountWalletHostRpcTests
             Assert.Equal(new PyReal(28), Field(corporationJournal.Items[0], "balance"));
             Assert.Equal(new PyReal(40.25), Field(corporationJournal.Items[1], "amount"));
 
-            var month = DateTime.UtcNow;
+            var month = now.UtcDateTime;
             var monthJournal = Assert.IsType<PyList>(await Call(12, "GetTransactions", new PyInt(1000),
                 new PyInt(month.Year), new PyInt(month.Month), PyBool.False));
-            Assert.Equal(3 + (historicalMonth.Year == month.Year && historicalMonth.Month == month.Month ? 125 : 0),
-                monthJournal.Items.Count);
+            Assert.Equal(3, monthJournal.Items.Count);
             Assert.Equal(2, Assert.IsType<PyList>(await Call(13, "GetTransactions", new PyInt(1000),
                 new PyInt(month.Year), new PyInt(month.Month), PyBool.True)).Items.Count);
             var historicalJournal = Assert.IsType<PyList>(await Call(16, "GetTransactions", new PyInt(1000),
                 new PyInt(historicalMonth.Year), new PyInt(historicalMonth.Month), PyBool.False));
-            Assert.Equal(125 + (historicalMonth.Year == month.Year && historicalMonth.Month == month.Month ? 3 : 0),
-                historicalJournal.Items.Count);
+            Assert.Equal(125, historicalJournal.Items.Count);
             Assert.Equal(new PyReal(1), Field(historicalJournal.Items[0], "amount"));
 
             var corporationDivisions = Assert.IsType<PyList>(await Call(14, "GetWalletDivisionsInfo"));

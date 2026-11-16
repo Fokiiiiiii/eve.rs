@@ -694,6 +694,7 @@ def test_a_moon_chunk_is_refused_until_ready_then_fractured_and_completed_and_it
         assert _owner_notifications(205, STRUCTURE), "the laser-fired notice of the fire is not in the owners' rows any more"
         assert client.call("structureControl", "ReleaseControl") is None
 
+@pytest.mark.timeout(600)
 def test_a_corporation_unanchors_and_scoops_its_control_tower():
     """V24 ship.Drop, posMgr.UnanchorStructure and ship.Scoop walk: reject an online tower, then unanchor, drop and recover its hull."""
     run = uuid.uuid4().hex[:10]

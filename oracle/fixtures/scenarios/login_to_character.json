@@ -1,6 +1,6 @@
 {
  "reference": "EVE.js",
- "referenceCommit": null,
+ "referenceCommit": "evejs-261108.1",
  "recordedAt": "2026-11-16T06:16:33Z",
  "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py",
  "login": {

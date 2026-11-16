@@ -517,15 +517,35 @@ public class CharUnboundMgrTests
         Assert.Equal(new PyInt(16), ((PyTuple)((PyObject)packet).Args).Items[0]);
         Assert.Equal(new PyInt(12), ((PyTuple)((PyObject)sink.Sent[1]).Args).Items[0]);
         var changes = ChangesOf(packet);
-        var recorded = Recorded.Login["afterSelect"]![0]!["$tuple"]![4]!["$tuple"]![1]!["$tuple"]![1]!["$dict"]!.AsArray();
-        Assert.Equal(recorded.Select(e => e![0]!.GetValue<string>()), changes.Select(c => c.Name));
-        for (var i = 0; i < recorded.Count; i++)
-        {
-            var pair = recorded[i]![1]!["$tuple"]!;
-            Assert.True(
-                (Recorded.Kind(pair[0]), Recorded.Kind(pair[1])) == (Recorded.Kind(changes[i].Old), Recorded.Kind(changes[i].New)),
-                $"{changes[i].Name}: recorded ({Recorded.Kind(pair[0])}, {Recorded.Kind(pair[1])}), ours ({Recorded.Kind(changes[i].Old)}, {Recorded.Kind(changes[i].New)})");
-        }
+        // login_to_character.json records the initial-in-space branch. This test creates a new character docked at its starter station,
+        // so compare with EveJS's general docked selection plan order (characterState.js:3972-4216), not that other branch's packet.
+        (string Name, string OldKind, string NewKind)[] expectedChanges =
+        [
+            ("charid", "none", "int"),
+            ("corpid", "none", "int"),
+            ("genderID", "none", "int"),
+            ("bloodlineID", "none", "int"),
+            ("raceID", "none", "int"),
+            ("schoolID", "none", "int"),
+            ("factionid", "none", "int"),
+            ("stationid", "none", "int"),
+            ("stationid2", "none", "int"),
+            ("solarsystemid2", "none", "int"),
+            ("constellationid", "none", "int"),
+            ("regionid", "none", "int"),
+            ("shipid", "none", "long"),
+            ("locationid", "none", "int"),
+            ("corpAccountKey", "none", "int"),
+            ("hqID", "int", "none"),
+            ("role", "none", "long"),
+            ("corprole", "none", "long"),
+            ("rolesAtAll", "none", "long"),
+            ("rolesAtBase", "none", "long"),
+            ("rolesAtHQ", "none", "long"),
+            ("rolesAtOther", "none", "long"),
+        ];
+        Assert.Equal(expectedChanges, changes.Select(change =>
+            (change.Name, Recorded.Kind(change.Old), Recorded.Kind(change.New))).ToArray());
 
         var now = changes.ToDictionary(c => c.Name, c => c.New);
         Assert.Equal(new PyInt(id), now["charid"]);

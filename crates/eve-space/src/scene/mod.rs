@@ -113,6 +113,9 @@ const JUMP_DELAY: i64 = 4 * TICKS_PER_SECOND;
 
 const JUMP_EFFECT_DELAY: i64 = 3 * TICKS_PER_SECOND;
 
+/// EVE.js keeps a gate-arriving ship cloaked for one minute unless the pilot flies first.
+pub(crate) const STARGATE_JUMP_CLOAK: i64 = 60 * TICKS_PER_SECOND;
+
 /// How many ships deep a ship that follows a ship that follows a ship is moved after the one it follows.
 const MAX_FOLLOW_CHAIN: u8 = 4;
 
@@ -650,6 +653,14 @@ pub(crate) struct Pilot {
     pub(crate) jump: Option<PendingJump>,
     /// The ship arrived already in space (through a gate or on login), not by undocking.
     jumped_in: bool,
+    /// A stargate arrival still needs its one-shot `effects.JumpIn` presentation when the client binds.
+    pub(crate) stargate_jump_in_pending: bool,
+    /// Until when a gate-arriving ship remains hidden from other ballparks.
+    pub(crate) jump_cloak_until: Option<i64>,
+    /// Whether the simulation clock has passed the end of the gate cloak or an accepted action has cancelled it.
+    pub(crate) jump_cloaked: bool,
+    /// The gate cloak ended this tick; observers receive the appearance effect with their AddBalls2.
+    pub(crate) jump_cloak_ended: bool,
     /// The client has bound the ballpark: it can be sent destiny updates.
     pub(crate) bound: bool,
     /// The login List sent the visual half; the later bind still owes the authoritative state.
@@ -706,6 +717,10 @@ impl Pilot {
             warp_target: None,
             jump: None,
             jumped_in: false,
+            stargate_jump_in_pending: false,
+            jump_cloak_until: None,
+            jump_cloaked: false,
+            jump_cloak_ended: false,
             bound: false,
             login_visuals_sent: false,
             entered,
@@ -739,6 +754,14 @@ impl Pilot {
             module.pending_overload = None;
         }
         self.heat.force_notify = true;
+    }
+
+    pub(crate) fn effective_cloak(&self) -> crate::visibility::CloakState {
+        if self.jump_cloaked { crate::visibility::CloakState::Cloaked } else { self.cloak }
+    }
+
+    pub(crate) fn ego_cloak_mode(&self) -> u8 {
+        if self.jump_cloaked { 2 } else { 0 }
     }
 }
 

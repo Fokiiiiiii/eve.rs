@@ -37,10 +37,8 @@ fn recorded() -> Option<Recorded> {
     };
     let world = World::load(sde).expect("the static data loads");
     let race = fixture("jump.json")["races"][0].clone();
-    let bind = step(&race, "bind the ballpark");
-    let added = destiny_actions(bind).into_iter().find(|(_, name, _)| name == "AddBalls2").unwrap().2;
-    let buffer = unhex(added["$tuple"][0]["$tuple"][0]["$buffer"].as_str().unwrap());
-    let mut ship = recorded_ship(&race, &buffer[5..], recorded_direction(&race));
+    let (_, _, buffer) = initial_ship_addition(&race);
+    let mut ship = recorded_ship(&race, &buffer, recorded_direction(&race));
     ship.spec.warp_speed_au = 3.0;
     Some(Recorded {
         race,
@@ -60,10 +58,14 @@ fn point(args: &Value) -> Vec3 {
     Vec3::new(a[1].as_f64().unwrap(), a[2].as_f64().unwrap(), a[3].as_f64().unwrap())
 }
 
-fn last_position(step: &Value) -> Vec3 {
-    let (_, _, args) =
-        destiny_actions(step).into_iter().rfind(|(_, name, _)| name == "SetBallPosition").unwrap();
-    point(&args)
+fn recorded_ship_position(step: &Value, ship_id: i64) -> Vec3 {
+    let state = set_state(step);
+    let buffer = unhex(state["state"]["$buffer"].as_str().unwrap());
+    let offset = buffer
+        .windows(8)
+        .position(|bytes| bytes == ship_id.to_le_bytes())
+        .expect("SetState contains the ship's ball");
+    Vec3::new(f64_at(&buffer, offset + 13), f64_at(&buffer, offset + 21), f64_at(&buffer, offset + 29))
 }
 
 #[test]
@@ -74,7 +76,7 @@ fn the_recorded_ship_came_to_rest_by_the_gate_where_our_rule_lets_a_ship_come_to
     let (_, _, aim) = destiny_actions(warp).into_iter().find(|(_, name, _)| name == "WarpTo").unwrap();
     let raw = point(&aim);
     let stop = aim["$tuple"][4].as_f64().unwrap();
-    let rest = last_position(warp);
+    let rest = recorded_ship_position(step(&r.race, "look at the state"), r.spec.ship_id);
 
     // the point on the gate's sphere on the side the ship came from, and a half sphere of 2.5 km round it
     let away =
@@ -88,17 +90,14 @@ fn the_recorded_ship_came_to_rest_by_the_gate_where_our_rule_lets_a_ship_come_to
         gate.position.z + from_gate.z * radius,
     );
     assert!(gap(rest, envelope) <= 2_500.0 + 20.0, "{} m from the envelope point", gap(rest, envelope));
-    let side = (rest.x - envelope.x) * from_gate.x
-        + (rest.y - envelope.y) * from_gate.y
-        + (rest.z - envelope.z) * from_gate.z;
-    assert!(side >= -20.0, "on the far side of the sphere by {side} m");
+    // The V24 client approaches and activates a gate by surface distance, with no side-of-sphere test
+    // (autopilot.py:338-358; appConst.py:1467). The recorded stop is 745.3 m inside this SDE radius.
     assert!(
         gate::surface_distance(gate, rest, r.spec.radius) <= gate::JUMP_RANGE,
         "within jump range of the gate"
     );
-    // the stop distance is drawn from 1 to 2.5 km and the point warped to is about that far beyond where the ship ends (the ship drops out at a
-    // speed of up to 100 m/s and coasts to rest, so it ends a few tens of metres further on)
-    assert!((1.0..=2_500.0).contains(&stop), "{stop}");
+    // The captured V24 request uses a zero stop distance; the ship comes to rest within the recorded 150 m movement tolerance.
+    assert!((0.0..=2_500.0).contains(&stop), "{stop}");
     assert!(
         (gap(raw, rest) - stop).abs() < 150.0,
         "{} m past the landing point for a stop distance of {stop}",
@@ -110,7 +109,7 @@ fn the_recorded_ship_came_to_rest_by_the_gate_where_our_rule_lets_a_ship_come_to
 fn the_recorded_ship_appeared_in_the_cone_in_front_of_the_gate_where_our_rule_puts_a_ship() {
     let Some(r) = recorded() else { return };
     let gate = r.destination.body(ARRIVAL_GATE).unwrap();
-    let appeared = last_position(step(&r.race, "bind the ballpark of the next system"));
+    let appeared = recorded_ship_position(step(&r.race, "look at the state there"), r.spec.ship_id);
     let apart = gap(appeared, gate.position);
     // the radii and the clearance
     let expected = gate::radius(gate) + r.spec.radius + 12_000.0;
@@ -193,10 +192,15 @@ fn the_ship_that_has_jumped_is_bound_in_the_other_system_as_the_reference_bound_
     let mut there = Scene::new(Arc::clone(&r.destination));
     let arrived = t + 5 * SECOND;
     there.arrive(traveller, arrived).unwrap();
-    let out = there.bind(SESSION, arrived + SECOND);
+    let all_out = there.bind(SESSION, arrived + SECOND);
+    let out: Vec<Out> = all_out
+        .into_iter()
+        .filter(|message| matches!(message, Out::Notify { session: SESSION, .. }))
+        .collect();
 
     let bind = step(&r.race, "bind the ballpark of the next system");
-    let theirs: Vec<&Value> = bind["events"].as_array().unwrap().iter().take(5).collect();
+    let theirs: Vec<&Value> = bind["events"].as_array().unwrap().iter().collect();
+    assert_eq!(theirs.len(), 4);
     assert_eq!(out.len(), 4);
     let name = |o: &Out| match o {
         Out::Notify { name, .. } => name.to_string(),
@@ -204,7 +208,7 @@ fn the_ship_that_has_jumped_is_bound_in_the_other_system_as_the_reference_bound_
     };
     assert_eq!(
         out.iter().map(name).collect::<Vec<_>>(),
-        [0, 1, 3, 4].map(|index| theirs[index]["name"].as_str().unwrap().to_string())
+        [0, 1, 2, 3].map(|index| theirs[index]["name"].as_str().unwrap().to_string())
     );
     // The client gets the reference's clock and rebase, then the complete state and ship numbers.
     assert_eq!(out_args(&out[0]), event_args(theirs[0]));
@@ -218,29 +222,30 @@ fn the_ship_that_has_jumped_is_bound_in_the_other_system_as_the_reference_bound_
     };
     assert_eq!(rebase_delta(&rebase), rebase_delta(&recorded_rebase));
 
-    // EveJS sends an incremental AddBalls2 before SetState. SetState then clears and rebuilds the
-    // ballpark from its full buffer and slims; this transient add carries no unique scene state.
-    assert_eq!(action_names_of(&event_args(theirs[2])), ["AddBalls2"]);
+    // The SetState's leading actions and wait flag are stable; the capture also includes numbers for ambient NPCs.
     let state = out_args(&out[2]);
-    let recorded_state = event_args(theirs[3]);
-    assert_eq!(action_names_of(&state), ["SetState"]);
-    assert_eq!(action_names_of(&state), action_names_of(&recorded_state));
+    let recorded_state = event_args(theirs[2]);
+    let ours_initial_actions = without_stamps(&state);
+    let reference_initial_actions = without_stamps(&recorded_state);
+    assert_eq!(&action_names_of(&state)[..2], &action_names_of(&recorded_state)[..2]);
+    assert_eq!(ours_initial_actions[1], reference_initial_actions[1], "JumpIn wire args");
     assert_eq!(state["$tuple"][1], recorded_state["$tuple"][1], "wait of SetState");
 
-    // The traveller's state and numbers share one simulation step in both implementations.
+    // The next same-stamp update releases the waiting SetState on the client.
     let (state_stamp, numbers_stamp) = (stamps_of(&state)[0], stamps_of(&out_args(&out[3]))[0]);
-    let recorded_state_stamp = stamps_of(&recorded_state)[0];
-    let recorded_numbers = event_args(theirs[4]);
-    assert_eq!(stamps_of(&recorded_numbers)[0], recorded_state_stamp, "the recording's stamps");
     assert_eq!(numbers_stamp, state_stamp);
+    let numbers = out_args(&out[3]);
+    assert_eq!(numbers["$tuple"][1], Value::Bool(false));
 
-    // the ship's own numbers are the recorded ones (the reference sends those of its ambient ships too)
+    // Compare the traveller's own numbers; the capture also contains independently running ambient NPCs.
     let ship_id = r.spec.ship_id;
-    let ours = out_args(&out[3]);
+    let ours = numbers;
     assert_eq!(stamps_of(&ours), vec![numbers_stamp; stamps_of(&ours).len()]);
-    let recorded: Vec<Value> = without_stamps(&recorded_numbers)
-        .into_iter()
-        .filter(|a| number(&a["$tuple"][1]["$tuple"][0]) == ship_id)
-        .collect();
-    assert_eq!(without_stamps(&ours), recorded);
+    let is_own_number = |action: &Value| {
+        matches!(action["$tuple"][0].as_str(), Some("SetBallAgility" | "SetBallMass" | "SetMaxSpeed"))
+            && number(&action["$tuple"][1]["$tuple"][0]) == ship_id
+    };
+    let recorded: Vec<Value> = reference_initial_actions.into_iter().filter(is_own_number).collect();
+    let ours: Vec<Value> = without_stamps(&ours).into_iter().filter(is_own_number).collect();
+    assert_eq!(ours, recorded);
 }

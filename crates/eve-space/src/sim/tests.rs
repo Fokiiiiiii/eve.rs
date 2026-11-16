@@ -3778,6 +3778,80 @@ fn a_jump_takes_the_ship_to_the_scene_of_the_other_system_when_it_is_due() {
 }
 
 #[test]
+fn a_ship_binding_after_a_gate_jump_sees_empire_sentries_before_the_first_destination_poll() {
+    use crate::scene::tests::{ARRIVAL_GATE, NEAR_GATE, OTHER_SYSTEM};
+
+    let (here, mut there) = crate::scene::tests::gated_systems();
+    there.security = 1.0;
+    there.faction_id = Some(500_006);
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([here, there])));
+    sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+    sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+    sim.handle(jump_command(NEAR_GATE, ARRIVAL_GATE), NOON).unwrap();
+    sim.poll(NOON + 6 * SECOND);
+
+    // Arrival happens after the poll has visited the existing scenes. The client binds the new ballpark immediately.
+    let bound = sim.handle(Message::Bind { session_id: SESSION }, NOON + 7 * SECOND).unwrap();
+    let set_state = bound
+        .iter()
+        .filter(|message| matches!(message, Message::Notify { session_id: SESSION, name, .. } if name == "DoDestinyUpdate"))
+        .flat_map(destiny_actions)
+        .find_map(|(name, args)| {
+            (name == "SetState").then(|| args.first().expect("SetState carries its full-state KeyVal").clone())
+        })
+        .expect("the first bound state contains SetState");
+    let slims = match object_field(&set_state, "slims") {
+        Some(Value::List(items)) => items,
+        other => panic!("SetState must carry slim items: {other:?}"),
+    };
+    let sentries = slims
+        .iter()
+        .filter(|item| matches!(object_field(item, "typeID").and_then(wire_integer), Some(3739..=3741)))
+        .count();
+    assert_eq!(sentries, 8, "the arrival gate's sentries are in the initial SetState");
+    assert_eq!(
+        sim.scenes[&SceneKey::solar_system(OTHER_SYSTEM)].pilots[&SESSION].ship.spec.ship_id,
+        spec().ship_id
+    );
+}
+
+#[test]
+fn a_jump_arrival_set_state_waits_for_the_same_stamp_followup_update() {
+    use crate::scene::tests::{ARRIVAL_GATE, NEAR_GATE};
+
+    let (here, there) = crate::scene::tests::gated_systems();
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([here, there])));
+    sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+    sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+    sim.handle(jump_command(NEAR_GATE, ARRIVAL_GATE), NOON).unwrap();
+    sim.poll(NOON + 6 * SECOND);
+    let bound = sim.handle(Message::Bind { session_id: SESSION }, NOON + 7 * SECOND).unwrap();
+    let updates: Vec<_> = bound
+        .iter()
+        .filter(|message| matches!(message, Message::Notify { session_id: SESSION, name, .. } if name == "DoDestinyUpdate"))
+        .collect();
+    assert!(updates.len() >= 2, "SetState has a same-stamp follow-up update");
+    let arrival_actions = destiny_actions(updates[0]);
+    assert_eq!(arrival_actions[0].0, "SetState");
+    assert_eq!(arrival_actions[1].0, "OnSpecialFX");
+    assert_eq!(arrival_actions[1].1[0], crate::wire::id(spec().ship_id));
+    assert!(matches!(
+        &arrival_actions[1].1[5],
+        Value::Bytes(name) if name.as_ref() == b"effects.JumpIn"
+    ));
+    assert_eq!(arrival_actions[1].1[9], crate::wire::int(5_000));
+    let wait = |message: &Message| {
+        let Message::Notify { args, .. } = message else { panic!("expected DoDestinyUpdate: {message:?}") };
+        let Value::Tuple(arguments) = eve_marshal::decode_exact(args).unwrap() else {
+            panic!("DoDestinyUpdate arguments must be a tuple")
+        };
+        matches!(arguments.get(1), Some(Value::Bool(true)))
+    };
+    assert!(wait(updates[0]), "the client holds SetState until its same-stamp follow-up arrives");
+    assert!(!wait(updates[1]), "the follow-up update releases the held SetState");
+}
+
+#[test]
 fn a_ship_that_is_asked_to_leave_while_it_jumps_leaves_from_the_scene_it_is_in() {
     use crate::scene::tests::{ARRIVAL_GATE, NEAR_GATE};
     let mut sim = gated_sim();

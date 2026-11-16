@@ -275,8 +275,11 @@ impl Scene {
     /// The client bound the system's ballpark: it is told the time, and given the ships in view (its own among them, in the order they came into
     /// the scene) and then everything around them.
     pub fn bind(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        // Populate static sentries before the initial state of a freshly entered system is built.
+        let mut told = self.populate_empire_sentries(now);
         if !self.pilots.contains_key(&session) {
-            return self.bind_controlled_structure(session, now);
+            told.extend(self.bind_controlled_structure(session, now));
+            return told;
         }
         self.settle_all(now);
         self.take_in_view(session);
@@ -290,10 +293,12 @@ impl Scene {
         let trace_adds: Vec<_> =
             match traces.iter().map(|trace| payload::add_abyssal_trace(add_stamp, trace)).collect() {
                 Ok(adds) => adds,
-                Err(_) => return Vec::new(),
+                Err(_) => return told,
             };
-        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+        let Some(pilot) = self.pilots.get(&session) else { return told };
         let ship = &pilot.ship;
+        let ego_cloak_mode = pilot.ego_cloak_mode();
+        let stargate_jump_in_pending = pilot.stargate_jump_in_pending;
         let ship_id = id(ship.spec.ship_id);
         let heading =
             |action_stamp: u32| payload::action(action_stamp, heading_name(ship), heading_args(ship));
@@ -305,10 +310,10 @@ impl Scene {
             added_actions
                 .extend(system.bodies.iter().filter_map(|body| payload::moon_chunk_effect(add_stamp, body)));
         } else {
-            let Ok(ship_added) = payload::add_ships(add_stamp, &ships, now) else { return Vec::new() };
+            let Ok(ship_added) = payload::add_ships(add_stamp, &ships, now) else { return told };
             added_actions.push(ship_added);
             let Ok(abyssal_scene_objects) = payload::add_abyssal_scene_objects(add_stamp, &system) else {
-                return Vec::new();
+                return told;
             };
             added_actions.extend(payload::add_structures(add_stamp, &system, now));
             added_actions.extend(payload::add_moon_chunks(add_stamp, &system));
@@ -317,21 +322,20 @@ impl Scene {
         }
         let added = (!added_actions.is_empty()).then_some(added_actions);
         let wrecks = self.wrecks_in_view(session);
-        let Ok(state) = payload::set_state_for_ego(
+        let Ok(state) = payload::set_state_for_ego_with_cloak_mode(
             state_stamp,
             &system,
-            ship.spec.ship_id,
+            payload::EgoShipState { ship_id: ship.spec.ship_id, cloak_mode: ego_cloak_mode },
             &ships,
             &wrecks,
             &self.structure_health,
             now,
         ) else {
-            return Vec::new();
+            return told;
         };
         let update = |actions: Vec<Value>| {
             Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
         };
-        let mut told = Vec::new();
         if pilot.jumped_in || added.is_some() {
             told.extend([
                 Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
@@ -374,7 +378,15 @@ impl Scene {
             ]);
             told.push(update(actions));
         }
-        told.push(update(vec![state]));
+        let mut initial_state = vec![state];
+        if stargate_jump_in_pending {
+            initial_state.push(payload::jump_in_effect(state_stamp, ship.spec.ship_id));
+        }
+        told.push(Self::notify(
+            session,
+            "DoDestinyUpdate",
+            payload::destiny_update(initial_state, pilot.jumped_in),
+        ));
         if pilot.jumped_in
             && let Some(added) = added
         {
@@ -389,6 +401,9 @@ impl Scene {
         }
         if !numbers.is_empty() {
             told.push(update(numbers));
+        }
+        if stargate_jump_in_pending && let Some(pilot) = self.pilots.get_mut(&session) {
+            pilot.stargate_jump_in_pending = false;
         }
         self.with_backlog(told)
     }
@@ -815,6 +830,7 @@ impl Scene {
         told.extend(self.advance_dots(now));
         told.extend(self.advance_deployables(now));
         told.extend(self.advance_drones(now));
+        told.extend(self.expire_stargate_jump_cloaks(now));
         told.extend(self.reconcile(now));
         told.extend(self.reconcile_wrecks(now));
         told.extend(self.reconcile_abyssal_traces(now));

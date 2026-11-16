@@ -393,6 +393,7 @@ impl Scene {
     /// the ballpark of the new system when its session has changed). Gives the ship back when this system has no such gate.
     pub fn arrive(&mut self, traveller: Traveller, now: i64) -> Result<Vec<Out>, Box<Traveller>> {
         let system = Arc::clone(&self.system);
+        let stargate_arrival = traveller.to_field.is_none() && traveller.to_far_end.is_none();
         // a ship that jumped to a field appears by the field while it is lit here; one that came through a gate, by that gate
         let (position, direction) = if let Some(field_id) = traveller.to_field {
             let Some(field) = self.deployables.get(&field_id).filter(|field| {
@@ -441,12 +442,51 @@ impl Scene {
         pilot.jump = None;
         pilot.tether = Default::default();
         pilot.jumped_in = true;
+        pilot.stargate_jump_in_pending = stargate_arrival;
+        pilot.jump_cloak_until = stargate_arrival.then_some(now.saturating_add(STARGATE_JUMP_CLOAK));
+        pilot.jump_cloaked = stargate_arrival;
+        pilot.jump_cloak_ended = false;
         // the client binds the ballpark of this system afresh, and is then sent what is in view
         pilot.bound = false;
         pilot.sees.clear();
         pilot.entered = self.next_entry();
         self.pilots.insert(session, pilot);
-        Ok(self.announce_arrival(session, now))
+        // A jump-cloaked gate arrival is not delivered to destination observers yet. The owner
+        // receives JumpIn with SetState when binding; other pilots first get the ship after the
+        // cloak ends (the client drops SpecialFX that names a ball it has not been given).
+        Ok(if stargate_arrival { Vec::new() } else { self.announce_arrival(session, now) })
+    }
+
+    /// Ends gate cloak: the owner clears the ball's native cloak bit; reconciliation then
+    /// introduces the ship to observers that can now see it. The Host owns the matching
+    /// `OnJumpCloakCancelled` / `OnInvulnCancelled` notifications and protection state.
+    pub(crate) fn cancel_stargate_jump_cloak(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        let Some(ship_id) =
+            self.pilots.get(&session).filter(|pilot| pilot.jump_cloaked).map(|pilot| pilot.ship.spec.ship_id)
+        else {
+            return Vec::new();
+        };
+        if let Some(pilot) = self.pilots.get_mut(&session) {
+            pilot.jump_cloaked = false;
+            pilot.jump_cloak_until = None;
+            pilot.jump_cloak_ended = true;
+            pilot.stargate_jump_in_pending = false;
+        }
+        let stamp = self.next_stamp(now);
+        self.tell_all(session, vec![payload::uncloak_ball(stamp, ship_id), payload::uncloak(stamp, ship_id)])
+    }
+
+    /// Ends gate cloak when the injected simulation clock reaches its deadline.
+    pub(crate) fn expire_stargate_jump_cloaks(&mut self, now: i64) -> Vec<Out> {
+        let expired: Vec<_> = self
+            .pilots
+            .iter()
+            .filter_map(|(session, pilot)| {
+                (pilot.jump_cloaked && pilot.jump_cloak_until.is_some_and(|deadline| now >= deadline))
+                    .then_some((*session, pilot.ship.spec.ship_id))
+            })
+            .collect();
+        expired.into_iter().flat_map(|(session, _)| self.cancel_stargate_jump_cloak(session, now)).collect()
     }
 }
 

@@ -1066,6 +1066,14 @@ fn holds_ball_of(buffer: &[u8], ship_id: i64) -> bool {
     buffer.windows(needle.len()).any(|window| window == needle)
 }
 
+fn cloak_mode_of(buffer: &[u8], ship_id: i64) -> u8 {
+    let needle = ship_id.to_le_bytes();
+    let offset = buffer.windows(needle.len()).position(|window| window == needle).unwrap();
+    // A free ball stores 8-byte IDs, one mode byte, a 4-byte radius, three 8-byte coordinates, one flags byte,
+    // and an 8-byte mass before the cloak mode.
+    buffer[offset + 46]
+}
+
 fn accepted(command: u8, at: i64) -> Out {
     Out::Accepted { session: SESSION, command, at }
 }
@@ -1341,7 +1349,7 @@ fn a_fleet_member_ship_is_a_warp_target_in_its_system() {
 fn a_ship_lining_up_for_warp_or_in_it_takes_no_orders() {
     let mut scene = scene_with_a_planet();
     let out = scene.command(SESSION, Command::WarpTo { target_id: PLANET, range: 0.0 }, NOON);
-    assert_eq!(action_names(&out[0]), ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"]);
+    assert_eq!(action_names(&out[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
     for command in [
         Command::Stop,
         Command::SetSpeedFraction(0.5),
@@ -2178,10 +2186,164 @@ fn binding_a_ship_that_came_through_a_gate_sends_the_ship_the_state_and_the_numb
         notifications,
         ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"]
     );
-    assert_eq!(names[2], ["SetState"]);
+    assert_eq!(names[2], ["SetState", "OnSpecialFX"]);
+    assert_eq!(cloak_mode_of(&set_state_buffer(&bound[2]), spec().ship_id), 2);
+    assert!(actions_of(&bound[2]).iter().any(|(name, args)| {
+        name == "OnSpecialFX"
+            && args.get(4) == Some(&crate::wire::text("effects.JumpIn"))
+            && args.get(8) == Some(&crate::wire::int(5_000))
+    }));
     assert_eq!(names[3], ["SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
     // the ship's own ball says it is stopped
     assert_eq!(there.ship(SESSION, NOON + seconds(6)).unwrap().course, Course::Stop);
+}
+
+#[test]
+fn a_gate_arrival_is_not_sent_to_destination_observers_until_the_jump_cloak_ends() {
+    let mut destination = other_scene();
+    let mut observer = spec();
+    observer.ship_id += 100;
+    observer.character_id += 100;
+    observer.owner_id += 100;
+    let gate = destination.system.body(ARRIVAL_GATE).unwrap();
+    destination
+        .enter_in_space(
+            SESSION + 1,
+            observer,
+            [gate.position.x + 30_000.0, gate.position.y, gate.position.z],
+            [1.0, 0.0, 0.0],
+            NOON,
+        )
+        .unwrap();
+    destination.bind(SESSION + 1, NOON);
+
+    let traveller = jumped(&mut scene_by_a_gate());
+    let arrival = destination.arrive(traveller, NOON + seconds(5)).unwrap();
+
+    assert!(arrival.is_empty(), "a jump-cloaked arrival is not yet delivered to observers: {arrival:?}");
+    assert!(!destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
+}
+
+#[test]
+fn a_gate_cloak_expires_on_the_simulation_clock_and_introduces_the_ship_to_its_observers() {
+    let mut destination = other_scene();
+    let mut observer = spec();
+    observer.ship_id += 100;
+    observer.character_id += 100;
+    observer.owner_id += 100;
+    let gate = destination.system.body(ARRIVAL_GATE).unwrap();
+    destination
+        .enter_in_space(
+            SESSION + 1,
+            observer,
+            [gate.position.x + 30_000.0, gate.position.y, gate.position.z],
+            [1.0, 0.0, 0.0],
+            NOON,
+        )
+        .unwrap();
+    destination.bind(SESSION + 1, NOON);
+
+    let traveller = jumped(&mut scene_by_a_gate());
+    destination.arrive(traveller, NOON + seconds(5)).unwrap();
+    let bound = destination.bind(SESSION, NOON + seconds(6));
+    assert_eq!(cloak_mode_of(&set_state_buffer(&bound[2]), spec().ship_id), 2);
+    assert!(!destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
+
+    let expired = destination.poll(NOON + seconds(66));
+    let owner_updates: Vec<_> = expired
+        .iter()
+        .filter(
+            |out| matches!(out, Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == SESSION),
+        )
+        .collect();
+    let observer_updates: Vec<_> = expired
+        .iter()
+        .filter(|out| matches!(out, Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == SESSION + 1))
+        .collect();
+
+    assert!(
+        owner_updates.iter().any(|out| action_names(out).contains(&"UncloakBall".to_string())),
+        "the owner's ball cloak expires: {owner_updates:?}"
+    );
+    assert_eq!(
+        action_names(observer_updates.first().unwrap()),
+        ["AddBalls2", "SetBallAgility", "SetBallMass", "SetMaxSpeed", "OnSpecialFX"]
+    );
+    assert!(destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
+    assert!(!destination.pilots[&SESSION].jump_cloaked);
+}
+
+#[test]
+fn an_accepted_movement_cancels_gate_cloak_then_introduces_the_ship_to_observers() {
+    let mut destination = other_scene();
+    let mut observer = spec();
+    observer.ship_id += 100;
+    observer.character_id += 100;
+    observer.owner_id += 100;
+    let gate = destination.system.body(ARRIVAL_GATE).unwrap();
+    destination
+        .enter_in_space(
+            SESSION + 1,
+            observer,
+            [gate.position.x + 30_000.0, gate.position.y, gate.position.z],
+            [1.0, 0.0, 0.0],
+            NOON,
+        )
+        .unwrap();
+    destination.bind(SESSION + 1, NOON);
+
+    let traveller = jumped(&mut scene_by_a_gate());
+    destination.arrive(traveller, NOON + seconds(5)).unwrap();
+    destination.bind(SESSION, NOON + seconds(6));
+
+    let moved_at = NOON + seconds(7);
+    let moved = destination.command(SESSION, Command::SetSpeedFraction(1.0), moved_at);
+    assert_eq!(action_names(&moved[0]), ["UncloakBall", "OnSpecialFX"]);
+    assert_eq!(action_names(&moved[1]), ["SetSpeedFraction"]);
+    assert!(matches!(moved.last(), Some(Out::Accepted { command: 1, .. })));
+    assert!(!destination.pilots[&SESSION].jump_cloaked);
+    assert!(!destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
+
+    let reconciled = destination.poll(moved_at + 1);
+    let observer_update = reconciled.iter().find(
+        |out| matches!(out, Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == SESSION + 1),
+    );
+    assert_eq!(
+        observer_update.map(action_names).unwrap_or_default(),
+        ["AddBalls2", "SetBallAgility", "SetBallMass", "SetMaxSpeed", "OnSpecialFX"]
+    );
+    assert!(destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
+}
+
+#[test]
+fn a_refused_movement_does_not_cancel_gate_cloak() {
+    let mut destination = other_scene();
+    let mut observer = spec();
+    observer.ship_id += 100;
+    observer.character_id += 100;
+    observer.owner_id += 100;
+    let gate = destination.system.body(ARRIVAL_GATE).unwrap();
+    destination
+        .enter_in_space(
+            SESSION + 1,
+            observer,
+            [gate.position.x + 30_000.0, gate.position.y, gate.position.z],
+            [1.0, 0.0, 0.0],
+            NOON,
+        )
+        .unwrap();
+    destination.bind(SESSION + 1, NOON);
+
+    let traveller = jumped(&mut scene_by_a_gate());
+    destination.arrive(traveller, NOON + seconds(5)).unwrap();
+    destination.bind(SESSION, NOON + seconds(6));
+    destination.pilots.get_mut(&SESSION).unwrap().immobile_until = NOON + seconds(10);
+
+    let refused =
+        destination.command(SESSION, Command::GotoDirection(Vec3::new(1.0, 0.0, 0.0)), NOON + seconds(7));
+    assert_eq!(refused, [Out::Refused { session: SESSION, command: 2, reason: "IMMOBILE" }]);
+    assert!(destination.pilots[&SESSION].jump_cloaked);
+    assert!(!destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
 }
 
 #[test]
@@ -2275,11 +2437,7 @@ fn a_warp_to_a_gate_ends_within_jump_range_of_it_and_the_jump_is_accepted() {
     scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
     let warp_at = NOON + seconds(1);
     let told = scene.command(SESSION, Command::WarpTo { target_id: FAR_GATE, range: 0.0 }, warp_at);
-    assert_eq!(
-        action_names(&told[0]),
-        ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"],
-        "{told:?}"
-    );
+    assert_eq!(action_names(&told[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"], "{told:?}");
     let refused = scene.command(SESSION, jump(FAR_GATE, 0), warp_at);
     assert!(
         refused.iter().any(|out| matches!(out, Out::Refused { reason: "TOO_FAR_FROM_STARGATE", .. })),
@@ -4256,11 +4414,7 @@ fn a_warp_to_a_wormhole_end_under_the_minimum_warp_distance_is_refused_and_one_b
     );
     let told =
         scene.command(SESSION, Command::WarpTo { target_id: WORMHOLE_END, range: 0.0 }, NOON + seconds(1));
-    assert_eq!(
-        action_names(&told[0]),
-        ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"],
-        "{told:?}"
-    );
+    assert_eq!(action_names(&told[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"], "{told:?}");
     let mut t = NOON + seconds(1);
     while t < NOON + seconds(300) {
         t += 2_500_000;

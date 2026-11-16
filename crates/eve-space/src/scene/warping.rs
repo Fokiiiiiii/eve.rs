@@ -114,8 +114,8 @@ impl Scene {
 
         let profile = warp::Profile::new(total, ship.spec.warp_speed_au, ship.spec.max_velocity);
         let ship_id = id(ship.spec.ship_id);
-        let boosted = ship.spec.max_velocity * warp::START_SPEED_SCALE;
-        let mut out = self.break_tether(session, now);
+        let mut out = self.cancel_stargate_jump_cloak(session, now);
+        out.extend(self.break_tether(session, now));
         let stamp = self.next_stamp(now);
         let pilot = self.pilots.get_mut(&session).expect("checked above");
         pilot.ship.course = Course::Warp {
@@ -131,14 +131,13 @@ impl Scene {
         pilot.flight = Some(Flight::begin(now, raw, stop));
         pilot.warp_target = target_id;
         let own = vec![
-            payload::action(stamp, "SetMaxSpeed", [ship_id.clone(), real(boosted)]),
+            warping_effect(stamp, &ship_id),
+            payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(1.0)]),
             payload::action(
                 stamp,
                 "WarpTo",
                 [ship_id.clone(), real(raw.x), real(raw.y), real(raw.z), real(stop), int(profile.factor)],
             ),
-            warping_effect(stamp, &ship_id),
-            payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(1.0)]),
         ];
         let watchers = vec![payload::action(
             stamp,

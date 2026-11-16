@@ -1,3 +1,4 @@
+use eve_destiny::Vec3;
 use eve_marshal::{Descriptor, PackedColumn, PackedRow, Value, dbtype};
 
 use crate::security;
@@ -200,7 +201,7 @@ fn moon_chunk_fields(body: &Body, entries: &mut Entries) {
 pub fn ship_entries(ship: &Ship) -> Entries {
     match &ship.npc {
         Some(NpcIdentity { drone: Some(link), .. }) => drone_entries(&ship.spec, link),
-        Some(npc) if !npc.hull => npc_ship_entries(&ship.spec, npc),
+        Some(npc) if !npc.hull => npc_ship_entries(&ship.spec, npc, ship.direction),
         _ => pilot_ship_entries(&ship.spec),
     }
 }
@@ -223,7 +224,26 @@ fn drone_entries(spec: &ShipSpec, link: &DroneLink) -> Entries {
 }
 
 /// The entries of the slim item of an NPC's ship, in the order the reference gives them (`oracle/fixtures/scenarios/jump.json`).
-fn npc_ship_entries(spec: &ShipSpec, npc: &NpcIdentity) -> Entries {
+fn npc_ship_entries(spec: &ShipSpec, npc: &NpcIdentity, direction: Vec3) -> Entries {
+    if spec.group_id == crate::pochven_population::EMPIRE_SENTRY_GROUP_ID
+        && npc.hostile_response_threshold == -11
+        && npc.friendly_response_threshold == -11
+    {
+        let forward = crate::motion::unit(direction).unwrap_or(Vec3::new(1.0, 0.0, 0.0));
+        let yaw = forward.x.atan2(forward.z).to_degrees();
+        let pitch = -forward.y.clamp(-1.0, 1.0).asin().to_degrees();
+        return vec![
+            ("itemID", id(spec.ship_id)),
+            ("typeID", int(i64::from(spec.type_id))),
+            ("ownerID", id(spec.owner_id)),
+            ("groupID", int(i64::from(spec.group_id))),
+            ("categoryID", int(i64::from(spec.category_id))),
+            ("dunRotation", rotation([yaw, pitch, 0.0])),
+            ("hostile_response_threshold", int(npc.hostile_response_threshold)),
+            ("friendly_response_threshold", int(npc.friendly_response_threshold)),
+        ];
+    }
+
     let modules = spec
         .modules
         .iter()
@@ -389,6 +409,40 @@ mod tests {
         let names: Vec<&str> = entries.iter().map(|(name, _)| *name).collect();
         assert!(!names.contains(&"name"));
         assert_eq!(&names[names.len() - 2..], ["hostile_response_threshold", "friendly_response_threshold"]);
+    }
+
+    #[test]
+    fn an_empire_sentry_has_the_v24_bracket_thresholds_and_layout_rotation() {
+        let identity = NpcIdentity { friendly_response_threshold: -11, ..NpcIdentity::default() };
+        let mut ship = ship_of(identity);
+        ship.spec.type_id = 3_740;
+        ship.spec.group_id = crate::pochven_population::EMPIRE_SENTRY_GROUP_ID;
+        ship.spec.category_id = 11;
+        ship.spec.owner_id = 500_001;
+        ship.direction = Vec3::new(-std::f64::consts::FRAC_1_SQRT_2, std::f64::consts::FRAC_1_SQRT_2, 0.0);
+
+        let entries = ship_entries(&ship);
+        let names: Vec<&str> = entries.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            [
+                "itemID",
+                "typeID",
+                "ownerID",
+                "groupID",
+                "categoryID",
+                "dunRotation",
+                "hostile_response_threshold",
+                "friendly_response_threshold",
+            ]
+        );
+        let value = |key: &str| entries.iter().find(|(name, _)| *name == key).unwrap().1.clone();
+        assert_eq!(value("hostile_response_threshold"), int(-11));
+        assert_eq!(value("friendly_response_threshold"), int(-11));
+        let Value::Tuple(rotation) = value("dunRotation") else { panic!("sentry rotation is a tuple") };
+        assert_eq!(rotation[0], int(-90));
+        assert!(matches!(&rotation[1], Value::Real(pitch) if (*pitch + 45.0).abs() < 1e-8));
+        assert_eq!(rotation[2], int(0));
     }
 
     #[test]

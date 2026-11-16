@@ -172,7 +172,7 @@ impl Scene {
             | Command::AlignTo { target_id } => self.target_of(target_id, session),
             _ => None,
         };
-        let pilot = self.pilots.get_mut(&session).expect("the caller checked");
+        let pilot = self.pilots.get(&session).expect("the caller checked");
         if pilot.immobile_until > now {
             // a ship held by a doomsday's immobility window follows no orders
             return vec![Out::Refused { session, command: code, reason: "IMMOBILE" }];
@@ -192,10 +192,12 @@ impl Scene {
             // a ship in warp, or lining up for it, follows none either
             return vec![Out::Refused { session, command: code, reason: "IN_WARP" }];
         }
+        let mut out = self.cancel_stargate_jump_cloak(session, now);
+        let pilot = self.pilots.get_mut(&session).expect("the caller checked");
         let ship_id = id(pilot.ship.spec.ship_id);
         match steer(&mut pilot.ship, target, command) {
-            Steering::Refused(reason) => vec![Out::Refused { session, command: code, reason }],
-            Steering::Nothing => vec![Out::Accepted { session, command: code, at: now }],
+            Steering::Refused(reason) => out.push(Out::Refused { session, command: code, reason }),
+            Steering::Nothing => out.push(Out::Accepted { session, command: code, at: now }),
             Steering::Actions(actions) => {
                 let stamp = self.next_stamp(now);
                 let actions: Vec<Value> = actions
@@ -206,11 +208,11 @@ impl Scene {
                         payload::action(stamp, name, all)
                     })
                     .collect();
-                let mut out = self.tell_all(session, actions);
+                out.extend(self.tell_all(session, actions));
                 out.push(Out::Accepted { session, command: code, at: now });
-                out
             }
         }
+        out
     }
 }
 

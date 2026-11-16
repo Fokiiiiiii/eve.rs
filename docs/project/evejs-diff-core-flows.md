@@ -1,0 +1,58 @@
+# EveJSとの差分調査: 接続から宇宙空間まで
+
+## 対象と方法
+
+未変更のV24.01クライアント（build 3396210）の全体を調べ、`/home/user/eve-logic` の実際の呼出し箇所、EveJS 261108.1、eve.rsのHostとspace実装を突き合わせた。参照サーバーは `/home/user/evejs-261108.1`、静的データは `.cache/sde/eve-online-static-data-3396210-jsonl` を使用した。
+
+同じheadless test selectionを両サーバーで実行し、MITMでJSONLに記録した。選択したテストは、キャラクター作成を含む記録walk、logoff後の再選択、選択済みキャラクターが突然切断された後の再接続と再選択、undock/dockのrace 1と4、warp/jump、目的地にいる別pilotからのjump観測、クライアントプロセス異常終了後の再接続。EveJSとeve.rsの各実行で8件成功し、skipはなかった。
+
+比較器は `tools/mitm/mitm.py diff-core`。ランダム名候補と `MachoBindObject` の値は実行ごとに変わるため、戻り値のmarshal形を比較しながら葉の値を無視する。session、RPCの順序、応答の有無、marshalの型・コンテナ・キー、notification順序、Placebo handshakeは別に比較する。
+
+最終ペアは `/tmp/core-evejs-coreflows-v8.jsonl` と `/tmp/core-evers-coreflows-v8.jsonl`、機械可読レポートは `/tmp/core-diff-v8-paired.json`。再比較:
+
+```sh
+python3 tools/mitm/mitm.py diff-core /tmp/core-evejs-coreflows-v8.jsonl /tmp/core-evers-coreflows-v8.jsonl --json
+```
+
+## 検証済みの所見
+
+| フロー / 所見 | クライアントとEveJS | eve.rsと判定 |
+| --- | --- | --- |
+| Placebo署名関数の検証マーカー | V24は `GPS.py:584-620` で署名関数を `Crypto.Verify` に渡す。EveJS `server/src/network/tcp/handshake.js:733-738` は無効化マーカーを整数0で送る。 | `crates/eve-net/src/handshake.rs:351-371` は `PyInt(0)` を送信する。`crates/eve-net/tests/handshake.rs:110-175` がwire上の型を検査。以前のBool(false)はV24 verifierが受ける型と異なるため、**互換性の破損を修正済み**。 |
+| 初期handshakeの `maxSessionTime` | EveJS `server/src/network/tcp/handshake.js:814-840` は `session_init` にNoneを含める。V24 `eve/client/script/parklife/gameui.py:294-300` は値があればセッション期限を表示する。 | `crates/eve-net/src/handshake.rs:380-403` は同じ順序とNoneを含む。**キー構造差を修正済み**。 |
+| 初回接続とサービス検索 | V24 `carbon/common/script/net/machoNet.py:1702-1709` はログイン時に `machoNet.GetServiceInfo` を呼び、`carbon/common/script/net/ServiceCallGPCS.py:194-212` はその表をRPC経路選択に使う。EveJS側は `server/src/services/machoNet/machoNetService.js:331-334`。 | 選択テストで必要なlogin/character/station/space RPCは登録Hostを通り応答した。raw比較ではサービス表のキー集合が異なる。呼ばれないサービス名の全てがV24起動中に使われないとは確認できていないため、範囲外の行は「未解決」に記録した。 |
+| キャラクター作成・選択とsession通知 | V24 `eve/client/script/ui/login/characterCreationContainer_new.py:727-743` が作成後に入場し、`eve/client/script/ui/login/charSelection/characterSelection.py:705-720` は `PerformSessionChange` で選択してロード失敗時に再試行する。EveJS `charService.js:1131-1248,1575-1605` と `characterState.js:4330-4334,4440-4473,4564-4608` が作成、選択、通知flushを行う。 | `dotnet/src/Eve.Services.CharacterSelect/CharUnboundMgrService.cs:289-325,328-479` は入力検証、キャラクター所有確認、lifecycle lock、入場hook、session変更、通知のcommit、失敗時rollbackを行う。`dotnet/src/Eve.Services/ClientSession.cs:153-190,364-393` がsession通知の順序を保持。記録walkとlogoff/reselectがEveJSとeve.rs双方で成功。**試験した標準経路で破損なし**。同時二重選択の競合stressは別途未実施。 |
+| Docked sessionとクライアントの画面遷移 | V24 `gameui.py:434-471,536-570,605-631` は `charid`, `stationid`, `structureid`, `solarsystemid` で選択画面、station、structure、spaceを切り替える。 | `SelectCharacterID` はstation dock中に `stationid` を持ち、`solarsystemid` をNoneにする（`CharUnboundMgrService.cs:366-402`）。EveJSとの通知キー差は残るがV24のstation判定と一致し、logoff/reselectと再ログイン後の再選択で確認した。**クライアントの遷移条件に一致**。 |
+| キャラクターlogoffと再ログイン | V24 `gameui.py:493-500` は `userSvc.UserLogOffCharacter` をsession change内で実行する。 | `dotnet/src/Eve.Services.CharacterSelect/CharacterLogoff.cs:7-45` は入場hook、最終logoff記録、online owner解放、character session属性削除を行う。connectionを切らないlogoff/reselectと、選択中characterのプロセス異常終了→別connectionで再ログイン→character再選択が双方で成功。**試験経路で再接続後の状態残留なし**。 |
+| Undock request | V24 `eve/client/script/ui/station/base.py:485-499` は実際のDogmaから `GetOnlineModules(shipID)` を作り、`Undock(shipID, ignoreContraband, onlineModules=...)` をsession changeとして送る。`clientDogmaLocation.py:1175-1176` がflagID→moduleIDを作る。 | fixture recorderは固定module IDを作らず `dogmaIM.GetAllInfo` のonline属性から表を生成する（`record_character_scenarios.py`）。`ShipService.cs:320-335` と `SpaceSessions.Movement.cs:621-683` が要求とtransitionを処理。race 1,4でundock、space bind、移動、dockを比較し成功。 |
+| Warp開始action順 | EveJS `server/src/space/destiny/commands/warpCommands.js:630-662` と現行 `oracle/fixtures/scenarios/warp.json` は `OnSpecialFX`, `SetSpeedFraction`, `WarpTo` の順。V24 `remote/michelle.py:1142-1185` はDestiny actionをstream順に適用し、`environment/effects/Warp.py:440-527` がwarp表示を処理する。 | `crates/eve-space/src/scene/warping.rs:115-147` が同じ順に送る。headless gate warpと状態比較を実行。以前の余分なowner `SetMaxSpeed` を除いた。**確認したwire順を修正済み**。 |
+| Jump到着stateとJumpIn | V24 `remote/michelle.py:900-917` はwait付き `SetState` の後続stateを待ち、`:1142-1185` がDestiny actionを処理する。V24 `effects/Jump.py:617-624` は `effects.JumpIn` をeffectとして実装。EveJS `server/src/space/runtime/spaceRuntime/stargateJump.js:209-260` がowner/observer向け通知を分ける。 | `crates/eve-space/src/scene/session.rs:275-408` はsentryを `SetState` 構築前に配置し、JumpInとstateを送って一回限りのpending状態を消す。`scene/jump.rs:392-457` はgate arrivalをcloak付きにし、`crowd/ships.rs:188-224` は有効な紹介時に `AddBalls2` の後へobserver向けactionを送る。**wire試験と実際の2-client jump/observer試験で成功**。 |
+| Jump cloakを他pilotに見せる順序 | V24は対象ballを認識する前のeffectを安全に扱えると仮定できない。`michelle.py:1256-1277` がballを追加し、`Jump.py:617-624` がjump effectを処理する。EveJSは着船後にobserverへJumpInを送る。 | gate cloak中はobserverに船を出さず、cloak解除またはmovement後に一度だけ導入する。`test_jump.py` の二人接続ケースで、cloak中に船が隠れること、ownerのcloak通知順、observerが移動後に一度だけ船を受けることを確認。**以前の欠落を修正済み**。 |
+| Empire sentryのSlimとdamageState | V24 `remote/michelle.py:1256-1277` は `AddBalls2` の追加データをSlim単体または `(Slim, damageState)` として読む。`GetDamageState` (`:1017-1031`) はstate無しをNoneとして返す。`spaceObject/spaceObject.py:616-637` はdamage値がある場合に描画へ反映。`spacecomponents/client/components/entitystandings.py:61-74` はSlimのresponse thresholdを読む。EveJS `server/src/space/defaultEmpireScenery.js:272-315` と `nativeNpcService.js:2554-2605`。 | `crates/eve-space/src/slim.rs` はsentry向けSlim字段を、`pochven_population.rs` はSDEからの型と配置を、`payload.rs:16-23` は実damage stateを構築する。idle sceneryのEveJS Noneと、eve.rsのauthoritative full-health値は異なるがV24の両分岐に合う。比較helperはfull-healthの場合だけこの差を許し、partial/malformed damageを拒否する。**クライアント互換を確認。** |
+| 新規キャラクターの `HasEverWarped` | V24 `eve/client/script/ui/camera/enterSpaceCamera.py:39-45` はfalseなら初回space cameraを選ぶ。今回のEveJS captureはtrue、新規characterのeve.rs応答はfalse。 | 永続achievementが無いcharacterにfalseを返す動作を維持した。これはV24分岐に合い、headless walkで応答を確認。EveJS値は**参照サーバー差**。実際のcamera animationはGUIで再生していない。 |
+| 時間比較の精度 | 以前のhelperは250ms polling後の時刻をevent受信時刻として扱い、first jumpで比較誤差を加えていた。 | `evecli/packet.py`, `client.py`, `observe.py` がsocket packet受信時のmonotonic時刻を記録する。`test_core_flow_helpers.py` が受信時刻を使うことを検証。jump許容値 `TOLERANCE=1.6` は変えていない。**v8のjump試験は両サーバーで成功**。 |
+
+## 未解決または未検証の差分
+
+`diff-core` v8は同一の8テストを記録したが、全packetが同一という結果ではない。169対189件のCallReqを191行で比較し、63件に差分があった（28 reply shape、8 reply value、2 request argument value、1 reply kind、24 call presence）。応答がないCallReqは0件。notificationはEveJS 277、eve.rs 323、順序やshape/valueを含む差分行は316件、session changeは43件。handshake差分は116件。orphan replyとundecoded frameはいずれも0件。時刻・local ID・login環境値だけの差と、V24起動時に実際に問題になる差をGUIで区別できていない項目が残る。
+
+| 差分 | 事実と判定 |
+| --- | --- |
+| `GetServiceInfo` のservice map | raw replyのキー集合がEveJSと異なる。V24はこの表を後続RPCのnode routingに使う（`ServiceCallGPCS.py:194-212`）。今回の8ケースで使ったサービスは解決したが、ログイン後に起動する全機能・全サービスをgraphical clientで試していない。**範囲外のサービスで失敗する可能性があり未検証**。 |
+| Inventory `List` とDogma `GetAllInfo` のmarshal形 | raw diffでは `invbroker.List` のObjectEx/list差、`dogmaIM.MachoBindObject` のDogma info差が残る。V24 `invCache.py:501-559` および `godma.py:2399-2410` がinventoryとDogma dataを初期化する。今回のheadless testはhangar/ship/moduleの必要fieldを読めたが、UI全体が全行・全派生型を消費する場合の互換性は未確認。**可能性あり・GUI未検証**。 |
+| account role | handshakeのrole値はローカル認証fixtureが同じ権限設定ではなく、EveJS側とeve.rs側で異なる。roleは認可値なので比較器で無視していない。**role grantを一致させた比較は未実施**。 |
+| AIR NPE / NodeGraph | EveJS handshakeはAIR NPEを有効にし、candidateは無効にしている。V24 `characterCreationContainer_new.py:736-743` はfeature flagによってskipTutorialを選ぶ。最終テストは両側ともskipTutorialを明示しており、**チュートリアル有効経路は未確認**。 |
+| キャラクターslot上限 | raw fixtureはUIを介さず4人目作成RPCも直接送る。EveJSは4人目を許し、eve.rsはslot上限で拒否する。V24 `characterSelection.py:212-213` はserverのslot数を画面表示に使う。**直接RPCの差は確認済みだが、GUIでの追加slot購入を含む全経路は未検証**。 |
+| `GetUserToken` | EveJSのローカル合成tokenとeve.rsの認証tokenは値が異なる。V24 `carbon/client/script/remote/connectionService.py:128-153` が応答を保持し、`eve/client/script/ui/services/skillsvc.py:970-997` に任意のskill-extractor経路がある。**外部skill-extractor連携をGUIで確認していない**。 |
+| session/notificationの全差分 | role、station属性、AIR通知、時間駆動のDestiny tickとsimulation stampが混ざる。指定stepの順序と状態はheadless testで直接比較したが、316件すべての違いがclientに無影響と証明したわけではない。**残るraw通知差はレポートJSONLから個別に確認が必要**。 |
+
+## 実行記録と未確認事項
+
+- eve.rs v8: 8 passed、0 failed、0 skipped。専用DB `eve_p3` を使った。選択中characterの異常終了後の再接続、二人のjump/observer、undock/dockを含む。
+- EveJS v8: 同じ8 passed、0 failed、0 skipped。初回テスト試行では `skipTutorial=False` がAIR tutorial経路に入りstationを前提とした追加assertionと一致しなかった。V24 clientのtutorial branchを確認し、同じ再ログイン検査を `skipTutorial=True` 条件にそろえて再実行した結果がv8。
+- `.venv/bin/python -m pytest -q tests/test_mitm.py tests/test_core_flow_helpers.py`: 41 passed。
+- Rust: `cargo fmt --package eve-net --package eve-space -- --check`、`cargo check --release -p eve-net -p eve-space`、`cargo clippy --release -p eve-net -p eve-space -- -D warnings` 成功。handshake 19件、jump cloak 3件、jump arrival state 1件、sentry 2件、`jump_matches_reference` 4件が成功。
+- .NET: Eve.Host.Tests Release build成功、0 warnings/0 errors。`EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p3 dotnet test ... --filter FullyQualifiedName~RpcFuzzTests -m:1`: 3 passed、0 failed、0 skipped。
+- `git diff --check` 成功。
+- headless/proxyの検証はV24 wire protocolを再生したもの。**実際のgraphical V24 clientは起動していない**。camera、warp model、station view、character-selection UIの描画は未確認。
+- 同時二重ログインを含む一般のlifecycle fuzz、PostgreSQL再起動をまたぐcharacter selectionの再起動試験、すべてのRPC serviceの起動順は、この調査では確認していない。

@@ -1210,6 +1210,8 @@ fn a_source_system_pose_query_returns_position_and_direction_atomically_without_
             .any(|message| matches!(message, Message::EnterReply { session_id: SESSION, outcome: Ok(()) }))
     );
 
+    sim.scenes.get_mut(&scene).unwrap().pilots.get_mut(&SESSION).unwrap().ship.course =
+        crate::ship::Course::Follow { target: 8_900_000_002, range: 2_500.0 };
     let reply =
         sim.handle(Message::GetAbyssalParticipantPose { request_id: 7, scene, ship_id }, NOON).unwrap();
     let [
@@ -1219,6 +1221,7 @@ fn a_source_system_pose_query_returns_position_and_direction_atomically_without_
             ship_id: id,
             outcome: Ok((position, direction)),
             deployment,
+            following,
         },
     ] = reply.as_slice()
     else {
@@ -1229,6 +1232,14 @@ fn a_source_system_pose_query_returns_position_and_direction_atomically_without_
         (scene, ship_id, [100.0, 200.0, 300.0], [0.0, 0.0, 1.0])
     );
     assert_eq!(deployment.is_some(), scene.instance_id == 0);
+    assert_eq!(
+        *following,
+        Some(crate::link::AbyssalFollowApproach {
+            target_id: 8_900_000_002,
+            follow_range_meters: 2_500.0,
+            max_velocity_meters_per_second: 339.25,
+        })
+    );
 }
 
 fn afterburner(module: i64) -> crate::modules::Effect {

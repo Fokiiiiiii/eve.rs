@@ -903,6 +903,45 @@ public sealed partial class AbyssalHostFlowTests
     }
 
     [PgFact]
+    public async Task Abyssal_gate_accepts_a_committed_follow_approach_to_the_exact_gate()
+    {
+        await using var rig = await Rig.Create();
+        var run = await rig.CreateRun();
+        await rig.Drain();
+        var session = await rig.Connect(run);
+        await rig.Transaction(async (c, tx) =>
+        {
+            foreach (var npc in run.Data.Rooms[0].Entities.Where(entity => entity.Role == AbyssalEntityRole.Npc))
+                await rig.Runtime.NpcDestroyedAsync(c, tx, new AbyssalNpcDestroyedRequest(run.InstanceId, 1, npc.EntityId));
+        });
+        var gate = run.Data.Rooms[0].Entities.Single(entity => entity.Role == AbyssalEntityRole.Gate);
+        var participant = run.Data.Participants.Single();
+        var typeRows = await rig.Sde.ReadAsync("types", [gate.TypeId, participant.ShipTypeId]);
+        var gateRadius = typeRows.Single(row => row.Key == gate.TypeId).Doc.GetProperty("radius").GetDouble();
+        var shipRadius = typeRows.Single(row => row.Key == participant.ShipTypeId).Doc.GetProperty("radius").GetDouble();
+        rig.Simulator.Pose = [gate.Position.X + 2_600 + gateRadius + shipRadius, gate.Position.Y, gate.Position.Z];
+        var request = new ServiceCall { Session = session, Method = "AbyssalGateActivation", Args = [new PyLong(gate.EntityId)] };
+
+        rig.Simulator.Following = new SimAbyssalFollowApproach(gate.EntityId + 1, 2_500, 100);
+        var contentBefore = (await rig.Foundations.Content.GetAsync(run.InstanceId))!.DataJson;
+        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Service.CallAsync(request).AsTask());
+        await rig.Drain();
+        Assert.Equal(contentBefore, (await rig.Foundations.Content.GetAsync(run.InstanceId))!.DataJson);
+        Assert.Equal(0, rig.Simulator.Moves);
+        Assert.DoesNotContain("OnEnteringDungeonRoom", rig.ClientNotifications);
+
+        rig.Simulator.Following = new SimAbyssalFollowApproach(gate.EntityId, 2_500, 100);
+
+        await rig.Service.CallAsync(request);
+        await rig.Drain();
+
+        Assert.Equal(2, (await rig.State(run.InstanceId)).CurrentRoomIndex);
+        Assert.Equal(1, rig.Simulator.Moves);
+        Assert.Equal(new[] { "OnExitingDungeon", "OnEnteringDungeonRoom" }, rig.ClientNotifications
+            .Where(name => name is "OnExitingDungeon" or "OnEnteringDungeonRoom"));
+    }
+
+    [PgFact]
     public async Task Final_exit_serializes_notices_session_handoff_and_finished_and_retry_does_not_repeat_exit()
     {
         await using var rig = await Rig.Create();
@@ -1091,6 +1130,7 @@ public sealed partial class AbyssalHostFlowTests
         public required AbyssalStaticCatalog Catalog { get; init; }
         public required CreationCatalog Creation { get; init; }
         public required StationCatalog Stations { get; init; }
+        public required SolarSystemCatalog Systems { get; init; }
         public required SdeReader Sde { get; init; }
         public required AbyssalRoomSpawnReservation Reservation { get; init; }
         public required CharacterServicesComposition Host { get; init; }
@@ -1204,6 +1244,7 @@ public sealed partial class AbyssalHostFlowTests
                 Catalog = catalog,
                 Creation = creation,
                 Stations = stations,
+                Systems = systems,
                 Sde = sde,
                 Reservation = reservation,
                 Host = host,
@@ -1306,14 +1347,14 @@ public sealed partial class AbyssalHostFlowTests
             return session;
         }
 
-        public async Task<ClientSession> ConnectPublic(AbyssalRunState run)
+        public async Task<ClientSession> ConnectPublic(AbyssalRunState run, IReadOnlyList<double>? position = null)
         {
             var character = (await Characters.GetAsync(run.Data.CreatorCharacterId))!;
             var ship = (await Items.GetAsync(run.Data.CreatorShipId))!;
             var type = (await new ItemTypeCatalog(Sde).GetAsync(ship.TypeId))!;
             var radius = (await Sde.ReadAsync("types", [ship.TypeId])).Single().Doc.GetProperty("radius").GetDouble();
             await Transaction((c, tx) => SpaceItems.SaveAsync(c, tx, new SpaceItem(ship.Id, character.SolarSystemId,
-                [10, 20, 30], [0, 0, 1], radius, type.GroupId, 0, character.Id, character.CorporationId, 0, 0, long.MaxValue)));
+                position ?? [10, 20, 30], [0, 0, 1], radius, type.GroupId, 0, character.Id, character.CorporationId, 0, 0, long.MaxValue)));
             var session = new ClientSession(new RecordingSink(Order, ClientNotifications, MessageOrder)) { SessionId = character.Id + 100, ClientId = character.Id + 200 };
             session.Set("charid", new PyLong(character.Id)); session.Set("shipid", new PyLong(ship.Id));
             session.Set("solarsystemid", new PyInt(character.SolarSystemId)); session.Set("solarsystemid2", new PyInt(character.SolarSystemId));
@@ -1426,6 +1467,7 @@ public sealed partial class AbyssalHostFlowTests
         public string? RemovalError { get; set; }
         public IReadOnlyList<double> Pose { get; set; } = [0, 0, 0];
         public IReadOnlyList<double> ShipDirection { get; set; } = [0, 0, 1];
+        public SimAbyssalFollowApproach? Following { get; set; }
         public int Moves { get; private set; }
         public List<SimMoveAbyssalParticipant> ParticipantMoves { get; } = [];
         public int PublicPoseQueries { get; private set; }
@@ -1473,7 +1515,10 @@ public sealed partial class AbyssalHostFlowTests
                 var request = (SimGetAbyssalParticipantPose)args![0]!;
                 if (request.Scene.InstanceId == 0) PublicPoseQueries++;
                 return Task.FromResult(new SimGetAbyssalParticipantPoseReply(request.RequestId, request.Scene, request.ShipId, Pose, ShipDirection, null)
-                { Deployment = request.Scene.InstanceId == 0 ? new SimAbyssalDeploymentSnapshot(false, false, false, false, false, []) : null });
+                {
+                    Deployment = request.Scene.InstanceId == 0 ? new SimAbyssalDeploymentSnapshot(false, false, false, false, false, []) : null,
+                    Following = request.Scene.InstanceId == 0 ? null : Following,
+                });
             }
             if (method.Name is "MoveAbyssalParticipantAsync" or "MoveAbyssalParticipantInOrderAsync")
             {

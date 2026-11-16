@@ -50,6 +50,7 @@ public sealed record AbyssalParticipantPoseResult(
 {
     public bool Found => Error is null;
     public SimAbyssalDeploymentSnapshot? Deployment { get; init; }
+    public SimAbyssalFollowApproach? Following { get; init; }
     public bool Tethered { get; init; }
     public bool SelfDestructPending { get; init; }
     public bool SessionChanging { get; init; }
@@ -271,7 +272,11 @@ public sealed partial class SpaceSessions
             {
                 return new(shipId, expectedScene, [], [], "ABYSSAL_POSE_REPLY_MISMATCH");
             }
-            return new(shipId, expectedScene, reply.Position.ToArray(), reply.Direction.ToArray(), null) { Deployment = reply.Deployment };
+            return new(shipId, expectedScene, reply.Position.ToArray(), reply.Direction.ToArray(), null)
+            {
+                Deployment = reply.Deployment,
+                Following = reply.Following,
+            };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

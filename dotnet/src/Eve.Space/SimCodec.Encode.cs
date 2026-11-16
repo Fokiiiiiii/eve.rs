@@ -1165,6 +1165,21 @@ private static void WriteStructureDamageCorrelation(
                         w.I64(item.ItemId); w.I32(item.TypeId); w.F64(item.CenterDistanceMeters);
                     }
                 }
+                if (m.Following is { } following)
+                {
+                    if (m.Error is not null || following.TargetId <= 0 || !double.IsFinite(following.FollowRangeMeters) ||
+                        following.FollowRangeMeters < 0 || !double.IsFinite(following.MaxVelocityMetersPerSecond) ||
+                        following.MaxVelocityMetersPerSecond <= 0)
+                        throw new ArgumentException("Invalid Abyssal FOLLOW state.", nameof(message));
+                    w.U8(1);
+                    w.I64(following.TargetId);
+                    w.F64(following.FollowRangeMeters);
+                    w.F64(following.MaxVelocityMetersPerSecond);
+                }
+                else
+                {
+                    w.U8(0);
+                }
                 break;
             case SimHello m:
                 w.U8(Kind.Hello);

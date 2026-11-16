@@ -516,7 +516,14 @@ impl Message {
                 put_scene_key(&mut out, *scene);
                 out.extend_from_slice(&ship_id.to_le_bytes());
             }
-            Self::GetAbyssalParticipantPoseReply { request_id, scene, ship_id, outcome, deployment } => {
+            Self::GetAbyssalParticipantPoseReply {
+                request_id,
+                scene,
+                ship_id,
+                outcome,
+                deployment,
+                following,
+            } => {
                 assert!(
                     *request_id > 0 && scene.is_valid() && *ship_id > 0,
                     "invalid resident pose reply identity"
@@ -570,6 +577,23 @@ impl Message {
                         out.extend_from_slice(&object.type_id.to_le_bytes());
                         out.extend_from_slice(&object.center_distance_meters.to_le_bytes());
                     }
+                }
+                if let Some(approach) = following {
+                    assert!(
+                        outcome.is_ok()
+                            && approach.target_id > 0
+                            && approach.follow_range_meters.is_finite()
+                            && approach.follow_range_meters >= 0.0
+                            && approach.max_velocity_meters_per_second.is_finite()
+                            && approach.max_velocity_meters_per_second > 0.0,
+                        "invalid Abyssal FOLLOW state"
+                    );
+                    out.push(1);
+                    out.extend_from_slice(&approach.target_id.to_le_bytes());
+                    out.extend_from_slice(&approach.follow_range_meters.to_le_bytes());
+                    out.extend_from_slice(&approach.max_velocity_meters_per_second.to_le_bytes());
+                } else {
+                    out.push(0);
                 }
             }
             Self::MovePublicParticipant {

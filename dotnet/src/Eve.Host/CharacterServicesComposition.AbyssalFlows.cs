@@ -283,8 +283,12 @@ internal sealed partial class CharacterServicesComposition
                 throw new InvalidDataException($"Conduit range type {typeId} has no finite SDE radius.");
             return radius;
         }
-        if (!AbyssalTraceRange.IsWithin(pose.Position, Radius(binding.Participant.ShipTypeId),
-                [gate.Position.X, gate.Position.Y, gate.Position.Z], Radius(gate.TypeId)))
+        var gatePosition = new[] { gate.Position.X, gate.Position.Y, gate.Position.Z };
+        var shipRadius = Radius(binding.Participant.ShipTypeId);
+        var gateRadius = Radius(gate.TypeId);
+        if (!AbyssalTraceRange.IsWithin(pose.Position, shipRadius, gatePosition, gateRadius) &&
+            !AbyssalTraceRange.IsWithinCommittedFollowApproach(
+                pose.Position, shipRadius, gatePosition, gateRadius, gate.EntityId, pose.Following))
             throw AbyssalErrorAdapter.FromRule(
                 new AbyssalRuleException(AbyssalRuleCode.InvalidGate, "the conduit is beyond its surface activation range"), true);
     }

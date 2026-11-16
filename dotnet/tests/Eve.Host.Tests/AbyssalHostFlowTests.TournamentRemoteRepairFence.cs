@@ -45,13 +45,30 @@ public sealed partial class AbyssalHostFlowTests
             var online=await rig.Ships.SetOnlineAsync(healerRun.Data.CreatorCharacterId,healerRun.Data.CreatorShipId,module,true);
             Assert.True(online is ShipChanged, online.ToString());
             await new PgModuleStateStore(rig.Source,rig.Schemas[3]).SetShipConditionAsync(targetRun.Data.CreatorShipId,ShipCondition.Full with { ArmorDamage=0.5 });
-            var healer=await rig.ConnectPublic(healerRun); var target=await rig.ConnectPublic(targetRun);
-            var system=rig.Space.SolarSystemOf(healer)!.Value; Assert.Equal(system,rig.Space.SolarSystemOf(target));
+            var system=(await rig.Characters.GetAsync(healerRun.Data.CreatorCharacterId))!.SolarSystemId;
+            var gates=rig.Systems.Get(system)!.Gates;
+            Assert.NotEmpty(gates);
+            var gate=gates[0];
+            var spawnX=gate.X+gate.Radius+10_000_000;
+            var healer=await rig.ConnectPublic(healerRun, [spawnX, gate.Y, gate.Z]);
+            var target=await rig.ConnectPublic(targetRun, [spawnX+1000, gate.Y, gate.Z]);
+            Assert.Equal(system,rig.Space.SolarSystemOf(healer)); Assert.Equal(system,rig.Space.SolarSystemOf(target));
             var targetShip=targetRun.Data.CreatorShipId; var scene=SimSceneKey.SolarSystem(system);
             var initial=(await sim.CommandAsync((ulong)target.SessionId,SimCommands.GetCondition,[],timeout.Token)).Condition!;
             Assert.True(initial.ArmorDamage>0);
+            var healerEntry=Assert.Single(rig.Simulator.Enters, entry => entry.SessionId==(ulong)healer.SessionId);
+            var healerPose=await sim.CommandAsync((ulong)healer.SessionId,SimCommands.PositionOf,[healerRun.Data.CreatorShipId],timeout.Token);
+            var targetPose=await sim.CommandAsync((ulong)healer.SessionId,SimCommands.PositionOf,[targetShip],timeout.Token);
+            Assert.True(healerPose.Accepted, $"The healer is not present in its scene: {healerPose.Reason}");
+            Assert.True(targetPose.Accepted, $"The target is not visible in the healer's scene: {targetPose.Reason}");
+            Assert.Equal(spawnX, healerPose.Position[0], 0.1);
+            Assert.Equal(gate.Y, healerPose.Position[1], 0.1);
+            Assert.Equal(gate.Z, healerPose.Position[2], 0.1);
+            Assert.Equal(spawnX+1000, targetPose.Position[0], 0.1);
             var lockResult=await sim.CommandAsync((ulong)healer.SessionId,SimCommands.AddTarget,[targetShip],timeout.Token);
-            Assert.True(lockResult.Accepted,lockResult.Reason);
+            Assert.True(lockResult.Accepted,
+                $"{lockResult.Reason}; entered={healerEntry.How}:{string.Join(',', healerEntry.Position ?? [])}; " +
+                $"healer={string.Join(',', healerPose.Position)}; target={string.Join(',', targetPose.Position)}");
             while (!(await sim.CommandAsync((ulong)healer.SessionId,SimCommands.GetTargets,[],timeout.Token)).Targets.Contains(targetShip)) await Task.Delay(100,timeout.Token);
             var startTime=Py.FileTimeFromUnixMs(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()+3000);
             var deadline=startTime+200_000_000;

@@ -47,7 +47,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 98;
+pub const PROTOCOL_VERSION: u16 = 99;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -679,6 +679,14 @@ pub struct AbyssalDeploymentSnapshot {
     pub nearby_objects: Vec<AbyssalDeploymentObject>,
 }
 
+/// The authoritative FOLLOW course of a resident ship, when it is following a target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AbyssalFollowApproach {
+    pub target_id: i64,
+    pub follow_range_meters: f64,
+    pub max_velocity_meters_per_second: f64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbyssalTrace {
     pub solar_system_id: i32,
@@ -1053,6 +1061,7 @@ pub enum Message {
         ship_id: i64,
         outcome: Result<([f64; 3], [f64; 3]), String>,
         deployment: Option<AbyssalDeploymentSnapshot>,
+        following: Option<AbyssalFollowApproach>,
     },
     Enter(Box<Enter>),
     /// Whether an `Enter` was done (`Err` carries why not).

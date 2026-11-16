@@ -563,6 +563,9 @@ public class SimCodecTests
                         (bool)deployment["undockInvulnerable"]!, (bool)deployment["warpScrambled"]!,
                         ((JsonArray)deployment["nearbyObjects"]!).Select(item => new SimAbyssalDeploymentObject(
                             Wide(item!, "itemId"), (int)item!["typeId"]!, (double)item["centerDistanceMeters"]!)).ToArray()) : null,
+                    Following = c["following"] is { } following ? new(
+                        Wide(following, "targetId"), (double)following["followRangeMeters"]!,
+                        (double)following["maxVelocityMetersPerSecond"]!) : null,
                 },
             "MoveAbyssalParticipant" => MoveAbyssalParticipantOf(c),
             "MoveAbyssalParticipantReply" => new SimMoveAbyssalParticipantReply((ulong)Wide(c, "requestId"), (bool)c["ok"]! ? null : (string)c["reason"]!),

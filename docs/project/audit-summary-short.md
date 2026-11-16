@@ -42,29 +42,29 @@
 
 ## 未解決・保留項目（元の一覧行。複数所見・重複記録あり）
 
-- コア・ハブ — communityTrackMgrの進捗生成元なし — audit-summary.md:L413 / audit-fixes-core.md:L28
-- フィッティング・Dogma — Starbase AddTargetOBO/RemoveTargetOBO未実装 — audit-summary.md:L414 / audit-fixes-dogma.md:L41
-- 戦闘・ドローン — Control BunkerのID・位置・占領処理不足 — audit-summary.md:L415 / audit-fixes-factionwarfare.md:L49
-- ミッション・エージェント — SDE mission poolからofferを作る経路なし（件数外） — audit-summary.md:L416 / audit-fixes-agents.md:L21
-- 戦闘・ドローン — Control BunkerのID取得元不足（重複記録） — audit-summary.md:L417 / service-audit/DEEPCHECK_facWarMgr.md:L64
-- 船・宇宙空間 — Filamentのcomponent操作が未実装 — audit-summary.md:L418 / service-audit/DEEPCHECK_beyonce.md:L70
-- 船・宇宙空間 — FitShips未登録 — audit-summary.md:L419 / service-audit/DEEPCHECK_ship.md:L22
-- 船・宇宙空間 — LaunchFromContainer未登録 — audit-summary.md:L420 / service-audit/DEEPCHECK_ship.md:L27
-- 船・宇宙空間 — ScoopToFleetHangar未登録 — audit-summary.md:L421 / service-audit/DEEPCHECK_ship.md:L29
-- 船・宇宙空間 — ScoopToInfrastructureHold未登録 — audit-summary.md:L422 / service-audit/DEEPCHECK_ship.md:L31
-- 船・宇宙空間 — ScoopToMobileDepotHold未登録 — audit-summary.md:L423 / service-audit/DEEPCHECK_ship.md:L32
-- 船・宇宙空間 — BoardStoredShip未登録 — audit-summary.md:L424 / service-audit/DEEPCHECK_ship.md:L36
-- 船・宇宙空間 — SetShipPassword未登録 — audit-summary.md:L425 / service-audit/DEEPCHECK_ship.md:L43
-- ミッション・エージェント — GetMyEscalatingPathDetailsの本番providerなし — audit-summary.md:L426 / service-audit/DEEPCHECK_journal.md:L47
-- Host・wire・marshal — Ansiblex Host移動経路未接続 — audit-summary.md:L427 / service-audit/EVEJS_261028_MIGRATION.md:L49
-- 船・宇宙空間 — Ansiblex移動経路の未解決を別記録も報告 — audit-summary.md:L428 / service-audit/deepfix-jump-drives-cyno.md:L48
-- 法人・契約 — warStatisticMgrのreport provider未実装（他2件は後続解消） — audit-summary.md:L429 / service-response-audit/corporations.md:L20
-- フィッティング・Dogma — 報酬永続化・再試行記録・旧fitting移行 — audit-summary.md:L430 / service-response-audit/crate-fitting-fix.md:L22
-- キャラクター・スキル — skill-bundle待機報酬の永続化候補 — audit-summary.md:L431 / service-response-audit/crate-skill-retry-fix.md:L75
-- Host・wire・marshal — 惑星RPC・material monitor・惑星状態merge — audit-summary.md:L432 / service-response-audit/host-native-services.md:L206
-- 構造物・POS — 燃料切れ後のmodule_state同期 — audit-summary.md:L433 / service-audit/deepfix-structure-fuel-services.md:L17
-- 構造物・POS — POS module/effect/forcefieldと燃料切れcleanupの検証 — audit-summary.md:L434 / deepfix-structures-pos.md:L53
-- 構造物・POS — sim ball・warp-in pointを含む配置検証 — audit-summary.md:L435 / deepfix-structures-pos.md:L54
+- コア・ハブ — communityTrackMgrの進捗生成元なし — audit-fixes-core.md:L28
+- フィッティング・Dogma — Starbase AddTargetOBO/RemoveTargetOBO未実装 — audit-fixes-dogma.md:L41
+- 戦闘・ドローン — Control BunkerのID・位置・占領処理不足 — audit-fixes-factionwarfare.md:L49
+- ミッション・エージェント — SDE mission poolからofferを作る経路なし（件数外） — audit-fixes-agents.md:L21
+- 戦闘・ドローン — Control BunkerのID取得元不足（重複記録） — service-audit/DEEPCHECK_facWarMgr.md:L64
+- 船・宇宙空間 — Filamentのcomponent操作が未実装 — service-audit/DEEPCHECK_beyonce.md:L70
+- 船・宇宙空間 — FitShips未登録 — service-audit/DEEPCHECK_ship.md:L22
+- 船・宇宙空間 — LaunchFromContainer未登録 — service-audit/DEEPCHECK_ship.md:L27
+- 船・宇宙空間 — ScoopToFleetHangar未登録 — service-audit/DEEPCHECK_ship.md:L29
+- 船・宇宙空間 — ScoopToInfrastructureHold未登録 — service-audit/DEEPCHECK_ship.md:L31
+- 船・宇宙空間 — ScoopToMobileDepotHold未登録 — service-audit/DEEPCHECK_ship.md:L32
+- 船・宇宙空間 — BoardStoredShip未登録 — service-audit/DEEPCHECK_ship.md:L36
+- 船・宇宙空間 — SetShipPassword未登録 — service-audit/DEEPCHECK_ship.md:L43
+- ミッション・エージェント — GetMyEscalatingPathDetailsの本番providerなし — service-audit/DEEPCHECK_journal.md:L47
+- Host・wire・marshal — Ansiblex Host移動経路未接続 — service-audit/EVEJS_261028_MIGRATION.md:L49
+- 船・宇宙空間 — Ansiblex移動経路の未解決を別記録も報告 — service-audit/deepfix-jump-drives-cyno.md:L48
+- 法人・契約 — warStatisticMgrのreport provider未実装（他2件は後続解消） — service-response-audit/corporations.md:L20
+- フィッティング・Dogma — 報酬永続化・再試行記録・旧fitting移行 — service-response-audit/crate-fitting-fix.md:L22
+- キャラクター・スキル — skill-bundle待機報酬の永続化候補 — service-response-audit/crate-skill-retry-fix.md:L75
+- Host・wire・marshal — 惑星RPC・material monitor・惑星状態merge — service-response-audit/host-native-services.md:L206
+- 構造物・POS — 燃料切れ後のmodule_state同期 — service-audit/deepfix-structure-fuel-services.md:L17
+- 構造物・POS — POS module/effect/forcefieldと燃料切れcleanupの検証 — deepfix-structures-pos.md:L53
+- 構造物・POS — sim ball・warp-in pointを含む配置検証 — deepfix-structures-pos.md:L54
 
 この表は記録単位の掲載数で、重複不具合を除いた総数ではない。NCは「不具合なし」を意味しない。
 修正確認は記録されたテスト範囲に限り、GUI実クライアントの受入れや監査完了を示さない。

@@ -100,6 +100,9 @@ public sealed class AgentMissionReadWireTests
         var arc = Assert.Single(arcStatus.Entries);
         Assert.Equal(new PyInt(1200), arc.Key);
         Assert.IsType<PyDict>(arc.Value);
+        var cachedMessages = Assert.IsType<PyObject>(await Call(5, "GetMessagesForEpicArcMissions"));
+        Assert.Equal("carbon.common.script.net.objectCaching.CachedMethodCallResult", JsSemantics.StringValue(cachedMessages.Name));
+        var cacheParts = Assert.IsType<PyTuple>(cachedMessages.Args).Items;
         Assert.Equal(new PyDict([
             new KeyValuePair<PyValue, PyValue>(
                 new PyStr("start"),
@@ -107,7 +110,7 @@ public sealed class AgentMissionReadWireTests
                     new KeyValuePair<PyValue, PyValue>(
                         new PyInt(430001), new PyStr("UI/Agent/EpicArc/Start")),
                 ])),
-        ]), await Call(5, "GetMessagesForEpicArcMissions"));
+        ]), Assert.IsType<PySubStream>(cacheParts[1]).Decoded);
 
         var journal = Assert.IsType<PyTuple>(await Call(6, "GetMyJournalDetails"));
         Assert.Equal(2, journal.Items.Count);

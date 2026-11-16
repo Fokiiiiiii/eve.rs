@@ -4,7 +4,7 @@ using Eve.Services.Core;
 
 namespace Eve.Services.Core.Tests;
 
-/// <summary>The basic kill pool of the security agents, on the committed level tags (missions 3318, 3319 at level 5; 891 at level 4).</summary>
+/// <summary>The basic kill pool of security agents, using committed official mission level tags.</summary>
 public class BasicKillOffersTests
 {
     private static SdeRow Kill(long id, long dungeon) => new(id, JsonDocument.Parse(
@@ -12,7 +12,7 @@ public class BasicKillOffersTests
         ", \"killMission\": {\"dungeonID\": " + dungeon + ", \"objectiveQuantity\": 0}}").RootElement.Clone());
 
     private static readonly MissionStaticCatalog Catalog = MissionStaticCatalog.FromRows(
-        3405148, [Kill(3318, 2147), Kill(3319, 2189), Kill(891, 216)], []);
+        3405148, [Kill(875, 213), Kill(888, 214), Kill(890, 190), Kill(891, 216), Kill(3318, 2147), Kill(3319, 2189)], []);
 
     private static AgentMissionAgentData Agent(long level, long type = 2, long division = 24, string kind = "encounter") => new(
         AgentId: 3008001, AgentTypeId: type, DivisionId: division, Level: level, StationId: 60000001, CorporationId: 1000001,
@@ -38,6 +38,24 @@ public class BasicKillOffersTests
     }
 
     [Fact]
+    public void A_level_1_security_agent_offers_a_level_1_mission_from_the_official_level_tags()
+    {
+        Assert.Equal(875, BasicKillOffers.Pick(Catalog, Agent(1), NoneDone, Now, AllStart));
+    }
+
+    [Fact]
+    public void Basic_security_agents_can_receive_missions_at_each_tagged_level()
+    {
+        Assert.Equal(875, BasicKillOffers.Pick(Catalog, Agent(1), NoneDone, Now, AllStart));
+        Assert.Equal(888, BasicKillOffers.Pick(Catalog, Agent(2), NoneDone, Now, AllStart));
+        Assert.Equal(890, BasicKillOffers.Pick(Catalog, Agent(3), NoneDone, Now, AllStart));
+        Assert.Equal(891, BasicKillOffers.Pick(Catalog, Agent(4), NoneDone, Now, AllStart));
+        Assert.Equal(3318, BasicKillOffers.Pick(Catalog, Agent(5), NoneDone, Now, AllStart));
+        Assert.Null(BasicKillOffers.Pick(Catalog, Agent(0), NoneDone, Now, AllStart));
+        Assert.Null(BasicKillOffers.Pick(Catalog, Agent(6), NoneDone, Now, AllStart));
+    }
+
+    [Fact]
     public void A_mission_whose_dungeon_cannot_start_is_not_offered()
     {
         Assert.Equal(3319, BasicKillOffers.Pick(Catalog, Agent(5), NoneDone, Now, dungeon => dungeon != 2147));
@@ -50,10 +68,9 @@ public class BasicKillOffersTests
     }
 
     [Fact]
-    public void A_level_4_agent_offers_a_level_4_mission_and_levels_3_or_below_are_not_offered()
+    public void A_level_4_agent_offers_a_level_4_mission()
     {
         Assert.Equal(891, BasicKillOffers.Pick(Catalog, Agent(4), NoneDone, Now, AllStart));
-        Assert.Null(BasicKillOffers.Pick(Catalog, Agent(3), NoneDone, Now, AllStart));
     }
 
     [Fact]

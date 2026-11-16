@@ -31,6 +31,7 @@ public class AgentDialogueTests
         public DateTimeOffset Now { get; set; } = Start;
         public AgentStandings Standings { get; set; } = new(0, 0, 0);
         public AgentMissionContent? Pool { get; set; }
+        public long? MissionMessageId { get; set; }
         public int TurnIns { get; private set; }
         public AgentMissionStore Store { get; }
 
@@ -58,6 +59,9 @@ public class AgentDialogueTests
             _ => Faction,
             (_, _, _) => ValueTask.FromResult(Pool),
             () => Now,
+            ReadMissionMessageId: (_, key) => key is ClientMissionMessages.OfferedAgentSaysKey or ClientMissionMessages.BriefingKey
+                ? MissionMessageId
+                : null,
             OnMissionTurnIn: async (characterId, agentId, cancellationToken) =>
             {
                 TurnIns++;
@@ -121,22 +125,41 @@ public class AgentDialogueTests
         await using var world = await World.CreateAsync();
         await world.MigrateAsync();
         world.Pool = Courier;
+        world.MissionMessageId = 9100;
         var machine = Machine(world);
 
         var requested = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Request), false, default);
-        Assert.Equal(Pairs((AgentDialogueToken.Accept, AgentDialogueButton.Accept), (AgentDialogueToken.Decline, AgentDialogueButton.Decline)), requested.Actions.ToArray());
+        Assert.Equal(Pairs(
+            (AgentDialogueToken.Accept, AgentDialogueButton.Accept),
+            (AgentDialogueToken.Decline, AgentDialogueButton.Decline),
+            (AgentDialogueToken.Defer, AgentDialogueButton.Defer)), requested.Actions.ToArray());
+        Assert.Equal(AgentMissionState.Offered, (await world.Store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Equal(new PyTuple([new PyInt(9100), new PyInt(Courier.MissionId)]), requested.AgentSays);
+
+        var deferred = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Defer), false, default);
+        Assert.Equal(requested.Actions.ToArray(), deferred.Actions.ToArray());
+        Assert.Equal(requested.AgentSays, deferred.AgentSays);
         Assert.Equal(AgentMissionState.Offered, (await world.Store.ReadAsync(Pilot, Agent))!.State);
 
         var accepted = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Accept), false, default);
-        Assert.Empty(accepted.Actions);
+        Assert.Equal(Pairs((AgentDialogueToken.Complete, AgentDialogueButton.Complete)), accepted.Actions.ToArray());
+        Assert.Equal(PyBool.False, accepted.LastActionInfo.Entries.Single(entry => entry.Key is PyStr { Value: "missionCompleted" }).Value);
+        Assert.Equal(PyBool.False, accepted.LastActionInfo.Entries.Single(entry => entry.Key is PyStr { Value: "missionQuit" }).Value);
+        Assert.Equal(PyBool.False, accepted.LastActionInfo.Entries.Single(entry => entry.Key is PyStr { Value: "missionDeclined" }).Value);
         Assert.Equal(AgentMissionState.Accepted, (await world.Store.ReadAsync(Pilot, Agent))!.State);
+
+        // The client can send Complete after a direct Accept response, but an incomplete objective cannot settle.
+        var prematureTurnIn = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Complete), true, default);
+        Assert.Equal(AgentMissionState.Accepted, (await world.Store.ReadAsync(Pilot, Agent))!.State);
+        Assert.Equal(0, world.TurnIns);
+        Assert.DoesNotContain(prematureTurnIn.Actions, action => action.ButtonType == AgentDialogueButton.Complete);
 
         var away = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Quit), false, default);
         Assert.Empty(away.Actions);
         Assert.Equal(AgentMissionState.Accepted, (await world.Store.ReadAsync(Pilot, Agent))!.State);
 
         var shown = await machine.DoActionAsync(Pilot, Basic(), PyNone.Instance, true, default);
-        Assert.Equal(Pairs((AgentDialogueToken.Quit, AgentDialogueButton.Quit)), shown.Actions.ToArray());
+        Assert.Equal(Pairs((AgentDialogueToken.QuitReady, AgentDialogueButton.Quit)), shown.Actions.ToArray());
         // Quit asks the client first (YesNo); a yes quits the mission.
         var asked = await machine.StepAsync(Pilot, Basic(), Button(AgentDialogueToken.Quit), true, default);
         Assert.Equal("YesNo", asked.Prompt!.Method);
@@ -183,7 +206,7 @@ public class AgentDialogueTests
         var kept = Assert.IsType<AgentDialogueStep>(await asked.Prompt!.Then(PyBool.False)).Reply!;
 
         Assert.Equal(AgentMissionState.Accepted, (await world.Store.ReadAsync(Pilot, Agent))!.State);
-        Assert.Equal(Pairs((AgentDialogueToken.Quit, AgentDialogueButton.Quit)), kept.Actions.ToArray());
+        Assert.Equal(Pairs((AgentDialogueToken.QuitReady, AgentDialogueButton.Quit)), kept.Actions.ToArray());
     }
 
     [AgentsPgFact]
@@ -203,7 +226,10 @@ public class AgentDialogueTests
         world.Now = Start + TimeSpan.FromHours(1);
         var during = await machine.DoActionAsync(Pilot, Basic(), Button(AgentDialogueToken.Request), false, default);
 
-        Assert.Equal(Pairs((AgentDialogueToken.Accept, AgentDialogueButton.Accept), (AgentDialogueToken.Decline, AgentDialogueButton.Decline)), during.Actions.ToArray());
+        Assert.Equal(Pairs(
+            (AgentDialogueToken.Accept, AgentDialogueButton.Accept),
+            (AgentDialogueToken.Decline, AgentDialogueButton.Decline),
+            (AgentDialogueToken.Defer, AgentDialogueButton.Defer)), during.Actions.ToArray());
         Assert.Equal(AgentMissionState.Offered, (await world.Store.ReadAsync(Pilot, Agent))!.State);
         Assert.Equal(Start + AgentMissionStore.DeclineReplayDelay, (await world.Store.ReadAsync(Pilot, Agent))!.DeclineUntil);
     }

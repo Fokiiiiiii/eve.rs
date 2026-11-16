@@ -79,7 +79,13 @@ public sealed class AgentCatalogHostWireTests
             Assert.Equal(new PyInt(agentId), agentRow.Items[0]);
             Assert.Equal(new PyInt(22), agentRow.Items[2]);
 
-            var messages = Assert.IsType<PyDict>(await CallAgentMgr(2, "GetMessagesForEpicArcMissions"));
+            var cachedMessages = Assert.IsType<PyObject>(await CallAgentMgr(2, "GetMessagesForEpicArcMissions"));
+            Assert.Equal("carbon.common.script.net.objectCaching.CachedMethodCallResult", JsSemantics.StringValue(cachedMessages.Name));
+            var cacheFields = Assert.IsType<PyTuple>(cachedMessages.Args).Items;
+            Assert.Equal("never", JsSemantics.StringValue(Assert.Single(Assert.IsType<PyDict>(cacheFields[0]).Entries,
+                entry => JsSemantics.StringValue(entry.Key) == "versionCheck").Value));
+            Assert.IsType<PyList>(cacheFields[2]);
+            var messages = Assert.IsType<PyDict>(Assert.IsType<PySubStream>(cacheFields[1]).Decoded);
             var chapterMessages = Assert.Single(messages.Entries,
                 entry => JsSemantics.StringValue(entry.Key) == "messages.epicMission.journalText.chapterTitle");
             var byMission = Assert.IsType<PyDict>(chapterMessages.Value);

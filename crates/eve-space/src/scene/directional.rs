@@ -48,7 +48,7 @@ impl Scene {
                 position: [p.x, p.y, p.z],
                 radius: pilot.ship.spec.radius,
                 cloaked: !matches!(pilot.cloak, CloakState::Uncloaked),
-                warping: pilot.flight.is_some(),
+                warping: pilot.flight.as_ref().is_some_and(|flight| flight.is_in_warp_mode()),
             });
         }
         for deployable in self.deployables.values() {

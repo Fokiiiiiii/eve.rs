@@ -1656,6 +1656,7 @@ fn message_of(case: &Value) -> Message {
             belt_id: wide(case, "beltId"),
             position: vector_of(case, "position"),
         },
+        "WarpExited" => Message::WarpExited { session_id: session_id() },
         "ChangeWreck" => Message::ChangeWreck {
             session_id: session_id(),
             wreck_id: wide(case, "wreckId"),
@@ -2629,6 +2630,7 @@ fn abyssal_scene_object_and_content_keyed_spawn_fixtures_roundtrip() {
                 || case.get("settledNpcIds").is_some()
         })
         .collect();
+    // The v99 committed-approach pose receipt is now part of this roundtrip set.
     assert_eq!(selected.len(), 19);
 
     for case in selected {

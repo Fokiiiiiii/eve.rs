@@ -22,6 +22,8 @@ import math
 import os
 import re
 import time
+import subprocess
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -74,6 +76,46 @@ def connect(name: str, *, timeout: float = 30.0) -> Client:
     client = Client(*address, timeout=timeout)
     client.login(name, "walk-password")
     return client
+
+
+def notification_type_ids(value) -> list[int]:
+    """Read the V24 notification manager's CRowset or the reference-compatible util.KeyVal list."""
+    required_fields = {"notificationID", "typeID", "senderID", "receiverID", "processed", "created", "data"}
+    if isinstance(value, m.ObjectEx):
+        described = describe(value)
+        object_header = described["$objectex"]["$tuple"][0]
+        first = object_header.get("$tuple", [None])[0] if isinstance(object_header, dict) else None
+        first = first.get("$tuple", [first])[0] if isinstance(first, dict) else first
+        class_name = first.get("$token") if isinstance(first, dict) else None
+        assert class_name == "carbon.common.script.sys.crowset.CRowset", class_name
+        rows = value.items
+        row_kind = "CRowset"
+    else:
+        assert isinstance(value, m.List), type(value).__name__
+        rows = value
+        row_kind = "list"
+
+    result = []
+    for row in rows:
+        if isinstance(row, m.PackedRow):
+            fields = row.fields()
+            assert required_fields.issubset(fields), f"{row_kind} DTO is missing {required_fields - set(fields)}"
+            result.append(int(m.plain(fields["typeID"])))
+            continue
+        assert isinstance(row, m.Object), f"{row_kind} row has marshal type {type(row).__name__}"
+        name, fields = m.plain(row)
+        assert name == "util.KeyVal", name
+        assert required_fields.issubset(fields), f"{row_kind} DTO is missing {required_fields - set(fields)}"
+        result.append(int(fields["typeID"]))
+    return result
+
+
+def packet_event_name(described: dict) -> str:
+    packet = described["$tuple"]
+    if packet[0] == p.SESSIONCHANGENOTIFICATION:
+        return "$sessionchange"
+    destination = packet[2]
+    return destination["args"]["$tuple"][1]
 
 def attempt(client: Client, service: str, method: str, *args):
     """("ok", description) or ("error", {"code", "payload"})."""
@@ -202,7 +244,10 @@ def test_the_recorded_walk_replays():
         character_id = walker.session.session_init.get("charid")
         assert isinstance(user_id, int) and user_id > 0
         assert isinstance(character_id, int) and character_id > 0
-        assert walker.call("achievementTrackerMgr", "HasEverWarped") is False
+        ever_warped = walker.call("achievementTrackerMgr", "HasEverWarped")
+        # EveJS defaults a missing achievement record to True. eve.rs derives this from the new character's
+        # authoritative achievement state, False, which lets V24 enter through its first-space camera.
+        assert ever_warped is (True if REFERENCE else False)
         token = walker.call("userSvc", "GetUserToken")
         if REFERENCE:
             assert token == f"evejs-local-token-{user_id}-{character_id}".encode("utf-8")
@@ -215,17 +260,50 @@ def test_the_recorded_walk_replays():
             assert int(claims["exp"]) > int(datetime.now(timezone.utc).timestamp())
             assert signature
 
-        # Match the selection-time notices, then compare the recorded session and skills packets.
+        # Selection notices depend on the configured AIR experience mode. The reference starts the
+        # NodeGraph tutorial; the local live Host defaults it to disabled. Compare the full ordered
+        # stream for each mode and compare the shared session/skills payloads below.
         walker.ping()
         seen = [describe(n.raw) for n in walker.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]
         notification_names = [event["name"] for event in notifications_of(walker)]
         assert notification_names[0] == "OnSubscriptionTimeUpdateServer"
         assert "OnCharacterSelected" not in notification_names
-        seen = seen[1:]
         recorded_changes = WALK["afterSelect"]
-        assert len(seen) == len(recorded_changes), f"{len(seen)} notifications after selecting, {len(recorded_changes)} recorded"
-        problems += _compare_session_change(recorded_changes[0], seen[0])
-        problems += _compare_skills_notification(recorded_changes[1], seen[1])
+        recorded_names = [packet_event_name(event) for event in recorded_changes]
+        actual_names = [packet_event_name(event) for event in seen]
+        if REFERENCE:
+            expected_names = recorded_names
+        else:
+            # Character ships are persisted before selection and fetched from the station inventory;
+            # the disabled Host does not start NodeGraph's AIR tutorial for this character.
+            absent_when_air_npe_disabled = {
+                "OnItemChange",
+                "OnStartClientNodeGraph",
+                "OnClientNodeGraphMessage",
+                "OnClientNodeGraphUpdate",
+            }
+            expected_names = [name for name in recorded_names if name not in absent_when_air_npe_disabled]
+        assert actual_names == expected_names, f"selection notifications {actual_names} in place of {expected_names}"
+        expected_skills = next(event for event, event_name in zip(recorded_changes, recorded_names) if event_name == "OnServerSkillsChanged")
+        actual_skills = next(event for event, event_name in zip(seen, actual_names) if event_name == "OnServerSkillsChanged")
+        problems += _compare_skills_notification(expected_skills, actual_skills)
+
+        # These are two distinct selection modes. EveJS puts the character directly into the
+        # tutorial system and starts its AIR NodeGraph; the local Host defaults AIR NPE off and
+        # places a new character in its starter station. Check the session the V24 client sees
+        # in each mode instead of treating one mode's session delta as the other's contract.
+        session_state = walker.session.session_init
+        assert session_state.get("solarsystemid2") == 30100032
+        assert isinstance(session_state.get("shipid"), int) and session_state["shipid"] > 0
+        if REFERENCE:
+            assert session_state.get("stationid") is None
+            assert session_state.get("locationid") == 30100032
+            assert session_state.get("solarsystemid") == 30100032
+        else:
+            assert session_state.get("stationid") == 60015249
+            assert session_state.get("stationid2") == 60015249
+            assert session_state.get("locationid") == 60015249
+            assert session_state.get("solarsystemid") is None
     finally:
         walker.close()
         if other is not None:
@@ -278,8 +356,15 @@ def test_new_account_enters_a_new_character_with_named_arguments():
         mail = m.plain(client.call("mailMgr", "SyncMail", None, None))
         expected_title = "Welcome to EveJS Elysian" if REFERENCE else "Welcome to New Eden"
         assert any(header[1]["title"] == expected_title for header in mail[1]["newMail"])
-        notifications = m.plain(client.call("notificationMgr", "GetAllNotifications"))
-        assert any(row[1]["typeID"] == 1004 for row in notifications)
+        notifications = client.call("notificationMgr", "GetAllNotifications")
+        notification_types = notification_type_ids(notifications)
+        if REFERENCE:
+            # EveJS retains its CRowset shape but has no welcome-mail notification for this new character.
+            assert isinstance(notifications, m.ObjectEx)
+            assert notification_types == []
+        else:
+            assert isinstance(notifications, m.List)
+            assert notification_types == [1004]
 
 OMEGA_END_FILETIME = 157469184000000000  # 2100-01-01T00:00:00Z: the end time every new account is written with
 
@@ -328,6 +413,42 @@ def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
         assert [row[1]["characterID"] for row in rows] == [character_id]
         assert m.plain(client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)) is None
         assert client.session.session_init.get("charid") == character_id
+
+
+def test_a_selected_character_can_be_selected_again_after_an_abrupt_client_exit():
+    run = run_token()
+    account = f"walk-relogin-{run}"
+    creation = next(step for step in WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
+    service, method, recorded_args = creation["call"]
+    with connect(account) as client:
+        character_id = int(m.plain(client.call(service, method, *[revive(value, run) for value in recorded_args])))
+
+    host, _, port = LIVE.partition(":")
+    code = (
+        "import os, sys; "
+        "from evecli.client import Client; "
+        "client = Client(sys.argv[1], int(sys.argv[2]), timeout=20); "
+        "client.login(sys.argv[3], sys.argv[4]); "
+        "client.call('charUnboundMgr', 'SelectCharacterID', int(sys.argv[5]), None, True); "
+        "os._exit(0)"
+    )
+    exited = subprocess.run(
+        [sys.executable, "-c", code, host or "127.0.0.1", port or "26000", account, "walk-password", str(character_id)],
+        capture_output=True,
+        timeout=30,
+        cwd=os.path.dirname(os.path.dirname(__file__)),
+    )
+    assert exited.returncode == 0, exited.stderr.decode(errors="replace")
+
+    with Client(host or "127.0.0.1", int(port or 26000), timeout=30) as reconnected:
+        reconnected.login(account, "walk-password")
+        assert reconnected.session.session_init.get("charid") is None
+        rows = m.plain(reconnected.call("charUnboundMgr", "GetCharacterSelectionData"))[2]
+        assert [row[1]["characterID"] for row in rows] == [character_id]
+        assert reconnected.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=True) is None
+        assert reconnected.session.session_init.get("charid") == character_id
+        assert reconnected.session.session_init.get("stationid") == 60015249
+        assert reconnected.session.session_init.get("solarsystemid") is None
 
 def test_search_query_and_quickquery_use_the_registered_host_route():
     """The client's item type lookup reads Query's category map and QuickQuery's flat ID list."""

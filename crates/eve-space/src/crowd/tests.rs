@@ -285,8 +285,7 @@ fn a_warp_order_is_sent_once_to_the_pilot_and_current_observers_when_it_is_accep
     let at = NOON + 2 * SECOND;
     let out = scene.command(B, Command::WarpTo { target_id: PLANET, range: 0.0 }, at);
     assert_eq!(names(&out[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
-    assert_eq!((recipient(&out[0]), recipient(&out[1])), (B, A));
-    assert_eq!(names(&out[1]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
+    assert_eq!((recipient(&out[1]), names(&out[1])), (A, vec!["GotoDirection".to_string()]));
 
     let mut entered = false;
     let mut t = at;

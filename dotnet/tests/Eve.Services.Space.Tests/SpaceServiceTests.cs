@@ -38,12 +38,9 @@ public sealed class FleetLoginHookTests
 
 internal static class WarpArrivalAssertions
 {
-    public static void TellOwnShipStopped(Rig rig, ClientSession session)
+    public static void TellOwnShipWarpExited(Rig rig, ClientSession session)
     {
-        var shipId = session.GetInt("shipid")!.Value;
-        var stop = Py.Tuple(new PyInt(1), Py.Tuple(new PyStr("Stop"), Py.Tuple(new PyLong(shipId))));
-        var args = MarshalCodec.Encode(Py.Tuple(new PyList([stop]), PyBool.False));
-        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "DoDestinyUpdate", "clientID", args));
+        rig.Sim.Say(new SimWarpExited((ulong)session.SessionId));
     }
 
     public static async Task AssertArrivalAllowsAnotherWarpAndDockAsync(
@@ -52,8 +49,8 @@ internal static class WarpArrivalAssertions
         string beyonceObjectId)
     {
         Assert.True(rig.Space.IsWarping(session), "the accepted warp is still tracked before its own Stop arrives");
-        TellOwnShipStopped(rig, session);
-        Assert.False(rig.Space.IsWarping(session), "the pilot's own Stop ends the warp");
+        TellOwnShipWarpExited(rig, session);
+        Assert.False(rig.Space.IsWarping(session), "the simulation's drop event ends the Host warp state");
 
         var shipId = session.GetInt("shipid")!.Value;
         var warp = await rig.BeyonceCallAsync(
@@ -63,8 +60,8 @@ internal static class WarpArrivalAssertions
         var warpCommand = Assert.IsType<SimCommand>(rig.Sim.Heard.Last());
         Assert.Equal(((ulong)session.SessionId, SimCommands.WarpTo), (warpCommand.SessionId, warpCommand.Code));
         Assert.Equal([(double)Rig.Station, 0d], warpCommand.Args);
-        TellOwnShipStopped(rig, session);
-        Assert.False(rig.Space.IsWarping(session), "the second warp's own Stop ends the warp");
+        TellOwnShipWarpExited(rig, session);
+        Assert.False(rig.Space.IsWarping(session), "the second warp's drop event ends the Host warp state");
 
         var dock = await rig.BeyonceCallAsync(
             session, "CmdDock", beyonceObjectId, new PyLong(Rig.Station), new PyLong(shipId));
@@ -1571,6 +1568,10 @@ public class SpaceServiceTests
         var shipId = session.GetInt("shipid")!.Value;
         Stop(shipId + 1);
         Assert.True(rig.Space.IsWarping(session));
+        rig.Sim.Say(new SimWarpExited((ulong)session.SessionId + 1));
+        Assert.True(rig.Space.IsWarping(session), "another session's warp exit cannot clear this pilot's state");
+        rig.Sim.Say(new SimWarpExited((ulong)session.SessionId));
+        Assert.False(rig.Space.IsWarping(session), "the simulation's warp-drop event ends this pilot's warp state");
         Stop(shipId);
         Assert.False(rig.Space.IsWarping(session));
 

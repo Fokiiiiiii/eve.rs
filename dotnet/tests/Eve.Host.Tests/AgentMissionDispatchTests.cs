@@ -151,9 +151,9 @@ public sealed class AgentMissionDispatchTests
             Assert.True(await dispatcher.DispatchAsync(Request(4, null, new PyStr(oid!), "DoAction",
                 new PyInt(AgentDialogueToken.Accept)), session));
             var acceptedActions = DialogueActions(sink.Packets[^1]);
-            var quitAction = Assert.Single(acceptedActions);
-            Assert.Equal(AgentDialogueToken.Quit, ((PyInt)quitAction.Items[0]).Value);
-            Assert.Equal(AgentDialogueButton.Quit, ((PyInt)quitAction.Items[1]).Value);
+            Assert.Equal(
+                new[] { ((long)AgentDialogueToken.Complete, (long)AgentDialogueButton.Complete), ((long)AgentDialogueToken.Quit, (long)AgentDialogueButton.Quit) },
+                acceptedActions.Select(action => (((PyInt)action.Items[0]).Value, ((PyInt)action.Items[1]).Value)));
             var acceptedMission = await new AgentMissionStore(source, schema).ReadAsync(Pilot, Agent);
             Assert.Equal(AgentMissionState.Accepted, acceptedMission!.State);
             Assert.Equal(Start + TimeSpan.FromDays(7), acceptedMission.ExpiresAt);

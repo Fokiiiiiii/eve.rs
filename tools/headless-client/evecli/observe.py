@@ -213,17 +213,22 @@ def notifications_of(client: Client) -> list[dict]:
     client.notifications.clear()
     return out
 
-def events_of(client: Client) -> list[dict]:
+def events_of(client: Client, *, include_received_at: bool = False) -> list[dict]:
     """Notifications and session state received since the previous read, in wire order."""
     client.ping()
     out = []
     for packet in client.notifications:
         if packet.command == p.NOTIFICATION:
-            out.append(_notification_event(packet))
+            event = _notification_event(packet)
         elif packet.command == p.SESSIONCHANGENOTIFICATION:
-            out.append(_session_event(packet))
+            event = _session_event(packet)
         elif packet.command == p.SESSIONINITIALSTATENOTIFICATION:
-            out.append(_session_event(packet, initial=True))
+            event = _session_event(packet, initial=True)
+        else:
+            continue
+        if include_received_at:
+            event["_received_at"] = packet.received_at
+        out.append(event)
     client.notifications.clear()
     return out
 
@@ -323,11 +328,13 @@ def wait_quietly(client: Client, seconds: float, until=None) -> list:
 
 def timed_events(who: Client, seconds: float, until=None) -> list:
     """`wait_quietly` with the seconds since the call each event arrived at (`at`): what a ship that flies somewhere takes to get there."""
-    started = time.time()
+    started = time.monotonic()
     seen: list = []
-    while time.time() - started < seconds:
-        for event in events_of(who):
-            event["at"] = round(time.time() - started, 2)
+    while time.monotonic() - started < seconds:
+        for event in events_of(who, include_received_at=True):
+            received_at = event.pop("_received_at", None)
+            arrived_at = received_at if isinstance(received_at, (int, float)) else time.monotonic()
+            event["at"] = round(max(0.0, arrived_at - started), 2)
             seen.append(event)
         if until is not None and until(seen):
             break

@@ -558,7 +558,7 @@ impl Scene {
         let worked = if pilot.incoming.is_empty() { base } else { pilot.incoming.worked(&base) };
         let (owner, ship_id) = (pilot.ship.spec.character_id, pilot.ship.spec.ship_id);
         // a ship in warp keeps the numbers it has until it is out (what it was given is worked in then)
-        let in_warp = pilot.flight.is_some();
+        let in_warp = pilot.flight.as_ref().is_some_and(|flight| flight.is_in_warp_mode());
         let spec = &mut pilot.ship.spec;
         let mut changes = Vec::new();
         let mut set = |attribute: i32, old: &mut f64, new: f64| {

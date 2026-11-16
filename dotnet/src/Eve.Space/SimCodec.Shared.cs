@@ -89,6 +89,8 @@ public static partial class SimCodec
         public const byte AdjustCharge = 33;
         public const byte ChargeAdjusted = 34;
         public const byte Arrived = 35;
+        /// <summary>The ship has left warp and can take movement orders during its coast (protocol 100).</summary>
+        public const byte WarpExited = 165;
         public const byte PlaceAsteroid = 45;
         public const byte DroneWorkCycle = 46;
         public const byte DroneWorkResult = 47;

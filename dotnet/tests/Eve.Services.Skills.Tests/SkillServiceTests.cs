@@ -247,15 +247,19 @@ public class SkillWireTests
     [Fact]
     public void The_notification_carries_the_bytes_the_reference_sent_for_the_same_skill()
     {
-        // OnServerSkillsChanged as recorded from the reference for character 140000038: Gunnery at level 4, 45255 points
+        // OnServerSkillsChanged as recorded from the reference for character 140000022: Gunnery at level 4, 45255 points
         var recorded = (JsonObject)JsonNode.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "fixtures", "scenarios", "login_to_character.json")))!;
-        var packet = recorded["afterSelect"]![1]!["$tuple"]!;
+        var packet = recorded["afterSelect"]!.AsArray()
+            .Select(entry => entry!["$tuple"]!.AsArray())
+            .Single(packet =>
+                packet[0]!.GetValue<int>() == 12 &&
+                packet[2]!["args"]!["$tuple"]![1]!.GetValue<string>() == "OnServerSkillsChanged");
         var buffer = Convert.FromHexString((string)packet[4]!["$tuple"]![0]!["$tuple"]![1]!["$buffer"]!);
 
         var decoded = (PyTuple)MarshalCodec.Decode(buffer);
         var time = ((PyLong)((PyTuple)((PyTuple)decoded.Items[1]).Items[1]).Items[2]).Value;
 
-        var entry = SkillWire.EntryDictionary(140_000_038, Rig.Catalog, [new CharacterSkill(3300, 4, 45_255)]);
+        var entry = SkillWire.EntryDictionary(140_000_022, Rig.Catalog, [new CharacterSkill(3300, 4, 45_255)]);
         var built = ClientNotification.Build(34, MachoMessage.ProxyNodeId, "OnServerSkillsChanged", "charid", [entry, PyNone.Instance, new PyLong(time)], 0);
 
         var sent = (PyTuple)((PyObject)built).Args;

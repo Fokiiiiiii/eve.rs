@@ -352,7 +352,9 @@ where
         writer,
         &Value::Tuple(vec![
             Value::str(""),
-            Value::Tuple(vec![Value::Buffer(env.signed_func.clone()), Value::Bool(false)]),
+            // EVE.js sends Placebo's disabled signature marker as PyInt(0); the V24 verifier
+            // receives this pair in Crypto.Verify(signedFunc), so preserve the wire type.
+            Value::Tuple(vec![Value::Buffer(env.signed_func.clone()), Value::Int(0)]),
             Value::Dict(vec![]),
             Value::dict([
                 ("challenge_responsehash", Value::str(profile::CHALLENGE_RESPONSE_HASH)),
@@ -385,6 +387,7 @@ where
                     ("languageID", Value::string(language.clone())),
                     ("countryCode", Value::string(country_code.clone())),
                     ("userid", Value::Int(i64::from(user_id))),
+                    ("maxSessionTime", Value::None),
                     ("userType", Value::Int(30)),
                     ("role", Value::Long((role | SESSION_BASE_ROLE) as i64)),
                     ("address", Value::string(address.to_owned())),

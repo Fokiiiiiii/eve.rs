@@ -97,7 +97,7 @@ impl Scene {
         let mut out = Vec::new();
         for session in sessions {
             let Some(pilot) = self.pilots.get(&session) else { continue };
-            if pilot.flight.as_ref().is_some_and(|f| f.is_warping()) {
+            if pilot.flight.as_ref().is_some_and(|f| f.is_in_warp_mode()) {
                 out.extend(self.clear_locks_with_reason(session, true, Some("WarpingOut"), now));
                 continue;
             }

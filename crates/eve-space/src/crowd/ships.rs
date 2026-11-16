@@ -10,7 +10,7 @@ impl Scene {
         if let Some(pilot) = self.pilots.get(&session) {
             return Some(Presence {
                 position: pilot.ship.position,
-                warping: pilot.flight.as_ref().is_some_and(|f| f.is_warping()),
+                warping: pilot.flight.as_ref().is_some_and(|f| f.is_in_warp_mode()),
             });
         }
         let observer = self.controlled_structures.get(&session)?;
@@ -21,7 +21,8 @@ impl Scene {
     pub(super) fn visible_to(&self, observer: SessionId, subject: SessionId) -> bool {
         match (self.presence(observer), self.presence(subject)) {
             (Some(observer), Some(subject_presence)) => {
-                let cloak = self.pilots.get(&subject).map_or(CloakState::Uncloaked, |pilot| pilot.cloak);
+                let cloak =
+                    self.pilots.get(&subject).map_or(CloakState::Uncloaked, |pilot| pilot.effective_cloak());
                 can_see_subject(observer, subject_presence, cloak)
             }
             _ => false,
@@ -191,15 +192,20 @@ impl Scene {
     }
 
     fn introduction_at(&self, subject: SessionId, stamp: u32, now: i64) -> Option<Vec<Value>> {
-        let ship = &self.pilots.get(&subject)?.ship;
+        let pilot = self.pilots.get(&subject)?;
+        let ship = &pilot.ship;
         let ship_id = id(ship.spec.ship_id);
         let added = payload::add_ships(stamp, &[ship], now).ok()?;
-        Some(vec![
+        let mut actions = vec![
             added,
             payload::action(stamp, "SetBallAgility", [ship_id.clone(), real(ship.spec.agility)]),
             payload::action(stamp, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]),
             payload::action(stamp, "SetMaxSpeed", [ship_id, real(ship.spec.max_velocity)]),
-        ])
+        ];
+        if pilot.jump_cloak_ended {
+            actions.push(payload::uncloak(stamp, ship.spec.ship_id));
+        }
+        Some(actions)
     }
 
     /// A ship has come into the scene: every bound view that can see it is sent the ship.
@@ -263,7 +269,8 @@ impl Scene {
                 warping |= presence.warping;
             }
         }
-        if !warping && !self.warped_last && boxes == self.boxes {
+        let jump_cloak_ended = self.pilots.values().any(|pilot| pilot.jump_cloak_ended);
+        if !warping && !self.warped_last && boxes == self.boxes && !jump_cloak_ended {
             return Vec::new();
         }
         self.boxes = boxes;
@@ -301,6 +308,9 @@ impl Scene {
             let Some(actions) = self.introduction(subject, now) else { continue };
             self.set_sees_ship(observer, subject, true);
             out.push(Self::update(observer, actions));
+        }
+        for pilot in self.pilots.values_mut() {
+            pilot.jump_cloak_ended = false;
         }
         out
     }

@@ -135,6 +135,9 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     /// <summary>The fleet a character is in (its id), or null when it is in none: a command burst reaches the ships of its source's fleet (track C6).</summary>
     public Func<long, CancellationToken, Task<long?>>? FleetIdOfAsync { get; set; }
 
+    /// <summary>Whether a command burst's source is contained by an online control-tower force field (the EVE.js activation check).</summary>
+    public Func<ClientSession, long, int, CancellationToken, Task<bool>>? CommandBurstSourceInForceFieldAsync { get; set; }
+
     /// <summary>
     /// The accounts whose guns the host reloads from their holds when the rounds run out (FP-C8): a bot with no client UI, named by the operator (EVE_AUTO_RELOAD_ACCOUNTS).
     /// Any other pilot's gun stops when its rounds are spent, and the client reloads it (<c>shipmodulebutton.py</c>), so the host does not load it twice.
@@ -1146,6 +1149,9 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                             _log?.Invoke($"the arrival of session {arrived.SessionId} at belt {arrived.BeltId} could not be dealt with: {error.Message}");
                         }
                     });
+                    break;
+                case SimWarpExited exited:
+                    _warping.TryRemove(exited.SessionId, out _);
                     break;
                 case SimAccepted ready when ready.Command == SimCommands.DockingReady:
                     if (_pilots.TryGetValue(ready.SessionId, out var dockingPilot))

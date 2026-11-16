@@ -35,6 +35,16 @@ impl Scene {
         } else if let Some(asteroid) = course_target.and_then(|target| self.asteroids.get(&target)) {
             // mineable rocks are stationary targets in this scene.
             ship_target = Some(Target::at_rest(asteroid.position, asteroid.radius));
+        } else if let Some(deployable) =
+            course_target.and_then(|target| self.deployables.get(&target)).filter(|deployable| {
+                !matches!(
+                    &deployable.role,
+                    crate::deployable::Role::DeadspacePocket | crate::deployable::Role::JumpBridge { .. }
+                )
+            })
+        {
+            // client-visible deployables (including a control tower hull) are stationary targets.
+            ship_target = Some(Target::at_rest(deployable.position, deployable.spec.radius));
         }
         let Some(pilot) = self.pilots.get_mut(&session) else { return };
         let from = pilot.settled_at;
@@ -172,7 +182,8 @@ impl Scene {
             | Command::AlignTo { target_id } => self.target_of(target_id, session),
             _ => None,
         };
-        let pilot = self.pilots.get_mut(&session).expect("the caller checked");
+        let pilot = self.pilots.get(&session).expect("the caller checked");
+        let coasting = pilot.flight.as_ref().is_some_and(|flight| flight.is_coasting());
         if pilot.immobile_until > now {
             // a ship held by a doomsday's immobility window follows no orders
             return vec![Out::Refused { session, command: code, reason: "IMMOBILE" }];
@@ -188,14 +199,23 @@ impl Scene {
         if pilot.modules.is_mjd_spooling() {
             return vec![Out::Refused { session, command: code, reason: "MJD_SPOOLING" }];
         }
-        if pilot.flight.is_some() {
+        if pilot.flight.is_some() && !coasting {
             // a ship in warp, or lining up for it, follows none either
             return vec![Out::Refused { session, command: code, reason: "IN_WARP" }];
         }
+        let mut out = self.cancel_stargate_jump_cloak(session, now);
+        let pilot = self.pilots.get_mut(&session).expect("the caller checked");
+        if coasting {
+            // The destiny client has left WARP mode at the drop and can steer during the physical coast.
+            // Keep the integrated velocity; only discard the old warp course and arrival target.
+            pilot.flight = None;
+            pilot.ship.course = Course::Stop;
+            pilot.warp_target = None;
+        }
         let ship_id = id(pilot.ship.spec.ship_id);
         match steer(&mut pilot.ship, target, command) {
-            Steering::Refused(reason) => vec![Out::Refused { session, command: code, reason }],
-            Steering::Nothing => vec![Out::Accepted { session, command: code, at: now }],
+            Steering::Refused(reason) => out.push(Out::Refused { session, command: code, reason }),
+            Steering::Nothing => out.push(Out::Accepted { session, command: code, at: now }),
             Steering::Actions(actions) => {
                 let stamp = self.next_stamp(now);
                 let actions: Vec<Value> = actions
@@ -206,11 +226,11 @@ impl Scene {
                         payload::action(stamp, name, all)
                     })
                     .collect();
-                let mut out = self.tell_all(session, actions);
+                out.extend(self.tell_all(session, actions));
                 out.push(Out::Accepted { session, command: code, at: now });
-                out
             }
         }
+        out
     }
 }
 
@@ -236,6 +256,10 @@ pub(super) fn settle(
     let seconds = (now - from) as f64 / TICKS_PER_SECOND as f64;
     if let Some(flight) = pilot.flight.as_mut() {
         let advance = flight.advance(&mut pilot.ship, from, now);
+        if advance.milestones.iter().any(|milestone| matches!(milestone, Milestone::Dropped { .. })) {
+            // The flight remains attached while the ship slows down, but the client has exited warp.
+            pilot.ship.course = Course::Stop;
+        }
         if let Some(rested) = advance.finished_at {
             // the warp is over: what is left of the time is a stopped ship's
             pilot.flight = None;

@@ -1498,6 +1498,10 @@ private static void WriteStructureDamageCorrelation(
                 w.I64(m.BeltId);
                 WriteVector(w, m.Position);
                 break;
+            case SimWarpExited m:
+                w.U8(Kind.WarpExited);
+                w.U64(m.SessionId);
+                break;
             case SimContainerPlaced m:
                 w.U8(Kind.ContainerPlaced);
                 w.U64(m.SessionId);

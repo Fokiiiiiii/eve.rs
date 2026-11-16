@@ -10,8 +10,8 @@ namespace Eve.Services.Core;
 /// </summary>
 public static class BasicKillOffers
 {
-    /// <summary>The levels of the first cut (level 3 and lower are not offered).</summary>
-    public const long MinLevel = 4;
+    /// <summary>Security agents from levels 1 through 5 can receive basic kill missions.</summary>
+    public const long MinLevel = 1;
 
     public const long MaxLevel = 5;
 

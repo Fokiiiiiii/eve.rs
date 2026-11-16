@@ -31,7 +31,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
-         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164}
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164, "WarpExited": 165}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -665,6 +665,8 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["containerId"]) + struct.pack("<6d", *m["position"], *m["direction"]))
     if k == "Arrived":
         return frame(k, u64(m["sessionId"]) + i64(m["beltId"]) + struct.pack("<3d", *m["position"]))
+    if k == "WarpExited":
+        return frame(k, u64(m["sessionId"]))
     if k == "ChangeWreck":
         is_empty = m["isEmpty"]
         abandoned = m["abandoned"]
@@ -855,8 +857,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 82},
-    {"name": "hello ack", "kind": "HelloAck", "version": 82, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 100},
+    {"name": "hello ack", "kind": "HelloAck", "version": 100, "pollHz": 4},
     {"name": "active Crimewatch flag", "kind": "CrimewatchFlagActive", "sessionId": "1001",
      "isCriminal": True, "expiresAtUnixMs": "1800000000000"},
     {"name": "Empire sentry offense", "kind": "EmpireSentryOffense", "sessionId": "1001"},
@@ -1489,6 +1491,7 @@ valid = [
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769]},
     {"name": "player's warp ended at a belt", "kind": "Arrived", "sessionId": "1790646377000015", "beltId": "40009256",
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
+    {"name": "ship left warp and can steer during its coast", "kind": "WarpExited", "sessionId": "1790646377000015"},
     {"name": "wreck with something to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002948", "isEmpty": False, "abandoned": None},
     {"name": "wreck with nothing to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002417", "isEmpty": True, "abandoned": None},
     {"name": "wreck loot rights abandoned", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002948", "isEmpty": None, "abandoned": True},

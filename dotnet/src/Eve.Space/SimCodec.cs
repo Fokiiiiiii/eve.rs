@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 99;
+    public const ushort ProtocolVersion = 100;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -1297,6 +1297,9 @@ public static partial class SimCodec
                 }
             case Kind.Arrived:
                 message = new SimArrived(r.U64(), r.I64(), ReadVector(ref r));
+                break;
+            case Kind.WarpExited:
+                message = new SimWarpExited(r.U64());
                 break;
             case Kind.ContainerPlaced:
                 message = new SimContainerPlaced(r.U64(), r.I64(), ReadVector(ref r), ReadVector(ref r));

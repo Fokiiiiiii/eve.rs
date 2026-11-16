@@ -9,21 +9,21 @@ ballpark of the next system bound and asked for its state. The warp takes a minu
 What a server may do differently (docs/reference/compat/DEVIATIONS.md): where the ship lands by the gate and where it appears in the next system (both are
 random in the reference, inside the same bounds), the customs offices, props, ambient ships and gate guns the reference adds to a system's
 ballpark, the position update the reference sends 0.5 s after the jump-out and the balls it adds a few seconds after the bind, and the ship
-arriving cloaked (the reference's balls carry the jump cloak; eve.rs tells the client with `OnJumpCloakUpdated` only).
+arriving cloaked. The Host sends the owner's jump cloak timer, while the ballpark `SetState` carries the native cloak mode;
+destination observers receive the ship only after its cloak ends or the pilot moves.
 """
 
 from __future__ import annotations
 
+import copy
 import os
-import math
 import time
 import uuid
-from collections import Counter
-from copy import deepcopy
 
 import pytest
 
-from evecli.describe import describe, differences, destiny_state_fields, shape
+from evecli import marshal as m
+from evecli.describe import describe, differences, shape
 from evecli.observe import timed_events, wait_quietly
 from tests import test_login_to_character as base
 from tests.test_undock import (
@@ -31,16 +31,24 @@ from tests.test_undock import (
     SYSTEM,
     actions_of,
     args_of,
+    collapse,
+    compare_actions,
+    compare_destiny_updates,
+    compare_events,
     compare_events_by_source,
+    compare_add_balls,
     compare_state,
     arrive,
+    add_ball_slim,
     ids,
     keyval,
     number,
+    online_modules_wire,
     outcome,
 )
 
 JUMP = base.load("jump.json")
+REFERENCE = base.REFERENCE
 pytestmark = [
     pytest.mark.skipif(not base.LIVE, reason="set EVE_LIVE_HOST=host:port to test against a running server"),
     pytest.mark.skipif(os.environ.get("EVE_LIVE_SLOW") != "1", reason="two minutes: set EVE_LIVE_SLOW=1"),
@@ -48,7 +56,6 @@ pytestmark = [
 
 # how far the second of an event may be from the recording's: the reference times the handoff by its own clock and the stamp it sent the effect at
 TOLERANCE = 1.6
-DESTINATION_DUPLICATE_SHIP_STATS = frozenset({"SetBallAgility", "SetBallMass", "SetMaxSpeed"})
 HEAT_ATTRIBUTES = {1175, 1176, 1177}  # SDE dogmaAttributes: heatHi, heatMed, heatLow
 # ids the reference adds to a system's ballpark that no static data holds: its ambient ships (98005…) and gate guns and customs offices
 AMBIENT = range(980_050_000_000, 980_060_000_000)
@@ -85,108 +92,129 @@ def milestones(events: list) -> dict:
                 out["rest"] = event["at"]
     return out
 
-def slim_of(extras: list, ship_id) -> list:
-    """The entries of an `AddBalls2` (the slim item and the damage state) that are the ship's own: the reference adds its ambient ships to the
-    ball list of the ship that arrives, so the first update of the bind carries eleven of them in place of one."""
-    def slim(entry):
-        # Michelle.AddBalls2 unpacks each entry as (slimItemDict, damageState)
-        # when it is a tuple, and also accepts a bare slimItemDict. Keep the
-        # comparison on the client-visible contents, not the Python container
-        # wrapper used to encode them.
-        parts = sequence(entry)
-        return parts[0] if parts else entry
+def compare_bound_events(recorded: list[dict], ours: list[dict], ship_id: int, mapping: dict, where: str) -> list[str]:
+    """Compare the first system state and the player's actions, independent of Destiny packet boundaries."""
+    out: list[str] = []
+    core_notices = ("OnSetTimeDilation", "DoSimClockRebase")
+    expected_notices = [event for event in recorded if event["name"] in core_notices]
+    actual_notices = [event for event in ours if event["name"] in core_notices]
+    if [(event["name"], event["idType"]) for event in expected_notices] != [
+        (event["name"], event["idType"]) for event in actual_notices
+    ]:
+        out.append(
+            f"{where}: core notices {[event['name'] for event in actual_notices]} "
+            f"in place of {[event['name'] for event in expected_notices]}"
+        )
+    else:
+        for index, (expected, actual) in enumerate(zip(expected_notices, actual_notices)):
+            out += compare_events([expected], [actual], f"{where}: notice {index} {expected['name']}", mapping)
 
-    return [item for item in extras if number(keyval(slim(item))["itemID"]) == ship_id]
+    def destiny(events: list[dict]) -> list[list]:
+        return [actions_of(event)[0] for event in events if event["name"] == "DoDestinyUpdate"]
 
-def sequence(value):
+    expected_updates, actual_updates = destiny(recorded), destiny(ours)
+    expected_state_packets = [
+        actions_of(event) for event in recorded
+        if event["name"] == "DoDestinyUpdate" and any(action[1] == "SetState" for action in actions_of(event)[0])
+    ]
+    actual_state_packets = [
+        actions_of(event) for event in ours
+        if event["name"] == "DoDestinyUpdate" and any(action[1] == "SetState" for action in actions_of(event)[0])
+    ]
+
+    def wait_contract(events: list[dict], state_packets: list[tuple], side: str) -> None:
+        if len(state_packets) != 1:
+            out.append(f"{where}: {side} SetState packet count {len(state_packets)}")
+            return
+        wait = state_packets[0][1]
+        if side == "eve.rs" and not wait:
+            out.append(f"{where}: eve.rs SetState must wait for its separate same-stamp follow-up")
+        if not wait:
+            return
+        state_stamps = {
+            number(action[0])
+            for action in state_packets[0][0]
+            if action[1] == "SetState"
+        }
+        state_index = next(
+            index for index, event in enumerate(events)
+            if event["name"] == "DoDestinyUpdate"
+            and any(action[1] == "SetState" for action in actions_of(event)[0])
+        )
+        released = any(
+            event["name"] == "DoDestinyUpdate"
+            and not actions_of(event)[1]
+            and any(number(action[0]) in state_stamps for action in actions_of(event)[0])
+            for event in events[state_index + 1:]
+        )
+        if not released:
+            out.append(f"{where}: {side} waited SetState has no same-stamp update to release it")
+
+    wait_contract(recorded, expected_state_packets, "EVEJS")
+    wait_contract(ours, actual_state_packets, "eve.rs")
+    expected_states = [action for update in expected_updates for action in update if action[1] == "SetState"]
+    actual_states = [action for update in actual_updates for action in update if action[1] == "SetState"]
+    if len(expected_states) != 1 or len(actual_states) != 1:
+        out.append(f"{where}: SetState count {len(actual_states)} in place of {len(expected_states)}")
+    else:
+        out += compare_bound_state(expected_states[0][2], actual_states[0][2], f"{where}.SetState", mapping)
+
+    def selected(actions: list[list], *, map_recorded_ids: bool) -> list[tuple[int, str, dict]]:
+        return [
+            action for action in actions
+            if action[1] != "SetState"
+            and action[1] != "AddBalls2"
+            and action[2].get("$tuple")
+            and (
+                mapping.get(number(action[2]["$tuple"][0]), number(action[2]["$tuple"][0]))
+                if map_recorded_ids else number(action[2]["$tuple"][0])
+            ) == ship_id
+        ]
+
+    expected_ship = selected([action for update in expected_updates for action in update], map_recorded_ids=True)
+    actual_ship = selected([action for update in actual_updates for action in update], map_recorded_ids=False)
+    out += compare_actions(expected_ship, actual_ship, f"{where}.ship", mapping)
+
+    expected_balls = [action for update in expected_updates for action in update if action[1] == "AddBalls2"]
+    actual_balls = [action for update in actual_updates for action in update if action[1] == "AddBalls2"]
+    if len(expected_balls) != len(actual_balls):
+        out.append(f"{where}: AddBalls2 count {len(actual_balls)} in place of {len(expected_balls)}")
+    else:
+        for index, (expected, actual) in enumerate(zip(expected_balls, actual_balls)):
+            out += compare_add_balls(expected[2], actual[2], f"{where}.AddBalls2[{index}]", mapping)
+    return out
+
+def compare_bound_state(recorded: dict, ours: dict, where: str, mapping: dict) -> list[str]:
+    """`SetState` of a system: as test_undock.compare_state, leaving out the ambient ships the reference adds to it."""
+    def without_ambient(described: dict) -> dict:
+        state = described["$tuple"][0]
+        fields = [[k, [s for s in v if number(keyval(s)["itemID"]) not in AMBIENT] if k == "slims" else v] for k, v in state["args"]["$dict"]]
+        return {"$tuple": [{**state, "args": {"$dict": fields}}, *described["$tuple"][1:]]}
+
+    # (a reference that is replayed against itself has ambient ships of its own, with ids of this run)
+    return compare_state(without_ambient(recorded), without_ambient(ours), where, mapping)
+
+
+def _sequence(value):
     if isinstance(value, list):
         return value
     if isinstance(value, dict) and isinstance(value.get("$tuple"), list):
         return value["$tuple"]
     return None
 
-def compare_bound_state(recorded: dict, ours: dict, where: str, mapping: dict) -> list[str]:
-    """Compare the bound state, accounting for EveJS ambient ships and scenery-only sentry props."""
-    def state_fields(described: dict) -> dict:
-        return keyval(described["$tuple"][0])
-
-    expected_state, actual_state = state_fields(recorded), state_fields(ours)
-    expected_sentries = Counter(
-        (number(keyval(slim)["groupID"]), number(keyval(slim)["categoryID"]), number(keyval(slim)["typeID"]))
-        for slim in expected_state["slims"] if number(keyval(slim).get("groupID", 0)) == 99
-    )
-    actual_sentries = Counter(
-        (number(keyval(slim)["groupID"]), number(keyval(slim)["categoryID"]), number(keyval(slim)["typeID"]))
-        for slim in actual_state["slims"] if number(keyval(slim).get("groupID", 0)) == 99
-    )
-    out: list[str] = []
-    if expected_sentries != actual_sentries:
-        out.append(f"{where}: SDE sentry group/category/type counts {actual_sentries} in place of {expected_sentries}")
-
-    expected_ego = number(expected_state["ego"])
-    actual_ego = number(actual_state["ego"])
-    expected_ball_id = mapping.get(expected_ego, expected_ego)
-    if actual_ego != expected_ball_id:
-        out.append(f"{where}: SetState ego {actual_ego} in place of {expected_ball_id}")
-    expected_ball = None
-    for label, fields, item_id in (("recorded", expected_state, expected_ego), ("eve.rs", actual_state, actual_ego)):
-        decoded = destiny_state_fields(fields["state"])
-        if decoded is None or decoded.get("decodeError"):
-            out.append(f"{where}: could not decode {label} Destiny state: {None if decoded is None else decoded.get('decodeError')}")
-            continue
-        ball = next((
-            ball for ball in decoded["balls"]
-            if (mapping.get(number(ball["itemID"]), number(ball["itemID"])) == actual_ego if label == "recorded" else number(ball["itemID"]) == item_id)
-        ), None)
-        if ball is None:
-            out.append(f"{where}: {label} SetState has no free-ball record for ship {item_id}")
-            continue
-        if not all(field in ball for field in ("mass", "maxVelocity", "inertia")):
-            out.append(f"{where}: {label} ship state omits mass, max velocity or inertia: {ball}")
-            continue
-        if label == "recorded":
-            expected_ball = ball
-        elif expected_ball is not None:
-            for field in ("mass", "maxVelocity", "inertia"):
-                if not math.isclose(float(expected_ball[field]), float(ball[field]), rel_tol=1e-6, abs_tol=1e-4):
-                    out.append(f"{where}: ship {field} {ball[field]} in place of {expected_ball[field]} in SetState")
-
-    def without_ambient_and_sentries(described: dict) -> dict:
-        copy = deepcopy(described)
-        state = copy["$tuple"][0]
-        fields = []
-        for key, value in state["args"]["$dict"]:
-            if key == "slims":
-                value = [
-                    slim for slim in value
-                    if number(keyval(slim)["itemID"]) not in AMBIENT
-                    and number(keyval(slim).get("groupID", 0)) != 99
-                ]
-            fields.append([key, value])
-        state["args"]["$dict"] = fields
-        return copy
-
-    clean_mapping = {**mapping, "_sentry_slims": {}}
-    out += compare_state(
-        without_ambient_and_sentries(recorded),
-        without_ambient_and_sentries(ours),
-        where,
-        clean_mapping,
-    )
-    return out
 
 def compare_heat_reset(events: list[dict], character_id: int, ship_id: int) -> list[str]:
-    """Check the jump's explicit Dogma heat reset; V24 applies these heat attributes to loaded modules."""
+    """Verify the jump explicitly resets the V24 dogma heat attributes on the arriving ship."""
     notices = [event for event in events if event["name"] == "OnModuleAttributeChanges"]
     if len(notices) != 1:
         return [f"jump destination bind: {len(notices)} module-attribute notices in place of the heat reset"]
-    outer = sequence(args_of(notices[0]))
-    changes = sequence(outer[0]) if outer else None
+    outer = _sequence(args_of(notices[0]))
+    changes = _sequence(outer[0]) if outer else None
     if changes is None:
         return ["jump destination bind: malformed OnModuleAttributeChanges payload"]
     found: dict[int, list] = {}
     for value in changes:
-        change = sequence(value)
+        change = _sequence(value)
         if change is None or len(change) != 8:
             return [f"jump destination bind: malformed module-attribute change {value}"]
         found[number(change[3])] = change
@@ -208,25 +236,38 @@ def test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did():
     steps = {step["label"]: step for step in race["steps"]}
     gate, next_gate, next_system = race["stargateID"], race["nextStargateID"], race["nextSolarSystemID"]
     with base.connect(f"walk-jump-{run}") as who:
-        character, ship_id, _, mapping = arrive(who, race, run)
+        character, ship_id, _, mapping, online_modules = arrive(
+            who, race, run, skip_tutorial=True, include_online_modules=True,
+        )
         ship = who.call("ship", "MachoBindObject", (STATION, 15), None)
         wait_quietly(who, 0.5)
-        raw, error = outcome(lambda: who.call_bound(ship[0], "Undock", ship_id, False))
+        raw, error = outcome(lambda: who.call_bound(ship[0], "Undock", m.Long(ship_id), False, onlineModules=online_modules_wire(online_modules)))
         assert error is None, base.brief(error)
+        # Before the first ballpark bind, V24 Michelle.DoDestinyUpdate drops the stream. Compare
+        # those server messages with the equivalent updates the client can first consume at bind.
         undock_events = wait_quietly(who, 2.0)
+        problems += compare_events(
+            [event for event in steps["undock"]["events"] if event["name"] != "DoDestinyUpdate"],
+            [event for event in undock_events if event["name"] != "DoDestinyUpdate"],
+            "undock",
+            mapping,
+        )
         ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
         bind_events = wait_quietly(who, 2.5)
-        # Destiny actions can cross the RPC wait boundary: the client's FlushState groups them by stamp,
-        # not by the command that happened to be in flight when the notification arrived.
-        problems += compare_events_by_source(
-            steps["undock"]["events"] + steps["bind the ballpark"]["events"],
-            undock_events + bind_events,
-            "undock and bind the source ballpark",
+        problems += compare_events(
+            [event for event in steps["bind the ballpark"]["events"] if event["name"] != "DoDestinyUpdate"],
+            [event for event in bind_events if event["name"] != "DoDestinyUpdate"],
+            "bind the ballpark",
             mapping,
-            state_comparator=compare_bound_state,
+        )
+        problems += compare_destiny_updates(
+            [event for step in (steps["undock"], steps["bind the ballpark"]) for event in step["events"] if event["name"] == "DoDestinyUpdate"],
+            [event for event in (*undock_events, *bind_events) if event["name"] == "DoDestinyUpdate"],
+            "undock and bind the ballpark",
+            mapping,
         )
 
-        # the gate warp drops out close enough to jump before the ship comes to rest; the jump update itself stops the ball
+        # the warp: to a random point by the gate, so what is compared is the shape of the update and when the ship drops out and comes to rest
         where = "warp to the stargate"
         recorded = steps[where]
         started = time.time()
@@ -234,41 +275,38 @@ def test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did():
         if error is not None:
             problems.append(f"{where}: error {base.brief(error)}")
         events = timed_events(who, 1.0)
-        while time.time() - started < 200 and "dropout" not in milestones(events):
+        def terminal_warp_event(event: dict) -> bool:
+            # EveJS 261108.1 completes this warp with SetBallMassive and no Stop; eve.rs sends the
+            # terminal SetBallPosition/SetBallVelocity/SetSpeedFraction/Stop update consumed by V24.
+            return "Stop" in names(event) if not REFERENCE else "SetBallMassive" in names(event)
+
+        while time.time() - started < 200 and not any(terminal_warp_event(event) for event in events):
             who.call_bound(ballpark[0], "UpdateStateRequest")
             seen = timed_events(who, 3.0)
             for event in seen:
                 event["at"] = round(event["at"] + (time.time() - started) - 3.0, 2)
             events += seen
         ours, theirs = without_noise(in_order(events)), without_noise(in_order(recorded["events"]))
-        if not ours or not theirs:
-            problems.append(f"{where}: no destiny update was recorded or received")
+        first_ours, first_theirs = ours[0], theirs[0]
+        if names(first_ours) != names(first_theirs):
+            problems.append(f"{where}: first update {names(first_ours)} in place of {names(first_theirs)}")
         else:
-            first_ours, first_theirs = ours[0], theirs[0]
-            if names(first_ours) != names(first_theirs):
-                problems.append(f"{where}: first update {names(first_ours)} in place of {names(first_theirs)}")
-            else:
-                expected_actions, actual_actions = actions_of(first_theirs)[0], actions_of(first_ours)[0]
-                for expected_action, actual_action in zip(expected_actions, actual_actions):
-                    _, name, expected = expected_action
-                    _, _, actual = actual_action
-                    if name == "WarpTo":  # the point is random: the shape and the warp factor are what the client works its warp out from
-                        expected_warp, actual_warp = expected["$tuple"], actual["$tuple"]
-                        if shape(ids(expected, mapping)) != shape(actual) or number(expected_warp[5]) != number(actual_warp[5]):
-                            problems.append(f"{where}.WarpTo: {base.brief(actual)} in place of {base.brief(expected)}")
-                        if not 0.0 <= float(actual_warp[4]) <= 2_500.0:
-                            problems.append(f"{where}.WarpTo: stop distance {actual_warp[4]} is outside the gate's 2,500 m landing scatter")
-                    else:
-                        problems += differences(base.blank_times(ids(expected, mapping)), base.blank_times(actual), f"{where}.{name}")
+            for (_, name, expected), (_, _, actual) in zip(actions_of(first_theirs)[0], actions_of(first_ours)[0]):
+                if name == "WarpTo":  # the point is random: the shape and the warp factor are what the client works its warp out from
+                    if shape(ids(expected, mapping)) != shape(actual) or expected["$tuple"][5] != actual["$tuple"][5]:
+                        problems.append(f"{where}.WarpTo: {base.brief(actual)} in place of {base.brief(expected)}")
+                else:
+                    problems += differences(base.blank_times(ids(expected, mapping)), base.blank_times(actual), f"{where}.{name}")
         got, expected = milestones(ours), milestones(theirs)
-        if "dropout" not in expected:
-            problems.append(f"{where}: the EveJS recording has no warp dropout")
-        for name, expected_at in expected.items():
+        for name in ("dropout", "rest"):
+            if name not in expected:
+                continue
             if name not in got:
-                problems.append(f"{where}: the ship never reached the recorded {name} milestone")
-            # This lane only runs when the client can issue the gate jump after warp dropout; the recording has no rest Stop here.
-            elif abs(got[name] - expected_at) > 4.0:
-                problems.append(f"{where}: {name} after {got[name]} s, in the recording after {expected_at} s")
+                problems.append(f"{where}: the ship never came to {name}")
+            elif abs(got[name] - expected[name]) > 4.0:
+                problems.append(f"{where}: {name} after {got[name]} s, in the recording after {expected[name]} s")
+        if not REFERENCE and "rest" not in got:
+            problems.append(f"{where}: eve.rs did not send the V24 terminal stop update")
 
         # the state at the gate: the same bodies as recorded (the ambient ships and the like left out)
         raw, error = outcome(lambda: who.call_bound(ballpark[0], "UpdateStateRequest"))
@@ -284,24 +322,21 @@ def test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did():
         where = "jump"
         recorded = steps[where]
         jumped_at = time.time()
-        raw, error = outcome(lambda: who.call_bound(ballpark[0], "CmdStargateJump", gate, next_gate, ship_id))
+        raw, error = outcome(lambda: who.call_bound(ballpark[0], "CmdStargateJump", gate, next_gate, m.Long(ship_id)))
         if error is not None:
             problems.append(f"{where}: error {base.brief(error)}")
-        else:
-            answer = describe(raw)
-            if shape(answer) != shape(recorded["ok"]):
-                problems.append(f"{where}: answered {base.brief(answer)} in place of {base.brief(recorded['ok'])}")
+        # V24's gateJumpSvc.py:124 passes CmdStargateJump to PerformSessionChange and ignores its return value;
+        # compare the call's success and the subsequent ordered session/destiny events below.
         seen = timed_events(who, 12.0, lambda e: any(x["name"] == "$sessionchange" for x in e))
-        if not any("Stop" in names(event) for event in seen):
-            problems.append(f"{where}: the gate jump did not stop the ship")
         # the reference sends the ball's position again half a second after the effect (DEVIATIONS #24)
         not_the_resync = lambda e: names(e) != ["SetBallPosition", "SetBallVelocity", "SetSpeedFraction", "Stop"]  # noqa: E731
+        # Jump-queue UI and Destiny's JumpOut presentation have separate V24 handlers. Preserve order
+        # within each stream while allowing their independent notifications to interleave.
         problems += compare_events_by_source(
             [e for e in recorded["events"] if not_the_resync(e)],
             [e for e in seen if not_the_resync(e)],
             where,
             mapping,
-            state_comparator=compare_bound_state,
         )
         moment = lambda events, label: next((e["at"] for e in events if e["name"] == label), None)  # noqa: E731
         change_ours, change_theirs = moment(seen, "$sessionchange"), moment(recorded["events"], "$sessionchange")
@@ -337,16 +372,7 @@ def test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did():
         landed = raw
         bound = wait_quietly(who, 4.0)
         problems += compare_heat_reset(bound, character, ship_id)
-        reference_bound = [event for event in recorded["events"] if event["name"] != "OnModuleAttributeChanges"]
-        actual_bound = [event for event in bound if event["name"] != "OnModuleAttributeChanges"]
-        problems += compare_events_by_source(
-            reference_bound,
-            actual_bound,
-            where,
-            mapping,
-            state_comparator=compare_bound_state,
-            ignored_actions=DESTINATION_DUPLICATE_SHIP_STATS,
-        )
+        problems += compare_bound_events(recorded["events"], bound, ship_id, mapping, where)
 
         raw, error = outcome(lambda: who.call_bound(landed[0], "UpdateStateRequest"))
         state = [e for e in timed_events(who, 3.0) if names(e) == ["SetState"]]
@@ -357,3 +383,128 @@ def test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did():
             ours_state = [a for a in actions_of(state[0])[0] if a[1] == "SetState"][0]
             problems += compare_bound_state(recorded_state[2], ours_state[2], "look at the state there", mapping)
     assert problems == [], "\n".join(problems[:40])
+
+
+def _jump_from_station(who, race: dict, run: str, ship_id: int, modules: list[tuple[int, int]]):
+    """Run the complete undock, gate warp and jump path for a second client."""
+    ship = who.call("ship", "MachoBindObject", (STATION, 15), None)
+    raw, error = outcome(
+        lambda: who.call_bound(
+            ship[0], "Undock", m.Long(ship_id), False, onlineModules=online_modules_wire(modules)
+        )
+    )
+    assert error is None, base.brief(error)
+    wait_quietly(who, 2.0)
+
+    ballpark = who.call("beyonce", "MachoBindObject", SYSTEM, None)
+    wait_quietly(who, 2.5)
+    gate = race["stargateID"]
+    next_gate = race["nextStargateID"]
+    next_system = race["nextSolarSystemID"]
+    _, error = outcome(lambda: who.call_bound(ballpark[0], "CmdWarpToStuff", "item", gate, minRange=0))
+    assert error is None, base.brief(error)
+
+    started = time.time()
+    events = timed_events(who, 1.0)
+
+    def warp_finished(event: dict) -> bool:
+        return any(name in names(event) for name in ("Stop", "SetBallMassive"))
+
+    while time.time() - started < 200 and not any(warp_finished(event) for event in events):
+        who.call_bound(ballpark[0], "UpdateStateRequest")
+        events.extend(timed_events(who, 3.0))
+    assert any(warp_finished(event) for event in events), f"{run}: gate warp did not finish"
+
+    _, error = outcome(
+        lambda: who.call_bound(ballpark[0], "CmdStargateJump", gate, next_gate, m.Long(ship_id))
+    )
+    assert error is None, base.brief(error)
+    jump_events = wait_quietly(
+        who, 15.0, lambda seen: any(event["name"] == "$sessionchange" for event in seen)
+    )
+    assert any(event["name"] == "$sessionchange" for event in jump_events), f"{run}: no jump session change"
+    landed = who.call("beyonce", "MachoBindObject", next_system, None)
+    wait_quietly(who, 3.0)
+    return landed
+
+
+def test_a_destination_observer_sees_the_jumping_ship_after_movement_cancels_its_cloak():
+    """A gate-cloaked arrival stays hidden until a valid movement command cancels its cloak."""
+    race = JUMP["races"][0]
+    run = uuid.uuid4().hex[:10]
+    def named_race(label: str) -> dict:
+        named = copy.deepcopy(race)
+        parts = named["create"]["call"][2][0].split(" ", 1)
+        named["create"]["call"][2][0] = f"{label} {parts[1]}"
+        return named
+
+    def has_traveler_add(events: list[dict]) -> bool:
+        return any(
+            event["name"] == "DoDestinyUpdate"
+            and any(
+                action[1] == "AddBalls2"
+                and any(
+                    number(keyval(add_ball_slim(row))["itemID"]) == traveler_ship
+                    for row in action[2]["$tuple"][0]["$tuple"][1]
+                )
+                for action in actions_of(event)[0]
+            )
+            for event in events
+        )
+
+    with base.connect(f"jump-observer-{run}") as observer, base.connect(f"jump-traveler-{run}") as traveler:
+        _, observer_ship, _, _, observer_modules = arrive(
+            observer, named_race("Obs"), run, skip_tutorial=True, include_online_modules=True
+        )
+        _, traveler_ship, _, _, traveler_modules = arrive(
+            traveler, named_race("Trav"), run, skip_tutorial=True, include_online_modules=True
+        )
+
+        # The observer first performs the same real gate transition, then binds the
+        # destination ballpark and remains connected while the other pilot arrives.
+        _jump_from_station(observer, race, run, observer_ship, observer_modules)
+        traveler_park = _jump_from_station(traveler, race, run, traveler_ship, traveler_modules)
+        hidden = wait_quietly(observer, 8.0)
+        _, error = outcome(lambda: traveler.call_bound(traveler_park[0], "CmdSetSpeedFraction", 1.0))
+        assert error is None, base.brief(error)
+        owner_events = wait_quietly(traveler, 2.0)
+        revealed = wait_quietly(observer, 10.0, until=has_traveler_add)
+
+    arriving_ships = []
+    jump_effects = []
+    for event in hidden:
+        if event["name"] != "DoDestinyUpdate":
+            continue
+        actions, _ = actions_of(event)
+        for _, name, args in actions:
+            if name == "AddBalls2":
+                for row in args["$tuple"][0]["$tuple"][1]:
+                    slim = add_ball_slim(row)
+                    if number(keyval(slim)["itemID"]) == traveler_ship:
+                        arriving_ships.append(slim)
+            elif name == "OnSpecialFX":
+                values = args["$tuple"]
+                if number(values[0]) == traveler_ship and values[5] == "effects.JumpIn":
+                    jump_effects.append(values)
+
+    assert not arriving_ships, f"observer saw a gate-cloaked ship in AddBalls2 before it moved: {arriving_ships}"
+    if not REFERENCE:
+        assert not jump_effects, f"eve.rs sent JumpIn before adding the arriving ball: {jump_effects}"
+
+    cloak_notices = [
+        event["name"]
+        for event in owner_events
+        if event["name"] in ("OnJumpCloakCancelled", "OnInvulnCancelled")
+    ]
+    assert cloak_notices == ["OnJumpCloakCancelled", "OnInvulnCancelled"], cloak_notices
+
+    visible_rows = [
+        add_ball_slim(row)
+        for event in revealed
+        if event["name"] == "DoDestinyUpdate"
+        for action in actions_of(event)[0]
+        if action[1] == "AddBalls2"
+        for row in action[2]["$tuple"][0]["$tuple"][1]
+        if number(keyval(add_ball_slim(row))["itemID"]) == traveler_ship
+    ]
+    assert len(visible_rows) == 1, f"observer did not receive exactly one arriving ship after cloak cancellation: {visible_rows}"

@@ -11,6 +11,11 @@ namespace Eve.Services.Core;
 /// </summary>
 public static class ClientMissionMessages
 {
+    public const string OfferedAgentSaysKey = "messages.mission.offered.agentsays";
+    public const string InProgressAgentSaysKey = "messages.root.missioninprogress.agentsays";
+    public const string AcceptedAgentSaysKey = "messages.mission.accepted.agentsays";
+    public const string CompletedAgentSaysKey = "messages.mission.completed.agentsays";
+    public const string CompletedNextMissionAgentSaysKey = "messages.mission.completed.nextmission.agentsays";
     public const string BriefingKey = "messages.mission.briefing";
 
     /// <summary>The missions file of the client data (see <see cref="ClientStaticData"/>).</summary>

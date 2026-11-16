@@ -174,9 +174,12 @@ pub fn vec_at(bytes: &[u8], at: usize) -> Vec3 {
 
 /// A number the reference sent the client about the ship in an action of the bind (mass, top speed, agility).
 fn number_of(race: &Value, action: &str) -> Option<f64> {
-    destiny_actions(step(race, "bind the ballpark"))
-        .into_iter()
-        .find(|(_, name, _)| name == action)
+    let ship_id = race["shipID"].as_i64().or_else(|| race["shipID"]["$long"].as_i64())?;
+    race["steps"]
+        .as_array()?
+        .iter()
+        .flat_map(destiny_actions)
+        .find(|(_, name, args)| name == action && number(&args["$tuple"][0]) == ship_id)
         .and_then(|(_, _, args)| args["$tuple"][1].as_f64())
 }
 

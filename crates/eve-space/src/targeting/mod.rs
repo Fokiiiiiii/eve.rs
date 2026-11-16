@@ -198,7 +198,7 @@ impl Scene {
                 signature_radius: spec.signature_radius,
                 state: pilot.ship.health.state_at(now),
                 has_damage_state: spec.group_id != crate::pochven_population::EMPIRE_SENTRY_GROUP_ID,
-                warping: pilot.flight.as_ref().is_some_and(|f| f.is_warping()),
+                warping: pilot.flight.as_ref().is_some_and(|f| f.is_in_warp_mode()),
                 protected: spec.group_id == crate::pochven_population::EMPIRE_SENTRY_GROUP_ID
                     || pilot.protected_until > now
                     || self.is_tethered_session(*session, now),

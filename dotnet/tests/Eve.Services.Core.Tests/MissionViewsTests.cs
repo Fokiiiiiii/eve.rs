@@ -88,6 +88,54 @@ public class MissionViewsTests
     }
 
     [Fact]
+    public void Mission_journal_text_and_dungeon_briefing_use_the_V24_client_shapes()
+    {
+        var mission = Kill() with { NameId = 0 };
+        var record = new AgentMissionRecord(1, 2, AgentMissionState.Accepted,
+            new AgentMissionContent(9301, 0, "Kill Step", "encounter", false), null, null, null, null, null, null);
+        var view = new HeldMissionView(mission, record, 140982,
+            DungeonLocation: new MissionDungeonLocation(30005204, 12.5, -8, 400));
+
+        var journal = MissionViews.JournalInfo(view).Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
+        Assert.Equal(new PyStr("Kill Step"), journal["missionNameID"]);
+        Assert.Contains("killmission.png", ((PyStr)journal["missionImage"]).Value);
+        var bookmarks = Assert.IsType<PyList>(journal["bookmarks"]);
+        var bookmark = Assert.IsType<PyObject>(Assert.Single(bookmarks.Items));
+        Assert.Equal(new PyStr("util.KeyVal"), bookmark.Name);
+        var bookmarkFields = Assert.IsType<PyDict>(bookmark.Args);
+        Assert.Contains(bookmarkFields.Entries, entry => entry.Key is PyStr { Value: "locationType" } && entry.Value == new PyStr("dungeon"));
+        Assert.Contains(bookmarkFields.Entries, entry => entry.Key is PyStr { Value: "x" } && entry.Value == new PyReal(12.5));
+
+        var objectives = Assert.IsType<PyDict>(journal["objectives"]);
+        Assert.DoesNotContain(objectives.Entries, entry => entry.Key is PyStr { Value: "missionExtra" });
+        var dungeon = Assert.IsType<PyDict>(Assert.Single(Assert.IsType<PyList>(objectives.Entries
+            .Single(entry => entry.Key is PyStr { Value: "dungeons" }).Value).Items));
+        var briefing = Assert.IsType<PyTuple>(dungeon.Entries.Single(entry => entry.Key is PyStr { Value: "briefingMessage" }).Value);
+        Assert.Equal(new PyInt(140982), briefing.Items[0]);
+        Assert.Equal(new PyInt(9301), briefing.Items[1]);
+
+        var agent = new AgentMissionAgentData(
+            2, 2, 22, 1, 60000001, 1000036, false, false, null, false, "encounter", "Encounter",
+            null, 1531, null, 30005204, null, null, null);
+        var keywords = MissionViews.Keywords(agent, view).Entries.ToDictionary(entry => ((PyStr)entry.Key).Value, entry => entry.Value);
+        Assert.Equal(new PyInt(30005204), keywords["dungeonLocationID"]);
+        Assert.Equal(new PyInt(30005204), keywords["dungeonSolarSystemID"]);
+        Assert.Equal(new PyStr("UI/Agents/MissionTypes/Encounter"), keywords["missionTypeLabel"]);
+    }
+
+    [Theory]
+    [InlineData(2, "encounter", "", "UI/Agents/MissionTypes/Encounter")]
+    [InlineData(2, "courier", "", "UI/Agents/MissionTypes/Courier")]
+    [InlineData(4, "encounter", "", "UI/Agents/MissionTypes/ResearchEncounter")]
+    [InlineData(6, "courier", "", "UI/Agents/MissionTypes/StorylineCourier")]
+    [InlineData(10, "mining", "", "UI/Agents/MissionTypes/EpicArcMining")]
+    public void Mission_type_labels_match_the_V24_localization_paths(long agentTypeId, string kind, string configured,
+        string expected)
+    {
+        Assert.Equal(expected, AgentMissionKindRules.ClientMissionTypeLabel(agentTypeId, kind, configured));
+    }
+
+    [Fact]
     public void A_completed_dungeon_objective_is_visible_while_the_mission_is_still_accepted()
     {
         var record = new AgentMissionRecord(1, 2, AgentMissionState.Accepted,

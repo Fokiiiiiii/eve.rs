@@ -220,6 +220,15 @@ public sealed partial class SpaceSessions
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
 
+        // EVE.js checks force-field containment before it begins a command burst's immediate activation cycle. The
+        // cycle settlement check below still covers a ship that enters a field while the burst is running.
+        if (package.Action is SimAction.Charged { Action: SimAction.CommandBurst }
+            && CommandBurstSourceInForceFieldAsync is { } sourceInForceField
+            && await sourceInForceField(session, pilot.ShipId, pilot.SolarSystemId, cancellationToken).ConfigureAwait(false))
+        {
+            return ModuleResult.Refusal("SHIP_IN_FORCE_FIELD", made.ModuleType, made.ModuleName);
+        }
+
         if (pilot.SimulationScene.InstanceId > 0 && AbyssalRestrictedAction(package.Action) is { } abyssalRefusal)
             return ModuleResult.Refusal(abyssalRefusal, made.ModuleType, made.ModuleName);
 

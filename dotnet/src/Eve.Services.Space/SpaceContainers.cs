@@ -90,6 +90,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         // the rocks of a belt are items of the store: a module's target is looked up here (SpaceSessions.ActivateAsync)
         _space.TypeOfSpaceItemAsync = async (id, _) => (await _items.GetAsync(id))?.TypeId;
         _space.MayPullAsync = MayPullAsync;
+        _space.CommandBurstSourceInForceFieldAsync = IsCommandBurstSourceInForceFieldAsync;
     }
 
     public void Dispose()
@@ -98,6 +99,8 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         _sim.Lost -= Forgotten;
         _space.SystemEntered -= SystemEntered;
         _space.WreckPlaced -= WreckPlaced;
+        if (_space.CommandBurstSourceInForceFieldAsync == IsCommandBurstSourceInForceFieldAsync)
+            _space.CommandBurstSourceInForceFieldAsync = null;
     }
 
     private void Forgotten() => _placed.Clear();

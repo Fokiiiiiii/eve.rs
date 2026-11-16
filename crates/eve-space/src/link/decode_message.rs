@@ -1316,6 +1316,7 @@ impl Message {
             kind::ARRIVED => {
                 Message::Arrived { session_id: r.u64()?, belt_id: r.i64()?, position: read_vector(&mut r)? }
             }
+            kind::WARP_EXITED => Message::WarpExited { session_id: r.u64()? },
             kind::CONDITION => Message::Condition {
                 session_id: r.u64()?,
                 command: r.u8()?,

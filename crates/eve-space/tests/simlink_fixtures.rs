@@ -1656,6 +1656,7 @@ fn message_of(case: &Value) -> Message {
             belt_id: wide(case, "beltId"),
             position: vector_of(case, "position"),
         },
+        "WarpExited" => Message::WarpExited { session_id: session_id() },
         "ChangeWreck" => Message::ChangeWreck {
             session_id: session_id(),
             wreck_id: wide(case, "wreckId"),

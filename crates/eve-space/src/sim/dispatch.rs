@@ -198,6 +198,7 @@ impl Sim {
                 belt_id,
                 position: [position.x, position.y, position.z],
             },
+            Out::WarpExited { session } => Message::WarpExited { session_id: session },
             Out::Condition { session, command, condition } => {
                 Message::Condition { session_id: session, command, condition }
             }

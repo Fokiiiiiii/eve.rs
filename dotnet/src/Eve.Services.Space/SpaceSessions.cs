@@ -1151,6 +1151,9 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                         }
                     });
                     break;
+                case SimWarpExited exited:
+                    _warping.TryRemove(exited.SessionId, out _);
+                    break;
                 case SimAccepted ready when ready.Command == SimCommands.DockingReady:
                     if (_pilots.TryGetValue(ready.SessionId, out var dockingPilot))
                         Background(() => ResolveDockingAsync(dockingPilot, ready.At));

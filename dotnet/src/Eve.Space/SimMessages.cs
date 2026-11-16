@@ -1249,6 +1249,8 @@ public sealed record SimPlaceContainer(ulong SessionId, long ContainerId, SimWre
 /// simulation does not send it for NPC ships.
 /// </summary>
 public sealed record SimArrived(ulong SessionId, long BeltId, IReadOnlyList<double> Position) : SimMessage;
+/// <summary>The ship has left warp and can take new movement orders while its velocity coasts down.</summary>
+public sealed record SimWarpExited(ulong SessionId) : SimMessage;
 
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;

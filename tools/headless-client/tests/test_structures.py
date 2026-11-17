@@ -524,8 +524,9 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
     sovPlayerDeployment.js; the wiki's Anchoring structures): the Astrahus leaves the ship (the item is consumed), the structure is created in the
     corporation in its anchoring state (AnchorVulnerable) with its default profile, the simulation places it in the system (the pilot sees it in
     the ballpark), and the corporation's sessions hear OnStructureStateChanged. The pilot warps 5000 km from the station first (the free-space rule),
-    and the anchor is asked again until the warp is over, as in the warp test. The 5,000 km destination is outside the pinned SDE moon
-    clearance; the former 2,000 km point was only 1,724,888 m from moon 40057788. Then the Director unanchors and cancels the unanchoring."""
+    then verifies the V24 ballpark deployment conflict with the ship at 1.4 km before anchoring 100 km away. The anchor is retried while the ship is in
+    warp. The 5,000 km destination is outside the pinned SDE moon clearance; the former 2,000 km point was only 1,724,888 m from moon 40057788. Then
+    the Director unanchors and cancels the unanchoring."""
     run = run_token()
     with base.connect(f"walk-anchor-ok-{run}") as client:
         character, ship_id, fitted, _ = arrive(client, RACE, run)
@@ -569,15 +570,27 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
         deadline = time.time() + 300
         while True:
             try:
-                assert client.call("structureDeployment", "Anchor", item, 1000.0, 1000.0, 0.0, None, "Live anchor", "", None, None, None) is None
-                break
+                client.call("structureDeployment", "Anchor", item, 1000.0, 1000.0, 0.0, None, "Live anchor", "", None, None, None)
             except p.MachoError as failure:
-                if _refusal(failure)[0] != "ShipInWarp" or time.time() > deadline:
-                    pytest.fail(f"the anchor was refused: {_refusal(failure)[0]}: {describe(failure.payload)}")
-            # a stop once the warp is over clears it on the server (refused while the ship is still in warp), as a pilot's stop does
-            client.call_bound(ballpark[0], "CmdStop")
-            client.call_bound(ballpark[0], "UpdateStateRequest")
-            timed_events(client, 3.0)
+                label, text = _refusal(failure)
+                if label == "ShipInWarp" and time.time() <= deadline:
+                    # Stopping the warp clears the server-side warp refusal, as a pilot's stop does.
+                    client.call_bound(ballpark[0], "CmdStop")
+                    client.call_bound(ballpark[0], "UpdateStateRequest")
+                    timed_events(client, 3.0)
+                    continue
+                assert label == "CantDeployBlocked", f"the too-close placement was refused as {label}: {text}"
+                ship_type_id = int(dbseed.sql(f"select type_id from {dbseed.schema('INVENTORY')}.items where id = {ship_id}"))
+                assert (f"['typeID', {ship_type_id}]" in text or
+                        f"'typeID', {{'$long': {ship_type_id}}}" in text), text
+                break
+            else:
+                pytest.fail("the Astrahus was allowed within the live ship's deployment clearance")
+        # V24's StructurePlacementEntity passes GetBallsAndItems into the deployment-conflict check; the live ship is a 5 km blocker.
+        # EveJS's scene validator includes dynamic entities for the same check. At 100 km the ship clearance is satisfied.
+        assert dbseed.sql(f"select count(*) from {dbseed.schema('INVENTORY')}.items where id = {item}") == "1", "the refused item was consumed"
+        assert dbseed.sql(f"select count(*) from {dbseed.schema('STRUCTURES')}.structures where structure_id = {item}") == "0", "the refused structure was persisted"
+        assert client.call("structureDeployment", "Anchor", item, 100_000.0, 0.0, 0.0, None, "Live anchor", "", None, None, None) is None
         assert dbseed.sql(f"select count(*) from {dbseed.schema('INVENTORY')}.items where id = {item}") == "0", "the anchored item was not consumed"
         row = dbseed.sql(f"select owner_corporation_id, solar_system_id, state from {dbseed.schema('STRUCTURES')}.structures where structure_id = {item}")
         assert row == f"{corporation}|{LEGAL_SYSTEM}|{ANCHOR_STATE}", f"the structure row is {row!r}"

@@ -127,8 +127,6 @@ public sealed partial class InvBrokerService
             var assembly = assembled[0];
             packaged[packagedIndex] = stack with { Quantity = stack.Quantity - 1 };
             ShipNotifications.Send(call.Session, character.Value, assembly, DogmaRow, Py.FileTimeFromUnixMs(nowUnixMs()));
-            foreach (var changedStack in assembly.Stacks ?? [])
-                ShipNotifications.SendItemChange(call.Session, changedStack, DogmaRow);
 
             var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
             _bound[oid] = new Context(Kind.Ship, assembly.ItemId, call.Session.SessionId, CharacterShips.CargoFlag);

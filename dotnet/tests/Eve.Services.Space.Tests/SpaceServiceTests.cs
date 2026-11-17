@@ -3707,7 +3707,7 @@ public class SpaceServiceTests
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         const long other = 9988400002187;
-        PyValue Targeted(params PyValue[] words) => Py.Tuple(new PyInt(0), Py.Tuple(new PyInt(1), new PyTuple(words)));
+        PyValue Targeted(params PyValue[] arguments) => Py.Tuple(arguments);
         var targets = new[]
         {
             Targeted(new PyStr("lost"), new PyLong(other)),
@@ -3716,9 +3716,8 @@ public class SpaceServiceTests
         };
         foreach (var args in targets)
         {
-            var sent = ((PyTuple)args).Items;
             rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnTarget", "shipid",
-                MarshalCodec.Encode((PyTuple)((PyTuple)sent[1]).Items[1])));
+                MarshalCodec.Encode((PyTuple)args)));
         }
         var exploding = Py.Tuple(new PyStr("otherlost"), new PyLong(other), new PyStr("Exploding"));
         rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnTarget", "shipid", MarshalCodec.Encode(exploding)));

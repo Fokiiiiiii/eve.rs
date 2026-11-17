@@ -117,7 +117,7 @@ public class DogmaServiceTests
             var row = (PyPackedRow)Field(entry, "invItem");
             Assert.Equal((new PyInt(expectedType), new PyInt(expectedFlag), PyNone.Instance), (row.Values[1], row.Values[4], row.Values[8]));
             var moduleAttributes = Dict(Field(entry, "attributes"));
-            Assert.Equal(new PyInt(0), moduleAttributes.Entries.Single(e => Id(e.Key) == 18).Value);
+            Assert.DoesNotContain(moduleAttributes.Entries, e => Id(e.Key) == 18);
             var running = Dict(Field(entry, "activeEffects"));
             Assert.Equal([16L], running.Entries.Select(e => Id(e.Key)));
             var effect = (PyTuple)running.Entries[0].Value;

@@ -94,7 +94,6 @@ public sealed class DogmaInfo(DogmaStatic statics)
     {
         var attributes = WithIntrinsics(s, moduleId);
         attributes[IsOnline] = s.World.Item(moduleId)?.State >= ItemState.Online ? 1 : 0;
-        attributes.TryAdd(Charge, 0);
         // what the module has taken: its hull in points, its shield and armor as the fractions the module keeps them as
         var condition = s.ConditionOf(moduleId);
         attributes[Damage] = Round6(s.World.Get(moduleId, HullPoints) * condition.Damage);

@@ -122,6 +122,8 @@ public sealed class IndustryJobsService : IService
     private readonly Func<long> currentFileTime;
     private readonly Func<ServiceCall, JsonObject, bool>? canViewStarbaseJob;
     private readonly Func<long, bool>? isStarbaseFacilityOnline;
+    private readonly Func<ServiceCall, JsonObject, CancellationToken, ValueTask<bool>>? canViewStarbaseJobAsync;
+    private readonly Func<long, CancellationToken, ValueTask<bool?>>? isStarbaseFacilityOnlineAsync;
     private readonly Func<long, long, long, long>? resolveBlueprintLocationFlagID;
     private readonly Func<PyValue?, bool>? isAlphaClone;
     private readonly Func<long, long, CancellationToken, ValueTask<bool>>? canAccessCorporationJobs;
@@ -136,7 +138,9 @@ private readonly IIndustryJobOperations operations;
         Func<long, bool>? isStarbaseFacilityOnline = null,
         Func<long, long, long, long>? resolveBlueprintLocationFlagID = null,
         Func<PyValue?, bool>? isAlphaClone = null,
-        Func<long, long, CancellationToken, ValueTask<bool>>? canAccessCorporationJobs = null)
+        Func<long, long, CancellationToken, ValueTask<bool>>? canAccessCorporationJobs = null,
+        Func<ServiceCall, JsonObject, CancellationToken, ValueTask<bool>>? canViewStarbaseJobAsync = null,
+        Func<long, CancellationToken, ValueTask<bool?>>? isStarbaseFacilityOnlineAsync = null)
     {
         ArgumentNullException.ThrowIfNull(readJobs);
         ArgumentNullException.ThrowIfNull(operations);
@@ -145,6 +149,8 @@ private readonly IIndustryJobOperations operations;
         this.currentFileTime = currentFileTime ?? (() => DateTime.UtcNow.ToFileTimeUtc());
         this.canViewStarbaseJob = canViewStarbaseJob;
         this.isStarbaseFacilityOnline = isStarbaseFacilityOnline;
+        this.canViewStarbaseJobAsync = canViewStarbaseJobAsync;
+        this.isStarbaseFacilityOnlineAsync = isStarbaseFacilityOnlineAsync;
         this.resolveBlueprintLocationFlagID = resolveBlueprintLocationFlagID;
         this.isAlphaClone = isAlphaClone;
         this.canAccessCorporationJobs = canAccessCorporationJobs;
@@ -167,7 +173,7 @@ private readonly IIndustryJobOperations operations;
             var characterId = SessionId(call, "charid");
             var installerId = call.Args.Count == 0 ? characterId : Positive(call.Arg(0));
             if (characterId == 0 || installerId != characterId) return new PyDict([]);
-            return Counts(await readJobs(call.Cancellation), characterId);
+            return await CountsAsync(await readJobs(call.Cancellation), characterId, call.Cancellation);
         }
 
         var jobId = Positive(call.Arg(0));
@@ -175,9 +181,9 @@ private readonly IIndustryJobOperations operations;
         {
             var table = await readJobs(call.Cancellation);
             var job = Jobs(table)?[Key(jobId)] as JsonObject;
-            var visible = job is not null && !Pending(job) && CanView(call, job) &&
+            var visible = job is not null && !Pending(job) && await CanViewAsync(call, job) &&
                 await CanAccessOwnerAsync(call, Integer(job["ownerID"]));
-            return visible ? Job(job, Status(job!)) : Job(null);
+            return visible ? Job(job, await StatusAsync(job!, call.Cancellation)) : Job(null);
         }
 
         var ownerId = jobId;
@@ -188,9 +194,10 @@ private readonly IIndustryJobOperations operations;
         if (jobs is not null)
             foreach (var (_, node) in jobs)
             {
-                if (node is not JsonObject job || Pending(job) || Integer(job["ownerID"]) != ownerId || !CanView(call, job))
+                if (node is not JsonObject job || Pending(job) || Integer(job["ownerID"]) != ownerId ||
+                    !await CanViewAsync(call, job))
                     continue;
-                var status = Status(job);
+                var status = await StatusAsync(job, call.Cancellation);
                 if (!includeCompleted && status >= Completed) continue;
                 rows.Add((Integer(job["jobID"]), Job(job, status)));
             }
@@ -473,7 +480,7 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
 
 
 
-    private PyValue Counts(JsonObject? table, long installerId)
+    private async ValueTask<PyValue> CountsAsync(JsonObject? table, long installerId, CancellationToken cancellationToken)
     {
         var counts = new Dictionary<int, int>();
         var jobs = Jobs(table);
@@ -481,7 +488,7 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
             foreach (var (_, node) in jobs)
             {
                 if (node is not JsonObject job || Pending(job) ||
-                    Integer(job["installerID"]) != installerId || Status(job) >= Completed)
+                    Integer(job["installerID"]) != installerId || await StatusAsync(job, cancellationToken) >= Completed)
                     continue;
                 var activity = (int)Integer(job["activityID"]);
                 counts[activity] = counts.GetValueOrDefault(activity) + 1;
@@ -516,11 +523,14 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
         _ => Integer(JsSemantics.ToNumber(value)),
     };
 
-    private bool CanView(ServiceCall call, JsonObject job)
+    private async ValueTask<bool> CanViewAsync(ServiceCall call, JsonObject job)
     {
         var towerId = Positive(job["starbaseTowerID"]);
         return towerId == 0 ||
-            (canViewStarbaseJob?.Invoke(call, job) == true && isStarbaseFacilityOnline is not null);
+            ((canViewStarbaseJobAsync is not null
+                ? await canViewStarbaseJobAsync(call, job, call.Cancellation)
+                : canViewStarbaseJob?.Invoke(call, job) == true) &&
+             (isStarbaseFacilityOnlineAsync is not null || isStarbaseFacilityOnline is not null));
     }
 
     private long BlueprintLocationFlagID(JsonObject? job)
@@ -532,12 +542,15 @@ private async ValueTask<PyValue> MutateAsync(ServiceCall call)
         return resolveBlueprintLocationFlagID?.Invoke(inventoryLocationId, Integer(job["ownerID"]), flag) ?? flag;
     }
 
-    private long Status(JsonObject job)
+    private async ValueTask<long> StatusAsync(JsonObject job, CancellationToken cancellationToken)
     {
         var status = Integer(job["status"]);
         if (status != Installed) return status;
         var towerId = Positive(job["starbaseTowerID"]);
-        var online = towerId == 0 ? true : isStarbaseFacilityOnline?.Invoke(towerId);
+        var facilityId = Positive(job["facilityID"]);
+        var online = towerId == 0 ? true : isStarbaseFacilityOnlineAsync is not null
+            ? await isStarbaseFacilityOnlineAsync(facilityId, cancellationToken)
+            : isStarbaseFacilityOnline?.Invoke(facilityId);
         if (online == false) return Paused;
         var end = FileTime(job["endDate"]);
         return (towerId == 0 || online == true) && end > 0 && end <= currentFileTime()

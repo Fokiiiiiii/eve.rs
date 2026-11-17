@@ -17,6 +17,7 @@
     <EmbeddedResource Include="SkinrMigrations/*.sql" />
     <EmbeddedResource Include="SkinActivationMigrations/*.sql" />
     <EmbeddedResource Include="Assets/ProjectDiscovery/*.gz;Assets/ProjectDiscovery/*.json" />
+    <EmbeddedResource Include="Data/starbase-assembly-profiles.json" LogicalName="Eve.Host.Data.starbase-assembly-profiles.json" />
     <EmbeddedResource Include="Assets/ProjectDiscovery/*.png">
       <LogicalName>Eve.Host.Assets.ProjectDiscovery.%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>

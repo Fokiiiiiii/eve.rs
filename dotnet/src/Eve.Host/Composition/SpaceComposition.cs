@@ -547,7 +547,14 @@ internal sealed partial class CharacterServicesComposition
             {
                 if (await spaceContainers.ControlTowerFuelAsync(context.Connection, context.Transaction,
                     context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token))
-                    context.AfterCommit(_ => { foundations.Events.Wake(); return Task.CompletedTask; });
+                {
+                    var towerId = context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerFuelDue>()!.DeployableId;
+                    context.AfterCommit(async afterCommitToken =>
+                    {
+                        await spaceContainers.SynchronizeControlTowerSlimStateAsync(towerId, afterCommitToken);
+                        foundations.Events.Wake();
+                    });
+                }
             });
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerProductionCycleJob,
                 async (context, token) => await spaceContainers.RunScheduledProductionCycleAsync(context, token));
@@ -556,7 +563,11 @@ internal sealed partial class CharacterServicesComposition
             {
                 var due = context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerOnlineDue>()!;
                 if (await spaceContainers.CompleteControlTowerOnlineAsync(context.Connection, context.Transaction, due.DeployableId, due.StartedAtMs, token))
-                    context.AfterCommit(_ => { foundations.Events.Wake(); return Task.CompletedTask; });
+                    context.AfterCommit(async afterCommitToken =>
+                    {
+                        await spaceContainers.SynchronizeControlTowerSlimStateAsync(due.DeployableId, afterCommitToken);
+                        foundations.Events.Wake();
+                    });
             });
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.StarbaseModuleOnlineJob, async (context, token) =>
             {

@@ -55,6 +55,13 @@ internal sealed partial class CharacterServicesComposition
         [Eve.Structures.StructureServiceIds.ReactionsHybrid] = 27,
     };
 
+    private const int PosAssemblyArrayGroupId = 397;
+    private const int PosLaboratoryGroupId = 413;
+    private const int StarbaseMaxSecurityAttributeId = 1032;
+    private const int StarbaseMinSecurityAttributeId = 1946;
+    private const int StarbaseRequiredSovereigntyAttributeId = 1185;
+    private const int StarbaseRequiredHubUpgradeAttributeId = 1595;
+
     static Eve.Marshal.PyValue MailingListJoinValue(
         long listId, JsonObject list, long characterId, long role) =>
         Py.KeyVal([
@@ -84,6 +91,9 @@ internal sealed partial class CharacterServicesComposition
                 true, operation.ResearchFactor, operation.Services);
         }
 
+        if (await deployedStore.GetAsync(facilityId, token) is { Kind: "starbase_module" })
+            return await ResolveStarbaseAssemblyFacilityAsync(facilityId, solarSystemId, characterId, token);
+
         if (stationId > 0)
             return null;
         var persisted = await structureDirectoryReadModel.GetStructureInfoAsync(facilityId, token);
@@ -94,6 +104,112 @@ internal sealed partial class CharacterServicesComposition
         if (structures[facilityId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is not JsonObject structure)
             return null;
         return await ResolveIndustryStructureFacilityAsync(facilityId, solarSystemId, characterId, structure, token);
+    }
+
+    async ValueTask<PersistenceIndustryJobOperations.IndustryFacility?> ResolveStarbaseAssemblyFacilityAsync(
+        long facilityId, long solarSystemId, long characterId, CancellationToken token)
+    {
+        if (facilityId <= 0 || await deployedStore.GetAsync(facilityId, token) is not { Kind: "starbase_module" } module ||
+            module.ControlTowerId <= 0 || module.GroupId is not (PosAssemblyArrayGroupId or PosLaboratoryGroupId) ||
+            !StarbaseAssemblyProfiles.TryGet(module.TypeId, out var profile))
+            return null;
+        if ((solarSystemId > 0 && solarSystemId != module.SolarSystemId) || module.ActivateAtMs == long.MaxValue || module.ActivateAtMs > now())
+            return null;
+        var member = characterId > 0 ? await corporations.MemberAsync(characterId, token) : null;
+        if (member is null || member.CorporationId != module.CorporationId || module.OwnerId != module.CorporationId)
+            return null;
+
+        var tower = await deployedStore.GetAsync(module.ControlTowerId, token);
+        if (tower is not { Kind: "control_tower" } || tower.OwnerId != module.OwnerId || tower.CorporationId != module.CorporationId ||
+            tower.SolarSystemId != module.SolarSystemId || tower.ActivateAtMs == long.MaxValue || tower.ActivateAtMs > now())
+            return null;
+
+        var moduleState = await deployedStore.TowerStateAsync(module.DeployableId, token);
+        var towerState = await deployedStore.TowerStateAsync(tower.DeployableId, token);
+        var restrictionsMet = !profile.Capital || await StarbaseCapitalAssemblyRestrictionsMetAsync(module, profile, token);
+        var online = moduleState == "online" && towerState == "online" && restrictionsMet;
+        var taxes = await industryFacilityTaxes.GetAsync(module.DeployableId, module.OwnerId, token);
+        return new PersistenceIndustryJobOperations.IndustryFacility(
+            module.DeployableId, module.SolarSystemId, module.CorporationId,
+            IndustryDecimal(taxes?["taxCorporation"]), 1d, online,
+            Activities: profile.Activities.Keys.ToHashSet(), Bonuses: StarbaseAssemblyBonuses(profile),
+            StarbaseTowerId: tower.DeployableId, StarbaseAssemblyTypeId: module.TypeId);
+    }
+
+    async ValueTask<bool?> StarbaseAssemblyFacilityOnlineAsync(long facilityId, CancellationToken token)
+    {
+        if (facilityId <= 0 || await deployedStore.GetAsync(facilityId, token) is not
+            { Kind: "starbase_module" } module || module.ControlTowerId <= 0 ||
+            module.GroupId is not (PosAssemblyArrayGroupId or PosLaboratoryGroupId) ||
+            !StarbaseAssemblyProfiles.TryGet(module.TypeId, out var profile))
+            return false;
+        if (profile.Capital && !await StarbaseCapitalAssemblyRestrictionsMetAsync(module, profile, token))
+            return false;
+        if (module.ActivateAtMs == long.MaxValue || module.ActivateAtMs > now())
+            return false;
+        if (await deployedStore.GetAsync(module.ControlTowerId, token) is not
+            { Kind: "control_tower" } tower || tower.OwnerId != module.OwnerId ||
+            tower.CorporationId != module.CorporationId || tower.SolarSystemId != module.SolarSystemId ||
+            tower.ActivateAtMs == long.MaxValue || tower.ActivateAtMs > now())
+            return false;
+        var moduleState = await deployedStore.TowerStateAsync(module.DeployableId, token);
+        var towerState = await deployedStore.TowerStateAsync(tower.DeployableId, token);
+        return moduleState == "online" && towerState == "online";
+    }
+
+    async ValueTask<bool> StarbaseCapitalAssemblyRestrictionsMetAsync(
+        Eve.Ships.DeployedRecord module,
+        StarbaseAssemblyProfile profile,
+        CancellationToken token)
+    {
+        if (!profile.Capital)
+            return true;
+
+        await dogma.EnsureTypesAsync([module.TypeId], token);
+        if (dogma.Type(module.TypeId) is not { } type || solarSystems.Get(module.SolarSystemId) is not { } system)
+            return false;
+        if (!double.IsFinite(system.Security))
+            return false;
+
+        // starbaseAnchoringPolicy.validateSystemRestrictions rounds the map's security to the
+        // tenth shown by the V24 client before applying these type-dogma limits.
+        var security = Math.Round(Math.Clamp(system.Security, 0d, 1d), 1, MidpointRounding.AwayFromZero);
+        if (type.Attributes.TryGetValue(StarbaseMaxSecurityAttributeId, out var maximumSecurity) && security > maximumSecurity)
+            return false;
+        if (type.Attributes.TryGetValue(StarbaseMinSecurityAttributeId, out var minimumSecurity) && security < minimumSecurity)
+            return false;
+
+        // EveJS also requires the owning alliance's live sovereignty claim, strategic index,
+        // and powered hub upgrade for profiles whose SDE type names those requirements.
+        // Host does not yet have authoritative hub-upgrade power/fuel state (TODO.md ST-17 c),
+        // so keep such arrays listed but offline instead of exposing a false online facility.
+        return !type.Attributes.TryGetValue(StarbaseRequiredSovereigntyAttributeId, out var requiredSovereigntyLevel) || requiredSovereigntyLevel <= 0
+            ? !type.Attributes.TryGetValue(StarbaseRequiredHubUpgradeAttributeId, out var requiredHubUpgrade) || requiredHubUpgrade <= 0
+            : false;
+    }
+
+    private static IReadOnlyList<Eve.Services.Core.IndustryBonus> StarbaseAssemblyBonuses(StarbaseAssemblyProfile profile)
+    {
+        var bonuses = new List<Eve.Services.Core.IndustryBonus>();
+        foreach (var (activityId, activity) in profile.Activities)
+        {
+            Add(Eve.Services.Core.IndustryBonusKind.Time, activity.Time, activityId);
+            Add(Eve.Services.Core.IndustryBonusKind.Material, activity.Material, activityId);
+            Add(Eve.Services.Core.IndustryBonusKind.Cost, activity.Cost, activityId);
+            foreach (var (groupId, modifier) in activity.GroupModifiers)
+            {
+                Add(Eve.Services.Core.IndustryBonusKind.Time, modifier.Time, activityId, groupId);
+                Add(Eve.Services.Core.IndustryBonusKind.Material, modifier.Material, activityId, groupId);
+                Add(Eve.Services.Core.IndustryBonusKind.Cost, modifier.Cost, activityId, groupId);
+            }
+        }
+        return bonuses;
+
+        void Add(Eve.Services.Core.IndustryBonusKind kind, double amount, int activityId, int? groupId = null)
+        {
+            if (amount != 1d)
+                bonuses.Add(new Eve.Services.Core.IndustryBonus(kind, activityId, amount, 4, GroupId: groupId));
+        }
     }
 
     async ValueTask<PersistenceIndustryJobOperations.IndustryFacility?> ResolveIndustryStructureFacilityAsync(
@@ -236,6 +352,7 @@ internal sealed partial class CharacterServicesComposition
 
     private IIndustryCostIndexSource industryCostIndexes = default!;
     private IndustryReadyJobs industryReady = default!;
+    private Eve.Host.Persistence.PgIndustryFacilityTaxStore industryFacilityTaxes = default!;
 
     /// <summary>The stored ESI cost indices, refreshed at most daily; EVE_INDUSTRY_INDEX_SEED=skip makes no call out.</summary>
     private IIndustryCostIndexSource IndustryCostIndexSetup()
@@ -490,7 +607,12 @@ internal sealed partial class CharacterServicesComposition
             .Where(pair => pair.Id > 0 && pair.Row is not null).ToArray();
         var infos = await structureDirectoryReadModel.GetStructureInfosAsync(
             structureRows.Select(pair => pair.Id).ToArray(), token);
+        var starbaseModules = (await deployedStore.ByKindAsync("starbase_module", token))
+            .Where(module => module.GroupId is PosAssemblyArrayGroupId or PosLaboratoryGroupId &&
+                StarbaseAssemblyProfiles.TryGet(module.TypeId, out _))
+            .ToArray();
         var solarSystemIds = structureRows.Select(pair => IndustryLong(pair.Row!["solarSystemID"]))
+            .Concat(starbaseModules.Select(module => (long)module.SolarSystemId))
             .Where(id => id > 0).Distinct().ToArray();
         var solarSystems = await sde.ReadAsync("mapSolarSystems", solarSystemIds, token);
         var regionBySystem = solarSystems.ToDictionary(
@@ -513,17 +635,36 @@ internal sealed partial class CharacterServicesComposition
                 facilityId, typeId, facility, null, structure, token)));
         }
 
+        foreach (var module in starbaseModules)
+        {
+            if (!regionBySystem.TryGetValue(module.SolarSystemId, out var moduleRegion) || moduleRegion != region)
+                continue;
+            var facility = await ResolveIndustryFacilityAsync(
+                module.DeployableId, 0, module.SolarSystemId, call.Session.CharacterId ?? 0, token);
+            if (facility is null)
+                continue;
+            facilities.Add((module.DeployableId, await IndustryFacilityPayloadAsync(
+                module.DeployableId, module.TypeId, facility, null, null, token)));
+        }
+
         return new PyList(facilities.OrderBy(pair => pair.FacilityId).Select(pair => pair.Payload).ToArray());
     }
 
-    /// <summary>GetFacilityTaxes: the SDE NPC-corporation rate or the deployed structure's saved industry rate.</summary>
-    async ValueTask<PyValue?> FacilityTaxesAsync(long facilityId, CancellationToken token)
+    /// <summary>GetFacilityTaxes: saved facility rates or the SDE NPC-corporation rate.</summary>
+    async ValueTask<PyValue?> FacilityTaxesAsync(long facilityId, long characterId, CancellationToken token)
     {
         if (stations.Get(facilityId) is { } station)
         {
             var taxes = await NpcCorporationTaxesAsync();
             var rate = taxes.TryGetValue(station.OwnerId, out var value) ? value : 0m;
             return TaxPayload(new JsonObject { ["taxCorporation"] = JsonValue.Create(rate) });
+        }
+        if (facilityId > 0 && await deployedStore.GetAsync(facilityId, token) is
+            { Kind: "starbase_module" } module &&
+            await ResolveStarbaseAssemblyFacilityAsync(facilityId, module.SolarSystemId, characterId, token) is { } posFacility)
+        {
+            var settings = await industryFacilityTaxes.GetAsync(facilityId, posFacility.OwnerId, token);
+            return TaxPayload(settings, settings is null ? 0m : null);
         }
         if (facilityId > 0 && await structureDirectoryReadModel.GetStructureInfoAsync(facilityId, token) is { PersistentlyDeployed: true })
         {
@@ -583,8 +724,58 @@ internal sealed partial class CharacterServicesComposition
         var characterId = call.Session.CharacterId ?? 0;
         var currentCorporationId = FacilityNumber(call.Session.Get("corpid"));
         if (facilityId <= 0 || ownerId <= 0 || ownerId != currentCorporationId || characterId <= 0 ||
-            stations.Get(facilityId) is not null ||
-            await structureDirectoryReadModel.GetStructureInfoAsync(facilityId, token) is not { PersistentlyDeployed: true })
+            stations.Get(facilityId) is not null)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That facility could not be found.")));
+
+        if (await deployedStore.GetAsync(facilityId, token) is { Kind: "starbase_module" } module)
+        {
+            var posFacility = await ResolveStarbaseAssemblyFacilityAsync(
+                facilityId, module.SolarSystemId, characterId, token);
+            if (posFacility is null || posFacility.OwnerId != ownerId ||
+                await corporations.GetAsync(ownerId, token) is not { IsNpc: false } posCorporation ||
+                await corporations.MemberAsync(characterId, token) is not { } posMember ||
+                posMember.CorporationId != ownerId)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot configure taxes for that facility.")));
+
+            var posRoles = Eve.Corporations.CorporationRoles.Session(
+                posCorporation, posMember, null, await corporations.TitlesAsync(ownerId, token));
+            if ((posRoles.AtAll & Eve.Corporations.CorporationRoles.StationManager) == 0)
+                throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You need station manager access to configure this assembly array.")));
+
+            var posSettings = await industryFacilityTaxes.GetAsync(facilityId, ownerId, token) ??
+                new JsonObject
+                {
+                    ["taxCorporation"] = 0m,
+                    ["taxAlliance"] = null,
+                    ["taxStandingsHorrible"] = null,
+                    ["taxStandingsBad"] = null,
+                    ["taxStandingsNeutral"] = null,
+                    ["taxStandingsGood"] = null,
+                    ["taxStandingsHigh"] = null,
+                };
+            foreach (var field in FacilityTaxFields)
+            {
+                var input = TaxInputValue(call.Arg(2), field);
+                if (input is null)
+                    continue;
+                posSettings[field] = TaxInputNumber(input) is { } value ? JsonValue.Create(value) : null;
+            }
+
+            await using (var connection = await source.OpenConnectionAsync(token))
+            await using (var transaction = await connection.BeginTransactionAsync(token))
+            {
+                if (!await industryFacilityTaxes.SetAsync(
+                        connection, transaction, facilityId, ownerId, posSettings, token))
+                    throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Failed to persist facility tax settings.")));
+                await transaction.CommitAsync(token);
+            }
+
+            foreach (var session in characterSessions.All())
+                session.SendNotification("OnFacilitiesUpdated", "clientID", new PyList([new PyLong(facilityId)]));
+            return PyNone.Instance;
+        }
+
+        if (await structureDirectoryReadModel.GetStructureInfoAsync(facilityId, token) is not { PersistentlyDeployed: true })
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That facility could not be found.")));
 
         var record = await structureStore.GetAsync(facilityId, token);
@@ -634,17 +825,21 @@ internal sealed partial class CharacterServicesComposition
         JsonObject? structureDoc,
         CancellationToken token)
     {
-        var activityPayload = await FacilityActivitiesPayloadAsync(
-            operation is not null ? NpcActivityIds(operation) : facility.Activities ?? new HashSet<int>(),
-            operation?.ManufacturingFactor ?? facility.TimeMultiplier,
-            operation?.ResearchFactor ?? facility.ResearchFactor,
-            facility.SolarSystemId,
-            facility.ModifierBonuses,
-            token);
+        var activityPayload = facility.StarbaseAssemblyTypeId > 0 &&
+            StarbaseAssemblyProfiles.TryGet(facility.StarbaseAssemblyTypeId, out var assemblyProfile)
+            ? await StarbaseAssemblyActivitiesPayloadAsync(assemblyProfile, facility.SolarSystemId, token)
+            : await FacilityActivitiesPayloadAsync(
+                operation is not null ? NpcActivityIds(operation) : facility.Activities ?? new HashSet<int>(),
+                operation?.ManufacturingFactor ?? facility.TimeMultiplier,
+                operation?.ResearchFactor ?? facility.ResearchFactor,
+                facility.SolarSystemId,
+                facility.ModifierBonuses,
+                token);
         var serviceTaxes = structureDoc is null
             ? new Dictionary<int, decimal>()
             : facility.ServiceTaxRates ?? new Dictionary<int, decimal>();
-        return Py.KeyVal(
+        var fields = new List<(string, PyValue)>
+        {
             ("facilityID", new PyLong(facility.FacilityId)),
             ("typeID", new PyInt(typeId)),
             ("ownerID", new PyLong(facility.OwnerId)),
@@ -656,7 +851,45 @@ internal sealed partial class CharacterServicesComposition
             ("sccTaxModifier", Py.Number(1)),
             ("rigModifiers", RigModifiersPayload(facility.ModifierBonuses)),
             ("globalModifiers", Py.Dict(("faction", Py.Number(1)), ("system", new PyDict([])))),
-            ("activities", activityPayload));
+            ("activities", activityPayload),
+        };
+        return Py.KeyVal(fields.ToArray());
+    }
+
+    async ValueTask<PyValue> StarbaseAssemblyActivitiesPayloadAsync(
+        StarbaseAssemblyProfile profile, long solarSystemId, CancellationToken token)
+    {
+        var entries = new List<KeyValuePair<PyValue, PyValue>>();
+        foreach (var (activityId, activity) in profile.Activities.OrderBy(pair => pair.Key))
+        {
+            async ValueTask<PyList> Modifiers(double baseAmount, Func<StarbaseAssemblyModifier, double> groupAmount, bool includeCostIndex = false)
+            {
+                var rows = new List<PyValue>();
+                if (baseAmount != 1d)
+                    rows.Add(Py.Tuple(Py.Number(baseAmount), PyNone.Instance, PyNone.Instance, PyNone.Instance, new PyInt(4)));
+                foreach (var (groupId, group) in activity.GroupModifiers.OrderBy(pair => pair.Key))
+                {
+                    var amount = groupAmount(group);
+                    if (amount != 1d)
+                        rows.Add(Py.Tuple(Py.Number(amount), PyNone.Instance, new PyInt(groupId), PyNone.Instance, new PyInt(4)));
+                }
+                if (includeCostIndex)
+                {
+                    var costIndex = await industryCostIndexes.GetAsync(solarSystemId, activityId, token);
+                    rows.Add(Py.Tuple(Py.Number((double)costIndex), PyNone.Instance, PyNone.Instance, PyNone.Instance, new PyInt(4)));
+                }
+                return new PyList(rows);
+            }
+
+            entries.Add(new(new PyInt(activityId), Py.Tuple(
+                await Modifiers(activity.Time, group => group.Time),
+                await Modifiers(activity.Material, group => group.Material),
+                await Modifiers(activity.Cost, group => group.Cost, includeCostIndex: true),
+                new PyList(activity.Categories.Select(value => (PyValue)new PyInt(value)).ToArray()),
+                new PyList(activity.Groups.Select(value => (PyValue)new PyInt(value)).ToArray()),
+                new PyList([]))));
+        }
+        return new PyDict(entries);
     }
 
     /// <summary>
@@ -710,6 +943,16 @@ internal sealed partial class CharacterServicesComposition
                 includeInventoryMapping);
         }
 
+        if (await deployedStore.GetAsync(facilityId, token) is { Kind: "starbase_module" } module)
+        {
+            var facility = await ResolveStarbaseAssemblyFacilityAsync(facilityId, module.SolarSystemId, characterId, token);
+            if (!corporate || facility is null || facility.StarbaseTowerId <= 0 || facility.OwnerId != ownerId)
+                return new PyList([]);
+            return await StarbaseAssemblyLocationsAsync(
+                facilityId, ownerId, characterId, checked((int)module.TypeId), facility.SolarSystemId, token,
+                includeInventoryMapping);
+        }
+
         if (await structureDirectoryReadModel.GetStructureInfoAsync(facilityId, token) is not { PersistentlyDeployed: true })
             return new PyList([]);
         var rows = await ReadGameStoreTableAsync("structures", token);
@@ -735,6 +978,31 @@ internal sealed partial class CharacterServicesComposition
             return new PyList([]);
         return await CorporationFacilityLocationsAsync(
             facilityId, ownerId, characterId, typeId, systemId, token, includeInventoryMapping);
+    }
+
+    async ValueTask<PyValue> StarbaseAssemblyLocationsAsync(
+        long facilityId, long corporationId, long characterId, int facilityTypeId,
+        long solarSystemId, CancellationToken token, bool includeInventoryMapping)
+    {
+        var corporation = await corporations.GetAsync(corporationId, token);
+        var member = await corporations.MemberAsync(characterId, token);
+        if (corporation is null || corporation.IsNpc || member is null || member.CorporationId != corporationId)
+            return new PyList([]);
+        var roles = Eve.Corporations.CorporationRoles.Session(
+            corporation, member, facilityId, await corporations.TitlesAsync(corporationId, token));
+        var locations = new List<PyValue>();
+        foreach (var flag in Enumerable.Range(
+            Eve.Services.Core.IndustryRules.CorporationHangarFirstFlag,
+            Eve.Services.Core.IndustryRules.CorporationHangarLastFlag - Eve.Services.Core.IndustryRules.CorporationHangarFirstFlag + 1))
+        {
+            var canView = Eve.Corporations.CorporationRoles.HasHangarAccess(roles, facilityId, flag, take: false);
+            if (!canView)
+                continue;
+            var canTake = Eve.Corporations.CorporationRoles.HasHangarAccess(roles, facilityId, flag, take: true);
+            locations.Add(IndustryLocation(facilityId, facilityId, facilityTypeId, corporationId,
+                flag, solarSystemId, true, canTake, includeInventoryMapping));
+        }
+        return new PyList(locations);
     }
 
     async ValueTask<PyValue> CorporationFacilityLocationsAsync(
@@ -856,12 +1124,20 @@ internal sealed partial class CharacterServicesComposition
             var station = stations.Get(facilityId);
             var systemId = station?.SolarSystemId ?? 0;
             var typeId = station?.TypeId ?? 0;
-            if (station is null)
+            JsonObject? structureDoc = null;
+            if (station is null && await deployedStore.GetAsync(facilityId, token) is { Kind: "starbase_module" } module)
+            {
+                systemId = module.SolarSystemId;
+                typeId = checked((int)module.TypeId);
+            }
+            else if (station is null)
             {
                 var info = persistedStructure ?? await structureDirectoryReadModel.GetStructureInfoAsync(facilityId, token);
                 if (info is not { PersistentlyDeployed: true }) return null;
                 systemId = (int)FacilityNumber(FacilityField(info.Info, "solarSystemID"));
                 typeId = (int)FacilityNumber(FacilityField(info.Info, "typeID"));
+                var rows = await ReadGameStoreTableAsync("structures", token);
+                structureDoc = rows[facilityId.ToString(System.Globalization.CultureInfo.InvariantCulture)] as JsonObject;
             }
             if (systemId <= 0 || typeId <= 0) return null;
             var facility = await ResolveIndustryFacilityAsync(
@@ -869,10 +1145,6 @@ internal sealed partial class CharacterServicesComposition
             if (facility is null) return null;
 
             var operation = station is null ? null : await NpcOperationAsync(station.OperationId);
-            var structureRows = station is null ? await ReadGameStoreTableAsync("structures", token) : null;
-            var structureDoc = station is null && structureRows is not null &&
-                structureRows[facilityId.ToString(System.Globalization.CultureInfo.InvariantCulture)] is JsonObject row
-                ? row : null;
             return await IndustryFacilityPayloadAsync(
                 facilityId, typeId, facility, operation, structureDoc, token);
         }
@@ -900,7 +1172,7 @@ internal sealed partial class CharacterServicesComposition
             return ActivityModifiersPayload(indexes);
         }
         if (call.Method == "GetFacilityTaxes")
-            return await FacilityTaxesAsync(FacilityNumber(call.Arg(0)), token);
+            return await FacilityTaxesAsync(FacilityNumber(call.Arg(0)), call.Session.CharacterId ?? 0, token);
         if (call.Method == "SetFacilityTaxes")
             return await SetFacilityTaxesAsync(call, token);
         if (call.Method == "GetFacilityLocations")
@@ -929,7 +1201,9 @@ internal sealed partial class CharacterServicesComposition
         {
             var facilityId = FacilityNumber(raw);
             var station = stations.Get(facilityId);
-            if (facilityId > 0 && station is null && !structureInfos.TryGetValue(facilityId, out _))
+            var isStarbaseModule = facilityId > 0 && station is null &&
+                await deployedStore.GetAsync(facilityId, token) is { Kind: "starbase_module" };
+            if (facilityId > 0 && station is null && !isStarbaseModule && !structureInfos.TryGetValue(facilityId, out _))
                 continue;
             structureInfos.TryGetValue(facilityId, out var persistedStructure);
             if (await ReadFacilityAsync(facilityId, persistedStructure) is { } facility)
@@ -990,6 +1264,8 @@ internal sealed partial class CharacterServicesComposition
 
     private async Task IndustryFacilities()
     {
+        deployedStore ??= new Eve.Ships.PgDeployedStore(source, spaceSchema);
+        industryFacilityTaxes = new Eve.Host.Persistence.PgIndustryFacilityTaxStore(source, industrySchema);
         industryCostIndexes = IndustryCostIndexSetup();
         industryReady = new IndustryReadyJobs(source, industrySchema, foundations.Events, foundations.Scheduler, () => now());
         industryReady.Register();

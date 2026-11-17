@@ -55,6 +55,7 @@ internal sealed partial class CharacterServicesComposition
         await Eve.Data.Migrations.ApplyAsync(source, industrySchema,
         [
             IndustryJobsSchema.Jobs(inventorySchema),
+            IndustryJobsSchema.FacilityTaxes(),
         ]);
         await PgSkillStore.MigrateAsync(source, skillsSchema);
         await PgWalletStore.MigrateAsync(source, walletSchema);

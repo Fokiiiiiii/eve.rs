@@ -63,7 +63,9 @@ Follow-up verification after the final permission and persistence assertions:
 ## Remaining gaps and limits
 
 - `GetTowerSentrySettings` and `SetTowerSentrySettings` persist and return V24 values, but there is no associated battery controller that consumes the sentry policy.
-- `SetStarbasePermissions` persists module usage settings, but there is no POS array/container operation that checks `viewput`, `viewputtake`, or `use` before inventory mutations.
-- `SetTowerPassword` stores a salted verifier and corp/alliance flags, but no force-field harmonic or movement/admission boundary consumes them.
-- `RunMoonProcessCycleforTower` preserves the GM check and no-links refusal. It does not process a connected graph because module onlining/resource accounting and an authoritative production-cycle inventory runner are not available. The pinned legacy EveJS authority is unconfigured for reactions; the SDE has no historical moon abundance field.
+- `SetStarbasePermissions` persists module usage settings. Silo `viewput`/`viewputtake` is enforced through registered inventory operations; maintenance/reprocessing/compression arrays and the jump-bridge `use` consumer remain open.
+- `SetTowerPassword` stores a salted verifier and corp/alliance flags, but no force-field harmonic or movement/admission boundary consumes them. `AddTargetOBO`/`RemoveTargetOBO` likewise have no controlled battery actor or Rust scene target state.
+- `RunMoonProcessCycleforTower` now has module onlining/resource accounting and an authoritative silo-to-silo cycle runner. It does not produce moon or reaction outputs: the pinned legacy EveJS authority is unconfigured for reactions and the SDE has no historical moon abundance field.
+- POS assembly-array industry facilities for the checked-in V24 profiles resolve through the Host, persist facility taxes and install/pause jobs using corporation hangar state. Other module operations and graphical client acceptance remain unverified; see [POS force field and modules](pos-force-field-and-modules.md).
+- The control-bunker item ID and position remain unavailable from Host state, the matching EveJS checkout, and the pinned SDE. `GetControlBunkerIDInSystem` remains fail-closed as `None`.
 - No graphical V24 client was launched. No complete EveJS POS flow was run; behavior was compared by source traces. Broader class builds/tests and CI gate are tracked separately from the focused result above.

@@ -69,6 +69,314 @@ public sealed class IndustryFacilityHostFlowTests
     }
 
     [PgFact]
+    public async Task Facility_manager_exposes_anchored_online_POS_assembly_arrays_and_corporate_hangars()
+    {
+        await using var fixture = await CreateAsync();
+        const long towerId = 1_990_400_101;
+        const long arrayId = 1_990_400_102;
+        const int towerTypeId = 12235;
+        const int assemblyArrayTypeId = 13780;
+        var deployed = new Eve.Ships.PgDeployedStore(fixture.Rig.Source, fixture.Rig.SpaceSchema);
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await deployed.SaveAsync(connection, transaction, new Eve.Ships.DeployedRecord(
+                towerId, "control_tower", checked((int)SolarSystemId), "Facility test tower", towerTypeId, 365,
+                [1, 2, 3], 50_000, CorporationId, checked((int)CorporationId), 0, 0, long.MaxValue));
+            await deployed.SaveAsync(connection, transaction, new Eve.Ships.DeployedRecord(
+                arrayId, "starbase_module", checked((int)SolarSystemId), "Facility test assembly array", assemblyArrayTypeId, 397,
+                [4, 5, 6], 100, CorporationId, checked((int)CorporationId), 0, 0, long.MaxValue,
+                ControlTowerId: towerId));
+            await deployed.SetTowerStateAsync(connection, transaction, towerId, "online");
+            await deployed.SetTowerStateAsync(connection, transaction, arrayId, "online");
+            await transaction.CommitAsync();
+        }
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var update = new NpgsqlCommand(
+            $"UPDATE {fixture.Rig.CorporationsSchema}.members SET roles_other = $2 WHERE character_id = $1", connection))
+        {
+            update.Parameters.Add(new NpgsqlParameter { Value = fixture.CharacterId });
+            update.Parameters.Add(new NpgsqlParameter { Value = (1L << 20) | (1L << 13) });
+            Assert.Equal(1, await update.ExecuteNonQueryAsync());
+        }
+
+        Exception? facilitiesProblem = null;
+        var facilitiesRawResponse = await SendAsync(fixture, "facilityManager", "GetFacilities", [],
+            (_, error) => facilitiesProblem = error);
+        var facilitiesResponse = ResponseValue(facilitiesRawResponse);
+        Assert.True(facilitiesResponse is PyList,
+            $"GetFacilities returned {facilitiesResponse.GetType().Name}: {facilitiesResponse switch { PyInt value => value.Value.ToString(), PyLong value => value.Value.ToString(), _ => facilitiesResponse.ToString() }}; packet={MachoPacket.Decode(facilitiesRawResponse)?.TypeName}; dispatch={facilitiesProblem}");
+        var facilities = (PyList)facilitiesResponse;
+        var fromRegion = Assert.Single(facilities.Items,
+            item => Field(item, "facilityID") == new PyLong(arrayId));
+        Assert.Equal(new PyInt(assemblyArrayTypeId), Field(fromRegion, "typeID"));
+        Assert.DoesNotContain(Assert.IsType<PyDict>(Assert.IsType<PyObject>(fromRegion).Args).Entries,
+            entry => JsSemantics.StringValue(entry.Key) == "starbaseTowerID");
+        Assert.Equal(PyBool.True, Field(fromRegion, "online"));
+        Assert.Contains(Assert.IsType<PyDict>(Field(fromRegion, "activities")).Entries,
+            entry => entry.Key == new PyInt(IndustryRules.Manufacturing));
+
+        var byId = Assert.IsType<PyList>(await CallAsync(fixture, "GetFacilitiesByID", new PyList([new PyLong(arrayId)])));
+        Assert.Equal(new PyLong(arrayId), Field(Assert.Single(byId.Items), "facilityID"));
+        var direct = await CallAsync(fixture, "GetFacility", new PyLong(arrayId));
+        Assert.DoesNotContain(Assert.IsType<PyDict>(Assert.IsType<PyObject>(direct).Args).Entries,
+            entry => JsSemantics.StringValue(entry.Key) == "starbaseTowerID");
+
+        var locations = Assert.IsType<PyList>(await CallAsync(
+            fixture, "GetFacilityLocations", new PyLong(arrayId), new PyLong(CorporationId)));
+        var hangar = Assert.Single(locations.Items,
+            location => Field(location, "flagID") == new PyInt(IndustryRules.CorporationHangarFirstFlag));
+        Assert.Equal(new PyLong(arrayId), Field(hangar, "itemID"));
+        Assert.DoesNotContain(Assert.IsType<PyObjectEx>(hangar).Dict,
+            entry => JsSemantics.StringValue(entry.Key) == "inventoryLocationID");
+        Assert.Equal(PyBool.True, Field(hangar, "canView"));
+        Assert.Equal(PyBool.True, Field(hangar, "canTake"));
+    }
+
+    [PgFact]
+    public async Task Capital_POS_assembly_array_obeys_its_V24_system_security_limit()
+    {
+        await using var fixture = await CreateAsync();
+        const long towerId = 1_990_400_121;
+        const long arrayId = 1_990_400_122;
+        const int towerTypeId = 12235;
+        const int capitalArrayTypeId = 24656;
+        var deployed = new Eve.Ships.PgDeployedStore(fixture.Rig.Source, fixture.Rig.SpaceSchema);
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await deployed.SaveAsync(connection, transaction, new Eve.Ships.DeployedRecord(
+                towerId, "control_tower", checked((int)SolarSystemId), "Capital array test tower", towerTypeId, 365,
+                [1, 2, 3], 50_000, CorporationId, checked((int)CorporationId), 0, 0, long.MaxValue));
+            await deployed.SaveAsync(connection, transaction, new Eve.Ships.DeployedRecord(
+                arrayId, "starbase_module", checked((int)SolarSystemId), "Capital array", capitalArrayTypeId, 397,
+                [4, 5, 6], 100, CorporationId, checked((int)CorporationId), 0, 0, long.MaxValue,
+                ControlTowerId: towerId));
+            await deployed.SetTowerStateAsync(connection, transaction, towerId, "online");
+            await deployed.SetTowerStateAsync(connection, transaction, arrayId, "online");
+            await transaction.CommitAsync();
+        }
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var update = new NpgsqlCommand(
+            $"UPDATE {fixture.Rig.CorporationsSchema}.members SET roles_other = $2 WHERE character_id = $1", connection))
+        {
+            update.Parameters.Add(new NpgsqlParameter { Value = fixture.CharacterId });
+            update.Parameters.Add(new NpgsqlParameter { Value = (1L << 20) | (1L << 13) });
+            Assert.Equal(1, await update.ExecuteNonQueryAsync());
+        }
+
+        var facility = await CallAsync(fixture, "GetFacility", new PyLong(arrayId));
+        Assert.Equal(new PyInt(capitalArrayTypeId), Field(facility, "typeID"));
+        Assert.Equal(PyBool.False, Field(facility, "online"));
+    }
+
+    [PgFact]
+    public async Task POS_assembly_facility_taxes_require_station_manager_and_persist_through_host_restart()
+    {
+        await using var fixture = await CreateAsync();
+        const long towerId = 1_990_400_201;
+        const long arrayId = 1_990_400_202;
+        const int towerTypeId = 12235;
+        const int assemblyArrayTypeId = 13780;
+        var deployed = new Eve.Ships.PgDeployedStore(fixture.Rig.Source, fixture.Rig.SpaceSchema);
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await deployed.SaveAsync(connection, transaction, new Eve.Ships.DeployedRecord(
+                towerId, "control_tower", checked((int)SolarSystemId), "Tax test tower", towerTypeId, 365,
+                [1, 2, 3], 50_000, CorporationId, checked((int)CorporationId), 0, 0, long.MaxValue));
+            await deployed.SaveAsync(connection, transaction, new Eve.Ships.DeployedRecord(
+                arrayId, "starbase_module", checked((int)SolarSystemId), "Tax test assembly array", assemblyArrayTypeId, 397,
+                [4, 5, 6], 100, CorporationId, checked((int)CorporationId), 0, 0, long.MaxValue,
+                ControlTowerId: towerId));
+            await deployed.SetTowerStateAsync(connection, transaction, towerId, "online");
+            await deployed.SetTowerStateAsync(connection, transaction, arrayId, "online");
+            await transaction.CommitAsync();
+        }
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var update = new NpgsqlCommand(
+            $"UPDATE {fixture.Rig.CorporationsSchema}.members SET roles_other = $2, roles = $3 WHERE character_id = $1", connection))
+        {
+            update.Parameters.Add(new NpgsqlParameter { Value = fixture.CharacterId });
+            update.Parameters.Add(new NpgsqlParameter { Value = (1L << 20) | (1L << 13) });
+            update.Parameters.Add(new NpgsqlParameter { Value = Eve.Corporations.CorporationRoles.FactoryManager });
+            Assert.Equal(1, await update.ExecuteNonQueryAsync());
+        }
+
+        var taxValues = TaxValues(0.025);
+        var refused = await SendAsync(fixture, "SetFacilityTaxes",
+            new PyLong(arrayId), new PyLong(CorporationId), taxValues);
+        Assert.Equal(MachoMessage.ErrorResponse, MachoPacket.Decode(refused)?.Type);
+        Assert.DoesNotContain(fixture.Capture.Packets,
+            packet => MachoPacket.Decode(packet)?.Type == MachoMessage.Notification);
+        Assert.Equal(0L, await ScalarLongAsync(fixture.Rig.Source,
+            $"SELECT count(*) FROM {fixture.Rig.IndustrySchema}.facility_taxes WHERE facility_id = {arrayId}"));
+
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var update = new NpgsqlCommand(
+            $"UPDATE {fixture.Rig.CorporationsSchema}.members SET roles = roles | $2 WHERE character_id = $1", connection))
+        {
+            update.Parameters.Add(new NpgsqlParameter { Value = fixture.CharacterId });
+            update.Parameters.Add(new NpgsqlParameter { Value = Eve.Corporations.CorporationRoles.StationManager });
+            Assert.Equal(1, await update.ExecuteNonQueryAsync());
+        }
+        fixture.Session.Set("corprole", new PyLong(
+            Eve.Corporations.CorporationRoles.FactoryManager | Eve.Corporations.CorporationRoles.StationManager));
+
+        Assert.IsType<PyNone>(await CallAsync(fixture, "SetFacilityTaxes",
+            new PyLong(arrayId), new PyLong(CorporationId), taxValues));
+        AssertFacilityUpdatedNotification(fixture.Capture, arrayId);
+        var taxes = await CallAsync(fixture, "GetFacilityTaxes", new PyLong(arrayId), new PyLong(CorporationId));
+        Assert.Equal(new PyReal(0.025), Field(taxes, "taxCorporation"));
+        Assert.Equal(1L, await ScalarLongAsync(fixture.Rig.Source,
+            $"SELECT count(*) FROM {fixture.Rig.IndustrySchema}.facility_taxes WHERE facility_id = {arrayId} AND owner_id = {CorporationId}"));
+
+        await fixture.Rig.RestartAsync();
+        var restarted = await RebindAsync(fixture);
+        var persistedTaxes = await CallAsync(restarted, "GetFacilityTaxes", new PyLong(arrayId), new PyLong(CorporationId));
+        Assert.Equal(new PyReal(0.025), Field(persistedTaxes, "taxCorporation"));
+        var facility = await CallAsync(restarted, "GetFacility", new PyLong(arrayId));
+        Assert.Equal(new PyReal(0.025), Field(facility, "tax"));
+    }
+
+    [PgFact]
+    public async Task Registered_host_installs_and_pauses_a_POS_assembly_job_using_corporate_hangar_state()
+    {
+        await using var fixture = await CreateAsync();
+        await fixture.Rig.FundAsync(CorporationId, 1_000_000m);
+        const long towerId = 1_990_400_111;
+        const long arrayId = 1_990_400_112;
+        const int towerTypeId = 12235;
+        const int assemblyArrayTypeId = 13780;
+        var deployed = new Eve.Ships.PgDeployedStore(fixture.Rig.Source, fixture.Rig.SpaceSchema);
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await deployed.SaveAsync(connection, transaction, new Eve.Ships.DeployedRecord(
+                towerId, "control_tower", checked((int)SolarSystemId), "Industry test tower", towerTypeId, 365,
+                [1, 2, 3], 50_000, CorporationId, checked((int)CorporationId), 0, 0, long.MaxValue));
+            await deployed.SaveAsync(connection, transaction, new Eve.Ships.DeployedRecord(
+                arrayId, "starbase_module", checked((int)SolarSystemId), "Industry test assembly array", assemblyArrayTypeId, 397,
+                [4, 5, 6], 100, CorporationId, checked((int)CorporationId), 0, 0, long.MaxValue,
+                ControlTowerId: towerId));
+            await deployed.SetTowerStateAsync(connection, transaction, towerId, "online");
+            await deployed.SetTowerStateAsync(connection, transaction, arrayId, "online");
+            await transaction.CommitAsync();
+        }
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var update = new NpgsqlCommand(
+            $"UPDATE {fixture.Rig.CorporationsSchema}.members SET roles_other = $2, roles = $3 WHERE character_id = $1", connection))
+        {
+            update.Parameters.Add(new NpgsqlParameter { Value = fixture.CharacterId });
+            update.Parameters.Add(new NpgsqlParameter { Value = (1L << 20) | (1L << 13) });
+            update.Parameters.Add(new NpgsqlParameter
+            {
+                Value = Eve.Corporations.CorporationRoles.FactoryManager |
+                    Eve.Corporations.CorporationRoles.WalletTakeRole(1000) | (1L << 50),
+            });
+            Assert.Equal(1, await update.ExecuteNonQueryAsync());
+        }
+        fixture.Session.Set("corprole", new PyLong(
+            Eve.Corporations.CorporationRoles.FactoryManager |
+            Eve.Corporations.CorporationRoles.WalletTakeRole(1000) | (1L << 50)));
+
+        var skills = new PgSkillStore(fixture.Rig.Source, fixture.Rig.SkillsSchema);
+        var industrySkill = (await SkillCatalog.LoadAsync(new SdeReader(fixture.Rig.Source))).Get(3380);
+        Assert.NotNull(industrySkill);
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await skills.GrantAsync(connection, transaction, fixture.CharacterId,
+                [new CharacterSkill(industrySkill.TypeId, 1, SkillPoints.ForTraining(industrySkill.Rank, 1))]);
+            await transaction.CommitAsync();
+        }
+
+        var inventory = new PgItemStore(fixture.Rig.Source, fixture.Rig.InventorySchema);
+        long blueprintId;
+        await using (var connection = await fixture.Rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            blueprintId = await inventory.CreateAsync(connection, transaction, new NewItem(
+                32859, CorporationId, arrayId, Eve.Inventory.ItemFlags.CorpSAG1,
+                Singleton: true, BlueprintCopy: false));
+            await inventory.CreateAsync(connection, transaction, new NewItem(
+                34, CorporationId, arrayId, Eve.Inventory.ItemFlags.CorpSAG1, Quantity: 222));
+            await inventory.CreateAsync(connection, transaction, new NewItem(
+                35, CorporationId, arrayId, Eve.Inventory.ItemFlags.CorpSAG1, Quantity: 222));
+            await transaction.CommitAsync();
+        }
+
+        var request = Py.KeyVal(
+            ("activityID", new PyInt(IndustryRules.Manufacturing)),
+            ("blueprintID", new PyLong(blueprintId)),
+            ("blueprintTypeID", new PyInt(32859)),
+            ("facilityID", new PyLong(arrayId)),
+            ("solarSystemID", new PyLong(SolarSystemId)),
+            ("characterID", new PyLong(fixture.CharacterId)),
+            ("corporationID", new PyLong(CorporationId)),
+            ("runs", new PyInt(1)),
+            ("cost", new PyReal(0)),
+            ("tax", new PyReal(0)),
+            ("time", new PyReal(0)),
+            ("materials", new PyDict([
+                new(new PyInt(34), new PyInt(222)),
+                new(new PyInt(35), new PyInt(222)),
+            ])),
+            ("inputLocation", IndustryLocation(arrayId, assemblyArrayTypeId,
+                CorporationId, Eve.Inventory.ItemFlags.CorpSAG1, SolarSystemId)),
+            ("outputLocation", IndustryLocation(arrayId, assemblyArrayTypeId,
+                CorporationId, Eve.Inventory.ItemFlags.CorpSAG1, SolarSystemId)),
+            ("licensedRuns", new PyInt(0)),
+            ("productTypeID", new PyInt(3297)),
+            ("account", Py.Tuple(new PyLong(CorporationId), new PyInt(1000))));
+
+        Exception? dispatchException = null;
+        var response = await SendAsync(fixture, "industryManager", "InstallJob", [request],
+            (_, error) => dispatchException = error);
+        var packet = MachoPacket.Decode(response);
+        var installError = packet?.Type == MachoMessage.ErrorResponse
+            ? new Eve.Services.MachoError(MachoErrorType.WrappedException,
+                Assert.IsType<PySubStream>(Assert.IsType<PyTuple>(
+                    Assert.IsType<PyTuple>(packet.Payload).Items[2]).Items[0]).Decoded!).UserErrorMessage
+            : "";
+        Assert.True(packet?.Type == MachoMessage.CallRsp,
+            $"InstallJob returned {packet?.TypeName} ({installError}); dispatch={dispatchException}");
+        var jobId = Assert.IsType<PyInt>(ResponseValue(response)).Value;
+        await fixture.Rig.Events.PumpAsync();
+        AssertIndustryJobNotification(fixture.Capture, jobId, CorporationId,
+            fixture.CharacterId, blueprintId, 1);
+        Assert.Equal(1L, await ScalarLongAsync(fixture.Rig.Source,
+            $"SELECT count(*) FROM {fixture.Rig.IndustrySchema}.jobs WHERE job_id = {jobId} AND status = 1"));
+        Assert.Equal(towerId, await ScalarLongAsync(fixture.Rig.Source,
+            $"SELECT (activity_snapshot->>'starbaseTowerID')::bigint FROM {fixture.Rig.IndustrySchema}.jobs WHERE job_id = {jobId}"));
+        var afterInstall = await inventory.InContainerAsync(arrayId);
+        Assert.DoesNotContain(afterInstall, item => item.TypeId is 34 or 35);
+
+        await deployed.SetTowerStateAsync(towerId, "offline");
+        var paused = await CallAsync(fixture, "industryManager", "GetJob", new PyLong(jobId));
+        Assert.Equal(new PyInt(2), Field(paused, "status"));
+        Assert.DoesNotContain(Assert.IsType<PyDict>(Assert.IsType<PyObject>(paused).Args).Entries,
+            entry => JsSemantics.StringValue(entry.Key) == "starbaseTowerID");
+
+        await deployed.SetTowerStateAsync(towerId, "online");
+        await using (var makeReady = fixture.Rig.Source.CreateCommand(
+            $"UPDATE {fixture.Rig.IndustrySchema}.jobs SET end_date_filetime = 0 WHERE job_id = $1"))
+        {
+            makeReady.Parameters.Add(new NpgsqlParameter { Value = jobId });
+            Assert.Equal(1, await makeReady.ExecuteNonQueryAsync());
+        }
+        Assert.IsType<PyNone>(await CallAsync(fixture, "industryManager", "CompleteJob",
+            new PyLong(jobId), new PyLong(SolarSystemId)));
+        await fixture.Rig.Events.PumpAsync();
+        AssertIndustryJobNotification(fixture.Capture, jobId, CorporationId,
+            fixture.CharacterId, blueprintId, 100);
+        Assert.Single(await inventory.InContainerAsync(arrayId), item => item.TypeId == 3297);
+        Assert.False((await inventory.GetAsync(blueprintId))!.BlueprintLocked);
+        Assert.Equal(100L, await ScalarLongAsync(fixture.Rig.Source,
+            $"SELECT status FROM {fixture.Rig.IndustrySchema}.jobs WHERE job_id = {jobId}"));
+    }
+
+    [PgFact]
     public async Task Facility_locations_include_the_personal_hangar_at_an_upwell_structure()
     {
         await using var fixture = await CreateAsync();

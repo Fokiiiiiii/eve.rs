@@ -170,13 +170,24 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         {
             if (await Containers.ControlTowerFuelAsync(context.Connection, context.Transaction,
                 context.Payload<SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token))
-                context.AfterCommit(_ => { Events.Wake(); return Task.CompletedTask; });
+            {
+                var towerId = context.Payload<SpaceContainers.ControlTowerFuelDue>()!.DeployableId;
+                context.AfterCommit(async afterCommitToken =>
+                {
+                    await Containers.SynchronizeControlTowerSlimStateAsync(towerId, afterCommitToken);
+                    Events.Wake();
+                });
+            }
         });
         Scheduler.Register(SpaceContainers.ControlTowerOnlineJob, async (context, token) =>
         {
             var due = context.Payload<SpaceContainers.ControlTowerOnlineDue>()!;
             if (await Containers.CompleteControlTowerOnlineAsync(context.Connection, context.Transaction, due.DeployableId, due.StartedAtMs, token))
-                context.AfterCommit(_ => { Events.Wake(); return Task.CompletedTask; });
+                context.AfterCommit(async afterCommitToken =>
+                {
+                    await Containers.SynchronizeControlTowerSlimStateAsync(due.DeployableId, afterCommitToken);
+                    Events.Wake();
+                });
         });
         Scheduler.Register(SpaceContainers.StarbaseModuleOnlineJob, async (context, token) =>
         {

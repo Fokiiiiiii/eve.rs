@@ -2644,10 +2644,14 @@ Built and tested headless on eve_p4 (PostgreSQL): the tower's fuel per hour by S
 
 Open:
 
-- Manual online (the pilot's online command and its online fuel charge), and any client surfacing of the tower's online state.
-- The client's fuel-bay access to a tower's container and the owner's fuel-bay notifications (no `OnItemChange` on a fuel change).
+- Manual online (the pilot's online command and its online fuel charge) is now implemented. Fuel failure takes the tower and its online/onlining modules offline in the same PostgreSQL transaction; after commit the Host synchronizes `posState`/`posTimestamp` to the tower and module slim items. `ControlTowerHostTests` checks the persisted and live slim states. Graphical V24 acceptance remains open.
+- The client's fuel-bay access to a tower's container and the owner's fuel-bay notifications still need a graphical-client check; the durable fuel row and inventory update do not prove the full client flow.
 - The scoop of an unanchored tower from space: built on the unanchor-drop marker, not verified on the graphical client or live.
-- The anchoring charter (SDE purpose 1) and the reinforcement fuel (purpose 4); the tower's modules.
+- The anchoring charter (SDE purpose 1) and the reinforcement fuel (purpose 4). Tower-module anchoring/onlining/resource accounting is implemented; the complete module lifecycle and defense behavior remain open.
+- Checked-in non-capital POS assembly-array and laboratory profiles appear in facility list/detail/location calls. Corporation hangar permissions, assembly job install/pause/resume, and facility-tax persistence have registered Host/PostgreSQL regressions. V24 capital profiles apply their static security restrictions; profiles requiring strategic sovereignty or an infrastructure-hub upgrade stay offline until authoritative hub-upgrade power/fuel state is implemented. Other POS profiles and graphical industry acceptance remain unverified.
+- POS force-field ball lifecycle, harmonic/admission and ship-password movement checks remain open. `SetTowerPassword` persists settings, but no force-field runtime consumes them yet.
+- Starbase `AddTargetOBO`/`RemoveTargetOBO` still require a controlled battery actor and Rust scene target state. Sentry policy remains persisted without a battery targeting controller.
+- `GetControlBunkerIDInSystem` remains `None`: no live bunker item ID/position source is configured. Do not infer placement from the SDE type alone.
 - Mission pockets: the body is in the scene (protocol 74), the observatory check reads it, and reconciliation plus system-entry restoration sends each pocket and gate body at most once per simulator link. The pocket's warp rules (EveJS `deadspaceWarpPolicy` A and B) are not in the simulation (DEVIATIONS, ST-23).
 - Live: the own-ship eject, the moon fracture, the completion and the owners' rows are live (`test_structures.py`, ST-23). The tower's online state and fuel-bay notices are not on the client yet.
 

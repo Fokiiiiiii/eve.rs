@@ -66,8 +66,9 @@
 - フィッティング・Dogma — 報酬永続化・再試行記録・旧fitting移行 — service-response-audit/crate-fitting-fix.md:L22
 - キャラクター・スキル — skill-bundle待機報酬の永続化候補 — service-response-audit/crate-skill-retry-fix.md:L75
 - Host・wire・marshal — 惑星RPC・material monitor・惑星状態merge — service-response-audit/host-native-services.md:L206
-- 構造物・POS — 燃料切れ後のmodule_state同期 — service-audit/deepfix-structure-fuel-services.md:L17
-- 構造物・POS — POS module/effect/forcefieldと燃料切れcleanupの検証 — deepfix-structures-pos.md:L53
+- 構造物・POS — POS force-field ball/harmonic/admissionは未実装。燃料切れ後のtower/module offline同期は修正済 — deepfix-structures-pos.md:L53; pos-force-field-and-modules.md
+- 構造物・POS — Starbase AddTargetOBO/RemoveTargetOBO未実装 — audit-fixes-dogma.md:L41
+- 構造物・POS — Control Bunkerの本番配置・通常scene spawnは未解決（capture handlerは部分実装） — audit-fixes-factionwarfare.md:L49; service-audit/DEEPCHECK_facWarMgr.md:L64
 
 この表は記録単位の掲載数で、重複不具合を除いた総数ではない。NCは「不具合なし」を意味しない。
 修正確認は記録されたテスト範囲に限り、GUI実クライアントの受入れや監査完了を示さない。

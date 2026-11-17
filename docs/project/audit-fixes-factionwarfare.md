@@ -44,20 +44,19 @@
 
 検証: Host RPCテストは修正前、同faction retryでstartDateが30秒進むことで失敗した。修正後はstartDateが保持され、別faction要求は`AlreadyInMilitia` user errorとなり、DB rowも変わらない。別のPostgreSQL concurrency testは修正前に2件ともAcceptedとなる状態をrelation-table lockで再現し、修正後はAccepted/AlreadyEnlistedが各1件となることを確認した。
 
-## 確認済みだが未修正の所見
+## 部分実装後も残る所見
 
 ### Vulnerable system captureとControl Bunker
 
-確認: `FwService.CaptureAsync`は存在するが通常Host/space eventから呼ばれず、`FacWarMgrService.GetControlBunkerIDInSystem`は`None`を返す。V24.01 `eve/client/script/ui/shared/agencyNew/ui/contentPageInfoConts/factionWarfareSystemInfoContainer.py:49-60` はそのIDをballparkのinventory itemとballから引く。V24.01 `fwVictoryPointSvc.py:50-67` と`fwWarzoneSvc.py:78-95` にはVP/vulnerability/occupancy更新のclient通知callsiteがある。EveJS v0.12.9には同等のoccupancy/capture runtimeがない。
+確認: V24.01 `eve/client/script/ui/shared/agencyNew/ui/contentPageInfoConts/factionWarfareSystemInfoContainer.py:49-60` は`GetControlBunkerIDInSystem`のIDからballparkのinventory itemとballを読むだけで、placement規則を示さない。`fwVictoryPointSvc.py:50-69` はVP state更新とbunker vulnerable/non-vulnerable通知を消費する。EveJS 261108.1のFaction Warfare service passでは同等のplayer-kill / Control Bunker lifecycle producerを見つけなかった。
 
-未修正理由: ピン留めSDEにはControl Bunkerのtype/faction/health情報はあるが、FW systemごとのlive bunker item IDとspace positionがない。V24.01 client callsiteもIDを使うだけでplacement規則を示さない。位置とballを推測して配置すると、正規の攻撃対象/Agency表示ではない偽objectを作ることになるため、Host破壊event・capture transaction・通知を接続する根拠が足りない。これは偽所見として除外したのではなく、confirmed P1 gapのまま残した。実クライアントtraceか権威ある配置データが必要。
+実装: migration `0009_fw_control_bunkers.sql`がreserved Control Bunker IDと次回downtime capture stateを保持する。登録済みHostの`FactionWarfareControlBunkers`はgroup-925 structure hull depletionを durable event/jobへ結び、vulnerable stateでだけ次回downtimeの captureを予約する。due jobは同一transactionでoccupier、attacker points、LP poolを更新し、commit後にVP/bunker通知を送る。V24のreserved ID範囲とピン留めSDEのgroup/type/faction/dogma healthを使う。`GetControlBunkerIDInSystem`はpersisted IDだけでは返さず、sim内にlive group-925 ballがある場合だけ返す。
 
-この状態ではcaptureを完了扱いにしていない。`GetControlBunkerIDInSystem`、bunker spawn/damage、capture commit後のoccupation/VP notification sequence、downtime transitionは未実装・未検証である。
+残るgap: V24 callsite、matching SDE、EveJS runtimeにFW systemごとのinitial bunker position/scene placement sourceがない。したがってproduction compositionにはverified-position providerを渡しておらず、scene entryでballを合成しない。Host lifecycle testは明示されたtest-only anchor fixtureでtype/health、hull depletion、next-downtime capture、state reset、scene replacementを確認し、provider無しではplacementとAgency IDをfail-closedで拒否する。productionのnormal spawn、capture後の再spawn、実際のbunker攻撃/Agency表示とclient notification orderは未検証のまま。位置sourceの一次根拠か実V24 client traceが必要。
 
 ## 検証範囲と未確認事項
 
-- 専用`eve_p4`を使い、`Eve.FactionWarfare`, `Eve.Services.Core`, `Eve.Host`, `Eve.FactionWarfare.Tests`, `Eve.Host.Tests`をReleaseでbuildした。すべて0 warning / 0 error。
-- Release focused tests: `FacWarMgrRpcTests`, `FwDatabaseTests`, `FwComplexTickerTests`, `FwBattlefieldTickerTests`, `FwOwnerWindowTests`は30 passed / 0 failed / 0 skipped。HostのFW read/donation、登録済みFacWarMgr、affiliation writer、warzone、facility/fighter関連10 testsは10 passed / 0 failed / 0 skipped。すべて`EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p4`を設定した。
+- このjobの再検証は専用DB`eve_p3`で実施。Release focused builds/testsの最新結果は[`space-world-gaps-implementation.md`](space-world-gaps-implementation.md)を参照。
 - 各修正では先に追加した回帰testを旧実装でfailさせ、その後同じassertionを修正後passさせた。別途Join初回owner rowの並行testも、row作成を一時的に外すとAcceptedが2件になり、復旧後はAcceptedとAlreadyEnlistedが各1件になった。
 - graphical V24.01 clientは起動していない。Host wire testとticker testはreal graphical-client verificationではない。
 - donation retryは同じCallIdの連続再送を検証した。プロセス再起動後に同じCallIdを再送するclient scenarioは実際のclient traceがなく未確認。

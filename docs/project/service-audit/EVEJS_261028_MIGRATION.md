@@ -46,4 +46,4 @@ Additional end-to-end client evidence for the checked core areas includes market
 
 ## Follow-up decision
 
-No behavior change from 261028.1 was established that requires changing eve.rs. No wire assertion was relaxed or altered. The Ansiblex Host gap remains tracked in DEVIATIONS and coverage; implementing it requires the persisted settlement, authoritative mutation, response and follow-up transition to be wired end to end, and is outside a source-migration-only change without a proven release delta.
+No behavior change from 261028.1 was established that requires changing eve.rs during this source-migration-only audit. No wire assertion was relaxed or altered. Status update (2026-11-17): the previously recorded Ansiblex Host gap has since been implemented in `StructureJumpBridgeTravel` and is covered by `StructureJumpBridgeTravelHostWireTests`; anchoring/setup and graphical-client travel remain open. See `docs/project/space-world-gaps-implementation.md`.

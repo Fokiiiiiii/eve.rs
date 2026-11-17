@@ -47,7 +47,7 @@ Database: `eve_p8`, with pinned SDE build 3396210 and mission data build 3405148
 
 ## Remaining area gap
 
-The Ansiblex `CmdJumpThroughStructureStargate` path has no Host travel callback. `dotnet/src/Eve.Host/Rpc/StructureRpc.cs:68` wires only bridge-destination lookups; `dotnet/src/Eve.Services.Space/StructureTravelRpcService.cs:78-87` returns the named not-wired error for travel. User-facing travel and destination lookup callers are listed above. This audit does not claim Ansiblex traversal working; the deployed Titan/Black Ops/Rorqual jump-portal path and cyno beacon paths are separate and have their own implementation/tests.
+Status update (2026-11-17): Ansiblex travel now has a production Host callback in `dotnet/src/Eve.Host/Rpc/StructureRpc.cs:55-59`, implemented by `StructureJumpBridgeTravel.TravelAsync`. `StructureJumpBridgeTravelHostWireTests` covers the registered RPC, PostgreSQL fuel/fee settlement, session transition, notifications, refusals, retry replay, and duplicate concurrency. This is separate from ship-mounted Titan/Black Ops/Rorqual bridges and cyno beacon travel. Anchoring/setup, initial scene alignment, and a graphical/headless client walk remain open; see `docs/project/space-world-gaps-implementation.md`.
 
 ## Handoff checkpoint
 

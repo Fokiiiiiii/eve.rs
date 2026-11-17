@@ -412,9 +412,9 @@ NCには coverage / call matrix を含む。`EVE_RS_COVERAGE.csv` の row 状態
 
 - [audit-fixes-core.md](audit-fixes-core.md#L28): P2 `communityTrackMgr` の本番の進捗生成元なし（明示 open）。
 - [audit-fixes-dogma.md](audit-fixes-dogma.md#L41): Starbase `AddTargetOBO` / `RemoveTargetOBO` の実装不足（確認済み・未修正）。
-- [audit-fixes-factionwarfare.md](audit-fixes-factionwarfare.md#L49): 脆弱化システムの占領について、Control Bunkerの権威あるID・位置・占領処理への接続が不足。
+- [audit-fixes-factionwarfare.md](audit-fixes-factionwarfare.md#L49): Control Bunkerのcapture handlerと次回downtime state transitionは部分実装済み。権威ある初期配置位置と通常scene-entry spawnが未解決。
 - [audit-fixes-agents.md](audit-fixes-agents.md#L21): SDE mission pool からofferを作るlive pathなし。これは4件の修正済み所見とは別に残る未完了経路で、件数には含めていない。
-- [DEEPCHECK_facWarMgr.md](service-audit/DEEPCHECK_facWarMgr.md#L64): Control BunkerのID取得元が不足。上記FW所見と同じ主題を別記録として計上。
+- [DEEPCHECK_facWarMgr.md](service-audit/DEEPCHECK_facWarMgr.md#L64): Control Bunker ID RPCはlive group-925 ball確認後のみ返し、通常spawn sourceは未解決。上記FW所見と同じ主題を別記録として計上。
 - [DEEPCHECK_beyonce.md](service-audit/DEEPCHECK_beyonce.md#L70): `FILAMENT_SPOOLUP` と `JumpThroughRandomFilamentGate` の component操作が未実装。監査全体も未完了。
 - [DEEPCHECK_ship.md](service-audit/DEEPCHECK_ship.md#L22): `FitShips` が未登録。
 - [DEEPCHECK_ship.md](service-audit/DEEPCHECK_ship.md#L27): `LaunchFromContainer` が未登録。

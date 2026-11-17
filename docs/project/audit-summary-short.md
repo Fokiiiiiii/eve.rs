@@ -22,6 +22,12 @@
 | scheduler・イベント・基盤 | 5 | 3 | 3 | 0 | 0 | 3 |
 | **全分野** | **296** | **374** | **310** | **28** | **32** | **156** |
 
+## 後続作業による状態更新（2026-11-17）
+
+- SW-04 のdeployment dynamic blocker行（旧L67）は Host / Rust scene / SimLink query とfocused regressionで修正確認した。詳細とGUI未確認範囲は [`space-world-gaps-implementation.md`](space-world-gaps-implementation.md)。
+- Ansiblexの移動RPC行（旧L59-L60、別記録に重複）は、登録済みHost travel、永続fuel/fee settlement、retry/concurrencyをPostgreSQL Host testで確認したため未解決一覧から除いた。anchoring/setup、初期scene配置、GUI walkは引き続き開いている。
+- Control BunkerはHull-depletion handlerとdowntime capture state transitionを実装したが、配置先のauthoritative sourceがなく本番scene spawnはfail-closed。重複する2記録はこの未解決理由を保持する。
+
 ## 外部監査所見
 
 | ID | 短い題名 | 状態・記録された検証 |
@@ -44,9 +50,9 @@
 
 - コア・ハブ — communityTrackMgrの進捗生成元なし — audit-fixes-core.md:L28
 - フィッティング・Dogma — Starbase AddTargetOBO/RemoveTargetOBO未実装 — audit-fixes-dogma.md:L41
-- 戦闘・ドローン — Control BunkerのID・位置・占領処理不足 — audit-fixes-factionwarfare.md:L49
+- 戦闘・ドローン — Control Bunkerの本番配置位置・通常spawn不足（capture handlerは部分実装） — audit-fixes-factionwarfare.md:L49
 - ミッション・エージェント — SDE mission poolからofferを作る経路なし（件数外） — audit-fixes-agents.md:L21
-- 戦闘・ドローン — Control BunkerのID取得元不足（重複記録） — service-audit/DEEPCHECK_facWarMgr.md:L64
+- 戦闘・ドローン — Control Bunker IDはlive group-925 ballの確認が必要。ball配置source未解決（重複記録） — service-audit/DEEPCHECK_facWarMgr.md:L64
 - 船・宇宙空間 — Filamentのcomponent操作が未実装 — service-audit/DEEPCHECK_beyonce.md:L70
 - 船・宇宙空間 — FitShips未登録 — service-audit/DEEPCHECK_ship.md:L22
 - 船・宇宙空間 — LaunchFromContainer未登録 — service-audit/DEEPCHECK_ship.md:L27
@@ -56,15 +62,12 @@
 - 船・宇宙空間 — BoardStoredShip未登録 — service-audit/DEEPCHECK_ship.md:L36
 - 船・宇宙空間 — SetShipPassword未登録 — service-audit/DEEPCHECK_ship.md:L43
 - ミッション・エージェント — GetMyEscalatingPathDetailsの本番providerなし — service-audit/DEEPCHECK_journal.md:L47
-- Host・wire・marshal — Ansiblex Host移動経路未接続 — service-audit/EVEJS_261028_MIGRATION.md:L49
-- 船・宇宙空間 — Ansiblex移動経路の未解決を別記録も報告 — service-audit/deepfix-jump-drives-cyno.md:L48
 - 法人・契約 — warStatisticMgrのreport provider未実装（他2件は後続解消） — service-response-audit/corporations.md:L20
 - フィッティング・Dogma — 報酬永続化・再試行記録・旧fitting移行 — service-response-audit/crate-fitting-fix.md:L22
 - キャラクター・スキル — skill-bundle待機報酬の永続化候補 — service-response-audit/crate-skill-retry-fix.md:L75
 - Host・wire・marshal — 惑星RPC・material monitor・惑星状態merge — service-response-audit/host-native-services.md:L206
 - 構造物・POS — 燃料切れ後のmodule_state同期 — service-audit/deepfix-structure-fuel-services.md:L17
 - 構造物・POS — POS module/effect/forcefieldと燃料切れcleanupの検証 — deepfix-structures-pos.md:L53
-- 構造物・POS — sim ball・warp-in pointを含む配置検証 — deepfix-structures-pos.md:L54
 
 この表は記録単位の掲載数で、重複不具合を除いた総数ではない。NCは「不具合なし」を意味しない。
 修正確認は記録されたテスト範囲に限り、GUI実クライアントの受入れや監査完了を示さない。

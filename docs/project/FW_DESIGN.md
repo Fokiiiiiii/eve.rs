@@ -43,7 +43,7 @@ of each number and rule, the decisions where the sources differ, and what is not
   system whose SDE faction is one of the warzone's two factions (`FwWarzones.InitialOccupier`). A system with another
   faction, or none, is unoccupied and has no row. Later starts keep the stored state (the seed uses `ON CONFLICT DO NOTHING`).
 - **Contest.** `FwRules.Contest(attackerPoints)`: stable at 0, contested below 75,000 points, vulnerable at 75,000 (wiki).
-  `ContestedPercent` is the points share of 75,000, capped at 100.
+  Complex and battlefield resolutions persist system VP in `attacker_points`; `ContestedPercent` is the points share of 75,000, capped at 100.
 - **LP pools and donations.** `fw_systems.lp_pool` is the pool; `fw_lp_donations` is the ledger. A donation debits the
   donor's LP with the militia corporation of the faction (`LoyaltyPointStore.ApplyAsync`, the same transaction) and adds
   the hub share to the pool. The upgrade level of a system is `FwRules.UpgradeLevel(pool)`; a system held by an enemy of
@@ -64,8 +64,7 @@ Served (each has a test): `GetCorporationWarFactionID`, `GetAllianceWarFactionID
 `GetFactionMilitiaCorporation`, `GetCorpFactionalWarStatus`, `JoinFactionAsCorporation`, `JoinFactionAsAlliance`,
 `LeaveFactionAsCorporation`, `LeaveFactionAsAlliance`, the four `WithdrawJoin*`/`WithdrawLeave*`, `JoinFactionAsCharacter`,
 `GetMyCharacterRankInfo`, `GetCharacterRankInfo`, `CheckForRankChange` (returns None: no rank-change producer),
-`GetSolarSystemLPs`, `GetSolarSystemLPsEx`, `DonateLPsToSolarSystem`, `GetControlBunkerIDInSystem` (None: eve.rs has
-no control bunker structures), `RefreshCorps` (None: the state is always current).
+`GetSolarSystemLPs`, `GetSolarSystemLPsEx`, `DonateLPsToSolarSystem`, `GetControlBunkerIDInSystem` (returns a `PyLong` only when the persisted ID resolves to a live group-925 scene ball; otherwise None), `RefreshCorps` (None: the state is always current).
 
 Corporation join, leave, and withdrawal mutations require the session Director bit and recheck current persisted corporation membership and Director authority. Alliance mutations also require current Director authority in the persisted active executor corporation. The faction-warfare regression denies stale corporation and alliance sessions after their persisted role checks refuse them.
 
@@ -110,9 +109,12 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 ## Built since the first slice
 
 - **Statistics** (migration 0002): `GetStats_Character` and `GetStats_Corp` serve the six client keys from daily rows. The
-  producers `FwService.RecordActivityAsync` and `FwService.AddVictoryPointsAsync` fill them; no combat event calls them yet.
-- **Capture** (`FwService.CaptureAsync`): a vulnerable system (75,000 attacker points) passes to the occupier's enemy, its points
-  and LP pool reset. The trigger (hub destruction) is not connected.
+  producers `FwService.RecordActivityAsync` and `FwService.AddVictoryPointsAsync` fill complex/battlefield activity; NPC kill events and
+  `FactionWarfareKillProducer` fill pilot/corporation kill counts for hostile player kills in warzones.
+- **Capture** (`FwService.CaptureAsync` plus `FactionWarfareControlBunkers`): a vulnerable system (75,000 attacker points) passes to
+  the occupier's enemy at the next downtime after a group-925 Control Bunker hull-depletion event; attacker points and LP pool reset.
+  The handler also publishes the post-commit state notice and updates a loaded scene when an anchor is available. Production has no verified
+  Control Bunker placement source, so the normal system-entry spawn and Agency item lookup remain unavailable; see the implementation record.
 - **NPC station war-faction factor**: applied to the NPC station facility tax of industry jobs for the pilot's war faction.
 - **Corporation LP tax**: `LoyaltyPointStore.CreditMemberAsync` takes the member's corporation rate of an LP credit into the
   corporation's own balance. Applied to the insurgency victory payout; the Viridian expansion notes give the scope.
@@ -136,14 +138,17 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
 - Battlefields: built, see "Battlefields" below (archetype 68 is the battlefield's gated site; the objectives, archetype 67, are not built).
 - Tests: `FwComplexTests.cs` (5). Eve.FactionWarfare.Tests: 83 passed on eve_p4.
 
-## Not built
+## Open and partial
 
-- **Pilot-versus-pilot kills**: not counted. The NPC kill producer (`RecordFactionWarfareNpcKill`) is built; a player kill has no
-  statistics or victory-point path yet (no event for it was found).
-- **Victory points from complexes**: built (gate, NPC defenders, per-pilot split). Battlefields use the 50,000 LP pool documented below. The ship-kill LP formula (wiki: 3.25 times hull, insurance and fitting value over 10,000,
-  capped at 50,000 LP) is not built.
-- **Capture trigger**: infrastructure hub destruction (25 million HP, wiki); no FW hub combat path exists.
-- **Statistics**: built in slice 2 (above). `GetStats_CorpPilots` is not served (no consumer).
+- **Player-vs-player kill statistics**: built. A final-blow player kill between combat-enemy FW factions in a warzone adds one pilot and corporation daily kill
+  (`FactionWarfareKillProducer`, on the durable ship-killmail event). This records statistics only; it does not add system or personal VP.
+- **Ship-kill LP**: not built. The wiki formula is 3.25 times hull, insurance and fitting value over 10,000, capped at 50,000 LP.
+- **Complex and battlefield victory points**: built (complex gate, NPC defenders, per-pilot split; battlefield scoring and awards). Victory-point state is persisted in `attacker_points` and drives contest/vulnerability. Battlefield LP uses the 50,000 LP pool documented below.
+- **Control Bunker placement and capture**: the Host can record group-925 hull depletion, schedule the vulnerable-system capture for next downtime,
+  reset occupier/points/LP and publish the capture notice. SDE supplies bunker types and dogma health, but neither V24 callsites nor the inspected
+  EveJS runtime supply an authoritative initial position. Production therefore skips bunker placement and `GetControlBunkerIDInSystem` returns an
+  ID only when a live group-925 scene ball exists. The test-only anchor verifies the remaining lifecycle code, not normal gameplay placement.
+- **Statistics**: kill and VP producers are built as above. Some other activity rows still depend on producers reaching `FwService.RecordActivityAsync` and `AddVictoryPointsAsync`; `GetStats_CorpPilots` is not served (no client consumer).
 - **Mission LP credits**: mission turn-in credits the issuing corporation's LP through `LoyaltyPointStore` and applies the member corporation's LP tax in the same completion transaction. Report-derived base tables and formula factors are configurable approximations; SDE `extraStandings` supplies mission standing entries, with configurable fallback values only for basic Level 4/5 missions.
 - **Live verification**: the scout-complex capture walk passed on eve_p3 on 2026-10-20; focused `FwBattlefield` tests passed 9/9 on eve_p4 on 2026-10-23. Graphical-client verification remains open.
 - **Earlier Host suite run**: 58 of 406 failed on connection exhaustion (see the testing section above); not a FW logic failure, but not green.

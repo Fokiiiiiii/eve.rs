@@ -4711,7 +4711,7 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   client's retry key. Tests: `FwRulesTests` (donation tax), `FwDatabaseTests` (quote, debit, refusals), `FacWarMgrRpcTests`.
 - **Applied: the LP donation.** The donor's LP is debited from the militia corporation's LP balance of the faction (the client's
   `DonateLPsToSolarSystem` checks the same balance), in the transaction that adds the hub share to the system's pool. A pool above 384 is refused
-  with the room left (`FacWarPoolOverloaded`). Minimum 10 LP (`facwarMinLPDonation`). Decision: the donor must be enlisted in an occupier faction.
+  with the room left (`FacWarPoolOverloaded`). Minimum 10 LP (`facwarMinLPDonation`). Decision: the donor must be enlisted in an occupier faction. Donation refusals are `CustomInfo` notices with localization keys, not the client's pool text.
 - **Applied: corporation and alliance enlistment.** The join needs standing at least -0.0001 (`facwarMinStandingsToJoinDefault`, the client's
   value; the wiki says 0.0 or greater). A join or leave takes effect at the next downtime. Decision: the downtime is 11:00 UTC; the wiki does not
   state it. The change is applied when read after that time, so no job runs it. Director role required (`corpRoleDirector` = 1). Alliance
@@ -4741,20 +4741,29 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   other systems start unoccupied (3 systems of warzone 1 are Gallente, 1 is Caldari, 3 of warzone 2 have no faction). Decision: a system is in
   a warzone's occupation only for its own warzone pair.
 - **Decision: contest.** The attacker's points are kept per system; the state is stable at 0, contested below 75,000 and vulnerable at 75,000
-  (wiki). The points have no producer yet, so every system stays stable.
-- **Decision: victory points come from complexes only.** The wiki's victory-point rules: complex captures give VP (its table: Scout BSC 50,
+  (wiki). Complex and battlefield completion now produce and persist those points. A vulnerable system still needs a group-925 Control Bunker hull-depletion event before next-downtime capture; production bunker placement remains open.
+- **Built/decision: capture victory points and kill rules.** Complex captures give VP (the wiki's victory-point table: Scout BSC 50,
   Scout NVY 25, Small NVY 50, Small ADV 75, Small Interceptor 150, FRF Small ELT about 300, Moderate NVY 600, Large NVY 250, Large ADV 300, Open 350,
   Battlefield 2,000); killing enemy militia pilots, NPCs and ship kills give no VP (the wiki states loyalty points for kills, not VP). The contest
-  percentage counts only the attacker's VP; kills do not move it. The complex producer is open (below).
-- **Built: the NPC kill count.** A pilot's kill of an NPC of a faction that fights the pilot's war faction (`FwFactions.IsCombatEnemy`), in a
+  percentage counts only the attacker's VP; kills do not move it. Complex and battlefield producers are built and covered by the FW regression set.
+- **Built: NPC and player kill counts.** A pilot's kill of an NPC of a faction that fights the pilot's war faction (`FwFactions.IsCombatEnemy`), in a
   warzone system, adds one kill to the pilot's and its corporation's rows (`FwService.RecordNpcKillAsync`, fed by the NPC destroyed event in
-  `SpaceComposition`). The wiki gives no source for the kill counting rule beyond the enemy militia; this is the project's choice. Tests:
-  `FwKillTests` (2). Pilot-versus-pilot kills: no event in the space runtime reports them yet, so they are not counted. Status: partly open.
+  `SpaceComposition`). A durable ship-killmail event adds the same daily counts for a player final blow only when the attacker and victim's event-time
+  war factions are combat enemies and the loss occurred in a warzone (`FactionWarfareKillProducer`). Friendly kills, non-warzone losses, NPC final
+  blows, self-kills and events with no player final blow do not count. Event cursor and both statistics rows commit in the same PostgreSQL transaction;
+  restart does not replay an already committed kill. The V24 client reads kill totals through `GetStats_Character` / `GetStats_Corp`
+  (`facWarSvc.py:340-363`); EveJS 261108.1's inspected `fwVictoryPointMgrService.js` only reads/publishes VP state and had no kill producer. This adds
+  statistics only: it grants no VP. Tests: `FwKillTests` and `FactionWarfareProducerHostTests.Player_kill_producer_uses_final_blow_hostility_and_committed_outbox_cursor`.
 - **Not built: the ship-kill LP** (wiki: 3.25 times hull, insurance and fitting value over 10,000, capped at 50,000 LP, shared). Status: open.
-- **Built, trigger open: capture.** `FwService.CaptureAsync` is the state transition: a vulnerable system (at 75,000 attacker points, wiki) passes to
-  the occupier's enemy (`FwFactions.OccupationEnemyOf`), and its points and LP pool reset (the wiki: a capture removes the upgrades). A contested or
-  unoccupied system is refused. Tests: `FwCaptureTests` (2). The trigger is the destruction of the infrastructure hub (wiki: 25 million HP), which
-  has no combat path in eve.rs yet, so no capture happens in a running server. Status: open (trigger).
+- **Partial: Control Bunker capture.** A registered Host handler listens for group-925 structure hull depletion and schedules the vulnerable
+  system's capture for next downtime. The durable job changes occupier, resets attacker points/LP, and publishes the state notice after commit.
+  Complex/battlefield VP resolution updates a live bunker state and sends the V24 `OnFacWarBunkerVulnerable` / `OnFacWarBunkerNonVulnerable`
+  notices as the threshold changes. The Agency's V24 path asks for an item ID and reads its live ball
+  (`factionWarfareSystemInfoContainer.py:49-60`). The exact reserved ID range and SDE group/type/faction/health data are used, but V24 client
+  callsites, pinned SDE, and the inspected EveJS runtime do not provide the initial bunker position. Production therefore does not synthesize a ball,
+  and the RPC returns an ID only for a live group-925 ball. The Host lifecycle test uses an explicit test-only anchor fixture; normal scene-entry
+  placement, capture re-spawn, client Agency visibility, and notification order with the graphical client remain unverified. The ship-kill LP reward
+  also remains open. See [`space-world-gaps-implementation.md`](../../project/space-world-gaps-implementation.md).
 - **Served: facWarMgr statistics and rank overview RPCs.** `GetStats_Character`, `GetStats_Corp`, `GetStats_FactionInfo`, `GetStats_Militia`, `GetStats_Alliance`, and `GetStats_TopAndAllKillsAndVPs` are routed through Host; faction member counts use the corporation and character stores, while activity windows use the persisted daily rows from migration 0002. The Host returns the client keys and grouping shapes. Those rows still depend on activity producers reaching `FwService.RecordActivityAsync` and `AddVictoryPointsAsync`; until then activity totals only reflect rows actually recorded. The rank overview and rank info methods return the enlisted faction and rank.
   **Not routed:** `GetStats_CorpPilots` has no caller outside its `facWarSvc.py` wrapper; the dashboard derives those counts from `GetStats_FactionInfo` (`statisticsController.py:69-90`).
 - **Applied: the NPC station war-faction modifier** (`npsStationTaxModifier.py`). The client extract holds one station (60015187) with 0.1 for
@@ -4769,7 +4778,6 @@ donation sections it marks outdated. Design: `docs/project/FW_DESIGN.md`.
   Mission payouts now use the same LP tax split; incursion payouts remain open. The wiki copy of these notes marks some LP items as to
   be determined, so the exact rate and rounding are the decision above, not CCP's published formula. Tests: `LoyaltyMemberCreditTests` (3, eve_p4),
   `InsurgencyCampaignTests` (18 run, all pass).
-  control bunker structures). The donation refusals are `CustomInfo` notices with localization keys, not the client's pool text.
   A corporation enlistment that takes effect at downtime does not push a session change to its members. The next `GetMyEnlistment` call refreshes
   effective/direct/corporation faction values and `session.warfactionid`; login and corporation-registry session refresh derive the same active
   direct/corporation/alliance state. Crimewatch resolves those owners before its legal war check. Client consumers include
@@ -5509,9 +5517,16 @@ The insurance RPCs accept positive integer ship IDs. Fractional or malformed val
 `structureDirectory.CheckMyDockingAccessToStructures` accepts up to 500 structure IDs. Larger lists return the client-recognized `GenericStopSpamming` user error before access-list snapshots are read; `parameter_types/controllers/matchertypes/parameter_location.py:169` and `jobboard/client/features/freelance_projects/job.py:634` handle that code. Normal structure-access results retain per-list ACL evaluation and requested order. `StructureDirectoryServiceTests.Docking_access_refuses_more_than_500_structure_ids_before_the_callback` verifies no callback work on refusal.
 
 
-## Ansiblex jump RPC audit (2026-10-20)
+## Ansiblex jump RPC (travel implemented; setup remains open, 2026-11-17)
 
-V24 menu and autopilot call `structureJumpBridgeMgr.CmdJumpThroughStructureStargate`. `StructureTravelRpcService` registers that method but the Host composition currently supplies only `GetJbStructureDestination` and `GetLinkedStructure` callbacks. With no travel callback, the jump call returns the named structure-travel refusal. The existing `SpaceSessions.BridgeJumpAsync` path covers ship-mounted Titan, Black Ops and Rorqual bridges and is not an Ansiblex route. `StructureTravelRpcTests.Travel_rpcs_report_the_missing_runtime_backend` and `Jump_bridge_lookup_rpcs_use_persisted_callbacks_and_reference_shapes` cover the current refusal and lookup behavior; the focused `StructureTravelRpcTests`/`StructureTravelTests` run passed 17/17. Ansiblex traversal, anchoring/setup, and associated scene alignment visuals remain open; the release delta records them separately.
+V24 menu and autopilot call `structureJumpBridgeMgr.CmdJumpThroughStructureStargate` (`menusvc.py:2105-2109`, `autopilot.py:348-352`). The
+production `StructureRpc` registration now supplies `StructureJumpBridgeTravel.TravelAsync` as well as persisted destination/link lookups. The
+registered Host path verifies active ship and current system, reciprocal Ansiblex records, services/proximity, access, local range, warp disruption,
+5 LY range, ship mass, fuel and wallet balance; it settles ozone/fee and event notifications with the session transition, records a retry receipt,
+and serializes duplicate calls. `StructureJumpBridgeTravelHostWireTests` passed against PostgreSQL `eve_p3`, covering successful movement and
+settlement, notification order, refusal cases, same-session retry, duplicate concurrency and persisted `SimJumped`. This is separate from
+ship-mounted Titan/Black Ops/Rorqual bridges. Ansiblex anchoring/setup, initial scene alignment, and graphical/headless client travel remain open;
+the host test is not a graphical-client walk.
 ## Contract RPC current-role checks (2026-10-20)
 
 Corporate contract creation, bidding, acceptance, completion, deletion, and corporate list reads check the authenticated session role bit and then resolve the actor’s current corporation membership and Contract Manager role through the persisted `CorporationStore`. A role removed while the character remains logged in therefore no longer authorizes a corporate contract call. `ContractProxyServiceTests.Accept_for_corporation_refuses_a_stale_session_role_without_persisted_authority` supplies a stale positive session role with a persisted-role callback returning false and verifies refusal.

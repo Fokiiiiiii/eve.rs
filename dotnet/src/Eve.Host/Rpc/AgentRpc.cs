@@ -224,7 +224,14 @@ internal sealed partial class CharacterServicesComposition
                 shipConfigurations: new PgShipConfigurationStore(source,
                     string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")) ? PgSpaceItemStore.DefaultSchema : Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")!),
                 shipDirts: new PgShipDirtStore(source,
-                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")) ? PgSpaceItemStore.DefaultSchema : Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")!)), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter)
+                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")) ? PgSpaceItemStore.DefaultSchema : Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")!),
+                fitShips: call => marketInventoryBroker.FitShipsAsync(call, async (session, locationId, token) =>
+                {
+                    if (session.GetInt("stationid") == locationId)
+                        return stations.ServicesOf(locationId).Contains(17); // V24 appConst.stationServiceFitting.
+                    return session.CharacterId is { } characterId && session.GetInt("structureid") == locationId
+                        && await structureDirectoryReadModel.CharacterHasServiceAsync(characterId, locationId, Eve.Structures.StructureServiceIds.Fitting, token);
+                })), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter)
                 {
                     CynoJammerOnlineSimTimeForSystem = CynoJammerOnlineSimTimeAsync,
                     InitiateBeaconLink = AnalysisBeaconLink,

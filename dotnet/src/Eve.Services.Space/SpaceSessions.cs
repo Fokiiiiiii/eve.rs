@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
+using System.Text;
 using Eve.Crimewatch;
 using Eve.Events;
 using Eve.Inventory;
@@ -130,6 +132,8 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     private readonly CharacterShips _ships;
     public DurableScheduler? TimedActions { get; set; }
     private readonly PgSpaceItemStore? _spaceItems;
+    /// <summary>The persisted deployables used for force-field password matching.</summary>
+    public PgDeployedStore? DeployedRecords { get; set; }
     public Func<long, CancellationToken, Task<bool>>? StructureExistsAsync { get; set; }
 
     /// <summary>The fleet a character is in (its id), or null when it is in none: a command burst reaches the ships of its source's fleet (track C6).</summary>
@@ -171,6 +175,50 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     /// <param name="protection">How long a ship that has just undocked is protected if its pilot does not fly it first (the client is told when it ends); <see cref="Timeout.InfiniteTimeSpan"/> for never.</param>
     /// <param name="jumpCloak">How long a ship that has come through a stargate stays cloaked if its pilot does not fly it first.</param>
     private readonly ConcurrentDictionary<ulong, byte> _safeLogoffs = new();
+    private sealed record ShipStarbaseCredential(long CharacterId, long ShipId, byte[] PasswordDigest);
+    private readonly ConcurrentDictionary<ulong, ShipStarbaseCredential> _shipStarbaseCredentials = new();
+
+    /// <summary>Caches the piloted ship's force-field credential for this session and applies its matching tower harmonic.</summary>
+    public async Task<PyValue> SetShipPasswordAsync(ClientSession session, PyValue? value, CancellationToken cancellationToken)
+    {
+        if (value is not PyStr { Value: var password } || password.Length is < 1 or > 50)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The starbase password cannot exceed 50 characters.")));
+
+        var sessionId = (ulong)session.SessionId;
+        var characterId = session.CharacterId;
+        var shipId = session.GetInt("shipid");
+        if (characterId is not > 0 || shipId is not > 0 || session.GetInt("stationid") is > 0 ||
+            !_pilots.TryGetValue(sessionId, out var pilot) || pilot.CharacterId != characterId || pilot.ShipId != shipId ||
+            !IsInSpace(session) || SolarSystemOf(session) is not { } systemId ||
+            await _ships.LoadAsync(characterId.Value, cancellationToken) is not { } fitting || fitting.Ship.Id != shipId ||
+            await PositionOfAsync(session, shipId.Value, cancellationToken) is not { SolarSystemId: var positionSystem } || positionSystem != systemId)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You must be piloting a ship in space to set its starbase password.")));
+
+        var credential = new ShipStarbaseCredential(characterId.Value, shipId.Value, SHA256.HashData(Encoding.UTF8.GetBytes(password)));
+        _shipStarbaseCredentials[sessionId] = credential;
+        var harmonic = -1L;
+        if (DeployedRecords is { } deployed)
+        {
+            foreach (var tower in await deployed.InSystemAsync(systemId, cancellationToken))
+            {
+                if (tower.Kind != "control_tower" || tower.GroupId != 365 || tower.ExpiresAtMs <= _nowUnixMs() ||
+                    tower.ActivateAtMs > _nowUnixMs() ||
+                    !StringComparer.Ordinal.Equals(await deployed.TowerStateAsync(tower.DeployableId, cancellationToken), "online") ||
+                    !await StarbasePasswordHash.MatchesAsync(
+                        await deployed.TowerConfigurationAsync(tower.DeployableId, cancellationToken), password, cancellationToken))
+                    continue;
+                harmonic = tower.DeployableId;
+                break;
+            }
+        }
+
+        if (!_shipStarbaseCredentials.TryGetValue(sessionId, out var current) || !ReferenceEquals(current, credential) ||
+            session.GetInt("shipid") != shipId || !_pilots.TryGetValue(sessionId, out pilot) || pilot.ShipId != shipId)
+            return PyNone.Instance;
+        if (!await _sim.TrySetSlimFieldAsync(shipId.Value, "harmonic", new SimSlimInt(harmonic), cancellationToken))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The ship's force-field password could not be applied.")));
+        return PyNone.Instance;
+    }
 
     /// <summary>Blockers owned by adjacent systems (crime timers, targeting, fleet, drone and movement state).</summary>
     public Func<ShipLifecycleAction, ClientSession, long?, CancellationToken, ValueTask<IReadOnlyList<string>>>? LifecycleBlockers { get; set; }
@@ -220,6 +268,7 @@ private readonly TransitionRuntime _transitions;
     public async Task<T> AdjustAsync<T>(ClientSession session, long moduleId, int chargeType, RoundsChange change, Func<GunRounds, Task<T>> afterwards, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
+        _shipStarbaseCredentials.TryRemove(id, out _);
         if (!_pilots.ContainsKey(id))
         {
             await _charges.FlushAsync(id).ConfigureAwait(false);

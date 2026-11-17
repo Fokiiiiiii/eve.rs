@@ -78,6 +78,46 @@ public static class ShipNotifications
     public static void SendItemsChanged(ClientSession session, ItemChanged change, Func<Eve.Inventory.Item, ItemRow> row, PyValue? context = null, string idType = "shipid") =>
         session.SendNotification("OnItemsChanged", idType, new PyList([InventoryWire.PackedRow(row(change.After))]), Differences(change), context ?? PyNone.Instance);
 
+    /// <summary>
+    /// The ship RPC's scoop inventory sequence. Ordinary container scoops use V24's singular item-change form; Mobile Depot ejection uses the plural inventory batch
+    /// form used by EveJS. A new ejection can and its contents precede the scooped depot.
+    /// </summary>
+    public static void SendScoop(ClientSession session, ShipChanged changed, Func<Eve.Inventory.Item, ItemRow> row, bool itemsChanged = false)
+    {
+        itemsChanged |= changed.CreatedItems is not null;
+        if (changed.CreatedItems is { } created)
+        {
+            foreach (var item in created)
+                SendItemsChanged(session, new ItemChanged(item, item.LocationId, item.Flag, item.Quantity), row, idType: "charid");
+        }
+        else
+        {
+            foreach (var stack in changed.Stacks ?? [])
+            {
+                if (itemsChanged)
+                    SendItemsChanged(session, stack, row, idType: "charid");
+                else
+                    SendItemChange(session, stack, row);
+            }
+        }
+
+        foreach (var moved in changed.Items)
+        {
+            var change = new ItemChanged(moved.After, moved.PreviousLocationId, moved.PreviousFlag,
+                moved.After.Quantity, moved.PreviousOwnerId);
+            if (itemsChanged)
+                SendItemsChanged(session, change, row, idType: "charid");
+            else
+                SendItemChange(session, change, row);
+        }
+
+        if (changed.CreatedItems is not null)
+        {
+            foreach (var stack in changed.Stacks ?? [])
+                SendItemsChanged(session, stack, row, idType: "charid");
+        }
+    }
+
     /// <summary>The events of a change as the batch the client is sent: each with the time it happened.</summary>
     public static PyValue MultiEvent(long characterId, long shipId, IEnumerable<DogmaEvent> events, long fileTime) => new PyList([.. events.Select(e => Py.Tuple(
         e switch
@@ -117,6 +157,11 @@ public static class ShipNotifications
         if (changed.Events.Count > 0)
         {
             session.SendNotification("OnMultiEvent", "clientID", MultiEvent(characterId, changed.ShipId, changed.Events, fileTime));
+        }
+        foreach (var created in changed.CreatedItems ?? [])
+        {
+            // A newly created space can has no previous inventory fields. The reference sends it before the contents moved into it.
+            session.SendNotification("OnItemsChanged", "charid", new PyList([InventoryWire.PackedRow(row(created))]), new PyDict([]), PyNone.Instance);
         }
         foreach (var moved in changed.Items)
         {

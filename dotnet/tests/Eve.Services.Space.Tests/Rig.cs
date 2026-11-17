@@ -196,7 +196,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Space.DirectionalScans = new Eve.Services.Space.Scanning.SpaceDirectionalScans(Space, Sim, statics);
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
-        Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
+        Ship = new ShipService(Space, () => ClockMs, Containers, Drones,
+            fitShips: call => Inventory.FitShipsAsync(call, (session, locationId, _) =>
+                ValueTask.FromResult(session.GetInt("stationid") == locationId && Stations.ServicesOf(locationId).Contains(17))));
         Beyonce = new BeyonceService(Space, () => ClockMs, FleetStore, characterId => _fleetSessions.GetValueOrDefault(characterId));
         Beyonce.SkillLevelOfCharacter = (_, _, _) => Task.FromResult(5);
         Entity = new EntityService(Drones, () => ClockMs);

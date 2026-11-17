@@ -19,6 +19,163 @@ public sealed partial class InvBrokerService
     private const long IceProductGroup = 423;
     private const int ImplantCategory = 20;     // SDE category "Implant"
 
+    /// <summary>
+    /// The ship service's multi-fit operation (<c>fittingSvc.py:510</c>): assemble one packaged hull at a time, apply the same fit operation used by
+    /// <c>FitFitting</c>, and stop at the first hull that cannot be completed. A packaged stack is split one hull at a time by CharacterShips.
+    /// </summary>
+    public async ValueTask<PyValue> FitShipsAsync(
+        ServiceCall call,
+        Func<ClientSession, long, CancellationToken, ValueTask<bool>> canUseFittingService)
+    {
+        var character = call.Session.CharacterId;
+        var shipTypeId = IdOf(call.Kwarg("shipTypeID") ?? call.Arg(0));
+        var fitInfo = call.Kwarg("fitInfo") ?? call.Arg(1);
+        var locationId = IdOf(call.Kwarg("itemLocationID") ?? call.Arg(2));
+        var cargoItemsByType = call.Kwarg("cargoItemsByType") ?? call.Arg(3);
+        var fitRigs = (call.Kwarg("fitRigs") ?? call.Arg(4)) is not PyBool { Value: false };
+        var fittingName = JsSemantics.StringValue(call.Kwarg("name") ?? call.Arg(5)) ?? "";
+        var numToFit = IdOf(call.Kwarg("numToFit") ?? call.Arg(6)) ?? 0;
+        var itemContainerId = IdOf(call.Kwarg("itemContainerID") ?? call.Arg(7)) ?? 0;
+        if (character is not > 0 || shipTypeId is not > 0 || locationId is not > 0 || numToFit <= 0)
+            return PyNone.Instance;
+        if (call.Session.DockedLocationId != locationId || call.Session.GetInt("stationid") is null && call.Session.GetInt("structureid") is null)
+            throw MachoErrors.ThrowUserError("CannotLoadFittingInSpace");
+        if (!await canUseFittingService(call.Session, locationId.Value, call.Cancellation))
+            throw MachoErrors.ThrowUserError("CannotLoadFittingInSpace");
+        if (!IsMap(fitInfo) || !IsMap(cargoItemsByType))
+            throw MachoErrors.ThrowUserError("INVENTORY_OPERATION_INVALID");
+        if (await types.GetAsync((int)shipTypeId.Value, call.Cancellation) is not { CategoryId: ShipCategory })
+            return PyNone.Instance;
+
+        var packaged = (await items.InLocationAsync(locationId.Value, character.Value, call.Cancellation))
+            .Where(item => item.Flag == ItemFlags.Hangar && item.TypeId == shipTypeId.Value && !item.Singleton && item.Quantity > 0)
+            .OrderBy(item => item.Id)
+            .ToArray();
+        var available = packaged.Sum(item => item.Quantity);
+        if (available < numToFit)
+            return FitShipsFailure([(shipTypeId.Value, numToFit - available)], null);
+
+        var sourceLocationId = itemContainerId > 0 ? itemContainerId : locationId.Value;
+        var fitEntries = Entries(fitInfo);
+        var required = new SortedDictionary<long, long>();
+        void AddRequired(long typeId, long quantity)
+        {
+            if (typeId > 0 && quantity > 0)
+                required[typeId] = required.GetValueOrDefault(typeId) + quantity;
+        }
+        var modulesByFlag = Pairs(Named(fitEntries, "modulesByFlag"));
+        foreach (var (flag, typeId) in modulesByFlag)
+        {
+            if (fitRigs || Slots.FamilyOfFlag((int)flag) != SlotFamily.Rig)
+                AddRequired(typeId, 1);
+        }
+        foreach (var (typeId, quantity) in Pairs(cargoItemsByType))
+            AddRequired(typeId, quantity);
+        foreach (var name in new[] { "dronesByType", "chargesByType", "fightersByTypeID", "iceByType", "implantsByTypeID" })
+        foreach (var (typeId, quantity) in Pairs(Named(fitEntries, name)))
+            AddRequired(typeId, quantity);
+
+        if (itemContainerId > 0)
+        {
+            var sourceContainer = await items.GetAsync(itemContainerId, call.Cancellation);
+            if (sourceContainer is null || sourceContainer.OwnerId != character || sourceContainer.LocationId != locationId
+                || sourceContainer.Flag != ItemFlags.Hangar)
+                return PyNone.Instance;
+        }
+        async Task<(PyDict Items, IReadOnlyList<long> Subsystems)> CandidatesAsync()
+        {
+            var sourceItems = itemContainerId > 0
+                ? await items.InContainerAsync(itemContainerId, call.Cancellation)
+                : await items.InLocationAsync(sourceLocationId, character.Value, call.Cancellation);
+            var candidateMap = new PyDict(required.Keys.Select(typeId =>
+            {
+                var matching = sourceItems.Where(item => item.OwnerId == character && item.TypeId == typeId
+                        && (itemContainerId > 0 || item.Flag == ItemFlags.Hangar))
+                    .OrderBy(item => item.Id)
+                    .ToArray();
+                var remaining = required[typeId];
+                var ids = new List<PyValue>();
+                foreach (var item in matching)
+                {
+                    if (remaining <= 0) break;
+                    ids.Add(new PyLong(item.Id));
+                    remaining -= item.Singleton ? 1 : item.Quantity;
+                }
+                return new KeyValuePair<PyValue, PyValue>(new PyLong(typeId), new PyList(ids));
+            }).ToArray());
+            var subsystemIds = modulesByFlag
+                .Where(module => Slots.FamilyOfFlag((int)module.Key) == SlotFamily.Subsystem)
+                .SelectMany(module => candidateMap.Entries
+                    .Where(entry => IdOf(entry.Key) == module.Value)
+                    .SelectMany(entry => SequenceItems(entry.Value).Select(IdOf).OfType<long>()))
+                .Distinct()
+                .ToArray();
+            return (candidateMap, subsystemIds);
+        }
+        var packagedIndex = 0;
+        for (long round = 0; round < numToFit; round++)
+        {
+            var (candidates, subsystemIds) = await CandidatesAsync();
+            while (packagedIndex < packaged.Length && packaged[packagedIndex].Quantity <= 0)
+                packagedIndex++;
+            if (packagedIndex >= packaged.Length)
+                return FitShipsFailure([(shipTypeId.Value, numToFit - round)], null);
+            var stack = packaged[packagedIndex];
+            var assembled = await ships.AssembleAsync(character.Value, locationId.Value, [stack.Id], subsystemIds, null, call.Cancellation);
+            if (assembled.Count != 1)
+                return FitShipsFailure([], stack.Id);
+            var assembly = assembled[0];
+            packaged[packagedIndex] = stack with { Quantity = stack.Quantity - 1 };
+            ShipNotifications.Send(call.Session, character.Value, assembly, DogmaRow, Py.FileTimeFromUnixMs(nowUnixMs()));
+            foreach (var changedStack in assembly.Stacks ?? [])
+                ShipNotifications.SendItemChange(call.Session, changedStack, DogmaRow);
+
+            var oid = $"N={MachoMessage.ProxyNodeId}:{BoundObjectIds.Next()}";
+            _bound[oid] = new Context(Kind.Ship, assembly.ItemId, call.Session.SessionId, CharacterShips.CargoFlag);
+            PyValue missing;
+            try
+            {
+                missing = await FitFitting(new ServiceCall
+                {
+                    Method = "FitFitting",
+                    Args = [InventoryWire.Id(assembly.ItemId), InventoryWire.Id(shipTypeId.Value), candidates,
+                        InventoryWire.Id(sourceLocationId), fitInfo, cargoItemsByType, fitRigs ? PyBool.True : PyBool.False],
+                    Session = call.Session,
+                    BoundObjectId = oid,
+                    Cancellation = call.Cancellation,
+                });
+            }
+            finally
+            {
+                _bound.TryRemove(oid, out _);
+            }
+            if (missing is PyList { Items.Count: > 0 } missingRows)
+            {
+                var failures = missingRows.Items.Select(row => row switch
+                {
+                    PyTuple { Items: [var type, var quantity] } => (IdOf(type) ?? 0, IdOf(quantity) ?? 0),
+                    PyList { Items: [var type, var quantity] } => (IdOf(type) ?? 0, IdOf(quantity) ?? 0),
+                    _ => (0L, 0L),
+                }).Where(pair => pair.Item1 > 0 && pair.Item2 > 0).ToArray();
+                return FitShipsFailure(failures, assembly.ItemId);
+            }
+            var normalizedName = CharacterShips.NormalizeName(fittingName);
+            if (normalizedName is not null && await items.GetAsync(assembly.ItemId, call.Cancellation) is { } before
+                && await items.SetCustomNameAsync(before, normalizedName, call.Cancellation) is { } renamed)
+            {
+                ShipNotifications.SendItemChange(call.Session,
+                    new ItemChanged(renamed, before.LocationId, before.Flag, before.Quantity), DogmaRow);
+            }
+        }
+        return PyNone.Instance;
+    }
+
+    private static PyValue FitShipsFailure(IEnumerable<(long TypeId, long Quantity)> failedToLoad, long? failedShipId) =>
+        new PyList([
+            new PyList([.. failedToLoad.Select(row => (PyValue)Py.Tuple(InventoryWire.Id(row.TypeId), InventoryWire.Id(row.Quantity)))]),
+            failedShipId is { } shipId ? InventoryWire.Id(shipId) : PyNone.Instance,
+        ]);
+
     private static int FitRank(long flag) => Slots.FamilyOfFlag((int)flag) switch
     {
         SlotFamily.Subsystem => 0,

@@ -21,6 +21,9 @@ public sealed record ShipEjection(
 
 public sealed record ShipBoarding(long ShipId, long PreviousOwnerId, long BoarderCharacterId, long BoarderCorporationId);
 
+/// <summary>The committed inventory changes made when a pilot boards a ship from a maintenance bay.</summary>
+public sealed record StoredShipBoarding(ShipBoarding Boarding, ShipChanged Change, int ShipTypeId);
+
 public sealed record SpaceMove(Item Ship, long PreviousLocationId, int PreviousFlag, Character Character);
 
 public sealed record SpaceRelocationRequest(long CharacterId, long ShipId, int FromSolarSystemId, int ToSolarSystemId, int ToConstellationId, int ToRegionId);
@@ -497,6 +500,128 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
                 current.LocationId, current.Flag, next.LocationId, next.Flag), cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new ShipBoarding(next.Id, previousOwnerId, characterId, character.CorporationId);
+    }
+
+    /// <summary>
+    /// Boards a ship directly from an accessible maintenance container. The current non-capsule ship is stored in that same container,
+    /// the target and its complete item tree transfer to the pilot, and the active-ship pointer changes in one PostgreSQL transaction.
+    /// Source visibility and access rights are checked by the space service before this inventory authority is called.
+    /// </summary>
+    public async Task<StoredShipBoarding?> BoardStoredShipFromMaintenanceBayAsync(
+        long characterId,
+        int solarSystemId,
+        long currentShipId,
+        long sourceId,
+        long shipId,
+        bool sourceIsShipBay,
+        bool mayTakeForeignShip,
+        CancellationToken cancellationToken = default,
+        Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, CancellationToken, Task<bool>>? authorizeSource = null)
+    {
+        if (characterId <= 0 || solarSystemId <= 0 || currentShipId <= 0 || sourceId <= 0 || shipId <= 0 ||
+            currentShipId == sourceId || shipId == sourceId || shipId == currentShipId)
+            return null;
+
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        await LockAsync(connection, transaction, characterId, cancellationToken);
+        var character = await characters.GetAsync(characterId, cancellationToken);
+        if (character is not { ShipId: { } activeShipId, SolarSystemId: { } currentSystem } ||
+            activeShipId != currentShipId || currentSystem != solarSystemId ||
+            await items.LockAndGetAsync(connection, transaction, currentShipId, cancellationToken) is not { } current ||
+            current.OwnerId != characterId || current.LocationId != solarSystemId || current.Flag != InSpaceFlag ||
+            await items.LockAndGetAsync(connection, transaction, sourceId, cancellationToken) is not { } sourceItem ||
+            sourceItem.LocationId != solarSystemId || sourceItem.Flag != InSpaceFlag ||
+            await items.LockContainerAsync(connection, transaction, sourceId, cancellationToken) is not { } sourceContents ||
+            await items.LockAndGetAsync(connection, transaction, shipId, cancellationToken) is not { } target ||
+            target.LocationId != sourceId || target.Id == currentShipId || !target.Singleton || target.Quantity != 1 ||
+            sourceIsShipBay && target.Flag != ShipMaintenanceBayFlag ||
+            target.OwnerId != characterId && !mayTakeForeignShip)
+            return null;
+
+        if (authorizeSource is not null && !await authorizeSource(connection, transaction, cancellationToken))
+            return null;
+
+        await statics.EnsureTypesAsync([current.TypeId, sourceItem.TypeId, target.TypeId, .. sourceContents.Select(item => item.TypeId)], cancellationToken);
+        var currentType = statics.Type(current.TypeId);
+        var sourceType = statics.Type(sourceItem.TypeId);
+        var targetType = statics.Type(target.TypeId);
+        if (currentType?.CategoryId != 6 || sourceType is null || targetType?.CategoryId != 6 || target.TypeId == CapsuleTypeId)
+            return null;
+        if (target.TypeId == CapsuleTypeId || sourceIsShipBay &&
+            !((statics.AttributeId("hasShipMaintenanceBay") is { } hasBay && sourceType.Attributes.GetValueOrDefault(hasBay) > 0) ||
+              (statics.AttributeId("shipMaintenanceBayCapacity") is { } bayCapacity && sourceType.Attributes.GetValueOrDefault(bayCapacity) > 0)))
+            return null;
+
+        var targetContents = new List<Item>();
+        async Task LockDescendantsAsync(long parentId, int depth)
+        {
+            if (depth > 16)
+                throw new InvalidOperationException($"Ship {shipId} has an inventory tree deeper than 16 levels.");
+            foreach (var child in await items.LockContainerAsync(connection, transaction, parentId, cancellationToken))
+            {
+                targetContents.Add(child);
+                await LockDescendantsAsync(child.Id, depth + 1);
+            }
+        }
+        await LockDescendantsAsync(target.Id, 0);
+        await statics.EnsureTypesAsync(targetContents.Select(item => item.TypeId), cancellationToken);
+        var activeSnapshot = await LoadAsync(characterId, cancellationToken);
+        if (activeSnapshot is null || activeSnapshot.Ship.Id != currentShipId)
+            return null;
+        if (!await ShipContentsAllowedInBayAsync(target, ShipMaintenanceBayFlag, activeSnapshot.World, characterId, cancellationToken))
+            return null;
+
+        if (current.TypeId != CapsuleTypeId)
+        {
+            if (currentType is not { } storedType ||
+                !await ShipContentsAllowedInBayAsync(current, ShipMaintenanceBayFlag, activeSnapshot.World, characterId, cancellationToken))
+                return null;
+            var capacityName = sourceIsShipBay ? "shipMaintenanceBayCapacity" : "capacity";
+            var capacity = statics.AttributeId(capacityName) is { } capacityId
+                ? sourceType.Attributes.GetValueOrDefault(capacityId, 0)
+                : 0;
+            if (capacity > 0)
+            {
+                var used = 0d;
+                foreach (var stored in sourceContents.Where(item => item.Id != target.Id && (!sourceIsShipBay || item.Flag == ShipMaintenanceBayFlag)))
+                {
+                    if (statics.Type(stored.TypeId) is not { } storedHullType)
+                        return null;
+                    used += ItemVolumeOf(storedHullType) * (stored.Singleton ? 1 : Math.Max(1, stored.Quantity));
+                }
+                var shipVolume = ItemVolumeOf(storedType);
+                if (used + shipVolume > capacity + 0.0001)
+                    return null;
+            }
+        }
+
+        var previousOwnerId = target.OwnerId;
+        foreach (var item in targetContents)
+        {
+            if (item.OwnerId != characterId)
+                await items.MoveToOwnerAsync(connection, transaction, item.Id, characterId, item.LocationId, item.Flag, cancellationToken);
+        }
+        await items.MoveToOwnerAsync(connection, transaction, target.Id, characterId, solarSystemId, InSpaceFlag, cancellationToken);
+        var storedChanges = new List<ItemChanged>
+        {
+            new(target with { OwnerId = characterId, LocationId = solarSystemId, Flag = InSpaceFlag }, target.LocationId, target.Flag, target.Quantity, target.OwnerId),
+        };
+        if (current.TypeId != CapsuleTypeId)
+        {
+            var storedFlag = sourceIsShipBay ? ShipMaintenanceBayFlag : ContainerFlag;
+            await items.MoveToOwnerAsync(connection, transaction, current.Id, characterId, sourceId, storedFlag, cancellationToken);
+            storedChanges.Add(new(current with { LocationId = sourceId, Flag = storedFlag }, current.LocationId, current.Flag, current.Quantity));
+        }
+        await characters.SetShipAsync(connection, transaction, characterId, target.Id, cancellationToken);
+        await WriteTransitionAsync(connection, transaction,
+            new ShipTransitionEvent("board-stored", characterId, target.Id, currentShipId,
+                current.LocationId, current.Flag, sourceId, sourceIsShipBay ? ShipMaintenanceBayFlag : ContainerFlag), cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new StoredShipBoarding(
+            new ShipBoarding(target.Id, previousOwnerId, characterId, character.CorporationId),
+            new ShipChanged(target.Id, target.Id, [], [], storedChanges),
+            target.TypeId);
     }
 
     public Task<bool> RecoverFromSpaceAsync(long characterId, CancellationToken cancellationToken = default) => RecoverFromSpaceAsync(characterId, null, cancellationToken);

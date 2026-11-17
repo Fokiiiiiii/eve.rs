@@ -4,6 +4,8 @@
 
 The assorted service audit rows RPC-00780–RPC-02778 are recorded in [implement-assorted-services.md](implement-assorted-services.md). `ship.LaunchFromContainer` now covers hull maintenance bays and POS arrays in groups 363 and 397, including persistent tower association, access checks, space restoration, notifications and the next `Board` transition. Abyssal content-authoring calls preserve EveJS's rejected `None` response; they do not generate content. No graphical V24 client verification was run.
 
+The 2026-11-17 ship RPC port wires FitShips, the scoop-hold variants, BoardStoredShip and SetShipPassword against their existing stores and Host service. `LaunchFromContainer` was already present on current main and is covered by the Host route regression. V24 graphical acceptance, direct EveJS execution, concurrent FitShips/BoardStoredShip attempts and restart of a Mobile Depot ejection can remain unchecked; the current Scoop path also lacks Mobile Tractor Unit retrieval because that deployable runtime is not present. See [the ship RPC implementation record](ship-rpcs-implementation.md).
+
 Destiny crate audit r15 findings are fixed and recorded in [audit-fixes-crate-destiny.md](audit-fixes-crate-destiny.md); current EveJS ball fixtures and AddBalls2 wire regressions cover the changed behavior. Graphical-client verification remains open.
 
 EventBus audit r14 findings, SKINR notice delivery recovery, and EventBus option validation are recorded in [audit-fixes-events.md](audit-fixes-events.md).

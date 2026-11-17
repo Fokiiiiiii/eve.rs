@@ -40,6 +40,20 @@ public sealed class PgShipConfigurationStore
             : ShipConfiguration.Default;
     }
 
+    /// <summary>Reads and locks one ship's access settings inside an inventory transition transaction.</summary>
+    public async Task<ShipConfiguration> GetAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long shipId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT smb_fleet_access, smb_corp_access, fleet_hangar_fleet_access, fleet_hangar_corp_access FROM {_schema}.ship_configurations WHERE ship_id = $1 FOR UPDATE",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = shipId });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken)
+            ? new ShipConfiguration(reader.GetBoolean(0), reader.GetBoolean(1), reader.GetBoolean(2), reader.GetBoolean(3))
+            : ShipConfiguration.Default;
+    }
+
     public async Task PatchAsync(
         long shipId, bool? smbFleetAccess, bool? smbCorpAccess, bool? fleetHangarFleetAccess, bool? fleetHangarCorpAccess,
         CancellationToken cancellationToken = default)

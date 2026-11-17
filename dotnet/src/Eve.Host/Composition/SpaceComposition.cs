@@ -497,6 +497,7 @@ internal sealed partial class CharacterServicesComposition
             foundations.Scheduler.Register("space.ess.tick", async (_, token) => await TickEssAsync(token));
             await foundations.Scheduler.EnsureRecurringAsync("space.ess.tick", "tick", TimeSpan.FromSeconds(10));
             deployedStore = new PgDeployedStore(source, spaceSchema);
+            spaceSessions.DeployedRecords = deployedStore;
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: deployedStore, scheduler: foundations.Scheduler, source: source);
             spaceContainers.CharacterSessions = characterSessions;
             new Eve.Services.Space.ControlTowerFuelNotifications(characterSessions, dogma).Subscribe(foundations.Events);

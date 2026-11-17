@@ -21,7 +21,8 @@ public sealed partial class ShipService(
     CharacterShips? ships = null,
     Func<Eve.Inventory.Item, ItemRow>? rowOf = null,
     PgShipConfigurationStore? shipConfigurations = null,
-    PgShipDirtStore? shipDirts = null) : IBoundObjectReleaseHandler
+    PgShipDirtStore? shipDirts = null,
+    Func<ServiceCall, ValueTask<PyValue>>? fitShips = null) : IBoundObjectReleaseHandler
 {
     private readonly Binding _binding = new(nowUnixMs);
 
@@ -306,6 +307,45 @@ public sealed partial class ShipService(
         return None;
     }
 
+    /// <summary><c>ScoopToFleetHangar(itemID)</c>: recovers a scoopable space item into the active ship's fleet hangar.</summary>
+    [Method("ScoopToFleetHangar")]
+    public async ValueTask<PyValue> ScoopToFleetHangar(ServiceCall call) =>
+        await ScoopToHoldAsync(call, CharacterShips.FleetHangarFlag, call.Arg(1) is PyStr password ? password.Value : null);
+
+    /// <summary><c>ScoopToInfrastructureHold(itemID)</c>: recovers a scoopable item accepted by the infrastructure hold.</summary>
+    [Method("ScoopToInfrastructureHold")]
+    public async ValueTask<PyValue> ScoopToInfrastructureHold(ServiceCall call) =>
+        await ScoopToHoldAsync(call, 185);
+
+    /// <summary><c>ScoopToMobileDepotHold(itemID)</c>: recovers an owned, active Mobile Depot into the Mobile Depot hold.</summary>
+    [Method("ScoopToMobileDepotHold")]
+    public async ValueTask<PyValue> ScoopToMobileDepotHold(ServiceCall call) =>
+        await ScoopToHoldAsync(call, 176);
+
+    private async ValueTask<PyValue> ScoopToHoldAsync(ServiceCall call, int destinationFlag, string? password = null)
+    {
+        if (containers is null || !_binding.Owns(call) || IdOf(call.Arg(0)) is not { } itemId || itemId <= 0 || rowOf is null)
+            return None;
+        await containers.ScoopToHoldAsync(call.Session, itemId, destinationFlag, password, call.Cancellation);
+        return None;
+    }
+
+    /// <summary><c>FitShips(...)</c> assembles and fits the requested packaged hulls. The host provider owns service authorization and the transactional fitting flow.</summary>
+    [Method("FitShips")]
+    public async ValueTask<PyValue> FitShips(ServiceCall call)
+    {
+        if (!_binding.Owns(call) || call.Session.CharacterId is null)
+            return None;
+        if (fitShips is null)
+            throw MachoErrors.ThrowUserError("CannotLoadFittingInSpace");
+        return await fitShips(call);
+    }
+
+    /// <summary><c>SetShipPassword(password)</c> caches the piloted ship's force-field credential for this session.</summary>
+    [Method("SetShipPassword")]
+    public async ValueTask<PyValue> SetShipPassword(ServiceCall call) =>
+        _binding.Owns(call) ? await space.SetShipPasswordAsync(call.Session, call.Arg(0), call.Cancellation) : None;
+
     /// <summary><c>ScoopToSMA(shipID)</c>: takes an abandoned ship into the active ship's maintenance bay.</summary>
     [Method("ScoopToSMA")]
     public async ValueTask<PyValue> ScoopToSMA(ServiceCall call)
@@ -333,6 +373,22 @@ public sealed partial class ShipService(
             return None;
         }
         return await space.BoardAsync(call.Session, shipId, currentShipId, call.Cancellation);
+    }
+
+    /// <summary><c>BoardStoredShip(sourceID, shipID)</c> swaps the active ship with a ship stored in an accessible maintenance bay.</summary>
+    [Method("BoardStoredShip")]
+    public async ValueTask<PyValue> BoardStoredShip(ServiceCall call)
+    {
+        if (!_binding.Owns(call) || IdOf(call.Arg(0)) is not { } sourceId || sourceId <= 0
+            || IdOf(call.Arg(1)) is not { } shipId || shipId <= 0)
+            return None;
+        if (!space.IsInSpace(call.Session))
+            return call.Session.GetInt("shipid") is { } currentShipId
+                ? await space.BoardAsync(call.Session, shipId, currentShipId, call.Cancellation)
+                : None;
+        return containers is null
+            ? None
+            : await containers.BoardStoredShipAsync(call.Session, sourceId, shipId, call.Cancellation);
     }
 
     /// <summary><c>LeaveShip(shipID)</c>: makes a capsule available for the client's following Board call.</summary>

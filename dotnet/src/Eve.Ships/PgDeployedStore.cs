@@ -105,6 +105,13 @@ public sealed class PgDeployedStore
         return await command.ExecuteScalarAsync(cancellationToken) as string;
     }
 
+    /// <summary>The persisted control-tower settings outside an existing transaction.</summary>
+    public async Task<string?> TowerConfigurationAsync(long deployableId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        return await TowerConfigurationAsync(connection, null, deployableId, cancellationToken);
+    }
+
     /// <summary>Writes POS management settings with the tower's other state in the caller's transaction.</summary>
     public async Task<bool> SetTowerConfigurationAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         long deployableId, string json, CancellationToken cancellationToken = default)

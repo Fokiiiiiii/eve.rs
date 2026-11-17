@@ -139,8 +139,11 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
                 throw MachoErrors.ThrowUserError("STARBASE_PRODUCTION_ACCESS_DENIED");
             return item;
         }
+        var groupName = type is null ? "" : _statics.GroupName(type.GroupId);
         if (type is null ||
             (type.GroupId != CanGroup && type.GroupId != WreckGroup && type.GroupId != AnalysisBeaconGroup && type.GroupId != Customs.OfficeGroupId &&
+             type.GroupId is not 340 and not 448 and not 649 &&
+             !groupName.Equals("Biomass", StringComparison.OrdinalIgnoreCase) &&
              !Eve.Structures.StructureUnanchorDrop.IsFittingsContainer(item.TypeId, item.CustomInfo) &&
              !(await IsLootedSiteContainerAsync(item.Id, item.TypeId, type.GroupId, cancellationToken))))
             return null;

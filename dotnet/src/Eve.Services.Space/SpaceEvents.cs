@@ -44,19 +44,22 @@ public sealed record ShipLoss(long CharacterId, long ShipId, int ShipTypeId, Shi
     IReadOnlyList<ShipLossItem>? Contents = null);
 
 /// <summary>An attacker aggregated by ship and weapon for one player's destruction.</summary>
+/// <param name="WarFactionId">The pilot's effective war faction from the damage-time session; null for old or non-pilot records.</param>
 public sealed record ShipKillmailAttacker(
     long? CharacterId, long CorporationId, long AllianceId, long FactionId,
     long SourceShipId, int ShipTypeId, int WeaponTypeId, double DamageDone,
-    double? SecurityStatus, long LastHitOrder);
+    double? SecurityStatus, long LastHitOrder, long? WarFactionId = null);
 
 /// <summary>The durable input captured at a ship's destruction boundary.</summary>
+/// <param name="VictimWarFactionId">The victim's effective war faction at destruction; null for an older event without this snapshot.</param>
 public sealed record ShipKillmailEvent(
     long? CharacterId, long CorporationId, long AllianceId, long FactionId,
     long ShipId, int ShipTypeId, int SolarSystemId, long OccurredAtMs,
     double DamageTaken, long KillerShipId,
     IReadOnlyList<ShipKillmailAttacker> Attackers,
     IReadOnlyList<Eve.Ships.ShipDeathItem> Items,
-    decimal? BountyClaimed = null)
+    decimal? BountyClaimed = null,
+    long? VictimWarFactionId = null)
 {
     public const string Topic = "ship.killmail.created";
 }

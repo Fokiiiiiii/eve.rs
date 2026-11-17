@@ -256,12 +256,37 @@ public class SpaceEventsTests
         var (rig, victim, victimSession) = await InSpaceAsync(shipTypeId: Ibis);
         await using var _ = rig;
         var (_, killer, killerSession) = await InSpaceAsync(rig, "Killer Pilot", 2, 2);
+        await rig.UseBusAsync();
+        const int killerCorporation = 98_200_221;
+        const int killerFaction = 500_002;
+        const int victimFaction = 500_004;
+        killerSession.Set("corpid", new PyInt(killerCorporation));
+        killerSession.Set("warfactionid", new PyInt(killerFaction));
+        victimSession.Set("warfactionid", new PyInt(victimFaction));
         var lost = new List<ShipLoss>();
         rig.Space.ShipLost += _ => throw new InvalidOperationException("an insurance that failed");
         rig.Space.ShipLost += lost.Add;
 
+        var damage = new PyDict([
+            new(new PyStr("attackType"), new PyStr("otherPlayerWeapons")),
+            new(new PyStr("source"), new PyLong(killer.ShipId)),
+            new(new PyStr("target"), new PyLong(victim.ShipId)),
+            new(new PyStr("weapon"), new PyInt(216)),
+            new(new PyStr("damage"), new PyReal(44.5)),
+            new(new PyStr("owner"), Py.Tuple(new PyInt(2), new PyLong(killer.CharacterId))),
+        ]);
+        rig.Sim.Say(new SimNotify((ulong)victimSession.SessionId, "OnDamageMessage", "clientID",
+            MarshalCodec.Encode(Py.Tuple(damage))));
         rig.Sim.Say(ShipDestroyed(victimSession, victim.ShipId, killer.ShipId));
         await Rig.UntilAsync(() => lost.Count == 1);
+
+        var announced = await AnnouncedAsync(rig, 1);
+        var (_, json) = Assert.Single(announced, entry => entry.Topic == ShipKillmailEvent.Topic);
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal(victimFaction, document.RootElement.GetProperty("victimWarFactionId").GetInt64());
+        var attacker = Assert.Single(document.RootElement.GetProperty("attackers").EnumerateArray());
+        Assert.Equal(killerCorporation, attacker.GetProperty("corporationId").GetInt64());
+        Assert.Equal(killerFaction, attacker.GetProperty("warFactionId").GetInt64());
 
         var loss = Assert.Single(lost);
         Assert.Equal((victim.CharacterId, ShipLossCause.Player, killer.CharacterId), (loss.CharacterId, loss.Cause, loss.KillerCharacterId));

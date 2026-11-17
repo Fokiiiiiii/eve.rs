@@ -18,7 +18,8 @@ public sealed record FacWarMgrCallbacks(
     Func<long, long, CancellationToken, ValueTask<bool>>? CanActAsCorporationDirectorAsync = null,
     Func<long, long, CancellationToken, ValueTask<bool>>? CanActAsAllianceExecutorDirectorAsync = null,
     Func<long, CancellationToken, ValueTask<long>>? ReadWarFactionAsync = null,
-    Func<long, long, CancellationToken, ValueTask<bool>>? LeaveCorporationAsync = null);
+    Func<long, long, CancellationToken, ValueTask<bool>>? LeaveCorporationAsync = null,
+    Func<long, CancellationToken, ValueTask<long?>>? ReadControlBunkerIdAsync = null);
 
 /// <summary>The members of a war faction: all of them, those of its militia corporation, and the largest enlisted corporation's members.</summary>
 public sealed record FwFactionMembers(long Total, long Militia, long Top);
@@ -159,8 +160,12 @@ public sealed class FacWarMgrService(FwService factionWarfare, FacWarMgrCallback
             case "DonateLPsToSolarSystem":
                 return await DonateAsync(session, characterId, corporationId, warFactionId, call, now, cancellation);
             case "GetControlBunkerIDInSystem":
-                // shortcut: FW hub item IDs are not stored by Host; replace this when space-object state owns those IDs.
-                return PyNone.Instance;
+            {
+                var solarSystemId = session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
+                if (solarSystemId <= 0 || callbacks.ReadControlBunkerIdAsync is not { } readBunker)
+                    return PyNone.Instance;
+                return await readBunker(solarSystemId, cancellation) is > 0 and var bunkerId ? new PyLong(bunkerId) : PyNone.Instance;
+            }
             default:
                 return PyNone.Instance;
         }

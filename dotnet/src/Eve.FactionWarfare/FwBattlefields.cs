@@ -123,7 +123,7 @@ public sealed record FwBattlefieldState(long BattlefieldId, long SolarSystemId, 
 
 /// <summary>A battlefield won this tick: its winning faction, the victory points moved, and how many pilots got loyalty points.</summary>
 public sealed record FwBattlefieldWon(long BattlefieldId, long SolarSystemId, long ScoreboardId, long WinnerId, long VictoryPoints, long AttackerPoints,
-    int LpRecipients);
+    int LpRecipients, long PreviousAttackerPoints = 0, long AttackerId = 0, long OccupierId = 0);
 
 /// <summary>Pays the loyalty points of a battlefield in the caller's transaction (the host credits them through the loyalty store, with the corporation tax).</summary>
 public interface IFwRewards
@@ -216,6 +216,8 @@ public static class FwBattlefieldTicker
             // the win: the victory points move the system's attacker points, the winners' pilots share the points for their statistics,
             // and the first winners get the loyalty points (the winning side's militia issues them)
             long winner = decided.Value ? attacker : occupier;
+            var systemBeforeAward = await store.SystemAsync(connection, transaction, battlefield.SolarSystemId, forUpdate: true, cancellationToken);
+            long previousAttackerPoints = systemBeforeAward?.AttackerPoints ?? 0;
             long victoryPoints = decided.Value ? FwBattlefields.VictoryPoints : -FwBattlefields.VictoryPoints;
             long attackerPoints = await store.AddAttackerPointsSignedAsync(connection, transaction, battlefield.SolarSystemId, victoryPoints, nowMs, cancellationToken);
             var winners = await store.BattlefieldPilotsAsync(connection, transaction, id, winner, cancellationToken);
@@ -238,7 +240,8 @@ public static class FwBattlefieldTicker
             if (battlefield.InstanceId > 0)
                 await sites.EndAsync(connection, transaction, battlefield.InstanceId, cancellationToken);
             states.Add(new FwBattlefieldState(id, battlefield.SolarSystemId, occupier, attacker, scoreboard, scoreboardType, scoreboardName, score, points, true));
-            wins.Add(new FwBattlefieldWon(id, battlefield.SolarSystemId, scoreboard, winner, victoryPoints, attackerPoints, recipients.Count));
+            wins.Add(new FwBattlefieldWon(id, battlefield.SolarSystemId, scoreboard, winner, victoryPoints, attackerPoints, recipients.Count,
+                previousAttackerPoints, attacker, occupier));
         }
         return (states, wins);
     }

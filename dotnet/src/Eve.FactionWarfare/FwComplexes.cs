@@ -58,7 +58,7 @@ public sealed record FwComplexPilot(long CharacterId, long WarFactionId, long Co
 /// it at the end split the complex's victory points evenly (<see cref="PilotShare"/> each, rounded down), and are credited in the tick's transaction.
 /// </summary>
 public sealed record FwComplexResolution(long ComplexId, long SolarSystemId, ComplexSize Size, long OccupierId, long AttackerId, bool AttackersWon,
-    long VictoryPoints, long AttackerPoints, IReadOnlyList<long> WinnerIds, long PilotShare);
+    long VictoryPoints, long AttackerPoints, IReadOnlyList<long> WinnerIds, long PilotShare, long PreviousAttackerPoints = 0);
 public static class FwComplexes
 {
 
@@ -158,6 +158,8 @@ public static class FwComplexTicker
                 await store.SetComplexProgressAsync(connection, transaction, complex.ComplexId, progress, nowMs, cancellationToken);
                 continue;
             }
+            var beforeSystem = await store.SystemAsync(connection, transaction, system.SolarSystemId, forUpdate: true, cancellationToken);
+            long previousAttackerPoints = beforeSystem?.AttackerPoints ?? system.AttackerPoints;
             long attackerFaction = FwFactions.OccupationEnemyOf(system.OccupierId);
             long points = await store.AddAttackerPointsSignedAsync(connection, transaction, system.SolarSystemId, won.Value ? spec.VictoryPoints : -spec.VictoryPoints,
                 nowMs, cancellationToken);
@@ -178,7 +180,7 @@ public static class FwComplexTicker
             await store.CloseComplexAsync(connection, transaction, complex.ComplexId, nowMs, cancellationToken);
             await sites.EndAsync(connection, transaction, complex.InstanceId, cancellationToken);
             results.Add(new FwComplexResolution(complex.ComplexId, system.SolarSystemId, complex.Size, system.OccupierId, attackerFaction, won.Value,
-                spec.VictoryPoints, points, winners, share));
+                spec.VictoryPoints, points, winners, share, previousAttackerPoints));
         }
         return results;
     }

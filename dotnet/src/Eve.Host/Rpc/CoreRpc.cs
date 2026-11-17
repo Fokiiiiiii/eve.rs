@@ -161,6 +161,7 @@ internal sealed partial class CharacterServicesComposition
                 CanActAsAllianceExecutorDirectorAsync: async (characterId, allianceId, cancellationToken) =>
                     await corporations.CanActAsAllianceExecutorDirectorAsync(characterId, allianceId, cancellationToken),
                 ReadWarFactionAsync: WarFactionOfAsync,
+                ReadControlBunkerIdAsync: ReadControlBunkerIdAsync,
                 LeaveCorporationAsync: async (characterId, militiaCorporationId, cancellationToken) =>
                 {
                     await corporations.LeaveAsync(characterId, militiaCorporationId, cancellationToken);

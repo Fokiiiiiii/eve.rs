@@ -13,7 +13,7 @@ public sealed partial class SpaceSessions
 
     private sealed class DamageContribution(
         long? characterId, long corporationId, long allianceId, long factionId,
-        long sourceShipId, int shipTypeId, int weaponTypeId, double? securityStatus)
+        long sourceShipId, int shipTypeId, int weaponTypeId, double? securityStatus, long? warFactionId)
     {
         public long? CharacterId { get; } = characterId;
         public long CorporationId { get; } = corporationId;
@@ -23,6 +23,7 @@ public sealed partial class SpaceSessions
         public int ShipTypeId { get; } = shipTypeId;
         public int WeaponTypeId { get; } = weaponTypeId;
         public double? SecurityStatus { get; } = securityStatus;
+        public long? WarFactionId { get; } = warFactionId;
         public double DamageDone { get; set; }
         public long LastHitOrder { get; set; }
     }
@@ -96,9 +97,12 @@ public sealed partial class SpaceSessions
         // a character ID for an NPC or other untracked entity.
         var corporationId = npc is { CorporationId: > 0 }
             ? npc.CorporationId
-            : sourcePilot is null && ownerId > 0 ? ownerId : 0;
-        var allianceId = npc?.AllianceId ?? 0;
+            : sourcePilot is not null
+                ? sourcePilot.Session.GetInt("corpid") ?? sourcePilot.Session.GetInt("corporationID") ?? 0
+                : ownerId > 0 ? ownerId : 0;
+        var allianceId = npc?.AllianceId ?? (sourcePilot?.Session.GetInt("allianceid") ?? sourcePilot?.Session.GetInt("allianceID") ?? 0);
         var factionId = npc?.FactionId ?? 0;
+        long? warFactionId = sourcePilot is null ? null : WarFactionOf(sourcePilot.Session);
         var shipTypeId = npc?.ShipTypeId ?? sourcePilot?.TypeId ?? 0;
         var securityStatus = npc?.SecurityStatus;
         var ledgerOwnerId = corporationId > 0 ? corporationId : characterId ?? ownerId;
@@ -127,7 +131,7 @@ public sealed partial class SpaceSessions
                 {
                     attacker = new DamageContribution(
                         characterId, corporationId, allianceId, factionId,
-                        sourceShipId, shipTypeId, weaponTypeId, securityStatus);
+                        sourceShipId, shipTypeId, weaponTypeId, securityStatus, warFactionId);
                     ledger.Attackers.Add(key, attacker);
                 }
                 attacker.DamageDone += amount;
@@ -138,6 +142,9 @@ public sealed partial class SpaceSessions
         if (Interlocked.Increment(ref _killmailDamageCleanupCounter) % 256 == 0)
             CleanupKillmailDamage(now);
     }
+
+    private static long WarFactionOf(ClientSession session) =>
+        session.GetInt("warfactionid") ?? session.GetInt("warFactionID") ?? 0;
 
     private IReadOnlyList<ShipKillmailAttacker> TakeKillmailAttackers(
         long victimShipId, long killerShipId, out double damageTaken, out int solarSystemId)
@@ -158,7 +165,7 @@ public sealed partial class SpaceSessions
             attackers = ledger.Attackers.Values.Select(attacker => new ShipKillmailAttacker(
                     attacker.CharacterId, attacker.CorporationId, attacker.AllianceId, attacker.FactionId,
                     attacker.SourceShipId, attacker.ShipTypeId, attacker.WeaponTypeId,
-                    attacker.DamageDone, attacker.SecurityStatus, attacker.LastHitOrder))
+                    attacker.DamageDone, attacker.SecurityStatus, attacker.LastHitOrder, attacker.WarFactionId))
                 .ToList();
         }
 
@@ -178,7 +185,8 @@ public sealed partial class SpaceSessions
             return new ShipKillmailAttacker(null, profile.CorporationId, profile.AllianceId, profile.FactionId,
                 shipId, profile.ShipTypeId, 0, 0, profile.SecurityStatus, long.MaxValue);
         if (_pilots.Values.FirstOrDefault(candidate => candidate.ShipId == shipId) is { } pilot)
-            return new ShipKillmailAttacker(pilot.CharacterId, 0, 0, 0, shipId, pilot.TypeId, 0, 0, null, long.MaxValue);
+            return new ShipKillmailAttacker(pilot.CharacterId, 0, 0, 0, shipId, pilot.TypeId, 0, 0, null, long.MaxValue,
+                WarFactionOf(pilot.Session));
         return null;
     }
 

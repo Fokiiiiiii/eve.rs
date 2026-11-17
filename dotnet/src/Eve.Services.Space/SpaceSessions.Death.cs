@@ -261,7 +261,8 @@ public sealed partial class SpaceSessions
                             new ShipKillmailEvent(
                                 character.Id, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0,
                                 lost.Ship.Id, lost.Ship.TypeId, abandoned.SolarSystemId, _nowUnixMs(), damageTaken,
-                                destroyed.KillerShipId, killmailAttackers, lost.KillmailItems),
+                                destroyed.KillerShipId, killmailAttackers, lost.KillmailItems,
+                                VictimWarFactionId: abandoned.OwnerWarFactionId),
                             $"ship:{lost.Ship.Id}", cancellationToken).ConfigureAwait(false);
                     }
                 };
@@ -545,7 +546,8 @@ public sealed partial class SpaceSessions
                                       lost.Character.Id, lost.Character.CorporationId, lost.Character.AllianceId ?? 0,
                                       lost.Character.FactionId ?? 0, lost.Ship.Id, lost.Ship.TypeId,
                                       pilot.SolarSystemId, _nowUnixMs(), killmailDamageTaken,
-                                      destroyed.KillerShipId, killmailAttackers, lost.KillmailItems),
+                                      destroyed.KillerShipId, killmailAttackers, lost.KillmailItems,
+                                      VictimWarFactionId: WarFactionOf(pilot.Session)),
                                   $"ship:{lost.Ship.Id}", innerToken);
                       }),
                 result => result is not null,

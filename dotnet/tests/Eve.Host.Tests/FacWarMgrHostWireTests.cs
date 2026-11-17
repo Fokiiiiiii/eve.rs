@@ -92,6 +92,36 @@ public partial class HostServerTests
     }
 
     [Fact]
+    public async Task Control_bunker_id_uses_the_current_system_and_returns_the_item_id_wire_value()
+    {
+        const long solarSystemId = 30_000_142;
+        const long bunkerId = 80_000_123;
+        long callbackSystemId = 0;
+        var service = new FacWarMgrService(new FwService(null!, null!, null!), new FacWarMgrCallbacks(
+            ReadCharacterAsync: (_, _) => ValueTask.FromResult<FwCharacterWarfareState?>(null),
+            SaveCharacterAsync: (_, _, _, _) => ValueTask.FromResult(true),
+            ReadStandingAsync: (_, _, _) => ValueTask.FromResult(0d),
+            ReadControlBunkerIdAsync: (systemId, _) =>
+            {
+                callbackSystemId = systemId;
+                return ValueTask.FromResult<long?>(bunkerId);
+            }));
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session => session.Set("solarsystemid2", new PyInt(solarSystemId)));
+
+        var front = await Handshaken(await ConnectAsync());
+        var open = Open();
+        await front.SendAsync(open);
+        _ = await front.ReceiveAsync();
+        await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(
+            Packets.CallWithKwargs(open, 1, "facWarMgr", "GetControlBunkerIDInSystem", new PyTuple([]), PyNone.Instance))));
+
+        Assert.Equal(new PyLong(bunkerId), Result(MarshalCodec.Decode(Assert.IsType<Send>(await front.ReceiveAsync()).Payload)));
+        Assert.Equal(solarSystemId, callbackSystemId);
+    }
+
+    [Fact]
     public async Task Character_enlistment_uses_the_dispatch_clock_and_notifies_before_the_rpc_reply()
     {
         const long characterId = 90_000_003;

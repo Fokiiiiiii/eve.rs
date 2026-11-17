@@ -630,6 +630,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
                     ["level"] = skill.Level,
                 }).ToArray()),
         };
+        if (facility.StarbaseTowerId > 0)
+            snapshot["starbaseTowerID"] = facility.StarbaseTowerId;
         if (invention is not null)
             snapshot["invention"] = invention;
         return snapshot;
@@ -744,7 +746,7 @@ private void Announce(Eve.Wallet.WalletSettlement? settlement)
         using var snapshot = reader.GetFieldValue<System.Text.Json.JsonDocument>(30);
         var outputIds = reader.GetFieldValue<long[]>(31);
         var activitySnapshot = JsonNode.Parse(snapshot.RootElement.GetRawText()) as JsonObject ?? new JsonObject();
-        return new JsonObject
+        var job = new JsonObject
         {
             ["jobID"] = reader.GetInt64(0),
             ["activityID"] = reader.GetInt32(1),
@@ -779,6 +781,9 @@ private void Announce(Eve.Wallet.WalletSettlement? settlement)
             ["activitySnapshot"] = activitySnapshot,
             ["outputItemIDs"] = new JsonArray(outputIds.Select(id => (JsonNode?)JsonValue.Create(id)).ToArray()),
         };
+        if (Long(activitySnapshot["starbaseTowerID"]) is > 0 and var towerId)
+            job["starbaseTowerID"] = towerId;
+        return job;
     }
 
     private static long FileTime(long unixMs) => checked(116444736000000000L + unixMs * 10_000L);

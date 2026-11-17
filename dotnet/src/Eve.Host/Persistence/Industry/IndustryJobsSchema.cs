@@ -53,4 +53,13 @@ public static class IndustryJobsSchema
                 CREATE INDEX IF NOT EXISTS industry_jobs_installer_active ON jobs (installer_id, status, job_id);
                 CREATE INDEX IF NOT EXISTS industry_jobs_facility_active ON jobs (facility_id, status, end_date_filetime);
         """);
+
+    public static Migration FacilityTaxes() => new("002_facility_taxes", """
+        CREATE TABLE IF NOT EXISTS facility_taxes (
+            facility_id bigint PRIMARY KEY,
+            owner_id bigint NOT NULL,
+            settings jsonb NOT NULL,
+            updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+        );
+        """);
 }

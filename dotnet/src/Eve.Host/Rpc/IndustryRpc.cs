@@ -56,7 +56,22 @@ internal sealed partial class CharacterServicesComposition
                         corporation, member, null, await corporations.TitlesAsync(corporationId, cancellationToken));
                     return (roles.AtAll & Eve.Corporations.CorporationRoles.FactoryManager) ==
                         Eve.Corporations.CorporationRoles.FactoryManager;
-                }),
+                },
+                canViewStarbaseJobAsync: async (call, job, cancellationToken) =>
+                {
+                    var characterId = call.Session.CharacterId ?? 0;
+                    var facilityId = job["facilityID"]?.GetValue<long>() ?? 0;
+                    var towerId = job["starbaseTowerID"]?.GetValue<long>() ?? 0;
+                    var ownerId = job["ownerID"]?.GetValue<long>() ?? 0;
+                    if (characterId <= 0 || facilityId <= 0 || towerId <= 0 ||
+                        ownerId <= 0 || call.Session.GetInt("corpid") != ownerId ||
+                        await deployedStore.GetAsync(facilityId, cancellationToken) is not { Kind: "starbase_module" } module)
+                        return false;
+                    var facility = await ResolveStarbaseAssemblyFacilityAsync(
+                        facilityId, module.SolarSystemId, characterId, cancellationToken);
+                    return facility is { StarbaseTowerId: var resolvedTower } && resolvedTower == towerId;
+                },
+                isStarbaseFacilityOnlineAsync: StarbaseAssemblyFacilityOnlineAsync),
             new Eve.Services.Core.BlueprintManagerService(
                 ReadBlueprintAsync,
                 ReadOwnedBlueprintsAsync,

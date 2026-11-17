@@ -302,10 +302,9 @@ public sealed class OverviewPresetMgrService : IService
         if (!TryPresetKey(key, out var hash, out var sqId)) return PyNone.Instance;
         lock (_gate)
         {
-            var state = _readState() ?? new JsonObject();
-            var changed = EnsureStateShape(state);
-            if (changed) _writeState?.Invoke(state);
-            if (state["entries"] is not JsonObject entries ||
+            // Fetching a shared preset is read-only. In particular, a miss must not persist an
+            // empty root merely because the table has not been initialized by a writer yet.
+            if (_readState()?["entries"] is not JsonObject entries ||
                 entries[$"{hash}::{sqId}"] is not JsonObject entry ||
                 Text(entry["hashvalue"]) != hash ||
                 Text(entry["payload"]) is not { Length: > 0 } payload)

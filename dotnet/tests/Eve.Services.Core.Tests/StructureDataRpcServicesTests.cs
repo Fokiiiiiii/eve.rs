@@ -143,6 +143,21 @@ public sealed class StructureDataRpcServicesTests
             new PyTuple([new PyStr(hash), new PyInt(2)]))));
     }
 
+    [Fact]
+    public async Task Fetching_a_missing_overview_preset_does_not_initialize_or_write_the_store()
+    {
+        var writes = 0;
+        var service = new OverviewPresetMgrService(
+            () => null,
+            _ => { writes++; return true; });
+
+        var missing = await service.CallAsync(Call("GetStoredPreset", null,
+            new PyList([new PyLong(-1), new PyLong(long.MaxValue)])));
+
+        Assert.Same(PyNone.Instance, missing);
+        Assert.Equal(0, writes);
+    }
+
     private static JsonObject Extraction(long id, long structureId, long ownerId, long startMs, long chunkMs, string state, long eventId) => new()
     {
         ["extractionID"] = id,

@@ -11,6 +11,7 @@
 - EveJS は Destiny の action をtickの一つの履歴へ積み、deliver時に Observer ごと、またはGrid bubbleごとのbatchへ分ける (`server/src/space/destiny/batching/destinyHistory.js:3-44`)。Grid bubbleに追加されたshipは `PackagedAction(AddBalls2)` の後ろにmode/primeを同stampで続ける (`server/src/space/runtime/scene/visibility.js:653-676`)。V24.01は `DoDestinyUpdate` 内の `PackagedAction` を展開してから `FlushState` へ渡し、ひとつのupdateに複数stampがあればdesyncとして扱う (`eve/client/script/remote/michelle.py:482-511`)。
 - そのため、既にbind済みのobserverに対するship追加とmovement primeを一つのbubble updateにまとめた。Rustでは `crates/eve-space/src/crowd/ships.rs:215-238` を変更し、`crowd` の回帰テストはaction順とwait flagを検査する。fresh undock中のpilot自身は別扱いで、EveJSは最初のbubble entryにprimeを付けず、primeの後のtickにSetStateを送る (`visibility.js:559-596`, `runtime/scene/presentation.js:723-787`)。
 - station undockのcollision grace `leaving_station` がSetState bindより先に終了することがあるため、fresh undockの判定を `!jumped_in && !bound` にした (`crates/eve-space/src/scene/session.rs:306-360`)。V24はballpark未作成中のDestiny更新を捨て (`michelle.py:482-485`)、SetStateでfull stateとslimを再構築する (`michelle.py:968-1005`)。SetState後にだけ初期状態を要求するRust regressionは `npc/tests.rs` と `sim/tests.rs` にある。
+- 最初のpush後のCI run 1831 (`44020477344`) では、さらに `scene::tests::a_ship_lining_up_for_warp_or_in_it_takes_no_orders` と `scene::tests::binding_a_ship_that_follows_restores_its_state_without_replaying_the_movement_command` が旧 `SetState + SetBall*` 列を期待して落ちた。EveJSはundockのSetStateを単独送信し、それ以前のprimeとSetStateがball/modeを持つと明記している (`runtime/scene/presentation.js:944-947`)。2 testを `SetState` 単独の期待に更新し、warp中とFollow中のego ball bytesがSetState bufferにあることを検証する (`crates/eve-space/src/scene/tests.rs:1470-1498,1832-1849`)。
 - gate jumpのJumpInはEveJSが到着したshipのowner sessionを除外して他observerへbroadcastする (`server/src/space/runtime/spaceRuntime/stargateJump.js:241-249`)。Rustのjump arrival testはownerへJumpInを送らず、SetStateのfull stateを一つのDestiny updateで確認する形へ更新した。V24側で `effects.JumpIn` が登録されていることは `eve/client/script/environment/effects/Jump.py:617-625`、SetStateの状態再構築は `michelle.py:968-1005` で確認した。
 
 ### Space のtarget通知fixture
@@ -32,7 +33,7 @@
 
 ## 実行した確認
 
-- Rust: `cargo +1.99.0 fmt --all -- --check` 成功、`cargo +1.99.0 check --release -p eve-space -p eve-behaviors` 成功、`cargo +1.99.0 clippy --release -p eve-space --all-targets -- -D warnings` 成功。変更したRust test 11件とCIで失敗した `a_second_ship_that_undocks_is_answered_and_shown_to_the_first_that_has_bound` を個別実行し、計12 passed / 0 failed。
+- Rust: `cargo +1.99.0 fmt --all -- --check` 成功、`cargo +1.99.0 check --release -p eve-space -p eve-behaviors` 成功、`cargo +1.99.0 clippy --release -p eve-space --all-targets -- -D warnings` 成功、`cargo +1.99.0 build --release -p eve-net` 成功。変更したRust test 11件、CI対象の2船目undock 1件、run 1831で新たに見つかったscene test 2件を個別実行し、計14 passed / 0 failed。
 - .NET Release build: Dogma、Space、Skills各test projectが0 warning / 0 error。DBは専用の `eve_p4`。
 - .NET focused DB tests: DogmaServiceTests + HealthTests 20 passed / 0 skipped、HackingMgrServiceTests + SpaceServiceTests 193 passed / 0 skipped、GiveSkillTests 5 passed / 0 skipped。
 - Python: 変更した3ファイルの `py_compile` 成功。実Hostに対しDogma race 1/2/4/8、Fitting race 1/2、Undock race 1/4、Movement race 1の計9 headless E2Eが成功。DB `eve_p4`、pinned SDEを使用した。quiet出力は9 dotsと`[100%]`、runner終了code 0 (`/tmp/cx4-ci-red-e2e-2026-11-17/`)。
@@ -42,4 +43,4 @@
 
 - グラフィカル版V24.01 clientを起動しての操作は未実施。E2E確認はreal Hostとheadless clientによる。
 - このCI追跡ではEveJS serverを新たに起動して同じ9ケースを直接再生していない。現在のEveJS実装、V24.01全client source内の受信callsite、および既存wire captureと照合した。
-- この文書の作成時点で修正後のmain CIはまだpush前であり、GitHub Actionsの修正後runは未確認。
+- run 1831はこの記録更新時点で終了待ちだった。修正した2 scene testを含む次のmain CI runの最終結果は未確認。

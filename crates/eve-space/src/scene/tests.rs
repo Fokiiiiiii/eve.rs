@@ -1490,7 +1490,7 @@ fn a_ship_lining_up_for_warp_or_in_it_takes_no_orders() {
     }
     // Fresh acquisition uses the ball's WARP state; EveJS encodes it in SetState rather than replaying WarpTo.
     let bound = scene.bind(SESSION, NOON + seconds(3));
-    assert_eq!(action_names(&bound[2]), ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
+    assert_eq!(action_names(&bound[2]), ["SetState"]);
     let encoded = eve_destiny::encode_entity_ball(&scene.pilots[&SESSION].ship.ball()).unwrap();
     assert!(
         set_state_buffer(&bound[2]).windows(encoded.len()).any(|ball| ball == encoded),
@@ -1834,9 +1834,12 @@ fn binding_a_ship_that_follows_restores_its_state_without_replaying_the_movement
     let mut scene = scene();
     scene.command(SESSION, Command::FollowBall { target_id: STATION, range: 3_000.0 }, NOON);
     let out = scene.bind(SESSION, NOON);
-    assert_eq!(
-        action_names(out.last().unwrap()),
-        ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]
+    let state = out.last().unwrap();
+    assert_eq!(action_names(state), ["SetState"]);
+    let encoded = eve_destiny::encode_entity_ball(&scene.pilots[&SESSION].ship.ball()).unwrap();
+    assert!(
+        set_state_buffer(state).windows(encoded.len()).any(|ball| ball == encoded),
+        "SetState carries the followed ego ball without replaying FollowBall"
     );
     assert_eq!(
         scene.pilots[&SESSION].ship.course,

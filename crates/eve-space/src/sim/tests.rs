@@ -3974,8 +3974,12 @@ fn a_second_ship_that_undocks_is_answered_and_shown_to_the_first_that_has_bound(
     let reply = sim.handle(other_enter(), NOON + SECOND).unwrap();
     assert_eq!(
         recipients(&reply),
-        [(OTHER, "EnterReply".to_string()), (SESSION, "DoDestinyUpdate".to_string())],
-        "the answer first, then what the first ship is told"
+        [
+            (OTHER, "EnterReply".to_string()),
+            (SESSION, "DoDestinyUpdate".to_string()),
+            (SESSION, "DoDestinyUpdate".to_string()),
+        ],
+        "the answer first, then the AddBalls update and its movement prime"
     );
     assert_eq!(sim.ships(), 2);
 }

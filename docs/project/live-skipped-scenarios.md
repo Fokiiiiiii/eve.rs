@@ -32,4 +32,42 @@
 ## 未確認
 
 - グラフィカルV24.01クライアントでの操作確認はしていない。今回の成功はheadless clientによる実Host end-to-end確認。
-- EveJSサーバーを今回の全10ケースで再起動して同一シナリオを再実行する比較は未完了。EveJS実装ソース、既存のEveJS capture fixture、V24.01 client callsiteを照合した。targetのEveJS直接再生は別の試行で300秒timeoutとなり、pass/failを得ていない。
+- この時点ではEveJSのfresh fixtureによる全10ケースの自己比較は未完了だった。現行fixtureでwarpとmoduleを再確認した結果は、後段「直接EveJSでの追試」に記録する。targetの過去の直接再生は300秒timeoutとなり、pass/failを得ていない。
+
+## 2026-11-16 最終再実行
+
+上の実行記録後、nightly相当の環境で10件を再実行した。`EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p4`、pinned SDE `.cache/sde/eve-online-static-data-3396210-jsonl`、`EVE_MARKET_SEED=skip`、各run固有の空きfront/gateway/SSO portを使い、出力を `/tmp/cx4-live-skipped-final/` 以下に保持した。`.github/workflows/live-slow.yml:132,157-159,191-192` に合わせ、slow casesには `EVE_LIVE_SLOW=1` と既定station `60015249` を設定した。二つのrace testはnightlyの既定 `EVE_SKILL_TRAINING_SPEED=1.0`（`CharacterComposition.cs:51`）で実行した。completion testだけは `.github/workflows/ci-nightly.yml:69-74` と同じ `EVE_SKILL_TRAINING_SPEED=60000` と `EVE_LIVE_SLOW=1` を設定した。
+
+| ケース | 最終結果 | ログ |
+| --- | --- | --- |
+| `test_the_skill_queue_is_what_the_reference_does[race-1]` | 成功 | `/tmp/cx4-live-skipped-final/training-reference-rate/run.log` (`.. [100%]`) |
+| `test_the_skill_queue_is_what_the_reference_does[race-4]` | 成功 | `/tmp/cx4-live-skipped-final/training-reference-rate/run.log` (`.. [100%]`) |
+| `test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level` | 成功、1 passed | `/tmp/cx4-live-skipped-final/training-speed-60000/run.log` |
+| `test_a_station_dock_from_beyond_the_range_is_accepted_on_arrival_without_a_second_command` | 成功 | `/tmp/cx4-live-skipped-final/movement-dock-arrival/run.log` |
+| `test_a_ship_warps_to_a_planet_as_the_reference_did` | 成功 | `/tmp/cx4-live-skipped-final/warp-planet-transitions/run.log` |
+| `test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did` | 成功 | `/tmp/cx4-live-skipped-final/jump-gate/run.log` |
+| `test_two_ships_see_each_other_as_they_did_in_the_reference` | 成功 | `/tmp/cx4-live-skipped-final/others-see-each-other/run.log` |
+| `test_a_ship_locks_others_as_it_did_in_the_reference` | 成功 | `/tmp/cx4-live-skipped-final/targeting-lock/run.log` |
+| `test_a_ship_works_its_afterburner_as_it_did_in_the_reference` | 成功、1 passed in 75.86s | `/tmp/cx4-live-skipped-final/module-afterburner-client-wait/run.log` |
+| `test_a_ship_is_damaged_flown_hurt_and_mended_as_it_was_in_the_reference` | 成功 | `/tmp/cx4-live-skipped-final/health-damage-repair/run.log` |
+
+この10件では最終試行の失敗・skipはない。quiet出力のケースはログにpytestの`.`と`[100%]`があり、runnerの終了codeも0。最初のwarp試行はpytest collection時に編集中のtest fileで `IndentationError` となり、scenario自体は起動していなかった。修正後の専用runと最終runは成功した。
+
+### warp比較の訂正
+
+planet warpは途中の比較器失敗を調べた。V24 `eve/client/script/remote/michelle.py:482-511` はballparkがbindされる前のowner Destiny updateを捨て、`SetState` (`:968-1005`) からballparkを作る。比較器側は古い`AddBalls2`だけから参照propsを拾っていたため、初回`SetState`に含まれるEveJS側のprop IDsを分類できていなかった。また、EveJS fixtureの10個のstation/customs-office ballとeve.rsの8個のscene ballを同じID列と比較していた。最終比較では各側のwarp前`SetState`からball IDsをdecodeし、その側に元からあったballだけを一つの`RemoveBalls` updateで除去したこと、wait flag、受信時刻を確認する。参照propsの異なるリスト内容は互いに同一とは要求しない。`docs/reference/compat/DEVIATIONS.md:365` の差分#21と同じballpark差で、wireのaction名、Destiny stamp、通知時刻と有効ID集合の検査は残した。
+
+WarpTo landing pointをfixtureと実行時の両方で独立に乱数化するEveJS同士の比較では、片方の距離半径2,500mだけでなく二点間の最大距離5,000mが上限になる。EveJS `server/src/space/destiny/simulation/warpJitter.js:3-8,18-35` がradius 2,500mを定義するため、テストは5,000m以内を許し、stop distance、warp factor、ship IDは引き続き完全一致で検査する。V24 `environment/effects/Warp.py:455-527` はballがWARP modeを抜けるまでwarp effectを処理する。eve.rsはdropout後も停止時のposition/velocity/zero speed/`Stop`を送るので、比較器はそれらを共通action比較から外す前に個別検証し、次のwarp要求の応答も確認した。
+
+初回module再実行はraw `OnTarget` を待つpredicateがV24の`OnMultiEvent` wrapperを見ず、8秒のwatchを使い切ってcap通知の範囲まで取り込んだ。V24 `godma.py:208-288` のgroup/filter規則でclient-visible eventを復元してからcompletionを待つようにし、同じafterburnerケースを再実行して成功した。
+
+現行EveJSとの自己比較では、最初にactor stream内のattributeID 18を船item IDで区別せず値順に比べたため、149.5 GJを148.38829 GJの期待値と比べて失敗した。V24 `godma.py:246-252` はOnModuleAttributeChangeを `(ownerID, itemID, attributeID)` ごとに集約し、`clientDogmaLocation.py:310-342` は行のitem IDへ適用する。比較器もactor shipのmapped item IDに限定し、EveJS self-comparisonとeve.rsの同じafterburner testを再実行して両方passした。追加のeve.rs実行は `EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p4`、`EVE_LIVE_SLOW=1`、`EVE_START_STATION=60015249` で1 passed in 80.04s。`clientDogmaLocation.py:310-342` の適用とEveJS `server/src/space/runtime/dogmaEvents.js:86-103,133-135` の通知生成は [ballpark-bind-wire-audit.md](ballpark-bind-wire-audit.md) に記録した。
+
+### 直接EveJSでの追試
+
+現行EveJSをpinned SDEで起動してwarpとmodule scenarioを一時fixtureへ記録した。記録は `/tmp/cx4-evejs-current-recording/warp.json` と `module.json`、server logは `/tmp/cx4-evejs-current-recording/recorder.log`。歴史的fixtureへの直接再生ではwarp着地点が3,473.9m異なり、150秒内に`Stop`が観測されなかった。またmoduleのcurrent outputは歴史的captureとevent order/time/capacitor cadenceが異なった。warp jitter半径2,500mの独立した二点の距離上限は5,000mなので、この着地点差は有効範囲内。現在fixtureを使った自己比較は、warp 1 passed（`/tmp/cx4-evejs-selfcheck/logs/evejs-server.out`）とmodule 1 passed（`/tmp/cx4-evejs-selfcheck/module-logs/evejs-server.out`）。最初のEveJS起動はNode既定heap 2GBでSDE読込中にOOMとなり、`run-evejs-live.sh` が案内する `EVEJS_NODE_OPTIONS=--max-old-space-size=8192` で再試行した。
+
+### 未確認
+
+- グラフィカルV24.01クライアントを起動した操作確認はしていない。結果は実Hostに対するheadless clientのwire/E2E検査。
+- EveJS現行captureを使った直接実行はwarpとmoduleのみ。残り8ケースはV24 client callsite、EveJS source/capture、eve.rs live resultで照合したが、EveJSに同じ10シナリオを再生していない。

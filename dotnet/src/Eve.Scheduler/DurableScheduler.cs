@@ -278,7 +278,11 @@ public sealed class DurableScheduler : IAsyncDisposable
         var now = _now();
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         // An exhausted one-shot can be parked; recurring work must reach its next occurrence.
+        // Once a claim transaction is open, let each short SQL statement finish before either
+        // rolling back or returning the connection. Canceling an Npgsql command can race the
+        // backend's cancel request and return a pooled connection with this transaction open.
         await Sql.ExecuteAsync(connection, transaction, Q("""
             WITH exhausted AS (
                 SELECT id FROM {schema}.jobs
@@ -287,7 +291,12 @@ public sealed class DurableScheduler : IAsyncDisposable
             )
             UPDATE {schema}.jobs j SET state = 'failed', last_error = 'the lease lapsed on every attempt', lease_owner = NULL, lease_until_ms = NULL, updated_ms = $1
             FROM exhausted WHERE j.id = exhausted.id
-            """), cancellationToken, now, kinds);
+            """), CancellationToken.None, now, kinds);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
         await using (var command = Sql.Command(connection, transaction, Q("""
             WITH due AS (
                 SELECT id FROM {schema}.jobs
@@ -299,16 +308,27 @@ public sealed class DurableScheduler : IAsyncDisposable
             FROM due WHERE j.id = due.id
             RETURNING j.id, j.kind, j.key, j.payload::text, j.run_at_ms, j.attempts, j.max_attempts, j.every_ms
             """), now, limit, _owner, now + _options.LeaseMs, kinds))
-        await using (var reader = await command.ExecuteReaderAsync(cancellationToken))
+        await using (var reader = await command.ExecuteReaderAsync(CancellationToken.None))
         {
-            while (await reader.ReadAsync(cancellationToken))
+            while (await reader.ReadAsync(CancellationToken.None))
             {
                 claimed.Add(new ClaimedJob(
                     reader.GetInt64(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2), reader.GetString(3), reader.GetInt64(4),
                     reader.GetInt32(5), reader.GetInt32(6), reader.IsDBNull(7) ? null : reader.GetInt64(7)));
             }
         }
-        await transaction.CommitAsync(cancellationToken);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        await transaction.CommitAsync(CancellationToken.None);
+        if (cancellationToken.IsCancellationRequested)
+        {
+            foreach (var job in claimed)
+                await ReleaseAsync(job, "pending", job.RunAtMs, null, Math.Max(0, job.Attempts - 1), null);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
         claimed.Sort((a, b) => a.RunAtMs != b.RunAtMs ? a.RunAtMs.CompareTo(b.RunAtMs) : a.Id.CompareTo(b.Id));
         return claimed;
     }

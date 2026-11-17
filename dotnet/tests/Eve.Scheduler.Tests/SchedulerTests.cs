@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Eve.Data;
+using Npgsql;
 
 namespace Eve.Scheduler.Tests;
 
@@ -430,6 +431,75 @@ public class SchedulerTests
         await real.StopAsync();
         Assert.Equal(0, await rig.Count());
         Assert.True(rig.Log.Count == 0, string.Join(" | ", rig.Log));   // the loop ran without an error of its own
+    }
+
+    [PgFact]
+    public async Task Stop_waits_for_a_claim_statement_then_rolls_back_the_open_transaction()
+    {
+        var schema = "sched_cancel_" + Guid.NewGuid().ToString("N")[..12];
+        var applicationName = $"SchedulerCancel/{Environment.ProcessId}/{schema}";
+        var connectionString = new NpgsqlConnectionStringBuilder(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!))
+        {
+            ApplicationName = applicationName,
+        }.ConnectionString;
+        await using var source = NpgsqlDataSource.Create(connectionString);
+        await DurableScheduler.MigrateAsync(source, schema);
+
+        try
+        {
+            var logs = new List<string>();
+            await using var scheduler = new DurableScheduler(source, () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                new SchedulerOptions { MaxPollMs = 50 }, schema, logs.Add);
+            scheduler.Register("t.cancel", (_, _) => Task.CompletedTask);
+
+            await using var blocker = await source.OpenConnectionAsync();
+            await using var lockTransaction = await blocker.BeginTransactionAsync();
+            await using (var lockTable = new NpgsqlCommand($"LOCK TABLE \"{schema}\".jobs IN ACCESS EXCLUSIVE MODE", blocker, lockTransaction))
+                await lockTable.ExecuteNonQueryAsync();
+
+            scheduler.Start();
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (true)
+            {
+                await using var probe = await source.OpenConnectionAsync(timeout.Token);
+                await using var command = probe.CreateCommand();
+                command.CommandText = """
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_stat_activity
+                        WHERE application_name = $1 AND state = 'active' AND wait_event_type = 'Lock'
+                          AND position($2 IN query) > 0
+                    )
+                    """;
+                command.Parameters.AddWithValue(applicationName);
+                command.Parameters.AddWithValue(schema);
+                if ((bool)(await command.ExecuteScalarAsync(timeout.Token) ?? false))
+                    break;
+                await Task.Delay(10, timeout.Token);
+            }
+
+            var stopping = scheduler.StopAsync();
+            await Task.Delay(100);
+            Assert.False(stopping.IsCompleted);
+
+            await lockTransaction.RollbackAsync();
+            await stopping.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Empty(logs);
+
+            await using var check = source.CreateCommand();
+            check.CommandText = """
+                SELECT count(*) FROM pg_stat_activity
+                WHERE application_name = $1 AND state IS DISTINCT FROM 'idle'
+                  AND position($2 IN coalesce(query, '')) > 0
+                """;
+            check.Parameters.AddWithValue(applicationName);
+            check.Parameters.AddWithValue(schema);
+            Assert.Equal(0L, (long)(await check.ExecuteScalarAsync())!);
+        }
+        finally
+        {
+            await using var cleanup = await source.OpenConnectionAsync();
+            await Sql.ExecuteAsync(cleanup, null, $"DROP SCHEMA IF EXISTS \"{schema}\" CASCADE", CancellationToken.None);
+        }
     }
 
     [PgFact]

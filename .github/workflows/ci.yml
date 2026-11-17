@@ -344,6 +344,10 @@ jobs:
           python3 tools/dev/gen-hostlink-fixtures.py
       - name: Fail if a generator and its committed fixture disagree
         run: git diff --exit-code -- oracle/
+      - name: Verify the generated project map
+        run: |
+          python3 tools/dev/test_gen_project_map.py
+          python3 tools/dev/gen_project_map.py --check
 
   live:
     name: End to end (server stack + headless client)

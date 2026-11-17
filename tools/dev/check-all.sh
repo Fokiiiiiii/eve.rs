@@ -50,6 +50,8 @@ if want fixtures; then
   python3 tools/dev/gen-simlink-fixtures.py
   python3 tools/dev/gen-hostlink-fixtures.py
   git diff --exit-code -- oracle/
+  python3 tools/dev/test_gen_project_map.py
+  python3 tools/dev/gen_project_map.py --check
 fi
 
 if want python; then

@@ -303,12 +303,14 @@ impl Scene {
             told.extend(self.bind_controlled_structure(session, now));
             return told;
         }
+        let fresh_undock = self
+            .pilots
+            .get(&session)
+            .is_some_and(|pilot| !pilot.jumped_in && !pilot.bound && pilot.leaving_station.is_some());
         self.settle_all(now);
         self.take_in_view(session);
-        let first = self.next_stamp(now);
-        let second = self.next_stamp(now);
-        let (add_stamp, state_stamp) =
-            if self.pilots[&session].jumped_in { (second, second) } else { (first, second) };
+        let state_stamp = self.next_stamp(now);
+        let add_stamp = state_stamp;
         let system = Arc::clone(&self.system);
         let ships = self.ships_in_view(session);
         let traces = self.abyssal_traces_in_view(session);
@@ -320,26 +322,12 @@ impl Scene {
         let Some(pilot) = self.pilots.get(&session) else { return told };
         let ship = &pilot.ship;
         let ego_cloak_mode = pilot.ego_cloak_mode();
-        let stargate_jump_in_pending = pilot.stargate_jump_in_pending;
-        let ship_id = id(ship.spec.ship_id);
 
-        let mut added_actions = Vec::new();
-        if pilot.jumped_in {
-            // SetState contains every system body, in-view ship and wreck. Only runtime traces live outside it.
-            added_actions.extend(trace_adds);
-            added_actions
-                .extend(system.bodies.iter().filter_map(|body| payload::moon_chunk_effect(add_stamp, body)));
-        } else {
-            let Ok(ship_added) = payload::add_ships(add_stamp, &ships, now) else { return told };
-            added_actions.push(ship_added);
-            let Ok(abyssal_scene_objects) = payload::add_abyssal_scene_objects(add_stamp, &system) else {
-                return told;
-            };
-            added_actions.extend(payload::add_structures(add_stamp, &system, now));
-            added_actions.extend(payload::add_moon_chunks(add_stamp, &system));
-            added_actions.extend(abyssal_scene_objects);
-            added_actions.extend(trace_adds);
-        }
+        // SetState contains every system body, in-view ship and wreck. Runtime traces and active moon-drill
+        // effects are the only presentation entries that must follow it as separate Destiny actions.
+        let mut added_actions = trace_adds;
+        added_actions
+            .extend(system.bodies.iter().filter_map(|body| payload::moon_chunk_effect(add_stamp, body)));
         let added = (!added_actions.is_empty()).then_some(added_actions);
         let wrecks = self.wrecks_in_view(session);
         let Ok(state) = payload::set_state_for_ego_with_cloak_mode(
@@ -356,65 +344,25 @@ impl Scene {
         let update = |actions: Vec<Value>| {
             Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
         };
-        if pilot.jumped_in || added.is_some() {
-            told.extend([
-                Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
-                Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
-            ]);
-            // The reference makes the bound ballpark's SetState its first Destiny update on login or jump.
-            // An undock instead introduces the ship before its movement prime and later SetState.
-            if !pilot.jumped_in
-                && let Some(added) = added.as_ref()
-            {
-                told.push(Self::notify(
-                    session,
-                    "DoDestinyUpdate",
-                    payload::destiny_update(added.clone(), true),
-                ));
-            }
-        }
-        if !pilot.jumped_in {
-            // Station undocks already receive their movement prime with AddBalls2; structures need their own entry pose.
-            let mut actions = Vec::new();
-            if pilot.leaving_station.is_none() {
-                actions.extend([
-                    payload::uncloak(first, ship.spec.ship_id),
-                    payload::action(
-                        first,
-                        "SetBallPosition",
-                        with_id(&ship_id, vector(ship.position.x, ship.position.y, ship.position.z)),
-                    ),
-                ]);
-            }
-            actions.extend(self.movement_prime(session, first).unwrap_or_default());
-            told.push(update(actions));
-        }
+        told.extend([
+            Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
+            Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
+        ]);
+        // Binding rebuilds the client ballpark from SetState. Updates sent before this action are
+        // discarded while Michelle has no ballpark (DoDestinyUpdate at michelle.py:482-485).
+        // An undock's SetState already carries the ship's initial movement state; EveJS sends no
+        // number primes for that bootstrap. Login and jump arrivals prime dynamic ships after it.
         let mut initial_state = vec![state];
-        if stargate_jump_in_pending {
-            initial_state.push(payload::jump_in_effect(state_stamp, ship.spec.ship_id));
-        }
-        told.push(Self::notify(
-            session,
-            "DoDestinyUpdate",
-            payload::destiny_update(initial_state, pilot.jumped_in),
-        ));
-        if pilot.jumped_in
-            && let Some(added) = added
-        {
-            told.push(update(added));
-        }
-        let mut numbers = Vec::new();
-        for other in &ships {
-            // The undocked ego's numbers are in SetState; fixed SDE sentries do not move.
-            if (other.spec.ship_id != ship.spec.ship_id || pilot.jumped_in) && other.spec.max_velocity > 0.0 {
-                numbers.extend(Self::numbers_of(other, second));
+        if !fresh_undock {
+            for other in &ships {
+                if other.spec.max_velocity > 0.0 {
+                    initial_state.extend(Self::numbers_of(other, state_stamp));
+                }
             }
         }
-        if !numbers.is_empty() {
-            told.push(update(numbers));
-        }
-        if stargate_jump_in_pending && let Some(pilot) = self.pilots.get_mut(&session) {
-            pilot.stargate_jump_in_pending = false;
+        told.push(Self::notify(session, "DoDestinyUpdate", payload::destiny_update(initial_state, false)));
+        if let Some(added) = added {
+            told.push(update(added));
         }
         self.with_backlog(told)
     }

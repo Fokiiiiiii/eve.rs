@@ -165,7 +165,11 @@ impl Scene {
     }
 
     pub(crate) fn update(session: SessionId, actions: Vec<Value>) -> Out {
-        Scene::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
+        Self::update_wait(session, actions, false)
+    }
+
+    fn update_wait(session: SessionId, actions: Vec<Value>, wait: bool) -> Out {
+        Scene::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, wait))
     }
 
     /// What happened to a ship, told to it and to everyone who has it in view: one update each, the same stamp.
@@ -195,7 +199,7 @@ impl Scene {
         let pilot = self.pilots.get(&subject)?;
         let ship = &pilot.ship;
         let ship_id = id(ship.spec.ship_id);
-        let added = payload::add_ships(stamp, &[ship], now).ok()?;
+        let added = payload::packaged_actions(stamp, [payload::add_ships(stamp, &[ship], now).ok()?]);
         let mut actions = vec![
             added,
             payload::action(stamp, "SetBallAgility", [ship_id.clone(), real(ship.spec.agility)]),
@@ -221,10 +225,12 @@ impl Scene {
         let stamp = self.next_stamp(now);
         let Some(actions) = self.introduction_at(subject, stamp, now) else { return Vec::new() };
         let movement_prime = self.station_undock_movement_prime(subject, stamp);
+        let wait_for_add = self.pilots.get(&subject).is_some_and(|pilot| pilot.leaving_station.is_some());
         let mut out = Vec::new();
         for watcher in watchers {
             self.set_sees_ship(watcher, subject, true);
-            out.push(Self::update(watcher, actions.clone()));
+            // The client binds the undocked ball before applying the separate movement prime.
+            out.push(Self::update_wait(watcher, actions.clone(), wait_for_add));
             if let Some(prime) = movement_prime.as_ref() {
                 out.push(Self::update(watcher, prime.clone()));
             }

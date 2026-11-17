@@ -175,12 +175,17 @@ pub fn vec_at(bytes: &[u8], at: usize) -> Vec3 {
 /// A number the reference sent the client about the ship in an action of the bind (mass, top speed, agility).
 fn number_of(race: &Value, action: &str) -> Option<f64> {
     let ship_id = race["shipID"].as_i64().or_else(|| race["shipID"]["$long"].as_i64())?;
-    race["steps"]
-        .as_array()?
-        .iter()
-        .flat_map(destiny_actions)
-        .find(|(_, name, args)| name == action && number(&args["$tuple"][0]) == ship_id)
-        .and_then(|(_, _, args)| args["$tuple"][1].as_f64())
+    for step in race["steps"].as_array()? {
+        for stream in ["events", "seen"] {
+            let events = step[stream].as_array().cloned().unwrap_or_default();
+            for (_, name, args) in destiny_actions(&json!({"events": events})) {
+                if name == action && number(&args["$tuple"][0]) == ship_id {
+                    return args["$tuple"][1].as_f64();
+                }
+            }
+        }
+    }
+    None
 }
 
 pub fn initial_ship_addition(race: &Value) -> (i64, Value, Vec<u8>) {

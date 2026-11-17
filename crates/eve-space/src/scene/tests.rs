@@ -184,13 +184,16 @@ fn a_space_login_sends_the_ego_ball_with_the_initial_bind() {
         .position(|out| actions_of(out).iter().any(|(name, _)| name == "SetState"))
         .expect("the bind must send the authoritative ballpark state");
     assert_eq!(set_state, 0, "SetState is the first bound Destiny update: {destiny_updates:?}");
-    assert_eq!(action_names(destiny_updates[set_state]), ["SetState"]);
+    assert_eq!(
+        action_names(destiny_updates[set_state]),
+        ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]
+    );
     assert!(
         !destiny_updates.iter().any(|out| actions_of(out).iter().any(|(name, _)| name == "AddBalls2")),
         "SetState already carries the ego and visible scene balls: {destiny_updates:?}"
     );
     assert!(holds_ball_of(&set_state_buffer(destiny_updates[set_state]), spec().ship_id));
-    assert_eq!(names.iter().filter(|name| **name == "DoDestinyUpdate").count(), 2);
+    assert_eq!(names.iter().filter(|name| **name == "DoDestinyUpdate").count(), 1);
 }
 
 fn seconds(n: i64) -> i64 {
@@ -217,6 +220,35 @@ fn action_names(out: &Out) -> Vec<String> {
             other => panic!("{other:?}"),
         })
         .collect()
+}
+
+fn expanded_action_names(out: &Out) -> Vec<String> {
+    let Out::Notify { args, .. } = out else { return Vec::new() };
+    let Some(Value::List(actions)) = args.first() else { return Vec::new() };
+    let mut names = Vec::new();
+    let decode_name = |value: &Value| match value {
+        Value::Str(name) | Value::WString(name) | Value::Token(name) => name.to_string(),
+        Value::Bytes(name) => String::from_utf8_lossy(name).into_owned(),
+        other => panic!("{other:?}"),
+    };
+    for action in actions {
+        let Value::Tuple(pair) = action else { panic!("{action:?}") };
+        let Value::Tuple(inner) = &pair[1] else { panic!("{:?}", pair[1]) };
+        if matches!(inner.first(), Some(Value::Str(name)) if name == "PackagedAction") {
+            let Value::Buffer(bytes) = &inner[1] else { panic!("{:?}", inner[1]) };
+            let Value::Tuple(unpacked) = eve_marshal::decode_exact(bytes).expect("package decodes") else {
+                panic!("the package contains a tuple of Destiny actions")
+            };
+            for action in unpacked {
+                let Value::Tuple(pair) = action else { panic!("{action:?}") };
+                let Value::Tuple(inner) = &pair[1] else { panic!("{:?}", pair[1]) };
+                names.push(decode_name(&inner[0]));
+            }
+        } else {
+            names.push(decode_name(&inner[0]));
+        }
+    }
+    names
 }
 
 fn stamps(out: &Out) -> Vec<i64> {
@@ -313,7 +345,7 @@ fn a_ship_cannot_undock_twice_or_from_a_station_that_is_not_there() {
 }
 
 #[test]
-fn binding_sends_the_time_the_ship_then_the_state() {
+fn binding_sends_the_time_then_the_authoritative_state() {
     let mut scene = scene();
     let out = scene.bind(SESSION, NOON);
     let names: Vec<_> = out
@@ -323,23 +355,8 @@ fn binding_sends_the_time_the_ship_then_the_state() {
             other => panic!("{other:?}"),
         })
         .collect();
-    assert_eq!(
-        names,
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate", "DoDestinyUpdate"]
-    );
-    assert_eq!(action_names(&out[2]), ["AddBalls2"]);
-    assert_eq!(
-        action_names(&out[3]),
-        [
-            "OnSpecialFX",
-            "SetBallPosition",
-            "SetBallMassive",
-            "SetBallMass",
-            "SetBallVelocity",
-            "GotoDirection"
-        ]
-    );
-    assert_eq!(action_names(&out[4]), ["SetState"]);
+    assert_eq!(names, ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"]);
+    assert_eq!(action_names(&out[2]), ["SetState"]);
     let ship = spec();
     let ship_id = ship.ship_id.to_le_bytes();
     let state = fields_in_state(&out)
@@ -359,14 +376,11 @@ fn binding_sends_the_time_the_ship_then_the_state() {
     let max_velocity = f32::from_le_bytes(state[ego + 63..ego + 67].try_into().unwrap());
     let agility = f32::from_le_bytes(state[ego + 91..ego + 95].try_into().unwrap());
     assert_eq!((max_velocity, agility), (ship.max_velocity as f32, ship.agility as f32));
-    // the ship comes at the stamp of the moment and the state a stamp after (the reference's 102 and 103)
+    // A fresh station undock uses SetState as its sole owner bootstrap update; it carries the
+    // ship's actual physical state, including its initial movement away from the station.
     let now_stamp = i64::from(stamp_at(NOON));
     assert_eq!(stamps(&out[2]), [now_stamp]);
-    assert_eq!(stamps(&out[4]), [now_stamp + 1]);
-    assert!(
-        matches!(&out[2], Out::Notify { args, .. } if args[1] == Value::Bool(true)),
-        "the client waits for the ship"
-    );
+    assert!(matches!(&out[2], Out::Notify { args, .. } if args[1] == Value::Bool(false)));
 }
 
 #[test]
@@ -1474,9 +1488,14 @@ fn a_ship_lining_up_for_warp_or_in_it_takes_no_orders() {
             "{command:?}"
         );
     }
-    // it is told to the client as a ball that is turning to warp, and, once in warp, as one in warp
+    // Fresh acquisition uses the ball's WARP state; EveJS encodes it in SetState rather than replaying WarpTo.
     let bound = scene.bind(SESSION, NOON + seconds(3));
-    assert_eq!(action_names(&bound[3]).last().map(String::as_str), Some("WarpTo"));
+    assert_eq!(action_names(&bound[2]), ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
+    let encoded = eve_destiny::encode_entity_ball(&scene.pilots[&SESSION].ship.ball()).unwrap();
+    assert!(
+        set_state_buffer(&bound[2]).windows(encoded.len()).any(|ball| ball == encoded),
+        "the SetState contains the warping ego ball exactly as encoded for the Destiny stream"
+    );
 }
 
 #[test]
@@ -1811,14 +1830,18 @@ fn a_station_dock_approach_that_arrives_while_blocked_is_not_accepted() {
 }
 
 #[test]
-fn binding_a_ship_that_follows_sends_the_follow() {
+fn binding_a_ship_that_follows_restores_its_state_without_replaying_the_movement_command() {
     let mut scene = scene();
     scene.command(SESSION, Command::FollowBall { target_id: STATION, range: 3_000.0 }, NOON);
     let out = scene.bind(SESSION, NOON);
-    let heading = actions_of(&out[3]);
     assert_eq!(
-        heading.last().unwrap(),
-        &("FollowBall".to_string(), vec![Value::Int(STATION), Value::Int(3_000)])
+        action_names(out.last().unwrap()),
+        ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]
+    );
+    assert_eq!(
+        scene.pilots[&SESSION].ship.course,
+        Course::Follow { target: STATION, range: 3_000.0 },
+        "the authoritative scene continues the existing follow after the client receives its full state"
     );
 }
 
@@ -2366,18 +2389,10 @@ fn binding_a_ship_that_came_through_a_gate_sends_the_ship_the_state_and_the_numb
             other => panic!("{other:?}"),
         })
         .collect();
-    assert_eq!(
-        notifications,
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"]
-    );
-    assert_eq!(names[2], ["SetState", "OnSpecialFX"]);
+    assert_eq!(notifications, ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"]);
+    assert_eq!(names[2], ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
     assert_eq!(cloak_mode_of(&set_state_buffer(&bound[2]), spec().ship_id), 2);
-    assert!(actions_of(&bound[2]).iter().any(|(name, args)| {
-        name == "OnSpecialFX"
-            && args.get(4) == Some(&crate::wire::text("effects.JumpIn"))
-            && args.get(8) == Some(&crate::wire::int(5_000))
-    }));
-    assert_eq!(names[3], ["SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
+    assert!(matches!(&bound[2], Out::Notify { args, .. } if args[1] == Value::Bool(false)));
     // the ship's own ball says it is stopped
     assert_eq!(there.ship(SESSION, NOON + seconds(6)).unwrap().course, Course::Stop);
 }
@@ -2450,7 +2465,7 @@ fn a_gate_cloak_expires_on_the_simulation_clock_and_introduces_the_ship_to_its_o
         "the owner's ball cloak expires: {owner_updates:?}"
     );
     assert_eq!(
-        action_names(observer_updates.first().unwrap()),
+        expanded_action_names(observer_updates.first().unwrap()),
         ["AddBalls2", "SetBallAgility", "SetBallMass", "SetMaxSpeed", "OnSpecialFX"]
     );
     assert!(destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
@@ -2493,7 +2508,7 @@ fn an_accepted_movement_cancels_gate_cloak_then_introduces_the_ship_to_observers
         |out| matches!(out, Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == SESSION + 1),
     );
     assert_eq!(
-        observer_update.map(action_names).unwrap_or_default(),
+        observer_update.map(expanded_action_names).unwrap_or_default(),
         ["AddBalls2", "SetBallAgility", "SetBallMass", "SetMaxSpeed", "OnSpecialFX"]
     );
     assert!(destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
@@ -3431,6 +3446,21 @@ fn structure_damage_in_state(out: &[Out], structure_id: i64) -> Option<Value> {
     entries.iter().find(|(key, _)| key == &structure_key).map(|(_, value)| value.clone())
 }
 
+fn state_contains_slim_id(out: &[Out], item_id: i64) -> bool {
+    let Some(fields) = fields_in_state(out) else { return false };
+    let slims_key = crate::wire::word("slims");
+    let Some((_, Value::List(slims))) = fields.iter().find(|(key, _)| key == &slims_key) else {
+        return false;
+    };
+    let item_key = crate::wire::word("itemID");
+    let item_value = crate::wire::id(item_id);
+    slims.iter().any(|slim| {
+        let Value::Object { args, .. } = slim else { return false };
+        let Value::Dict(entries) = args.as_ref() else { return false };
+        entries.iter().any(|(key, value)| key == &item_key && value == &item_value)
+    })
+}
+
 #[test]
 fn a_structure_put_in_space_is_a_body_with_its_slim_item_and_is_in_the_bind_of_a_pilot_who_comes_later() {
     let mut scene = scene();
@@ -3476,13 +3506,14 @@ fn a_customs_office_is_an_orbital_of_its_planet_with_the_planet_and_level_in_its
 }
 
 #[test]
-fn a_pilot_who_comes_in_is_told_the_structures_placed_while_it_was_away_as_balls() {
-    let without = format!("{:?}", scene().bind(SESSION, NOON)).matches("AddBalls2").count();
+fn a_pilot_who_comes_in_gets_structures_placed_while_it_was_away_in_set_state() {
+    let baseline = scene().bind(SESSION, NOON);
     let mut scene = scene();
     let placement = structure_placement(&scene, NOON);
     scene.place_structure(placement, NOON);
-    let with = format!("{:?}", scene.bind(SESSION, NOON)).matches("AddBalls2").count();
-    assert_eq!(with, without + 1, "the structure is one more ball in the first bind of a pilot");
+    let bound = scene.bind(SESSION, NOON);
+    assert!(state_contains_slim_id(&baseline, STATION), "the baseline state carries its station slim");
+    assert!(state_contains_slim_id(&bound, STRUCTURE), "the bound state carries the added structure slim");
 }
 
 #[test]

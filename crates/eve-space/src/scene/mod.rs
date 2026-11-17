@@ -656,8 +656,6 @@ pub(crate) struct Pilot {
     pub(crate) jump: Option<PendingJump>,
     /// The ship arrived already in space (through a gate or on login), not by undocking.
     jumped_in: bool,
-    /// A stargate arrival still needs its one-shot `effects.JumpIn` presentation when the client binds.
-    pub(crate) stargate_jump_in_pending: bool,
     /// Until when a gate-arriving ship remains hidden from other ballparks.
     pub(crate) jump_cloak_until: Option<i64>,
     /// Whether the simulation clock has passed the end of the gate cloak or an accepted action has cancelled it.
@@ -720,7 +718,6 @@ impl Pilot {
             warp_target: None,
             jump: None,
             jumped_in: false,
-            stargate_jump_in_pending: false,
             jump_cloak_until: None,
             jump_cloaked: false,
             jump_cloak_ended: false,

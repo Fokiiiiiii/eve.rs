@@ -139,8 +139,7 @@ impl Scene {
                 [ship_id.clone(), real(raw.x), real(raw.y), real(raw.z), real(stop), int(profile.factor)],
             ),
         ];
-        // The warp request is one Destiny order for the pilot and all current observers. The ship's
-        // later transition into the warp phase is local simulation state, not a second WarpTo order.
+        // The order starts the Destiny warp mode for the pilot and every current observer on the same stamp.
         out.extend(self.tell_all(session, own));
         out.push(Out::Accepted { session, command: code, at: now });
         out

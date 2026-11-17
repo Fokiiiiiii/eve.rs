@@ -438,7 +438,6 @@ impl Scene {
         pilot.jump = None;
         pilot.tether = Default::default();
         pilot.jumped_in = true;
-        pilot.stargate_jump_in_pending = stargate_arrival;
         pilot.jump_cloak_until = stargate_arrival.then_some(now.saturating_add(STARGATE_JUMP_CLOAK));
         pilot.jump_cloaked = stargate_arrival;
         pilot.jump_cloak_ended = false;
@@ -448,8 +447,7 @@ impl Scene {
         pilot.entered = self.next_entry();
         self.pilots.insert(session, pilot);
         // A jump-cloaked gate arrival is not delivered to destination observers yet. The owner
-        // receives JumpIn with SetState when binding; other pilots first get the ship after the
-        // cloak ends (the client drops SpecialFX that names a ball it has not been given).
+        // binds from SetState; other pilots first get the ship after the cloak ends.
         Ok(if stargate_arrival { Vec::new() } else { self.announce_arrival(session, now) })
     }
 
@@ -466,7 +464,6 @@ impl Scene {
             pilot.jump_cloaked = false;
             pilot.jump_cloak_until = None;
             pilot.jump_cloak_ended = true;
-            pilot.stargate_jump_in_pending = false;
         }
         let stamp = self.next_stamp(now);
         self.tell_all(session, vec![payload::uncloak_ball(stamp, ship_id), payload::uncloak(stamp, ship_id)])

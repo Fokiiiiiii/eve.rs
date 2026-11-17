@@ -329,11 +329,15 @@ pub fn remove_ships(stamp: u32, ship_ids: impl IntoIterator<Item = i64>) -> Valu
     action(stamp, "RemoveBalls", [list(ship_ids.into_iter().map(id))])
 }
 
+/// Several Destiny actions carried in one `PackagedAction` buffer.
+pub fn packaged_actions(stamp: u32, actions: impl IntoIterator<Item = Value>) -> Value {
+    let inner = eve_marshal::encode(&tuple(actions)).expect("the sim's own values encode");
+    tuple([id(i64::from(stamp)), tuple([word("PackagedAction"), Value::Buffer(inner.into())])])
+}
+
 /// The same removal as the reference sends it while a ship is warping away or in: inside a `PackagedAction`, the action marshalled whole.
 pub fn remove_ships_packaged(stamp: u32, ship_ids: impl IntoIterator<Item = i64>) -> Value {
-    let inner =
-        eve_marshal::encode(&tuple([remove_ships(stamp, ship_ids)])).expect("the sim's own values encode");
-    tuple([id(i64::from(stamp)), tuple([word("PackagedAction"), Value::Buffer(inner.into())])])
+    packaged_actions(stamp, [remove_ships(stamp, ship_ids)])
 }
 
 /// The ball of a body of the system: a structure is a station's ball (rigid, global, dockable).
@@ -491,28 +495,4 @@ pub fn uncloak(stamp: u32, ship_id: i64) -> Value {
 /// `UncloakBall` clears the owner's native cloaked flag when a gate cloak ends.
 pub(crate) fn uncloak_ball(stamp: u32, ship_id: i64) -> Value {
     action(stamp, "UncloakBall", [id(ship_id)])
-}
-
-/// The one-shot arrival presentation the client plays when a pilot binds the ballpark after a stargate jump.
-pub fn jump_in_effect(stamp: u32, ship_id: i64) -> Value {
-    action(
-        stamp,
-        "OnSpecialFX",
-        [
-            id(ship_id),
-            Value::None,
-            Value::None,
-            Value::None,
-            Value::None,
-            text("effects.JumpIn"),
-            int(0),
-            int(1),
-            int(0),
-            int(5_000),
-            Value::None,
-            Value::None,
-            int(0),
-            Value::None,
-        ],
-    )
 }

@@ -96,11 +96,12 @@ fn the_recorded_ship_came_to_rest_by_the_gate_where_our_rule_lets_a_ship_come_to
         gate::surface_distance(gate, rest, r.spec.radius) <= gate::JUMP_RANGE,
         "within jump range of the gate"
     );
-    // The captured V24 request uses a zero stop distance; the ship comes to rest within the recorded 150 m movement tolerance.
+    // Warp arrival is jittered within the client's 2,500 m radius (appConst.py:1547; EveJS
+    // warpCommands.js:955-974), so the raw WarpTo point is not an exact stop coordinate.
     assert!((0.0..=2_500.0).contains(&stop), "{stop}");
     assert!(
-        (gap(raw, rest) - stop).abs() < 150.0,
-        "{} m past the landing point for a stop distance of {stop}",
+        (gap(raw, rest) - stop).abs() <= 2_500.0 + 20.0,
+        "{} m from the jittered landing point for a stop distance of {stop}",
         gap(raw, rest)
     );
 }
@@ -200,17 +201,17 @@ fn the_ship_that_has_jumped_is_bound_in_the_other_system_as_the_reference_bound_
 
     let bind = step(&r.race, "bind the ballpark of the next system");
     let theirs: Vec<&Value> = bind["events"].as_array().unwrap().iter().collect();
-    assert_eq!(theirs.len(), 4);
-    assert_eq!(out.len(), 4);
+    assert_eq!(theirs.len(), 3, "the reference combines SetState and its number primes in one notification");
+    assert_eq!(out.len(), 3, "the state and ship-number primes share one Destiny update");
     let name = |o: &Out| match o {
         Out::Notify { name, .. } => name.to_string(),
         other => panic!("{other:?}"),
     };
     assert_eq!(
         out.iter().map(name).collect::<Vec<_>>(),
-        [0, 1, 2, 3].map(|index| theirs[index]["name"].as_str().unwrap().to_string())
+        [0, 1, 2].map(|index| theirs[index]["name"].as_str().unwrap().to_string())
     );
-    // The client gets the reference's clock and rebase, then the complete state and ship numbers.
+    // The client gets the reference's clock and rebase, then its complete state and ship-number primes.
     assert_eq!(out_args(&out[0]), event_args(theirs[0]));
     // Michelle applies newSimTime - oldSimTime (michelle.py:699-703); absolute filetimes belong to the capture.
     let rebase = out_args(&out[1]);
@@ -222,30 +223,23 @@ fn the_ship_that_has_jumped_is_bound_in_the_other_system_as_the_reference_bound_
     };
     assert_eq!(rebase_delta(&rebase), rebase_delta(&recorded_rebase));
 
-    // The SetState's leading actions and wait flag are stable; the capture also includes numbers for ambient NPCs.
+    // SetState and ship numbers share one update; the capture also includes numbers for ambient NPCs.
     let state = out_args(&out[2]);
     let recorded_state = event_args(theirs[2]);
     let ours_initial_actions = without_stamps(&state);
     let reference_initial_actions = without_stamps(&recorded_state);
-    assert_eq!(&action_names_of(&state)[..2], &action_names_of(&recorded_state)[..2]);
-    assert_eq!(ours_initial_actions[1], reference_initial_actions[1], "JumpIn wire args");
+    assert_eq!(&action_names_of(&state)[..4], &action_names_of(&recorded_state)[..4]);
     assert_eq!(state["$tuple"][1], recorded_state["$tuple"][1], "wait of SetState");
-
-    // The next same-stamp update releases the waiting SetState on the client.
-    let (state_stamp, numbers_stamp) = (stamps_of(&state)[0], stamps_of(&out_args(&out[3]))[0]);
-    assert_eq!(numbers_stamp, state_stamp);
-    let numbers = out_args(&out[3]);
-    assert_eq!(numbers["$tuple"][1], Value::Bool(false));
 
     // Compare the traveller's own numbers; the capture also contains independently running ambient NPCs.
     let ship_id = r.spec.ship_id;
-    let ours = numbers;
-    assert_eq!(stamps_of(&ours), vec![numbers_stamp; stamps_of(&ours).len()]);
+    let state_stamp = stamps_of(&state)[0];
+    assert_eq!(stamps_of(&state), vec![state_stamp; stamps_of(&state).len()]);
     let is_own_number = |action: &Value| {
         matches!(action["$tuple"][0].as_str(), Some("SetBallAgility" | "SetBallMass" | "SetMaxSpeed"))
             && number(&action["$tuple"][1]["$tuple"][0]) == ship_id
     };
     let recorded: Vec<Value> = reference_initial_actions.into_iter().filter(is_own_number).collect();
-    let ours: Vec<Value> = without_stamps(&ours).into_iter().filter(is_own_number).collect();
+    let ours: Vec<Value> = ours_initial_actions.into_iter().filter(is_own_number).collect();
     assert_eq!(ours, recorded);
 }

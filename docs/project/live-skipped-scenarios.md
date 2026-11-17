@@ -71,3 +71,32 @@ WarpTo landing pointをfixtureと実行時の両方で独立に乱数化するEv
 
 - グラフィカルV24.01クライアントを起動した操作確認はしていない。結果は実Hostに対するheadless clientのwire/E2E検査。
 - EveJS現行captureを使った直接実行はwarpとmoduleのみ。残り8ケースはV24 client callsite、EveJS source/capture、eve.rs live resultで照合したが、EveJSに同じ10シナリオを再生していない。
+
+## 2026-11-17 nightly相当の再実行
+
+`eve_p4` 上で再実行した。SDE build 3396210 と mission build 3405148 はロード済みだった。全runで `EVE_MARKET_SEED=skip`、`KEEP_LOGS=1`、空いているportを使い、runnerの終了を待ってからログを確認した。7つのslow scenarioは `.github/workflows/live-slow.yml:139-142,188-197` と同じくscenario fileごとに別Hostで実行し、`EVE_LIVE_SLOW=1` と既定station `60015249` を設定した。race testも既定training speed（`EVE_SKILL_TRAINING_SPEED` unset、`CharacterComposition.cs:51` の既定値 `1`）のfresh Hostで実行した。fast-training testは `.github/workflows/ci-nightly.yml:69-74,109-117` と同じ `EVE_SKILL_TRAINING_SPEED=60000`、`EVE_LIVE_SLOW=1` の専用Hostで実行した。
+
+| ケース | nightly相当runの結果 | ログ |
+| --- | --- | --- |
+| `test_the_skill_queue_is_what_the_reference_does[race-1]` | 成功 | `/tmp/cx4-live-skipped-rerun-2026-11-17/training-races.log` (`2 passed`) |
+| `test_the_skill_queue_is_what_the_reference_does[race-4]` | 成功 | `/tmp/cx4-live-skipped-rerun-2026-11-17/training-races.log` (`2 passed`) |
+| `test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level` (`EVE_SKILL_TRAINING_SPEED=60000`) | 成功、1 passed | `/tmp/cx4-live-skipped-rerun-2026-11-17/run.log:39-45`; JUnit `/tmp/cx4-live-skipped-rerun-2026-11-17/training.xml` (1 test, 0 failures, 0 skipped) |
+| `test_a_station_dock_from_beyond_the_range_is_accepted_on_arrival_without_a_second_command` | 成功、1 passed in 266.18s | `/tmp/cx4-live-skipped-rerun-2026-11-17/isolated-slow.log:4-25` |
+| `test_a_ship_warps_to_a_planet_as_the_reference_did` | 成功、1 passed in 94.61s | `/tmp/cx4-live-skipped-rerun-2026-11-17/isolated-slow.log:26-47` |
+| `test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did` | 成功、1 passed in 109.32s | `/tmp/cx4-live-skipped-rerun-2026-11-17/isolated-slow.log:48-69` |
+| `test_two_ships_see_each_other_as_they_did_in_the_reference` | 成功、1 passed in 122.90s | `/tmp/cx4-live-skipped-rerun-2026-11-17/isolated-slow.log:70-91` |
+| `test_a_ship_locks_others_as_it_did_in_the_reference` | 成功、1 passed in 257.05s | `/tmp/cx4-live-skipped-rerun-2026-11-17/isolated-slow.log:92-113` |
+| `test_a_ship_works_its_afterburner_as_it_did_in_the_reference` | 成功、1 passed in 75.97s | `/tmp/cx4-live-skipped-rerun-2026-11-17/isolated-slow.log:114-135` |
+| `test_a_ship_is_damaged_flown_hurt_and_mended_as_it_was_in_the_reference` | 成功、1 passed in 37.69s | `/tmp/cx4-live-skipped-rerun-2026-11-17/isolated-slow.log:136-157` |
+
+最終の10ケースはすべて成功し、skipは0件。race testは独立Hostで2 passed、fast-trainingは独立Hostで1 passed、slow scenarioは各々独立Hostで7 passed。GUI版V24.01クライアントの操作確認ではなく、実Hostに接続するheadless clientのE2E確認である。
+
+### 再実行中に見えた失敗の分類
+
+一度、slowの9ケース（2 race parameterと7 scenario）を一つのHostへまとめて実行したところ `test_others.py` と `test_target.py` が失敗し、ballpark slimの `charID` / `ownerID` が記録からruntime IDへ写像した期待値より1大きいという比較差が出た（`/tmp/cx4-live-skipped-rerun-2026-11-17/slow-only.log`）。これはnightly相当の最終結果には数えていない。nightlyは `test_file` ごとのmatrix jobを起動し、各jobでrunnerを一度実行する（`live-slow.yml:139-142,188-197`）；一つのHostに複数scenario fileを連結したrunはその隔離条件と異なる。各fileを別Hostで再実行すると、`test_others.py` と `test_target.py` は含め全7ケースが成功した。
+
+この差は最終的に「nightly相当のHost分離を欠いた調査runの環境差」と分類した。テスト期待値を緩和したり、server codeを変更したりしていない。wire上のidentity field自体はclient-visibleであり、V24 `eve/client/script/remote/michelle.py:527-534` はshipの `charID` を返し、`:1208-1216` は `ownerID` / `charID` をowner情報のprimingに使う。EveJSも `server/src/space/destiny/index.js:390-394,541-547` で `ownerID` と `entity.characterID` をslimへ出す。実行時IDの対応はscenario helper `tools/headless-client/tests/test_undock.py:566-622` が各runで作るcharacterへ写像する。複数fileを同じHostに積んだときだけ出た比較差であり、nightly相当のfresh Hostで同じclient-visible assertionが通ることを確認した。共有Hostでの異なるscenario間のstate干渉そのものは、このjobのnightly条件外なので別途は検証していない。
+
+最初の試行ではslow `EVE_RUN` のtest pathをrepository root基準ではなく `tests/...` とし、pytest collectionが `file or directory not found` で終了した。シナリオは一件も収集・実行されていない。その後CIと同じroot基準の `tools/headless-client/tests/...` へ直して上記の実行を行い、このcollection失敗は最終ケースの失敗数には含めていない。
+
+この再実行ではEveJS serverを起動した直接再生はしていない。成功した結果は既存のEveJS fixtureとのwire比較を含むheadless testの結果である。

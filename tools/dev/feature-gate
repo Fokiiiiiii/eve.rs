@@ -1,0 +1,592 @@
+#!/usr/bin/env python3
+"""Check whether a configured eve.rs service or RPC family is ready."""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import shlex
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+
+
+ROOT = Path(__file__).resolve().parents[2]
+AREAS_PATH = ROOT / "tools/dev/feature-gate-areas.json"
+AUDIT_TOOL = ROOT / "tools/spec-extract/generate_service_audit.py"
+DEFAULT_CLIENT_ROOT = Path("/home/user/eve-logic")
+CI_REPLAY_DOC = ROOT / "docs/project/live-trace-replay.md"
+
+
+def load_json(path: Path) -> object:
+    with path.open(encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def import_audit_tool() -> object:
+    spec = importlib.util.spec_from_file_location("eve_service_audit", AUDIT_TOOL)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load existing coverage tooling: {AUDIT_TOOL}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def collect_rpc_evidence(repo_root: Path, client_root: Path) -> tuple[list[dict[str, str]], set[tuple[str, str]]]:
+    """Load the generated whole-client inventory and re-scan current active Host registrations."""
+    if not client_root.is_dir():
+        raise FileNotFoundError(f"V24.01 client source not found: {client_root}")
+    matrix_path = repo_root / "docs/project/service-audit/CLIENT_CALL_MATRIX.csv"
+    if not matrix_path.is_file():
+        raise FileNotFoundError(f"generated V24 RPC inventory not found: {matrix_path}")
+    with matrix_path.open(encoding="utf-8", newline="") as stream:
+        rows = [row for row in csv.DictReader(stream) if row.get("row_type") == "rpc"]
+    audit = import_audit_tool()
+    contract = audit.load_contract()
+    registered, _, _ = audit.host_routes(contract, repo_root)
+    return rows, registered
+
+
+def check_rpc_registration(
+    scope: list[dict[str, object]], client_rows: list[dict[str, str]], registered: set[tuple[str, str]],
+    client_root: Path | None = None,
+) -> dict[str, object]:
+    client_pairs = {
+        (row["service"], row["method"])
+        for row in client_rows
+        if row.get("row_type") == "rpc"
+    }
+    expected = {
+        (str(item["service"]), str(method))
+        for item in scope
+        for method in item.get("methods", [])
+    }
+    all_services = {str(item["service"]) for item in scope if item.get("all_client_methods") is True}
+    expected.update(pair for pair in client_pairs if pair[0] in all_services)
+    if not expected:
+        return check("fail", "The area has no client RPC scope configured.")
+
+    manual_sites: dict[tuple[str, str], list[str]] = {}
+    invalid_manual_sites: list[str] = []
+    for item in scope:
+        service = str(item["service"])
+        for method, references in item.get("client_callsites", {}).items():
+            pair = (service, str(method))
+            manual_sites[pair] = [str(reference) for reference in references]
+            for reference in manual_sites[pair]:
+                if client_root is None or not _client_callsite_contains(client_root, reference, str(method)):
+                    invalid_manual_sites.append(f"{service}.{method} at {reference}")
+    valid_manual = {pair for pair, references in manual_sites.items()
+                    if client_root is not None and references and all(
+                        _client_callsite_contains(client_root, reference, pair[1]) for reference in references
+                    )}
+
+    invalid_inventory_sites: list[str] = []
+    if client_root is not None:
+        for row in client_rows:
+            pair = (row.get("service", ""), row.get("method", ""))
+            if pair not in expected:
+                continue
+            references = [value.strip() for value in row.get("client_file_line", "").split(";") if value.strip()]
+            if not references or any(
+                not _client_callsite_contains(client_root, reference, pair[1]) for reference in references
+            ):
+                invalid_inventory_sites.append(f"{pair[0]}.{pair[1]}: {row.get('client_file_line', '(no client sites)')}")
+
+    missing_callsites = sorted(expected - client_pairs - valid_manual)
+    observed = expected & (client_pairs | valid_manual)
+    missing_routes = sorted(observed - registered)
+    sites: dict[tuple[str, str], list[str]] = {}
+    for row in client_rows:
+        pair = (row.get("service", ""), row.get("method", ""))
+        if pair in missing_routes:
+            sites.setdefault(pair, []).append(row.get("client_file_line", "unknown client callsite"))
+
+    if missing_callsites or missing_routes or invalid_manual_sites or invalid_inventory_sites:
+        details = []
+        if missing_callsites:
+            details.append("configured methods absent from the whole-client RPC inventory: " + ", ".join(
+                f"{service}.{method}" for service, method in missing_callsites
+            ))
+        if invalid_manual_sites:
+            details.append("configured V24 callsite references no longer match: " + "; ".join(invalid_manual_sites))
+        if invalid_inventory_sites:
+            details.append("generated V24 callsite references are missing from the client tree: " + "; ".join(invalid_inventory_sites))
+        if missing_routes:
+            details.append("client-reachable methods absent from the active Host method table: " + "; ".join(
+                f"{service}.{method} ({', '.join(sites.get((service, method), []) + manual_sites.get((service, method), []))})"
+                for service, method in missing_routes
+            ))
+        return check("fail", "; ".join(details), {
+            "configured_rpc_count": len(expected),
+            "client_reachable_count": len(observed),
+            "missing_callsites": [f"{service}.{method}" for service, method in missing_callsites],
+            "invalid_client_references": invalid_manual_sites,
+            "missing_inventory_sources": invalid_inventory_sites,
+            "missing_host_methods": [f"{service}.{method}" for service, method in missing_routes],
+        })
+
+    return check("pass", f"All {len(expected)} configured RPCs have V24 callsites and active Host-table methods.", {
+        "rpc_count": len(expected),
+        "rpc_methods": [f"{service}.{method}" for service, method in sorted(expected)],
+        "coverage_source": "docs/project/service-audit/CLIENT_CALL_MATRIX.csv generated by tools/spec-extract/generate_service_audit.py",
+        "explicit_client_callsite_overrides": {
+            f"{service}.{method}": references
+            for (service, method), references in sorted(manual_sites.items())
+        },
+    })
+
+
+def check(status: str, summary: str, details: dict[str, object] | None = None) -> dict[str, object]:
+    return {"status": status, "summary": summary, "details": details or {}}
+
+
+def test_body(path: Path, name: str) -> tuple[str, str] | None:
+    """Return a test's nearby attributes and body using balanced C# braces."""
+    try:
+        source = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    method = re.search(rf"\b{re.escape(name)}\s*\([^)]*\)\s*\{{", source)
+    if method is None:
+        return None
+    opening = source.find("{", method.start())
+    depth = 0
+    quote: str | None = None
+    escaped = False
+    for index in range(opening, len(source)):
+        char = source[index]
+        if quote is not None:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in "\"'":
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                prefix = source[max(0, method.start() - 300):method.start()]
+                return prefix, source[opening + 1:index]
+    return None
+
+
+def check_host_evidence(
+    repo_root: Path, evidence: dict[str, object], test_results: dict[str, dict[str, object]] | None
+) -> dict[str, object]:
+    file_path = repo_root / str(evidence.get("test_file", ""))
+    found = test_body(file_path, str(evidence.get("test_name", "")))
+    if found is None:
+        return check("fail", "The configured PostgreSQL Host test or its method body is missing.", {
+            "test_file": str(evidence.get("test_file", "")), "test_name": evidence.get("test_name", "")
+        })
+    attributes, body = found
+    missing = [marker for marker in evidence.get("required_body_markers", []) if marker not in body]
+    if not evidence.get("required_body_markers"):
+        missing.append("required Host test body markers")
+    required_attribute = str(evidence.get("required_attribute", ""))
+    if required_attribute and required_attribute not in attributes:
+        missing.append(f"test attribute {required_attribute}")
+
+    harness_path = repo_root / str(evidence.get("registration_harness_file", ""))
+    try:
+        harness = harness_path.read_text(encoding="utf-8")
+    except OSError:
+        harness = ""
+    missing.extend(
+        f"registration harness marker {marker}"
+        for marker in evidence.get("required_harness_markers", [])
+        if marker not in harness
+    )
+    if not evidence.get("required_harness_markers"):
+        missing.append("required Host registration harness markers")
+    postgres_file_name = str(evidence.get("postgres_harness_file", ""))
+    if postgres_file_name:
+        try:
+            postgres_harness = (repo_root / postgres_file_name).read_text(encoding="utf-8")
+        except OSError:
+            postgres_harness = ""
+        missing.extend(
+            f"PostgreSQL harness marker {marker}"
+            for marker in evidence.get("required_postgres_markers", [])
+            if marker not in postgres_harness
+        )
+    else:
+        missing.append("PostgreSQL harness file reference")
+    if not evidence.get("required_postgres_markers"):
+        missing.append("required PostgreSQL harness markers")
+    if missing:
+        return check("fail", "Host-test evidence is missing required source checks: " + ", ".join(missing), {
+            "test_file": str(evidence.get("test_file", "")),
+            "test_name": evidence.get("test_name", ""),
+        })
+
+    project = str(evidence.get("project", ""))
+    selected_projects = [str(value) for value in evidence.get("selected_projects", [project])]
+    if test_results is None or project not in test_results:
+        return check("fail", "The configured Host test has not been executed through the area's test selection.", {
+            "project": project, "test_name": evidence.get("test_name", "")
+        })
+    skipped = {name: test_results.get(name, {}).get("skipped", 0)
+               for name in selected_projects if int(test_results.get(name, {}).get("skipped", 0)) != 0}
+    if skipped:
+        return check("fail", "At least one selected area test was skipped.", {
+            "skipped_by_project": skipped
+        })
+    project_result = test_results[project]
+    if project_result.get("outcomes", {}).get(str(evidence.get("test_name", ""))) != "passed":
+        return check("fail", "The configured PostgreSQL Host test did not pass.", {
+            "project": project,
+            "test_name": evidence.get("test_name", ""),
+            "outcome": project_result.get("outcomes", {}).get(str(evidence.get("test_name", "")), "not found"),
+        })
+    return check("pass", "A PostgreSQL-backed registered Host test asserted response shape, persisted state and notifications; selected tests ran without skips.", {
+        "project": project,
+        "test_file": str(evidence.get("test_file", "")),
+        "test_name": evidence.get("test_name", ""),
+        "executed": project_result.get("executed", 0),
+        "skipped": 0,
+    })
+
+
+def _client_callsite_contains(client_root: Path, reference: str, method: str) -> bool:
+    file_name, separator, line_text = reference.rpartition(":")
+    line_match = re.fullmatch(r"(\d+)(?:-(\d+))?", line_text)
+    if not separator or line_match is None:
+        return False
+    path = client_root / file_name
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return False
+    start = int(line_match.group(1))
+    end = int(line_match.group(2) or start)
+    if start < 1 or end < start or end > len(lines):
+        return False
+    return any(re.search(rf"\b{re.escape(method)}\b", line) for line in lines[start - 1:end])
+
+
+def check_error_inventory(
+    repo_root: Path, client_root: Path, inventory: dict[str, object], test_results: dict[str, dict[str, object]] | None
+) -> dict[str, object]:
+    cases = inventory.get("cases", [])
+    bad_cases: list[str] = []
+    checked = 0
+    for case in cases:
+        name = str(case.get("test_name", ""))
+        located = test_body(repo_root / str(case.get("test_file", "")), name)
+        project = str(case.get("project", ""))
+        client_reference = str(case.get("client_callsite", ""))
+        expected = str(case.get("expected_error", ""))
+        if located is None or not _client_callsite_contains(client_root, client_reference, str(case.get("method", ""))) or not expected:
+            bad_cases.append(f"{case.get('method', '?')}:{name} lacks client/test/error evidence")
+            continue
+        _, body = located
+        if "Assert.Throws" not in body or expected not in body:
+            bad_cases.append(f"{case.get('method', '?')}:{name} does not assert {expected}")
+            continue
+        outcome = None if test_results is None else test_results.get(project, {}).get("outcomes", {}).get(name)
+        if outcome != "passed":
+            bad_cases.append(f"{case.get('method', '?')}:{name} outcome is {outcome or 'not found'}")
+            continue
+        checked += 1
+
+    complete = inventory.get("complete") is True
+    if not complete:
+        reason = str(inventory.get("incomplete_reason", "The V24-visible error-path inventory is not attested complete."))
+        status_summary = f"Recorded failing cases verified: {checked}/{len(cases)}. {reason}"
+        return check("fail", status_summary, {
+            "record": inventory.get("review_record", ""),
+            "verified_cases": checked,
+            "known_cases": len(cases),
+            "evidence_errors": bad_cases,
+            "complete": False,
+        })
+    if bad_cases or not cases:
+        return check("fail", "The complete error inventory has missing or failing case evidence.", {
+            "verified_cases": checked,
+            "known_cases": len(cases),
+            "evidence_errors": bad_cases or ["no error cases are listed"],
+        })
+    return check("pass", f"All {checked} reviewed V24-visible error paths have passing failing-case tests.", {
+        "record": inventory.get("review_record", ""), "verified_cases": checked, "complete": True
+    })
+
+
+def check_deviations(repo_root: Path, review: dict[str, object]) -> dict[str, object]:
+    path = repo_root / "docs/reference/compat/DEVIATIONS.md"
+    try:
+        document = path.read_text(encoding="utf-8")
+    except OSError:
+        return check("fail", "Compatibility deviation record is missing.")
+    missing = []
+    for entry in review.get("entries", []):
+        heading = str(entry.get("heading", ""))
+        reason = str(entry.get("reason_marker", ""))
+        start = document.find(heading)
+        if not heading or start < 0:
+            missing.append(f"missing deviation heading: {heading or '(empty)'}")
+            continue
+        next_heading = document.find("\n## ", start + len(heading))
+        section = document[start:next_heading if next_heading >= 0 else len(document)]
+        if not reason or reason not in section:
+            missing.append(f"deviation has no recorded reason: {heading}")
+
+    if not review.get("entries") and review.get("none_known") is not True:
+        missing.append("list reviewed differences or explicitly attest that none are known")
+
+    if review.get("complete") is not True:
+        missing.append(str(review.get("incomplete_reason", "The difference review is not attested complete.")))
+    record = repo_root / str(review.get("review_record", ""))
+    if not record.is_file():
+        missing.append(f"comparison record is missing: {review.get('review_record', '')}")
+    if missing:
+        return check("fail", "; ".join(missing), {"verified_entries": len(review.get("entries", [])) - len(missing)})
+    return check("pass", f"All {len(review.get('entries', []))} reviewed compatibility differences have reasoned DEVIATIONS entries.", {
+        "record": review.get("review_record", ""),
+        "entries": [entry.get("heading", "") for entry in review.get("entries", [])],
+    })
+
+
+def parse_trx(path: Path) -> dict[str, object] | None:
+    try:
+        root = ET.parse(path).getroot()
+    except (ET.ParseError, OSError):
+        return None
+    counters = next((node for node in root.iter() if node.tag.rsplit("}", 1)[-1] == "Counters"), None)
+    if counters is None:
+        return None
+    outcomes: dict[str, str] = {}
+    failed = 0
+    for node in root.iter():
+        if node.tag.rsplit("}", 1)[-1] != "UnitTestResult":
+            continue
+        name = node.attrib.get("testName", "").split(".")[-1]
+        outcome = node.attrib.get("outcome", "").lower()
+        outcomes[name] = outcome
+        failed += outcome == "failed"
+    return {
+        "executed": int(counters.attrib.get("executed", "0")),
+        "passed": int(counters.attrib.get("passed", "0")),
+        "skipped": int(counters.attrib.get("notExecuted", "0")),
+        "failed": failed,
+        "outcomes": outcomes,
+    }
+
+
+def run_command(repo_root: Path, label: str, command: list[str], env: dict[str, str], timeout: int = 14_400) -> dict[str, object]:
+    log_dir = repo_root / ".agent-test-logs/feature-gate"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    safe_label = re.sub(r"[^a-z0-9-]+", "-", label.lower()).strip("-") or "command"
+    log_path = log_dir / f"{safe_label}.log"
+    try:
+        with log_path.open("w", encoding="utf-8") as output:
+            process = subprocess.run(command, cwd=repo_root, env=env, stdout=output, stderr=subprocess.STDOUT,
+                                     check=False, timeout=timeout)
+        code = process.returncode
+    except (OSError, subprocess.TimeoutExpired) as error:
+        with log_path.open("a", encoding="utf-8") as output:
+            output.write(f"\nCommand failed to run: {error}\n")
+        code = 124 if isinstance(error, subprocess.TimeoutExpired) else 127
+    try:
+        tail = log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-20:]
+    except OSError:
+        tail = []
+    return {"label": label, "command": command, "exit_code": code, "log": str(log_path.relative_to(repo_root)), "tail": tail}
+
+
+def run_area_checks(repo_root: Path, area: dict[str, object]) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
+    env = os.environ.copy()
+    rust_toolchain = env.get("RUST_TOOLCHAIN", "1.94.1").strip() or "1.94.1"
+    cargo = ["cargo", f"+{rust_toolchain}"]
+    test_config = area.get("tests", {})
+    projects = list(test_config.get("dotnet_projects", []))
+    filter_text = str(test_config.get("dotnet_filter", ""))
+    checks = [
+        run_command(repo_root, "rust-format", cargo + ["fmt", "--all", "--check"], env),
+        run_command(repo_root, "rust-clippy", cargo + ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"], env),
+    ]
+    for package in area.get("rust_check_packages", []):
+        checks.append(run_command(repo_root, f"rust-check-{package}", cargo + ["check", "-p", str(package)], env))
+
+    test_results: dict[str, dict[str, object]] = {}
+    test_exit = 2
+    if projects and filter_text:
+        env["DOTNET_PROJECTS"] = ",".join(str(project) for project in projects)
+        env["DOTNET_FILTER"] = filter_text
+        env["RUST_TESTS"] = "none"
+        env["LIVE_TESTS"] = ""
+        command = [sys.executable, str(repo_root / "tools/dev/agent-test.py")]
+        test_run = run_command(repo_root, "area-tests", command, env)
+        test_exit = int(test_run["exit_code"])
+        checks.append(test_run)
+        for project in projects:
+            report = repo_root / ".agent-test-logs/dotnet-results" / f"{project}.trx"
+            parsed = parse_trx(report)
+            if parsed is not None:
+                test_results[str(project)] = parsed
+    else:
+        checks.append({"label": "area-tests", "command": [], "exit_code": 2,
+                       "tail": ["Configure at least one .NET test project and filter."]})
+
+    errors = []
+    for result in checks:
+        if int(result["exit_code"]) != 0:
+            errors.append(f"{result['label']} exited {result['exit_code']}")
+    for project in projects:
+        outcome = test_results.get(str(project))
+        if outcome is None:
+            errors.append(f"{project} did not produce a readable TRX report")
+        elif int(outcome["executed"]) == 0:
+            errors.append(f"{project} executed zero selected tests")
+        elif int(outcome["failed"]) != 0:
+            errors.append(f"{project} reported {outcome['failed']} failed tests")
+        elif int(outcome["skipped"]) != 0:
+            errors.append(f"{project} reported {outcome['skipped']} skipped tests")
+    summary = "; ".join(errors) if errors else "Rust fmt, workspace clippy, and all selected area tests passed without skips."
+    return check("fail" if errors else "pass", summary, {
+        "commands": checks,
+        "dotnet_results": {project: {key: value for key, value in result.items() if key != "outcomes"}
+                            for project, result in test_results.items()},
+    }), test_results
+
+
+def run_replay_cases(repo_root: Path, area_name: str, area: dict[str, object], env: dict[str, str]) -> dict[str, object]:
+    cases = area.get("replay_cases", [])
+    if not cases:
+        return check("fail", "No area-specific recorded headless or trace replay case is configured.", {
+            "allowlist_policy": "Trace replays must use the live replay tool's stale-entry check; see docs/project/live-trace-replay.md.",
+            "replayed_cases": 0,
+        })
+    if not env.get("EVE_PG_URL"):
+        return check("fail", "EVE_PG_URL is required to replay area cases against a PostgreSQL-backed Host.", {
+            "replayed_cases": 0
+        })
+
+    results = []
+    runner = repo_root / "tools/dev/run-eve-live.sh"
+    for index, case in enumerate(cases, start=1):
+        kind = case.get("kind")
+        if kind == "headless":
+            test_file = str(case.get("test_file", ""))
+            test_path = repo_root / "tools/headless-client/tests" / test_file
+            if Path(test_file).name != test_file or not test_path.is_file():
+                results.append({"case": test_file, "exit_code": 2, "error": "headless test file is missing or invalid"})
+                continue
+            env["EVE_RUN"] = shlex.join(["tools/headless-client/.venv/bin/python", "-m", "pytest", "-q", str(test_path)])
+        elif kind == "trace":
+            fixture = str(case.get("fixture", ""))
+            allowlist = str(case.get("allowlist", ""))
+            fixture_path = repo_root / fixture
+            allowlist_path = repo_root / allowlist
+            if not fixture_path.is_file() or not allowlist_path.is_file():
+                results.append({"case": fixture, "exit_code": 2, "error": "trace fixture or allowlist is missing"})
+                continue
+            try:
+                entries = load_json(allowlist_path).get("known_failures", [])
+            except (OSError, json.JSONDecodeError, AttributeError) as error:
+                results.append({"case": fixture, "exit_code": 2, "error": f"invalid allowlist: {error}"})
+                continue
+            if any(not entry.get("owner_job") for entry in entries):
+                results.append({"case": fixture, "exit_code": 2, "error": "every trace allowlist entry needs an owner_job expiry hook"})
+                continue
+            if not CI_REPLAY_DOC.is_file() or "fails if an allowlist entry stops appearing" not in CI_REPLAY_DOC.read_text(encoding="utf-8"):
+                results.append({"case": fixture, "exit_code": 2, "error": "trace allowlist expiry behavior is not documented"})
+                continue
+            command = ["tools/mitm/mitm", "replay", fixture, "--conn", str(case.get("connection", "")), "--allowlist", allowlist]
+            env["EVE_RUN"] = shlex.join(command)
+        else:
+            results.append({"case": str(case), "exit_code": 2, "error": f"unsupported replay kind: {kind}"})
+            continue
+
+        env["EVE_LIVE_LOG_DIR"] = str(repo_root / ".live-logs" / f"feature-gate-{area_name}-{index}")
+        result = run_command(repo_root, f"replay-{area_name}-{index}", [str(runner)], env, timeout=7_200)
+        results.append({"case": case, "exit_code": result["exit_code"], "log": result["log"], "tail": result["tail"]})
+
+    failures = [result for result in results if int(result.get("exit_code", 1)) != 0]
+    summary = f"{len(cases) - len(failures)}/{len(cases)} recorded replay cases passed against the Host."
+    if failures:
+        summary += " Failures: " + "; ".join(str(item.get("error") or item.get("case")) for item in failures)
+    return check("fail" if failures else "pass", summary, {"replay_cases": results})
+
+
+def render_summary(report: dict[str, object]) -> str:
+    lines = [f"Feature gate {report['area']}: {report['overall'].upper()}"]
+    for index, item in enumerate(report["checks"], start=1):
+        lines.append(f"  {item['status'].upper():4} {index}. {item['summary']}")
+    return "\n".join(lines) + "\n"
+
+
+def build_report(
+    area_name: str,
+    area: dict[str, object],
+    repo_root: Path,
+    client_root: Path,
+    *,
+    run_checks: bool = True,
+) -> dict[str, object]:
+    try:
+        client_rows, registered = collect_rpc_evidence(repo_root, client_root)
+        item1 = check_rpc_registration(area.get("rpc_scope", []), client_rows, registered, client_root)
+    except Exception as error:  # report an unavailable source/tool as a failed gate item, not a false pass
+        item1 = check("fail", f"Could not inspect whole-client RPC and Host registration coverage: {error}")
+
+    if run_checks:
+        item6, test_results = run_area_checks(repo_root, area)
+    else:
+        item6, test_results = check("fail", "Checks were not run; a static report cannot certify the area."), None
+    item2 = check_host_evidence(repo_root, area.get("host_e2e", {}), test_results)
+    item3 = check_error_inventory(repo_root, client_root, area.get("error_inventory", {}), test_results)
+    item4 = run_replay_cases(repo_root, area_name, area, os.environ.copy()) if run_checks else check(
+        "fail", "Replay cases were not run; a static report cannot certify the area.")
+    item5 = check_deviations(repo_root, area.get("deviation_review", {}))
+    checks = [item1, item2, item3, item4, item5, item6]
+    return {
+        "schema_version": 1,
+        "area": area_name,
+        "overall": "pass" if all(item["status"] == "pass" for item in checks) else "fail",
+        "checks": checks,
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("area", help="configured service or RPC family")
+    parser.add_argument("--client-root", type=Path, default=Path(os.environ.get("EVE_CLIENT_ROOT", DEFAULT_CLIENT_ROOT)))
+    parser.add_argument("--report", type=Path, help="write JSON report to this path (otherwise JSON is written to stdout)")
+    args = parser.parse_args(argv)
+    try:
+        areas = load_json(AREAS_PATH)
+        if args.area not in areas:
+            raise KeyError(f"unknown area {args.area!r}; configured areas: {', '.join(sorted(areas))}")
+        report = build_report(args.area, areas[args.area], ROOT, args.client_root)
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
+        print(f"feature-gate: {error}", file=sys.stderr)
+        return 2
+
+    rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    if args.report:
+        report_path = args.report if args.report.is_absolute() else ROOT / args.report
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(rendered, encoding="utf-8")
+        print(render_summary(report), end="", file=sys.stderr)
+        print(f"JSON report: {report_path}", file=sys.stderr)
+    else:
+        print(render_summary(report), end="", file=sys.stderr)
+        print(rendered, end="")
+    return 0 if report["overall"] == "pass" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

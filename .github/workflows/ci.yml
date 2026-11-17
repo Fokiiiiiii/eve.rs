@@ -325,6 +325,9 @@ jobs:
       - name: Test service audit extraction
         working-directory: .
         run: python3 -m unittest discover -s tools/spec-extract -p 'test_service_audit*.py'
+      - name: Test feature gate orchestrator
+        working-directory: .
+        run: python3 tools/dev/test_feature_gate.py
       # the live tests skip without a server; what is left runs on its own (the marshal golden frames, the mock server)
       - run: python -m pytest -q -rs
 

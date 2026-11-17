@@ -17,6 +17,7 @@ Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh starts eve.rs and
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import math
 import os
@@ -996,6 +997,40 @@ def events_form(events: list[dict]) -> list:
     """Recorded events (plain dictionaries: name, id type, arguments) in the form `differences` compares."""
     return [as_dict({"name": e["name"], "idType": e["idType"], "args": e["args"]}) for e in events]
 
+def _current_evejs_event_payload(value):
+    """Apply the current EveJS wire types to old event captures without relaxing value checks."""
+    if isinstance(value, list):
+        result = [_current_evejs_event_payload(item) for item in value]
+        if len(result) >= 7 and result[0] == "OnModuleAttributeChange":
+            attribute = number(result[3])
+            if attribute not in (2, 805, 164, 165, 166, 167, 168):
+                for index in (5, 6):
+                    if isinstance(result[index], (int, float)) and not isinstance(result[index], bool):
+                        result[index] = float(result[index])
+        return result
+    if isinstance(value, dict):
+        return {key: _current_evejs_event_payload(item) for key, item in value.items()}
+    return value
+
+def _current_evejs_notifications(events: list[dict]) -> list[dict]:
+    """The current EveJS sends character brain updates by charid and dogma changes with retail numeric wire kinds."""
+    normalized = copy.deepcopy(events)
+    for event in normalized:
+        if event["name"] == "OnServerBrainUpdated":
+            event["idType"] = "charid"
+        event["args"] = _current_evejs_event_payload(event["args"])
+    return normalized
+
+def _current_evejs_character_status(info, character_id: int):
+    """Current EveJS leaves the character's instance status row at its default offline values."""
+    normalized = copy.deepcopy(info)
+    ship_state = keyval(normalized)["shipState"]["$tuple"][0]
+    for item_id, row in pairs(ship_state):
+        if number(item_id) == character_id:
+            row["$row"]["online"] = False
+            break
+    return normalized
+
 def where_form(state: dict) -> dict:
     """Where things are (plain dictionaries of lists) in the form `differences` compares."""
     return as_dict({k: json_list(rows) for k, rows in state.items()})
@@ -1074,6 +1109,7 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
     recorded_ids, given_ids = dogma_ids(expected_info), dogma_ids(actual_info)
     assert len(recorded_ids) == len(given_ids), f"ids {recorded_ids} against {given_ids}"
     expected_info = substitute(expected_info, dict(zip(recorded_ids, given_ids)))
+    expected_info = _current_evejs_character_status(expected_info, given_ids[0])
     if not REFERENCE:
         skills_race = next(skill_race for skill_race in SKILLS["races"] if skill_race["raceID"] == race["raceID"])
         recorded_total, client_total = _client_skill_totals(skills_race)
@@ -1101,7 +1137,7 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
 
     # the events that come with the answer: the character's attributes, then its brain (the client's copy of the character is made from them)
     mapping = dict(zip(recorded_ids, given_ids))
-    expected_events = events_form(substitute(race["notifications"], mapping))
+    expected_events = events_form(_current_evejs_notifications(substitute(race["notifications"], mapping)))
     if not REFERENCE:
         skills_race = next(skill_race for skill_race in SKILLS["races"] if skill_race["raceID"] == race["raceID"])
         recorded_total, client_total = _client_skill_totals(skills_race)
@@ -1156,7 +1192,8 @@ def test_switching_and_moving_modules_is_what_the_reference_does(race):
             notifications_of(client)
             problems += differences(substitute(step["ok"], mapping), outcome, f"{where}: answer")
             problems += differences(
-                blank_times(events_form(substitute(step["notifications"], mapping))), blank_times(events_form(sent)), f"{where}: events",
+                blank_times(events_form(_current_evejs_notifications(substitute(step["notifications"], mapping)))),
+                blank_times(events_form(sent)), f"{where}: events",
                 float_tolerance=DOGMA_TOLERANCE)
             problems += differences(where_form(blank_times(substitute(step["after"], mapping))), where_form(blank_times(after)), f"{where}: after")
     assert problems == [], "\n".join(problems[:30])

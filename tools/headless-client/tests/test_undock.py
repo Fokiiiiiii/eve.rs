@@ -678,9 +678,11 @@ def test_a_ship_undocks_flies_and_docks_as_the_reference_did(race):
                 where,
                 mapping,
             )
+        # V24 drops the undock's early Destiny actions while its ballpark is unset. Its first
+        # consumed owner update is the SetState sent after the ballpark bind.
         problems += compare_destiny_updates(
-            expected_destiny_updates,
-            actual_destiny_updates,
+            client_updates_after_ballpark_bind(expected_destiny_updates),
+            client_updates_after_ballpark_bind(actual_destiny_updates),
             f"race {race['raceID']} destiny updates",
             mapping,
         )

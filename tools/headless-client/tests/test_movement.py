@@ -24,7 +24,20 @@ from evecli.describe import describe, shape
 from evecli.observe import collection_items, ego_state, timed_events, wait_quietly
 from evecli import marshal as m
 from tests import test_login_to_character as base
-from tests.test_undock import UNDOCK, STATION, SYSTEM, actions_of, arrive, compare_answer, compare_destiny_updates, compare_events, keyval, number, outcome
+from tests.test_undock import (
+    UNDOCK,
+    STATION,
+    SYSTEM,
+    actions_of,
+    arrive,
+    client_updates_after_ballpark_bind,
+    compare_answer,
+    compare_destiny_updates,
+    compare_events,
+    keyval,
+    number,
+    outcome,
+)
 
 MOVEMENT = base.load("movement.json")
 APPROACH = base.load("approach.json")
@@ -91,7 +104,12 @@ def test_orders_in_space_make_the_updates_the_reference_sent(race):
                 where,
                 mapping,
             )
-        problems += compare_destiny_updates(expected_destiny_updates, actual_destiny_updates, f"race {race['raceID']} destiny updates", mapping)
+        problems += compare_destiny_updates(
+            client_updates_after_ballpark_bind(expected_destiny_updates),
+            client_updates_after_ballpark_bind(actual_destiny_updates),
+            f"race {race['raceID']} destiny updates",
+            mapping,
+        )
     assert problems == [], "\n".join(problems[:40])
 
 def distance_from_surface(events: list, ship_id: int):

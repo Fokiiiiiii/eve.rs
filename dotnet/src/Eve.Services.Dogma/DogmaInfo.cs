@@ -265,6 +265,10 @@ public sealed class DogmaInfo(DogmaStatic statics)
         return Py.Tuple(new PyDict(rows), loaded, weaponBanks, DogmaWire.HeatState(now));
     }
 
+    /// <summary>The four-part state returned when the client activates a ship: instance rows, loaded charges, weapon banks, and heat.</summary>
+    public PyValue ActivationState(ShipSnapshot snapshot, long fileTime) =>
+        ShipState(snapshot, ShipAttributes(snapshot), fileTime);
+
     /// <summary>
     /// <c>GetAllInfo</c> for a character in its ship in a station. What is left out follows the reference: the character and
     /// ship info asked for; a docked ship asked for on its own brings the character with it.

@@ -42,6 +42,56 @@ public partial class HostServerTests
         Assert.Equal([(sourceId, itemId)], containers.Launches);
     }
 
+    [Fact]
+    public async Task Ship_FitShips_forwards_the_client_keyword_arguments_over_the_bound_host_route()
+    {
+        const int stationId = 60015249;
+        const long characterId = 900_004;
+        using var timers = new Eve.Scheduler.LocalTimers();
+        using var space = new SpaceSessions(DispatchProxy.Create<ISimulation, InertWormholeSimulation>(), null!, null!,
+            new StationCatalog([]), new SolarSystemCatalog([]), () => FixedNowMs, localTimers: timers);
+        ServiceCall? received = null;
+        Start(
+            configure: registry => registry.Register(new ShipService(space, () => FixedNowMs,
+                fitShips: call =>
+                {
+                    received = call;
+                    return ValueTask.FromResult<PyValue>(PyNone.Instance);
+                })),
+            sessionOpened: session =>
+            {
+                session.Set("stationid", new PyInt(stationId));
+                session.Set("charid", new PyLong(characterId));
+            });
+        var (front, open) = await OpenFrontAsync();
+        var kwargs = new PyDict([
+            new(new PyStr("shipTypeID"), new PyInt(601)),
+            new(new PyStr("fitInfo"), Py.KeyVal(("modulesByFlag", new PyDict([])))),
+            new(new PyStr("itemLocationID"), new PyLong(stationId)),
+            new(new PyStr("cargoItemsByType"), new PyDict([])),
+            new(new PyStr("fitRigs"), PyBool.True),
+            new(new PyStr("name"), new PyStr("Ibis batch")),
+            new(new PyStr("numToFit"), new PyInt(2)),
+            new(new PyStr("itemContainerID"), new PyLong(0)),
+        ]);
+
+        var response = Assert.IsType<PyTuple>(await HostRpcAsync(front, open, 1, "ship", "MachoBindObject",
+            Py.Tuple(new PyInt(stationId), new PyInt(15)),
+            Py.Tuple(new PyStr("FitShips"), Py.Tuple([]), kwargs)));
+
+        Assert.IsType<PySubStruct>(response.Items[0]);
+        Assert.Same(PyNone.Instance, response.Items[1]);
+        Assert.NotNull(received);
+        Assert.Empty(received.Args);
+        Assert.Equal(8, Assert.IsType<PyDict>(received.Kwargs).Entries.Count);
+        Assert.Equal(new PyInt(601), Assert.IsType<PyDict>(received.Kwargs).Entries.Single(entry =>
+            JsSemantics.StringValue(entry.Key) == "shipTypeID").Value);
+        Assert.Equal(new PyLong(stationId), Assert.IsType<PyDict>(received.Kwargs).Entries.Single(entry =>
+            JsSemantics.StringValue(entry.Key) == "itemLocationID").Value);
+        Assert.Equal(new PyInt(2), Assert.IsType<PyDict>(received.Kwargs).Entries.Single(entry =>
+            JsSemantics.StringValue(entry.Key) == "numToFit").Value);
+    }
+
     private sealed class LaunchRecordingContainers : ISpaceContainers
     {
         public List<(long SourceId, long ItemId)> Launches { get; } = [];

@@ -11,9 +11,11 @@ public class ShipCoverageTests
 {
     private static readonly string[] ClientCalls =
     [
-        "AbortSafeLogoff", "AssembleShip", "Board", "ConfigureShip", "Drop", "Eject", "GetDirtTimestamp",
+        "AbortSafeLogoff", "AssembleShip", "Board", "BoardStoredShip", "ConfigureShip", "Drop", "Eject", "FitShips", "GetDirtTimestamp",
         "GetShipConfiguration", "GetShipFittingInfo", "Jettison", "LaunchDrones", "LaunchFromContainer",
-        "LaunchFromShip", "LeaveShip", "ResetDirtTimestamp", "SafeLogoff", "ScoopDrone", "Undock",
+        "LaunchFromShip", "LeaveShip", "ResetDirtTimestamp", "SafeLogoff", "Scoop", "ScoopDrone",
+        "ScoopToFleetHangar", "ScoopToInfrastructureHold", "ScoopToMobileDepotHold", "ScoopToSMA",
+        "SetShipPassword", "Undock",
     ];
 
     private static readonly string[] Open = [];

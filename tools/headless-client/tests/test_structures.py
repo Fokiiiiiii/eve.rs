@@ -746,6 +746,12 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
             client.call_bound(ballpark[0], "UpdateStateRequest")
             warp_events.extend(timed_events(client, 3.0))
 
+        # Drop can become legal on the first tick after warp exit, while the ship still has
+        # substantial sublight velocity. Stop it before the nearby structure-management calls.
+        client.call_bound(ballpark[0], "CmdStop")
+        client.call_bound(ballpark[0], "UpdateStateRequest")
+        warp_events.extend(timed_events(client, 2.0))
+
         assert dbseed.sql(
             f"select count(*) from {dbseed.schema('SPACE')}.deployed "
             f"where deployable_id = {tower} and kind = 'control_tower' and corporation_id = {corporation}"
@@ -761,7 +767,11 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
         assert label == "CustomNotify" and "offline" in text, (label, text)
 
         dbseed.sql(f"update {dbseed.schema('SPACE')}.deployed set tower_state = 'offline' where deployable_id = {tower}")
-        assert client.call("posMgr", "UnanchorStructure", tower) is None
+        try:
+            unanchored = client.call("posMgr", "UnanchorStructure", tower)
+        except p.MachoError as failure:
+            pytest.fail(f"posMgr.UnanchorStructure failed: {describe(failure.payload)}")
+        assert unanchored is None
         assert dbseed.sql(
             f"select tower_state from {dbseed.schema('SPACE')}.deployed where deployable_id = {tower}"
         ) == "unanchoring"

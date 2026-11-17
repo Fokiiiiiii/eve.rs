@@ -75,7 +75,8 @@ fn binding_says_what_the_reference_said() {
         out.iter().filter(|message| matches!(message, Out::Notify { .. })).collect();
     let sentries: Vec<&Out> =
         out.iter().filter(|message| matches!(message, Out::SimDamageableEntityUpserted { .. })).collect();
-    assert_eq!(notifications.len(), 5, "the client-visible bind sequence");
+    assert_eq!(notifications.len(), 3, "the client-visible SetState bind sequence");
+    assert_eq!(events.len(), 3, "the current EveJS capture binds with SetState");
     assert_eq!(sentries.len(), 64, "the scene registers its SDE-backed sentries with Sim");
     assert_eq!(notifications.len() + sentries.len(), out.len(), "only bind notifications and sentries");
     assert!(sentries.iter().all(|message| matches!(
@@ -91,31 +92,11 @@ fn binding_says_what_the_reference_said() {
         json!({"$tuple": [{"$tuple": [{"$long": SIM_TIME}, {"$long": SIM_TIME}]}]})
     );
 
-    assert_eq!(action_names_of(&out_args(notifications[2])), ["AddBalls2"]);
-    assert_eq!(out_args(notifications[2])["$tuple"][0][0]["$tuple"][0], json!(i64::from(stamp_at(SIM_TIME))));
-    let undock_step = step(recorded.race(), "undock");
-    let undock_events = events_named(undock_step, "DoDestinyUpdate");
-    assert_eq!(out_args(notifications[2])["$tuple"][1], event_args(undock_events[0])["$tuple"][1]);
-    let mine = out_args(notifications[3]);
-    assert_eq!(action_names_of(&mine), ["SetBallMassive", "SetBallMass", "SetBallVelocity", "GotoDirection"]);
-    assert_eq!(shape(&mine), shape(&event_args(undock_events[1])));
-    let stamp = json!(i64::from(stamp_at(SIM_TIME)));
-    assert!(mine["$tuple"][0].as_array().unwrap().iter().all(|action| action["$tuple"][0] == stamp));
-    let undock = destiny_actions(undock_step);
-    for name in ["SetBallMassive", "SetBallMass"] {
-        let actual = mine["$tuple"][0]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|action| action["$tuple"][1]["$tuple"][0] == name)
-            .unwrap();
-        let expected = undock.iter().find(|(_, action, _)| action == name).unwrap();
-        assert_eq!(actual["$tuple"][1]["$tuple"][1], expected.2, "{name}");
-    }
+    let mine = out_args(notifications[2]);
+    assert_eq!(action_names_of(&mine), ["SetState"]);
 
-    // the state: the same fields at the same stamp
+    // Michelle.SetState builds the ballpark from the state buffer and slims.
     let state = event_args(events[2]);
-    let mine = out_args(notifications[4]);
     let key_names = |args: &Value| -> Vec<String> {
         args["$tuple"][0][0]["$tuple"][1]["$tuple"][1]["$tuple"][0]["args"]["$dict"]
             .as_array()
@@ -127,7 +108,7 @@ fn binding_says_what_the_reference_said() {
     assert_eq!(key_names(&mine), key_names(&state));
     assert_eq!(
         mine["$tuple"][0][0]["$tuple"][0],
-        json!(i64::from(stamp_at(SIM_TIME)) + 1),
+        json!(i64::from(stamp_at(SIM_TIME))),
         "the scene's state stamp"
     );
     let ship_id = recorded.race()["shipID"].as_i64().unwrap();
@@ -212,12 +193,22 @@ fn a_warp_is_answered_with_the_update_the_reference_sent() {
         let expected = expected["$tuple"].as_array().unwrap();
         let args = mine.as_array().unwrap();
         if name == "WarpTo" {
-            // The latest warp.json capture has no EveJS source revision and disagrees with the checked-in EveJS
-            // warp-in-point implementation for this same SDE target. The older, pinned two-pilot trace records
-            // the output of that implementation exactly, so use it for the deterministic client-parity point.
+            // Each EveJS run jitters the target independently inside a 2,500 m radius. The client consumes the
+            // reported point as the ship's warp-mode destination, so compare the recorded point within that
+            // runtime bound and retain exact checks for ship, stop distance, and warp factor.
             let reference = other_warp["$tuple"].as_array().unwrap();
-            assert_eq!(&args[1..], &reference[1..], "EveJS WarpTo point from the pinned reference trace");
-            assert_eq!(&args[4..], &expected[4..], "range and warp factor from the current capture");
+            assert_eq!(args[0], expected[0], "WarpTo ship ID from the current capture");
+            let distance = (0..3)
+                .map(|index| {
+                    (args[index + 1].as_f64().unwrap() - reference[index + 1].as_f64().unwrap()).powi(2)
+                })
+                .sum::<f64>()
+                .sqrt();
+            assert!(
+                distance <= 2_500.0,
+                "WarpTo point differs by {distance:.1} m from EveJS's 2,500 m bound"
+            );
+            assert_eq!(&args[4..], &expected[4..], "WarpTo stop distance and warp factor");
         } else {
             assert_eq!(&args[1..], &expected[1..], "{name}");
         }

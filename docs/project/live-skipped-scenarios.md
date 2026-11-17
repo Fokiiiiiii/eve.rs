@@ -100,3 +100,21 @@ WarpTo landing pointをfixtureと実行時の両方で独立に乱数化するEv
 最初の試行ではslow `EVE_RUN` のtest pathをrepository root基準ではなく `tests/...` とし、pytest collectionが `file or directory not found` で終了した。シナリオは一件も収集・実行されていない。その後CIと同じroot基準の `tools/headless-client/tests/...` へ直して上記の実行を行い、このcollection失敗は最終ケースの失敗数には含めていない。
 
 この再実行ではEveJS serverを起動した直接再生はしていない。成功した結果は既存のEveJS fixtureとのwire比較を含むheadless testの結果である。
+
+## 2026-11-17 origin/main merge後の再確認
+
+`origin/main` の `bd43206d3e54` をmergeした作業treeで10件を再確認した。各caseはnightlyと同様に独立したHostで実行し、`EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve_p4`、pinned SDE build 3396210、mission build 3405148、`EVE_MARKET_SEED=skip` と個別の空きportを使った。二つのraceは `EVE_SKILL_TRAINING_SPEED` をunsetにして実行した。fast-trainingは `.github/workflows/ci-nightly.yml:69-74,109-117` と同じくspeed `60000`、`EVE_LIVE_SLOW=1`。7つのslow scenarioは `.github/workflows/live-slow.yml:188-197` と同じく `EVE_LIVE_SLOW=1`、station `60015249` で実行した。出力は `/tmp/cx4-live-skipped-postmerge-2026-11-17b/` に保存した。
+
+| ケース | 結果 | 実行ログ |
+| --- | --- | --- |
+| `test_the_skill_queue_is_what_the_reference_does` (`race-1`, `race-4`) | 成功、2 passed | `/tmp/cx4-live-skipped-postmerge-2026-11-17b/training-races/runner.log` |
+| `test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level` (`EVE_SKILL_TRAINING_SPEED=60000`) | 成功、1 passed | `/tmp/cx4-live-skipped-postmerge-2026-11-17b/fast-training/runner.log` と `training.xml` |
+| `test_a_station_dock_from_beyond_the_range_is_accepted_on_arrival_without_a_second_command` | 成功、1 passed | `/tmp/cx4-live-skipped-postmerge-2026-11-17b/movement-dock/runner.log` |
+| `test_a_ship_warps_to_a_planet_as_the_reference_did` | 成功、1 passed | `/tmp/cx4-live-skipped-postmerge-2026-11-17b/warp-planet/runner.log` |
+| `test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did` | 成功、1 passed | `/tmp/cx4-live-skipped-postmerge-2026-11-17b/gate-jump/runner.log` |
+| `test_two_ships_see_each_other_as_they_did_in_the_reference` | 成功、1 passed | `/tmp/cx4-live-skipped-postmerge-2026-11-17b/two-ships/runner.log` |
+| `test_a_ship_locks_others_as_it_did_in_the_reference` | 成功、1 passed | `/tmp/cx4-live-skipped-postmerge-2026-11-17b/target-lock/runner.log` |
+| `test_a_ship_works_its_afterburner_as_it_did_in_the_reference` | 成功、1 passed | `/tmp/cx4-live-skipped-postmerge-2026-11-17b/afterburner/runner.log` |
+| `test_a_ship_is_damaged_flown_hurt_and_mended_as_it_was_in_the_reference` | 成功、1 passed | `/tmp/cx4-live-skipped-postmerge-2026-11-17b/health-repair/runner.log` |
+
+全10ケースが成功し、今回のrunでskipは0件。slowのrunnerはnightlyと同じquiet形式のためログにpytestのdotと`[100%]`が残り、各runnerの終了codeは0。speed testのJUnit XMLも1 test・0 failure・0 skipped。実Hostに対するheadless clientの検証であり、GUI版V24.01クライアントの操作は未確認。EveJS serverの直接再生もこの再確認では行っていない。

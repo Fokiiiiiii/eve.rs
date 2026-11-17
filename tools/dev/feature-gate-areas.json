@@ -1,0 +1,115 @@
+{
+  "ship-rpcs": {
+    "description": "The fitting, ship recovery, maintenance-bay, drone, and in-space ship password RPC family.",
+    "rpc_scope": [
+      {
+        "service": "ship",
+        "methods": [
+          "FitShips",
+          "LaunchFromContainer",
+          "Scoop",
+          "ScoopToFleetHangar",
+          "ScoopToInfrastructureHold",
+          "ScoopToMobileDepotHold",
+          "BoardStoredShip",
+          "SetShipPassword",
+          "ScoopDrone",
+          "ScoopToSMA"
+        ],
+        "client_callsites": {
+          "FitShips": ["eve/client/script/environment/fittingSvc.py:510"],
+          "LaunchFromContainer": ["eve/client/script/ui/services/menuSvcExtras/invItemFunctions.py:38"],
+          "Scoop": ["eve/client/script/ui/services/menusvc.py:3254", "eve/client/script/ui/services/menusvc.py:3256"],
+          "ScoopToFleetHangar": ["eve/client/script/ui/services/menusvc.py:3289"],
+          "ScoopToInfrastructureHold": ["eve/client/script/ui/services/menusvc.py:3307"],
+          "ScoopToMobileDepotHold": ["eve/client/script/ui/services/menusvc.py:3313"],
+          "BoardStoredShip": ["eve/client/script/ui/services/menuSvcExtras/menuFunctions.py:218"],
+          "SetShipPassword": ["eve/client/script/parklife/playerOwned.py:190"],
+          "ScoopDrone": ["eve/client/script/ui/services/menuSvcExtras/droneFunctions.py:195"],
+          "ScoopToSMA": ["eve/client/script/ui/services/menusvc.py:3331"]
+        }
+      }
+    ],
+    "host_e2e": {
+      "project": "Eve.Host.Tests",
+      "selected_projects": ["Eve.Services.Space.Tests", "Eve.Host.Tests"],
+      "test_file": "dotnet/tests/Eve.Host.Tests/ShipRpcHostTests.cs",
+      "test_name": "Ship_launch_from_container_forwards_client_ids_and_returns_none_over_the_bound_host_route",
+      "required_attribute": "[Fact]",
+      "required_body_markers": [
+        "HostRpcAsync(front, open, 1, \"ship\", \"MachoBindObject\"",
+        "PySubStruct",
+        "PyNone.Instance",
+        "rig.Items.GetAsync",
+        "Events.Of(session)",
+        "OnItemChange"
+      ],
+      "registration_harness_file": "dotnet/tests/Eve.Host.Tests/HostServerTests.cs",
+      "required_harness_markers": [
+        "var registry = new ServiceRegistry();",
+        "new HostServer("
+      ],
+      "postgres_harness_file": "dotnet/tests/Eve.Host.Tests/ShipRpcHostTests.cs",
+      "required_postgres_markers": [
+        "EVE_PG_URL",
+        "NpgsqlDataSource"
+      ]
+    },
+    "tests": {
+      "dotnet_projects": [
+        "Eve.Services.Space.Tests",
+        "Eve.Host.Tests"
+      ],
+      "dotnet_filter": "FullyQualifiedName~ShipCoverageTests|FullyQualifiedName~FitShipsHostTests|FullyQualifiedName~BoardStoredShipHostTests|FullyQualifiedName~ShipScoopingHostTests|FullyQualifiedName~SetShipPasswordHostTests|FullyQualifiedName~ScoopToSmaHostTests|FullyQualifiedName~HostServerTests.Ship_launch_from_container|FullyQualifiedName~HostServerTests.Ship_FitShips|FullyQualifiedName~HostServerTests.Ship_fitting_info_and_dirt_timestamp"
+    },
+    "error_inventory": {
+      "complete": false,
+      "review_record": "docs/project/feature-gate.md",
+      "incomplete_reason": "The area manifest covers selected refusals but does not map every V24.01 client-visible failure branch in this RPC family to a recorded failing case.",
+      "cases": [
+        {
+          "service": "ship",
+          "method": "FitShips",
+          "client_callsite": "eve/client/script/environment/fittingSvc.py:510",
+          "test_file": "dotnet/tests/Eve.Services.Space.Tests/FitShipsHostTests.cs",
+          "test_name": "FitShips_rejects_a_caller_supplied_location_that_is_not_the_docked_session_location",
+          "project": "Eve.Services.Space.Tests",
+          "expected_error": "CannotLoadFittingInSpace"
+        },
+        {
+          "service": "ship",
+          "method": "Scoop",
+          "client_callsite": "eve/client/script/ui/services/menusvc.py:3254",
+          "test_file": "dotnet/tests/Eve.Services.Space.Tests/ShipScoopingHostTests.cs",
+          "test_name": "Scoop_returns_the_client_typed_range_error_without_mutating_a_distant_target",
+          "project": "Eve.Services.Space.Tests",
+          "expected_error": "CantUseTooDistantWithType"
+        },
+        {
+          "service": "ship",
+          "method": "Scoop",
+          "client_callsite": "eve/client/script/ui/services/menusvc.py:3256",
+          "test_file": "dotnet/tests/Eve.Services.Space.Tests/ShipScoopingHostTests.cs",
+          "test_name": "Scoop_checks_the_saved_secure_container_password_and_allows_the_matching_credential",
+          "project": "Eve.Services.Space.Tests",
+          "expected_error": "ShpScoopSecureCC"
+        }
+      ]
+    },
+    "replay_cases": [],
+    "deviation_review": {
+      "complete": true,
+      "review_record": "docs/project/ship-rpcs-implementation.md",
+      "entries": [
+        {
+          "heading": "## ScoopToInfrastructureHold follows the V24 caller where EveJS has no handler (2026-11-17)",
+          "reason_marker": "This is a client-derived extension beyond the incomplete EveJS route set, not captured-packet behavior."
+        },
+        {
+          "heading": "## Tractor beam (protocol 30)",
+          "reason_marker": "runtime (EVE.js `mobileTractorUnitRuntime.js`) is not built; the handler is for the ship's `tractorBeamCan`."
+        }
+      ]
+    }
+  }
+}

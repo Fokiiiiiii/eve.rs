@@ -181,18 +181,24 @@ class ReplayAndDeviationTests(unittest.TestCase):
             root = Path(directory)
             deviations = root / "docs/reference/compat/DEVIATIONS.md"
             deviations.parent.mkdir(parents=True)
-            deviations.write_text("## Difference\nA reason is documented.\n", encoding="utf-8")
+            deviations.write_text(
+                "## Difference\nA reason is documented.\n\n## Another difference\nIts own reason is documented.\n",
+                encoding="utf-8",
+            )
             record = root / "docs/project/record.md"
             record.parent.mkdir(parents=True)
             record.write_text("comparison", encoding="utf-8")
             review = {
                 "complete": True,
                 "review_record": "docs/project/record.md",
-                "entries": [{"heading": "## Difference", "reason_marker": "A reason is documented."}],
+                "entries": [
+                    {"heading": "## Difference", "reason_marker": "A reason is documented."},
+                    {"heading": "## Another difference", "reason_marker": "Its own reason is documented."},
+                ],
             }
 
             self.assertEqual("pass", gate.check_deviations(root, review)["status"])
-            review["entries"][0]["reason_marker"] = "missing reason"
+            review["entries"][1]["reason_marker"] = "missing reason"
             self.assertEqual("fail", gate.check_deviations(root, review)["status"])
 
     def test_empty_deviation_list_needs_an_explicit_none_known_attestation(self):

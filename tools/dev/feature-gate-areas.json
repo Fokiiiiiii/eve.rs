@@ -98,13 +98,16 @@
     },
     "replay_cases": [],
     "deviation_review": {
-      "complete": false,
-      "review_record": "docs/project/feature-gate.md",
-      "incomplete_reason": "The ScoopToInfrastructureHold comparison is described in the feature-gate record, but its reasoned DEVIATIONS.md entry is not part of this area-gate revision. Keep this review incomplete until that entry is committed.",
+      "complete": true,
+      "review_record": "docs/project/ship-rpcs-implementation.md",
       "entries": [
         {
           "heading": "## ScoopToInfrastructureHold follows the V24 caller where EveJS has no handler (2026-11-17)",
-          "reason_marker": "This is an intentional client-derived extension beyond the incomplete EveJS route set"
+          "reason_marker": "This is a client-derived extension beyond the incomplete EveJS route set, not captured-packet behavior."
+        },
+        {
+          "heading": "## Tractor beam (protocol 30)",
+          "reason_marker": "runtime (EVE.js `mobileTractorUnitRuntime.js`) is not built; the handler is for the ship's `tractorBeamCan`."
         }
       ]
     }

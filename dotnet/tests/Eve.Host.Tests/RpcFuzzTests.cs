@@ -118,6 +118,13 @@ public sealed class RpcFuzzTests
                         var allocatedBefore = GC.GetTotalAllocatedBytes(precise: false);
                         var argumentIndex = longMode ? index : methodCount % 7;
                         IReadOnlyList<PyValue> arguments = Arguments(argumentIndex, random, longMode);
+                        if (service.Name == "overviewPresetMgr" && method == "StoreLinkAndGetID" &&
+                            arguments.FirstOrDefault() is PyDict)
+                        {
+                            // V24 sends a dictionary here, and EveJS accepts any plain object as
+                            // an overview payload. Keep this refusal case malformed by type.
+                            arguments = [new PyList([new PyStr("not an overview payload object")])];
+                        }
                         if (service.Name == "structureAssetSafety" && method == "GetItemsInSafetyForCharacter" && index == 0)
                             arguments = [];
                         if (service.Name == "facilityManager" && method == "GetFacilitiesByID" &&

@@ -1,5 +1,11 @@
 # Deviations from the reference server
 
+## Missing overview preset lookup does not initialize storage (2026-11-17)
+
+V24 asks `overviewPresetMgr.GetStoredPreset` only when a selected shared profile is absent from the client's cache (`eve/client/script/parklife/overview/presetservice.py:868-876`). A profile link is created with `StoreLinkAndGetID(entry.data)` (`eve/client/script/ui/control/eveEditPlainText.py:157`). EveJS `Handle_GetStoredPreset` calls `_getState` before looking up the key (`server/src/services/overview/overviewPresetMgrService.js:526-545`); `_getState` persists a new empty root on a missing table (`:374-396`).
+
+eve.rs returns the same `None` for a miss without writing a root row. This avoids a persistent side effect from a read while preserving the V24 wire result; a malformed-key or missing-profile lookup does not create `overviewSharedPresets`. `StructureDataRpcServicesTests.Fetching_a_missing_overview_preset_does_not_initialize_or_write_the_store` and the Host RPC fuzz persistence snapshot cover this behavior. This intentionally does not reproduce EveJS's lazy initialization side effect.
+
 ## HyperNet account ban state (2026-11-13)
 
 V24.01's raffle service expects `AmIBanned()` to return a boolean and uses a true result to deny access (`/home/user/eve-logic/raffles/client/raffle_service.py:32-59`). EveJS v0.12.9 returns false unconditionally (`/home/user/evejs-261108.1/server/src/services/raffles/raffleProxyService.js:29-33`), so it does not reflect account-specific moderation state.

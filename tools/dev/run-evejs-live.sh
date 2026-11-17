@@ -4,6 +4,7 @@
 #   tools/dev/run-evejs-live.sh /path/to/evejs [/path/to/sde-jsonl-dir]
 #
 # Without an SDE directory, `eve-sde ensure` fetches the pinned build into .cache/sde first.
+# EVEJS_NODE_OPTIONS can add Node options such as --max-old-space-size=8192 for large SDE preloads.
 #
 # The reference server needs the tables EVE.js derives from the SDE, so this
 # generates them into a throwaway data root, boots the server on it, runs
@@ -25,7 +26,16 @@ LOG="$DATA/server.out"
 server_pid=""
 
 cleanup() {
-  [ -n "$server_pid" ] && kill "$server_pid" 2>/dev/null || true
+  if [ -n "$server_pid" ]; then
+    # EVE.js starts worker processes that keep the temporary SQLite store busy after the main node exits.
+    # Give the server its own process group so cleanup stops those workers before removing the data root.
+    kill -TERM -- "-$server_pid" 2>/dev/null || kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+    for _ in $(seq 1 50); do
+      kill -0 -- "-$server_pid" 2>/dev/null || break
+      sleep 0.1
+    done
+  fi
   # EVE_LIVE_LOG_DIR keeps the reference server output and its logs (the data root is removed below)
   if [ -n "${EVE_LIVE_LOG_DIR:-}" ]; then mkdir -p "$EVE_LIVE_LOG_DIR" && cp "$LOG" "$EVE_LIVE_LOG_DIR/evejs-server.out" && { [ ! -d "$DATA/logs" ] || cp -r "$DATA/logs" "$EVE_LIVE_LOG_DIR/evejs-logs"; } || true; cp "$DATA"/gameStore/gamestore.sqlite* "$EVE_LIVE_LOG_DIR/" 2>/dev/null || true; fi
   rm -rf "$DATA"
@@ -36,7 +46,7 @@ echo "generating the reference server's data from $SDE"
 node "$EVEJS/tools/DatabaseCreator/database-creator.js" --sde-dir "$SDE" --out "$DATA/gameStore/data" --force
 
 echo "starting the reference server (data root $DATA)"
-( cd "$EVEJS/server" && exec env EVEJS_DATA_ROOT="$DATA" EVEJS_GAMESTORE_DATA_DIR="$DATA/gameStore/data" EVEJS_SERVER_PORT="$PORT" EVE_TIMESHIFT_FILE="$DATA/timeshift.ms" NODE_OPTIONS="--require $HERE/tools/dev/evejs-timeshift.js" node index.js >"$LOG" 2>&1 ) &  # exec: the kill in cleanup must reach node
+( cd "$EVEJS/server" && exec setsid env EVEJS_DATA_ROOT="$DATA" EVEJS_GAMESTORE_DATA_DIR="$DATA/gameStore/data" EVEJS_SERVER_PORT="$PORT" EVE_TIMESHIFT_FILE="$DATA/timeshift.ms" NODE_OPTIONS="${EVEJS_NODE_OPTIONS:+$EVEJS_NODE_OPTIONS }--require $HERE/tools/dev/evejs-timeshift.js" node index.js >"$LOG" 2>&1 ) &
 server_pid=$!
 
 # the reference server loads every table before it listens: about five minutes on a cold start

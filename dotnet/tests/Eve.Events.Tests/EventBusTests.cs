@@ -498,4 +498,159 @@ public class EventBusTests
         await rig.Bus.StopAsync();
         Assert.Empty(rig.Log);
     }
+
+    [PgFact]
+    public async Task Stopping_finishes_an_in_flight_housekeeping_cursor_write_before_releasing_its_transaction()
+    {
+        await using var rig = await Rig.Create(new EventBusOptions { PollMs = 20 });
+        rig.Bus.Subscribe("unmatched", ["watched.test"], (_, _) => Task.CompletedTask, StartAt.Beginning);
+
+        await using (var function = rig.Source.CreateCommand($"""
+            CREATE FUNCTION {rig.EventsSchema}.pause_cursor_housekeeping() RETURNS trigger
+            LANGUAGE plpgsql AS $$
+            BEGIN
+                PERFORM pg_sleep(0.75);
+                RETURN NEW;
+            END;
+            $$
+            """))
+        {
+            await function.ExecuteNonQueryAsync();
+        }
+        await using (var trigger = rig.Source.CreateCommand($"""
+            CREATE TRIGGER pause_cursor_housekeeping
+            BEFORE UPDATE OF cursor_id ON {rig.EventsSchema}.subscribers
+            FOR EACH ROW WHEN (NEW.cursor_id > OLD.cursor_id)
+            EXECUTE FUNCTION {rig.EventsSchema}.pause_cursor_housekeeping()
+            """))
+        {
+            await trigger.ExecuteNonQueryAsync();
+        }
+
+        var skippedEvent = await rig.Bus.PublishAsync("unwatched.test", null, "skip");
+        await rig.Bus.StartAsync();
+        try
+        {
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            var housekeepingIsRunning = false;
+            while (DateTime.UtcNow < deadline)
+            {
+                await using var activity = rig.Source.CreateCommand("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_stat_activity
+                        WHERE datname = current_database()
+                          AND pid <> pg_backend_pid()
+                          AND wait_event = 'PgSleep'
+                          AND position($1 in coalesce(query, '')) > 0
+                          AND query LIKE '%UPDATE%subscribers SET cursor_id%'
+                    )
+                    """);
+                activity.Parameters.AddWithValue(rig.EventsSchema);
+                housekeepingIsRunning = (bool)(await activity.ExecuteScalarAsync())!;
+                if (housekeepingIsRunning)
+                {
+                    break;
+                }
+                await Task.Delay(10);
+            }
+
+            Assert.True(housekeepingIsRunning, "The cursor housekeeping UPDATE did not enter its database trigger.");
+            await rig.Bus.StopAsync();
+        }
+        finally
+        {
+            await rig.Bus.StopAsync();
+        }
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            Assert.Equal(skippedEvent, await Sql.ScalarAsync(connection, null,
+                $"SELECT cursor_id FROM {rig.EventsSchema}.subscribers WHERE name = $1", CancellationToken.None, "unmatched"));
+            var outstandingTransactions = (long)(await Sql.ScalarAsync(connection, null, """
+                SELECT count(*) FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                  AND state IS DISTINCT FROM 'idle'
+                  AND position($1 in coalesce(query, '')) > 0
+                """, CancellationToken.None, rig.EventsSchema))!;
+            Assert.Equal(0, outstandingTransactions);
+        }
+        Assert.Empty(rig.Log);
+    }
+
+    [PgFact]
+    public async Task Stopping_finishes_an_in_flight_subscriber_ensure_before_releasing_its_connection()
+    {
+        await using var rig = await Rig.Create(new EventBusOptions { PollMs = 20 });
+        rig.Bus.Subscribe("unmatched", ["watched.test"], (_, _) => Task.CompletedTask, StartAt.Beginning);
+
+        await using (var function = rig.Source.CreateCommand($"""
+            CREATE FUNCTION {rig.EventsSchema}.pause_subscriber_ensure() RETURNS trigger
+            LANGUAGE plpgsql AS $$
+            BEGIN
+                PERFORM pg_sleep(0.75);
+                RETURN NEW;
+            END;
+            $$
+            """))
+        {
+            await function.ExecuteNonQueryAsync();
+        }
+        await using (var trigger = rig.Source.CreateCommand($"""
+            CREATE TRIGGER pause_subscriber_ensure
+            BEFORE INSERT ON {rig.EventsSchema}.subscribers
+            FOR EACH ROW
+            EXECUTE FUNCTION {rig.EventsSchema}.pause_subscriber_ensure()
+            """))
+        {
+            await trigger.ExecuteNonQueryAsync();
+        }
+
+        try
+        {
+            await rig.Bus.StartAsync();
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(10);
+            var ensureIsRunning = false;
+            while (DateTime.UtcNow < deadline)
+            {
+                await using var activity = rig.Source.CreateCommand("""
+                    SELECT EXISTS (
+                        SELECT 1 FROM pg_stat_activity
+                        WHERE datname = current_database()
+                          AND pid <> pg_backend_pid()
+                          AND wait_event = 'PgSleep'
+                          AND position($1 in coalesce(query, '')) > 0
+                          AND query LIKE '%INSERT INTO%subscribers%'
+                    )
+                    """);
+                activity.Parameters.AddWithValue(rig.EventsSchema);
+                ensureIsRunning = (bool)(await activity.ExecuteScalarAsync())!;
+                if (ensureIsRunning)
+                {
+                    break;
+                }
+                await Task.Delay(10);
+            }
+
+            Assert.True(ensureIsRunning, "The subscriber Ensure INSERT did not enter its database trigger.");
+            await rig.Bus.StopAsync();
+        }
+        finally
+        {
+            await rig.Bus.StopAsync();
+        }
+
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        {
+            var activeEnsure = (long)(await Sql.ScalarAsync(connection, null, """
+                SELECT count(*) FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND pid <> pg_backend_pid()
+                  AND state IS DISTINCT FROM 'idle'
+                  AND position($1 in coalesce(query, '')) > 0
+                """, CancellationToken.None, rig.EventsSchema))!;
+            Assert.Equal(0, activeEnsure);
+        }
+        Assert.Empty(rig.Log);
+    }
 }

@@ -147,8 +147,8 @@ public sealed partial class SpaceContainers
             var plain = JsSemantics.StringValue(password);
             if (plain is null || plain.Length is < 1 or > 50) throw SettingsInvalid();
             var saltBytes = RandomNumberGenerator.GetBytes(16);
-            var hash = Rfc2898DeriveBytes.Pbkdf2(plain, saltBytes, 100_000, HashAlgorithmName.SHA256, 32);
             passwordSalt = Convert.ToHexString(saltBytes).ToLowerInvariant();
+            var hash = await StarbasePasswordHash.DeriveAsync(plain, passwordSalt, call.Cancellation).ConfigureAwait(false);
             passwordHash = Convert.ToHexString(hash).ToLowerInvariant();
         }
 

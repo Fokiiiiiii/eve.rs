@@ -124,6 +124,8 @@ public interface ISimulation
     /// <summary>Reads a body from a loaded public solar-system scene.</summary>
     Task<SimGetSceneBodyReply> GetSceneBodyAsync(SimGetSceneBody request, CancellationToken cancellationToken = default) =>
         Task.FromException<SimGetSceneBodyReply>(new NotSupportedException("Scene body queries are unavailable."));
+    Task<SimGetDeploymentBallsReply> GetDeploymentBallsAsync(SimGetDeploymentBalls request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimGetDeploymentBallsReply>(new NotSupportedException("Deployment ball queries are unavailable."));
 
     /// <summary>Reads the authoritative pose of a resident ship from its expected private scene.</summary>
     Task<SimGetAbyssalParticipantPoseReply> GetAbyssalParticipantPoseAsync(

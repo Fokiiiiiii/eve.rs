@@ -57,21 +57,14 @@ public class HealthTests
 
         Assert.Equal("Applied light test damage to your active ship and 3 fitted modules.", message);
         var events = Events.Of(session);
-        Assert.Equal(["OnItemChange", "OnCfgDataChanged", "OnItemChange", "OnItemChange", "OnItemChange"], Names(events));
+        Assert.Equal(["OnItemChange", "OnItemChange", "OnItemChange", "OnItemChange"], Names(events));
         Assert.All(events.Where(e => e.Name == "OnItemChange"), e => Assert.Equal("clientID", e.IdType));
-        Assert.Equal("charid", events[1].IdType);
         // each item as it is, the way the client gets it (three arguments: the row, what changed of it, and none)
         Assert.All(events.Where(e => e.Name == "OnItemChange"), e => Assert.Equal((3, true), (e.Args.Length, e.Args[1] is PyDict { Entries.Count: 0 } && e.Args[2] is PyNone)));
         var rows = events.Where(e => e.Name == "OnItemChange").Select(e => ((PyPackedRow)e.Args[0]).Values).ToArray();
         Assert.Equal([shipId, .. modules], rows.Select(r => Id(r[0])));
         Assert.Equal(Rig.Station, Id(rows[0][3]));
         Assert.Equal(shipId, Id(rows[1][3]));
-        // the ship's place in the name table: (id, name, solar system, 0, 0, 0, none)
-        Assert.Equal("evelocations", JsSemantics.StringValue(events[1].Args[0]));
-        var location = ((PyList)events[1].Args[1]).Items;
-        Assert.Equal((shipId, 7), (Id(location[0]), location.Count));
-        Assert.All(location.Skip(3).Take(3), v => Assert.Equal(0, Id(v)));
-        Assert.IsType<PyNone>(location[6]);
     }
 
     [PgFact]
@@ -150,7 +143,7 @@ public class HealthTests
 
         Assert.Equal("Restored full shields, armor, hull, capacitor, and fitted modules on your active ship.", message);
         var events = Events.Of(session);
-        Assert.Equal(["OnModuleAttributeChanges", "OnModuleAttributeChanges", "OnModuleAttributeChanges", "OnItemChange", "OnCfgDataChanged", "OnItemChange", "OnItemChange", "OnItemChange"], Names(events));
+        Assert.Equal(["OnModuleAttributeChanges", "OnModuleAttributeChanges", "OnModuleAttributeChanges", "OnItemChange", "OnItemChange", "OnItemChange", "OnItemChange"], Names(events));
         // each module: its hull now (nothing) and what it was, in a notification of its own
         for (var i = 0; i < 3; i++)
         {
@@ -174,12 +167,12 @@ public class HealthTests
         Events.Of(session);
         await rig.SlashAsync(session, "/heal");
         // nothing was hurt, so no module has a hull to tell; the modules are mended all the same (they gain their shield), so their items are told
-        Assert.Equal(["OnItemChange", "OnCfgDataChanged", "OnItemChange", "OnItemChange", "OnItemChange"], Names(Events.Of(session)));
+        Assert.Equal(["OnItemChange", "OnItemChange", "OnItemChange", "OnItemChange"], Names(Events.Of(session)));
         Assert.Equal(1.0, Attribute(await rig.CallAsync(session, "GetAllInfo", oid, Everything), modules[0], 264));
 
         // mended already: only the ship
         await rig.SlashAsync(session, "/heal");
-        Assert.Equal(["OnItemChange", "OnCfgDataChanged"], Names(Events.Of(session)));
+        Assert.Equal(["OnItemChange"], Names(Events.Of(session)));
     }
 
     [PgFact]

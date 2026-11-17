@@ -173,11 +173,18 @@ pub fn vec_at(bytes: &[u8], at: usize) -> Vec3 {
 }
 
 /// A number the reference sent the client about the ship in an action of the bind (mass, top speed, agility).
-fn number_of(race: &Value, action: &str) -> Option<f64> {
-    destiny_actions(step(race, "bind the ballpark"))
-        .into_iter()
-        .find(|(_, name, _)| name == action)
-        .and_then(|(_, _, args)| args["$tuple"][1].as_f64())
+fn number_of(race: &Value, ship_id: i64, action: &str) -> Option<f64> {
+    for step in race["steps"].as_array()? {
+        for stream in ["events", "seen"] {
+            let events = step[stream].as_array().cloned().unwrap_or_default();
+            for (_, name, args) in destiny_actions(&json!({"events": events})) {
+                if name == action && number(&args["$tuple"][0]) == ship_id {
+                    return args["$tuple"][1].as_f64();
+                }
+            }
+        }
+    }
+    None
 }
 
 pub fn initial_ship_addition(race: &Value) -> (i64, Value, Vec<u8>) {
@@ -207,15 +214,13 @@ pub fn initial_ship_addition(race: &Value) -> (i64, Value, Vec<u8>) {
 /// The ship the reference undocked, put together from what it sent (the slim item and the ball).
 pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
     let (_, added, _) = initial_ship_addition(race);
+    let ship_id = i64::from_le_bytes(ball[..8].try_into().unwrap());
     let extras = added["$tuple"][0]["$tuple"][1].as_array().unwrap();
     let extra = &extras
         .iter()
         .find(|entry| {
             entry["$tuple"][0]["$dict"].as_array().is_some_and(|fields| {
-                fields.iter().any(|pair| {
-                    pair[0] == "itemID"
-                        && number(&pair[1]) == i64::from_le_bytes(ball[..8].try_into().unwrap())
-                })
+                fields.iter().any(|pair| pair[0] == "itemID" && number(&pair[1]) == ship_id)
             })
         })
         .unwrap()["$tuple"];
@@ -259,9 +264,9 @@ pub fn recorded_ship(race: &Value, ball: &[u8], direction: Vec3) -> Ship {
         },
         security_status: 0.0,
         radius: f32_at(9),
-        mass: number_of(race, "SetBallMass").unwrap_or_else(|| f64_at(ball, 38)),
-        max_velocity: number_of(race, "SetMaxSpeed").unwrap_or_else(|| f32_at(63)),
-        agility: number_of(race, "SetBallAgility").unwrap_or_else(|| f32_at(91)),
+        mass: number_of(race, ship_id, "SetBallMass").unwrap_or_else(|| f64_at(ball, 38)),
+        max_velocity: number_of(race, ship_id, "SetMaxSpeed").unwrap_or_else(|| f32_at(63)),
+        agility: number_of(race, ship_id, "SetBallAgility").unwrap_or_else(|| f32_at(91)),
         warp_speed_au: 0.0,
         shield_recharge_ms: shield_tau * 5.0,
         max_target_range: 29_700.0,

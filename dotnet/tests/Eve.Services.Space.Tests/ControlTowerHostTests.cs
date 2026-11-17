@@ -1030,6 +1030,22 @@ public class ControlTowerHostTests
         rig.Now = reactorJob.RunAtMs;
         await rig.Scheduler.RunDueAsync();
         Assert.Equal("online", await rig.Deployed.TowerStateAsync(secondReactor));
+
+        // The hourly fuel job is authoritative for all associated modules. With an empty fuel bay it shuts the tower and
+        // modules down in one PostgreSQL transaction, then publishes the committed state to their live slim items.
+        await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(SpaceContainers.ControlTowerFuelJob, rig.Now)
+        {
+            Key = $"tower:{tower}",
+            Payload = new SpaceContainers.ControlTowerFuelDue(tower),
+            OnDuplicate = Eve.Scheduler.OnDuplicate.Replace,
+        });
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(tower));
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(firstReactor));
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(secondReactor));
+        AssertControlTowerSlimState(rig, tower, 1, null);
+        AssertControlTowerSlimState(rig, firstReactor, 1, null);
+        AssertControlTowerSlimState(rig, secondReactor, 1, null);
     }
 
     private static PyValue? Field(PyDict fields, string name) => fields.Entries
@@ -1297,13 +1313,24 @@ public class ControlTowerHostTests
         {
             var due = context.Payload<SpaceContainers.ControlTowerOnlineDue>()!;
             if (await restartedContainers.CompleteControlTowerOnlineAsync(context.Connection, context.Transaction, due.DeployableId, due.StartedAtMs, token))
-                context.AfterCommit(_ => { rig.Events.Wake(); return Task.CompletedTask; });
+                context.AfterCommit(async afterCommitToken =>
+                {
+                    await restartedContainers.SynchronizeControlTowerSlimStateAsync(due.DeployableId, afterCommitToken);
+                    rig.Events.Wake();
+                });
         });
         restartedScheduler.Register(SpaceContainers.ControlTowerFuelJob, async (context, token) =>
         {
             if (await restartedContainers.ControlTowerFuelAsync(context.Connection, context.Transaction,
                 context.Payload<SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token))
-                context.AfterCommit(_ => { rig.Events.Wake(); return Task.CompletedTask; });
+            {
+                var towerId = context.Payload<SpaceContainers.ControlTowerFuelDue>()!.DeployableId;
+                context.AfterCommit(async afterCommitToken =>
+                {
+                    await restartedContainers.SynchronizeControlTowerSlimStateAsync(towerId, afterCommitToken);
+                    rig.Events.Wake();
+                });
+            }
         });
 
         rig.Sim.Heard.Clear();

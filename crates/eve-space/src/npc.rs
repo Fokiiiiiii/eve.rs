@@ -210,6 +210,14 @@ impl Scene {
         if let Some(wreck) = self.wrecks.get(&target_id) {
             return Some(Target::at_rest(wreck.position, wreck.radius));
         }
+        if let Some(deployable) = self.deployables.get(&target_id).filter(|deployable| {
+            !matches!(
+                &deployable.role,
+                crate::deployable::Role::DeadspacePocket | crate::deployable::Role::JumpBridge { .. }
+            )
+        }) {
+            return Some(Target::at_rest(deployable.position, deployable.spec.radius));
+        }
         let other = self.session_of(target_id).filter(|other| *other != session)?;
         self.target_of_ship(other)
     }

@@ -15,6 +15,7 @@ use eve_destiny::Vec3;
 
 use crate::brains::EMPIRE_SENTRY;
 use crate::health::{Condition, Resonances, Vitals};
+use crate::motion;
 use crate::npc::NpcPlace;
 use crate::pochven;
 use crate::scene::{Out, Scene, TICKS_PER_SECOND};
@@ -535,7 +536,7 @@ impl Scene {
         }
         let faction_id = empire_sentry_faction_id(self.system().faction_id);
         let type_ids = empire_sentry_type_ids(faction_id);
-        let placements: Vec<(i32, i64, Vec3)> = self
+        let placements: Vec<(i32, i64, Vec3, Vec3)> = self
             .system()
             .bodies
             .iter()
@@ -561,25 +562,39 @@ impl Scene {
                             body.position.y + offset[1] * diagonal,
                             body.position.z + offset[2] * diagonal,
                         ),
+                        motion::unit(Vec3::new(offset[0], offset[1], offset[2]))
+                            .expect("sentry layout offsets are nonzero"),
                     )
                 })
             })
             .collect();
 
         let mut out = Vec::new();
-        for (type_id, owner_id, position) in placements {
-            out.extend(self.spawn_empire_sentry(type_id, owner_id, position, now));
+        for (type_id, owner_id, position, direction) in placements {
+            out.extend(self.spawn_empire_sentry(type_id, owner_id, position, direction, now));
         }
         out
     }
 
-    fn spawn_empire_sentry(&mut self, type_id: i32, owner_id: i64, at: Vec3, now: i64) -> Vec<Out> {
+    fn spawn_empire_sentry(
+        &mut self,
+        type_id: i32,
+        owner_id: i64,
+        at: Vec3,
+        direction: Vec3,
+        now: i64,
+    ) -> Vec<Out> {
         let ship_id = 980_100_000_000 + self.npc_sequence as i64;
         let sentry = empire_sentry_type(type_id);
         let mut spec = npc_spec(ship_id, &sentry);
         spec.owner_id = owner_id;
-        let identity = npc_identity(ship_id, &sentry, 0.0, EMPIRE_SENTRY_CYCLE_MS, 100.0);
-        match self.spawn_npc_with_behavior(spec, identity, NpcPlace::at_rest(at), EMPIRE_SENTRY, now) {
+        let mut identity = npc_identity(ship_id, &sentry, 0.0, EMPIRE_SENTRY_CYCLE_MS, 100.0);
+        // V24 uses these response limits to classify a sentry's bracket color. The deployed
+        // sentry representation treats every pilot as friendly while its combat behavior
+        // still handles crimes independently.
+        identity.friendly_response_threshold = -11;
+        let place = NpcPlace { direction, ..NpcPlace::at_rest(at) };
+        match self.spawn_npc_with_behavior(spec, identity, place, EMPIRE_SENTRY, now) {
             Ok((_, mut outs)) => {
                 outs.insert(0, self.publish_sim_damageable_entity(ship_id, type_id, owner_id, 0, 0, 0));
                 outs
@@ -860,6 +875,58 @@ mod tests {
         assert_eq!(empire_sentry_count(0.04), 2);
         assert_eq!(empire_sentry_count(0.49), 6);
         assert_eq!(empire_sentry_count(0.79), 8);
+    }
+
+    #[test]
+    fn empire_sentries_use_v24_response_limits_and_face_their_layout_direction() {
+        let gate = Body {
+            id: 50_000_001,
+            type_id: 10,
+            group_id: 10,
+            category_id: 2,
+            owner_id: 500_001,
+            name: "Gate".to_string(),
+            kind: BodyKind::Stargate,
+            position: Vec3::new(1.0e9, 0.0, 0.0),
+            radius: 10_000.0,
+            graphic_id: None,
+            detail: Detail::Stargate {
+                destination_system: 30_000_002,
+                destination_gate: 50_000_002,
+                destination_name: "Elsewhere".to_string(),
+                destination_security: 0.9,
+                destination_faction: Some(500_001),
+                hazardous: false,
+                facing: None,
+                heading: None,
+            },
+        };
+        let system = SolarSystem {
+            id: 30_000_001,
+            name: "Highsec".to_string(),
+            constellation_id: 20_000_001,
+            region_id: 10_000_001,
+            faction_id: Some(500_001),
+            security: 0.9,
+            bodies: vec![gate],
+        };
+        let mut scene = Scene::new(Arc::new(system));
+
+        scene.populate_empire_sentries(T0);
+
+        let sentry = scene
+            .pilots
+            .values()
+            .find(|pilot| pilot.ship.spec.group_id == EMPIRE_SENTRY_GROUP_ID)
+            .expect("the high-security gate has an Empire sentry");
+        let npc = sentry.ship.npc.as_ref().expect("the sentry has active NPC behavior");
+        assert_eq!(npc.hostile_response_threshold, -11);
+        assert_eq!(npc.friendly_response_threshold, -11);
+        let direction = sentry.ship.direction;
+        let inverse_sqrt_two = std::f64::consts::FRAC_1_SQRT_2;
+        assert!((direction.x + inverse_sqrt_two).abs() < 1e-12);
+        assert!((direction.y - inverse_sqrt_two).abs() < 1e-12);
+        assert_eq!(direction.z, 0.0);
     }
 
     #[test]

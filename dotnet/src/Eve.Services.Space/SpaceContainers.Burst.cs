@@ -75,6 +75,22 @@ public sealed partial class SpaceContainers
                 pilots.TryAdd(candidate, pilot);
             }
         }
+        var controlTowerShields = await OnlineControlTowerShieldsAsync(cycle.SolarSystemId, CancellationToken.None);
+        var shieldedShips = new HashSet<long>();
+        if (controlTowerShields.Count > 0)
+        {
+            foreach (var (candidate, pilot) in pilots)
+            {
+                if (await IsInsideControlTowerShieldAsync(pilot, candidate, cycle.SolarSystemId, controlTowerShields, CancellationToken.None))
+                {
+                    shieldedShips.Add(candidate);
+                }
+            }
+        }
+        if (shieldedShips.Contains(cycle.ShipId))
+        {
+            return WorkOutcome.Refuse("FORCE_FIELD");
+        }
         var fleets = new Dictionary<long, long>();
         foreach (var character in pilots.Values.Select(pilot => pilot.CharacterId ?? 0).Where(id => id > 0).Distinct())
         {
@@ -90,7 +106,8 @@ public sealed partial class SpaceContainers
             ships,
             Math.Max(0d, ship.World.Get(cycle.OwnerId, CommandBurstEffect.RangeAttribute)),
             _ => 0d,
-            (first, second) => fleets.TryGetValue(first, out var fleetOfFirst) && fleets.TryGetValue(second, out var fleetOfSecond) && fleetOfFirst == fleetOfSecond);
+            (first, second) => fleets.TryGetValue(first, out var fleetOfFirst) && fleets.TryGetValue(second, out var fleetOfSecond) && fleetOfFirst == fleetOfSecond,
+            eligible: candidate => !shieldedShips.Contains(candidate.ShipId));
         _log?.Invoke($"command burst cycle {cycle.CycleId} resolved: pilots [{string.Join(",", pilots.Keys)}]; fleet ids [{string.Join(",", fleets.Select(pair => $"{pair.Key}:{pair.Value}"))}]; reached [{string.Join(",", reached)}]");
         foreach (var target in reached)
         {
@@ -106,6 +123,68 @@ public sealed partial class SpaceContainers
         return new WorkOutcome(true, "", ClientNotification: (
             "OnFleetBoosted",
             [new Eve.Marshal.PyInt(checked((int)module.TypeId)), new Eve.Marshal.PyInt(reached.Count)]));
+    }
+
+    private async Task<IReadOnlyList<(double[] Position, double Radius)>> OnlineControlTowerShieldsAsync(
+        int solarSystemId,
+        CancellationToken cancellationToken)
+    {
+        if (_deployed is null)
+        {
+            return [];
+        }
+        var towers = (await _deployed.InSystemAsync(solarSystemId, cancellationToken))
+            .Where(record => record.Kind == ControlTowerKind && record.ActivateAtMs <= _nowUnixMs())
+            .ToArray();
+        if (towers.Length == 0)
+        {
+            return [];
+        }
+        await _statics.EnsureTypesAsync(towers.Select(tower => tower.TypeId), cancellationToken);
+        var shieldRadiusAttribute = _statics.AttributeId("shieldRadius") ?? 680;
+        var shields = new List<(double[] Position, double Radius)>(towers.Length);
+        foreach (var tower in towers)
+        {
+            if (await _deployed.TowerStateAsync(tower.DeployableId, cancellationToken) != TowerOnline)
+            {
+                continue;
+            }
+            var radius = _statics.Type(tower.TypeId)?.Attributes.GetValueOrDefault(shieldRadiusAttribute) ?? 0d;
+            if (radius > 0 && double.IsFinite(radius) && tower.Position.Length >= 3 && tower.Position.Take(3).All(double.IsFinite))
+            {
+                shields.Add((tower.Position, radius));
+            }
+        }
+        return shields;
+    }
+
+    private async Task<bool> IsInsideControlTowerShieldAsync(
+        ClientSession pilot,
+        long shipId,
+        int solarSystemId,
+        IReadOnlyList<(double[] Position, double Radius)> shields,
+        CancellationToken cancellationToken)
+    {
+        var position = await _space.PositionOfAsync(pilot, shipId, cancellationToken);
+        if (position is not { } at || at.SolarSystemId != solarSystemId)
+        {
+            _log?.Invoke($"command burst ship {shipId} shield position is unavailable in system {solarSystemId}; excluding it");
+            return true;
+        }
+        var radius = Math.Max(0d, at.Radius.GetValueOrDefault());
+        return shields.Any(shield => MetersBetween(
+            [at.X, at.Y, at.Z], shield.Position) + radius < shield.Radius);
+    }
+
+    private async Task<bool> IsCommandBurstSourceInForceFieldAsync(
+        ClientSession pilot,
+        long shipId,
+        int solarSystemId,
+        CancellationToken cancellationToken)
+    {
+        var shields = await OnlineControlTowerShieldsAsync(solarSystemId, cancellationToken);
+        return shields.Count > 0 && await IsInsideControlTowerShieldAsync(
+            pilot, shipId, solarSystemId, shields, cancellationToken);
     }
 
     /// <summary>

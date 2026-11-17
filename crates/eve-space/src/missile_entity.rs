@@ -370,7 +370,7 @@ impl Scene {
             kinematics,
             hittable: pilot.protected_until <= now
                 && !self.is_tethered_session(session, now)
-                && !pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()),
+                && !pilot.flight.as_ref().is_some_and(|flight| flight.is_in_warp_mode()),
             session: Some(session),
         })
     }
@@ -385,7 +385,7 @@ impl Scene {
                 can_see(
                     Presence {
                         position: pilot.ship.position,
-                        warping: pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()),
+                        warping: pilot.flight.as_ref().is_some_and(|flight| flight.is_in_warp_mode()),
                     },
                     Presence { position, warping: false },
                 )
@@ -408,7 +408,7 @@ impl Scene {
                 || self.combat_owner(attacker) == owner
                 || (shooter.spec.corporation_id != 0 && target.corporation_id == shooter.spec.corporation_id)
                 || (shooter.spec.alliance_id != 0 && target.alliance_id == shooter.spec.alliance_id)
-                || pilot.flight.as_ref().is_some_and(|flight| flight.is_warping())
+                || pilot.flight.as_ref().is_some_and(|flight| flight.is_in_warp_mode())
                 || pilot.protected_until > now
             {
                 continue;

@@ -13,7 +13,9 @@ enter_task!(
     /// `TypeError` every time it is entered. It is ported as it is; a tree that uses it stops at it, as it does there.
     CachedRandomChanceCondition,
     |t| {
-        t.raise(BehaviorError::Task("TypeError: GetLastBlackboardValue() got an unexpected keyword argument 'maxAge'".to_string()));
+        t.raise(BehaviorError::Task(
+            "TypeError: GetLastBlackboardValue() got an unexpected keyword argument 'maxAge'".to_string(),
+        ));
     }
 );
 

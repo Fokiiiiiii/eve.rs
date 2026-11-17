@@ -1,6 +1,7 @@
 """Regression checks for replaying the mitm JSONL records produced by tools/mitm/mitm."""
 
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from evecli.trace_replay import (
     format_report,
     load_allowlist,
     load_capture,
+    _scenario_character_call,
     request_steps,
     replay_live_capture,
     replay_records,
@@ -186,6 +188,16 @@ def test_known_error_allowlist_is_exact_and_tracks_the_live_fix_jobs():
         ("corpFittingMgr", "GetCommunityFittings", "SessionRpcBudgetExceeded"),
     }
     assert all(entry["owner_job"] == "60-fix-live-*" for entry in allowlist)
+
+
+def test_scenario_character_names_are_unique_and_fit_the_client_limit():
+    calls = [_scenario_character_call() for _ in range(20)]
+    names = [args[0] for _, method, args in calls]
+
+    assert all(method == "CreateCharacterWithDoll" for _, method, _ in calls)
+    assert len(set(names)) == len(names)
+    assert all(re.fullmatch(r"Recorded Pilot [0-9a-f]{22}", name) for name in names)
+    assert all(len(name) <= 37 for name in names)
 
 
 LIVE = os.environ.get("EVE_LIVE_HOST", "")

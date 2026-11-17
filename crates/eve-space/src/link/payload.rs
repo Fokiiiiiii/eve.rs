@@ -510,13 +510,60 @@ impl Message {
                     }
                 }
             }
+            Self::GetDeploymentBalls { request_id, scene } => {
+                assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+            }
+            Self::GetDeploymentBallsReply { request_id, scene, outcome } => {
+                assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                match outcome {
+                    Ok(balls) => {
+                        assert!(balls.len() <= 8192);
+                        out.push(0);
+                        out.extend_from_slice(&(balls.len() as u16).to_le_bytes());
+                        for ball in balls {
+                            assert!(
+                                ball.item_id > 0
+                                    && ball.type_id > 0
+                                    && ball.radius.is_finite()
+                                    && ball.radius >= 0.0
+                                    && ball.position.iter().all(|value| value.is_finite())
+                                    && (!ball.warp_in_point || ball.radius == 0.0)
+                            );
+                            out.extend_from_slice(&ball.item_id.to_le_bytes());
+                            out.extend_from_slice(&ball.type_id.to_le_bytes());
+                            for value in ball.position {
+                                out.extend_from_slice(&value.to_le_bytes());
+                            }
+                            out.extend_from_slice(&ball.radius.to_le_bytes());
+                            out.push(u8::from(ball.warp_in_point));
+                        }
+                        put_text(&mut out, "");
+                    }
+                    Err(error) => {
+                        assert!(!error.is_empty());
+                        out.push(1);
+                        put_text(&mut out, error);
+                    }
+                }
+            }
             Self::GetAbyssalParticipantPose { request_id, scene, ship_id } => {
                 assert!(*request_id > 0 && scene.is_valid() && *ship_id > 0, "invalid resident pose request");
                 out.extend_from_slice(&request_id.to_le_bytes());
                 put_scene_key(&mut out, *scene);
                 out.extend_from_slice(&ship_id.to_le_bytes());
             }
-            Self::GetAbyssalParticipantPoseReply { request_id, scene, ship_id, outcome, deployment } => {
+            Self::GetAbyssalParticipantPoseReply {
+                request_id,
+                scene,
+                ship_id,
+                outcome,
+                deployment,
+                following,
+            } => {
                 assert!(
                     *request_id > 0 && scene.is_valid() && *ship_id > 0,
                     "invalid resident pose reply identity"
@@ -570,6 +617,23 @@ impl Message {
                         out.extend_from_slice(&object.type_id.to_le_bytes());
                         out.extend_from_slice(&object.center_distance_meters.to_le_bytes());
                     }
+                }
+                if let Some(approach) = following {
+                    assert!(
+                        outcome.is_ok()
+                            && approach.target_id > 0
+                            && approach.follow_range_meters.is_finite()
+                            && approach.follow_range_meters >= 0.0
+                            && approach.max_velocity_meters_per_second.is_finite()
+                            && approach.max_velocity_meters_per_second > 0.0,
+                        "invalid Abyssal FOLLOW state"
+                    );
+                    out.push(1);
+                    out.extend_from_slice(&approach.target_id.to_le_bytes());
+                    out.extend_from_slice(&approach.follow_range_meters.to_le_bytes());
+                    out.extend_from_slice(&approach.max_velocity_meters_per_second.to_le_bytes());
+                } else {
+                    out.push(0);
                 }
             }
             Self::MovePublicParticipant {
@@ -891,6 +955,7 @@ impl Message {
                 out.extend_from_slice(&belt_id.to_le_bytes());
                 put_vector(&mut out, position);
             }
+            Self::WarpExited { session_id } => out.extend_from_slice(&session_id.to_le_bytes()),
             Self::Condition { session_id, command, condition } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*command);
@@ -1815,6 +1880,17 @@ impl Message {
                 for (ship, jammed) in reached {
                     out.extend_from_slice(&ship.to_le_bytes());
                     out.push(u8::from(*jammed));
+                }
+            }
+            Self::SmartbombHit { session_id, ship_id, module_id, targets } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&module_id.to_le_bytes());
+                out.extend_from_slice(&(targets.len() as u32).to_le_bytes());
+                for (ship_id, character_id, type_id) in targets {
+                    out.extend_from_slice(&ship_id.to_le_bytes());
+                    out.extend_from_slice(&character_id.to_le_bytes());
+                    out.extend_from_slice(&type_id.to_le_bytes());
                 }
             }
             Self::FighterReleased { session_id, fighter_id, position } => {

@@ -5,6 +5,7 @@ use eve_destiny::Vec3;
 use super::*;
 use crate::scene::tests::{NOON, STATION, spec, system};
 use crate::scene::{Command, Departure};
+use crate::ship::Course;
 use crate::world::{Body, BodyKind, Detail};
 
 const A: SessionId = 7;
@@ -152,7 +153,16 @@ fn added_ships(out: &Out) -> Vec<i64> {
     let Out::Notify { args, .. } = out else { panic!("{out:?}") };
     let Some(Value::List(actions)) = args.first() else { panic!("{out:?}") };
     let Value::Tuple(pair) = &actions[0] else { panic!() };
-    let Value::Tuple(inner) = &pair[1] else { panic!() };
+    let Value::Tuple(mut inner) = pair[1].clone() else { panic!() };
+    if matches!(&inner[0], Value::Str(name) if name == "PackagedAction") {
+        let Value::Buffer(bytes) = &inner[1] else { panic!() };
+        let Value::Tuple(unpacked) = eve_marshal::decode_exact(bytes).expect("the package decodes") else {
+            panic!("the package is a tuple of actions")
+        };
+        let Value::Tuple(action_pair) = &unpacked[0] else { panic!() };
+        let Value::Tuple(add) = &action_pair[1] else { panic!() };
+        inner = add.clone();
+    }
     let Value::Tuple(arguments) = &inner[1] else { panic!() };
     let Value::Tuple(added) = &arguments[0] else { panic!() };
     let Value::List(extras) = &added[1] else { panic!() };
@@ -170,16 +180,65 @@ fn added_ships(out: &Out) -> Vec<i64> {
         .collect()
 }
 
+/// The ship slims in a `SetState`, in the same order as the view was built.
+fn state_ship_ids(out: &Out) -> Vec<i64> {
+    let Out::Notify { args, .. } = out else { panic!("{out:?}") };
+    let Some(Value::List(actions)) = args.first() else { panic!("{out:?}") };
+    let state = actions
+        .iter()
+        .find_map(|action| {
+            let Value::Tuple(pair) = action else { return None };
+            let Value::Tuple(inner) = &pair[1] else { return None };
+            matches!(&inner[0], Value::Str(name) if name == "SetState").then_some(&inner[1])
+        })
+        .expect("the update contains SetState");
+    let Value::Tuple(arguments) = state else { panic!("{state:?}") };
+    let Value::Object { args, .. } = &arguments[0] else { panic!("{:?}", arguments[0]) };
+    let Value::Dict(fields) = &**args else { panic!() };
+    let (_, Value::List(slims)) = fields
+        .iter()
+        .find(|(key, _)| matches!(key, Value::Str(name) if name == "slims"))
+        .expect("SetState carries slims")
+    else {
+        panic!()
+    };
+    slims
+        .iter()
+        .filter_map(|slim| {
+            let Value::Object { args, .. } = slim else { return None };
+            let Value::Dict(fields) = &**args else { return None };
+            let item_id = fields.iter().find_map(|(key, value)| {
+                matches!(key, Value::Str(name) if name == "itemID").then(|| match value {
+                    Value::Int(id) | Value::Long(id) => *id,
+                    _ => panic!("{value:?}"),
+                })
+            })?;
+            let category_id = fields.iter().find_map(|(key, value)| {
+                matches!(key, Value::Str(name) if name == "categoryID").then(|| match value {
+                    Value::Int(id) => *id,
+                    _ => panic!("{value:?}"),
+                })
+            });
+            (category_id == Some(6)).then_some(item_id)
+        })
+        .collect()
+}
+
 #[test]
-fn a_ship_that_undocks_is_shown_to_the_pilot_that_has_bound_the_ballpark_with_its_numbers_in_one_update() {
+fn a_ship_that_undocks_is_shown_to_the_bound_pilot_before_its_movement_prime() {
     let mut scene = watcher();
     let told = scene.undock(B, other_spec(), STATION, NOON + SECOND).unwrap();
-    assert_eq!(told.len(), 1);
+    assert_eq!(told.len(), 2);
     assert_eq!(recipient(&told[0]), A);
-    assert_eq!(names(&told[0]), ["AddBalls2", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
-    let stamps = stamps(&told[0]);
-    assert!(stamps.iter().all(|s| *s == stamps[0]), "one stamp: {stamps:?}");
+    assert_eq!(names(&told[0]), ["PackagedAction", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
     assert_eq!(added_ships(&told[0]), [other_spec().ship_id]);
+    assert!(matches!(&told[0], Out::Notify { args, .. } if args[1] == Value::Bool(true)));
+    let first_stamp = stamps(&told[0])[0];
+    assert!(stamps(&told[0]).iter().all(|stamp| *stamp == first_stamp));
+    assert_eq!(recipient(&told[1]), A);
+    assert_eq!(names(&told[1]), ["SetBallMassive", "SetBallMass", "SetBallVelocity", "GotoDirection"]);
+    assert!(matches!(&told[1], Out::Notify { args, .. } if args[1] == Value::Bool(false)));
+    assert!(stamps(&told[1]).iter().all(|stamp| *stamp == first_stamp));
 }
 
 #[test]
@@ -189,33 +248,22 @@ fn a_pilot_that_has_not_bound_the_ballpark_is_told_nothing_and_is_given_the_ship
     assert!(scene.undock(B, other_spec(), STATION, NOON).unwrap().is_empty());
     let bound = scene.bind(A, NOON + SECOND);
     assert_eq!(
-        added_ships(&bound[2]),
+        state_ship_ids(&bound[2]),
         [spec().ship_id, other_spec().ship_id],
         "both, in the order they came"
     );
 }
 
 #[test]
-fn binding_gives_the_ships_in_view_in_the_order_they_came_and_the_numbers_of_each() {
+fn binding_gives_the_ships_in_view_in_the_order_they_came_with_full_ball_state() {
     let mut scene = watcher();
     scene.undock(B, other_spec(), STATION, NOON + SECOND).unwrap();
     let bound = scene.bind(B, NOON + SECOND);
-    assert_eq!(
-        bound.len(),
-        6,
-        "the time, the clock, the ships, the ship's own start, the state, the numbers"
-    );
-    assert_eq!(added_ships(&bound[2]), [spec().ship_id, other_spec().ship_id]);
-    assert_eq!(
-        names(&bound[5]),
-        [
-            "SetBallAgility",
-            "SetBallMass",
-            "SetMaxSpeed", // the other ship's
-        ]
-    );
+    assert_eq!(bound.len(), 3, "the clock, rebase and full ballpark state");
+    assert_eq!(names(&bound[2]), ["SetState"]);
+    assert_eq!(state_ship_ids(&bound[2]), [spec().ship_id, other_spec().ship_id]);
     // the state holds the balls of both ships
-    let buffer = state_buffer(&bound[4]);
+    let buffer = state_buffer(&bound[2]);
     assert!(holds_ball_of(&buffer, spec().ship_id) && holds_ball_of(&buffer, other_spec().ship_id));
     let ego = buffer.windows(8).position(|bytes| bytes == other_spec().ship_id.to_le_bytes()).unwrap();
     let speed = f32::from_le_bytes(buffer[ego + 63..ego + 67].try_into().unwrap());
@@ -226,7 +274,7 @@ fn binding_gives_the_ships_in_view_in_the_order_they_came_and_the_numbers_of_eac
     let agility = f32::from_le_bytes(buffer[watcher + 91..watcher + 95].try_into().unwrap());
     assert_eq!((speed, agility), (spec().max_velocity as f32, spec().agility as f32));
     // the state lists the ships in the same order
-    let Out::Notify { args, .. } = &bound[4] else { panic!() };
+    let Out::Notify { args, .. } = &bound[2] else { panic!() };
     let text = format!("{args:?}");
     let (first, second) =
         (text.find(&spec().ship_id.to_string()), text.rfind(&other_spec().ship_id.to_string()));
@@ -257,7 +305,7 @@ fn the_ships_are_listed_in_the_order_they_came_into_the_scene_not_in_the_order_o
     scene.undock(second, other_spec(), STATION, NOON + SECOND).unwrap();
     let bound = scene.bind(second, NOON + SECOND);
     assert_eq!(
-        added_ships(&bound[2]),
+        state_ship_ids(&bound[2]),
         [spec().ship_id, other_spec().ship_id],
         "the one that came first is first"
     );
@@ -284,23 +332,26 @@ fn a_pilot_that_has_not_bound_the_ballpark_is_told_nothing_of_the_others_orders(
 }
 
 #[test]
-fn a_ship_is_told_to_those_who_watch_as_a_turn_when_it_asks_for_a_warp_and_as_the_warp_when_it_enters_it() {
+fn a_warp_order_is_sent_once_to_the_pilot_and_current_observers_when_it_is_accepted() {
     let mut scene = both();
     let at = NOON + 2 * SECOND;
     let out = scene.command(B, Command::WarpTo { target_id: PLANET, range: 0.0 }, at);
-    assert_eq!(names(&out[0]), ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"]);
-    assert_eq!((recipient(&out[1]), names(&out[1])), (A, vec!["GotoDirection".to_string()]));
+    assert_eq!(names(&out[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
+    assert_eq!(recipient(&out[1]), A);
+    assert_eq!(names(&out[1]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
 
-    let mut entered = None;
+    let mut entered = false;
     let mut t = at;
-    while t < at + 30 * SECOND && entered.is_none() {
+    while t < at + 30 * SECOND && !entered {
         t += SECOND / 4;
-        entered =
-            scene.poll(t).into_iter().find(|o| names(o).first().map(String::as_str) == Some("OnSpecialFX"));
+        let told = scene.poll(t);
+        assert!(
+            told.iter().all(|out| !names(out).contains(&"WarpTo".to_string())),
+            "entering the warp phase does not resend the WarpTo order: {told:?}"
+        );
+        entered = matches!(scene.ship(B, t).unwrap().course, Course::Warp { active: true, .. });
     }
-    let entered = entered.expect("the ship enters warp");
-    assert_eq!(recipient(&entered), A, "the pilot was told at the command");
-    assert_eq!(names(&entered), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
+    assert!(entered, "the ship enters warp");
 }
 
 #[test]
@@ -446,7 +497,9 @@ fn ships_in_different_boxes_of_the_grid_are_not_shown_to_each_other_until_they_s
     let told = scene.poll(NOON + 3 * SECOND);
     assert_eq!(told.len(), 2, "each is shown the other");
     assert_eq!(told.iter().map(recipient).collect::<Vec<_>>(), [A, B]);
-    assert!(told.iter().all(|o| names(o) == ["AddBalls2", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]));
+    assert!(
+        told.iter().all(|o| names(o) == ["PackagedAction", "SetBallAgility", "SetBallMass", "SetMaxSpeed"])
+    );
 }
 
 #[test]

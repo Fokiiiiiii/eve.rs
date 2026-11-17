@@ -176,6 +176,37 @@ fn action_names(told: &[Out], session: SessionId) -> Vec<String> {
     told_actions(&told).into_iter().map(|(_, name)| name).collect()
 }
 
+/// The actions carried in the first `PackagedAction` of a session's Destiny update.
+fn packaged_actions(told: &[Out], session: SessionId) -> Vec<(i64, String)> {
+    let out = told.iter().find(|out| out.session() == session).expect("session has a Destiny update");
+    let Out::Notify { args, .. } = out else { panic!("{out:?}") };
+    let Value::List(actions) = &args[0] else { panic!("{args:?}") };
+    let Value::Tuple(pair) = &actions[0] else { panic!("{:?}", actions[0]) };
+    let Value::Int(outer_stamp) = &pair[0] else { panic!("{:?}", pair[0]) };
+    let Value::Tuple(call) = &pair[1] else { panic!("{:?}", pair[1]) };
+    assert!(matches!(&call[0], Value::Str(name) if name == "PackagedAction"));
+    let Value::Buffer(buffer) = &call[1] else { panic!("{:?}", call[1]) };
+    let Value::Tuple(inner) = eve_marshal::decode_exact(buffer).expect("PackagedAction payload decodes")
+    else {
+        panic!("PackagedAction payload is a tuple")
+    };
+    inner
+        .iter()
+        .map(|action| {
+            let Value::Tuple(pair) = action else { panic!("{action:?}") };
+            let Value::Int(stamp) = &pair[0] else { panic!("{:?}", pair[0]) };
+            let Value::Tuple(call) = &pair[1] else { panic!("{:?}", pair[1]) };
+            let name = match &call[0] {
+                Value::Str(name) => name.to_string(),
+                Value::Bytes(name) => std::str::from_utf8(name).expect("action name is UTF-8").to_string(),
+                other => panic!("{other:?}"),
+            };
+            assert_eq!(stamp, outer_stamp, "packaged action shares its outer stamp");
+            (*stamp, name)
+        })
+        .collect()
+}
+
 #[test]
 fn the_pilot_of_a_capsule_is_not_told_of_its_explosion_and_the_pilot_of_a_ship_is() {
     let mut scene = scene_with_a_player();
@@ -207,7 +238,11 @@ fn a_session_that_lost_its_ship_is_given_a_capsule_where_it_was_and_its_client_i
     assert_eq!(scene.ship(PLAYER, LATER + SECOND).unwrap().spec.ship_id, 9_988_400_002_416);
     assert_eq!(scene.ship(PLAYER, LATER + SECOND).unwrap().position, place);
     let names = action_names(&told, PLAYER);
-    assert_eq!(names.first().map(String::as_str), Some("AddBalls2"), "{names:?}");
+    assert_eq!(names, ["PackagedAction", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
+    assert_eq!(
+        packaged_actions(&told, PLAYER).iter().map(|(_, name)| name.as_str()).collect::<Vec<_>>(),
+        ["AddBalls2"]
+    );
     assert!(scene.locked_by(PLAYER).is_empty());
     // it is the pilot's ship again: it answers to commands
     let answered = scene.command(PLAYER, Command::Stop, LATER + 2 * SECOND);

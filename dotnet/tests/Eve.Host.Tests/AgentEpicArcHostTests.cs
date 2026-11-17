@@ -39,7 +39,12 @@ public partial class HostServerTests
                 ])),
         ]);
 
+        var cached = Assert.IsType<PyObject>(Result(MarshalCodec.Decode(reply.Payload)));
+        Assert.Equal(ObjectCaching.ResultClass, Eve.Macho.JsSemantics.StringValue(cached.Name));
+        var fields = Assert.IsType<PyTuple>(cached.Args).Items;
+        Assert.Equal("never", Eve.Macho.JsSemantics.StringValue(Assert.Single(Assert.IsType<PyDict>(fields[0]).Entries,
+            entry => Eve.Macho.JsSemantics.StringValue(entry.Key) == "versionCheck").Value));
         Assert.Equal(MarshalCodec.Decode(MarshalCodec.Encode(expected)),
-            Result(MarshalCodec.Decode(reply.Payload)));
+            Assert.IsType<PySubStream>(fields[1]).Decoded);
     }
 }

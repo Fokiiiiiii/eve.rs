@@ -36,7 +36,7 @@ TRITANIUM = 34
 RESEARCH_AGENT_TYPE = 4
 COCKROACH = 11019  # the GM frigate (the pinned SDE's "Cockroach"): the standard live-walk ship
 START_RESEARCH, CANCEL_RESEARCH, BUY_DATACORES = 830, 831, 832  # the action tokens (AgentDialogueToken)
-REQUEST, ACCEPT, DECLINE = 376, 377, 378
+REQUEST, ACCEPT, DECLINE, DEFER = 376, 377, 378, 379
 DAY_MS = 86_400_000
 SKIP_REFERENCE = pytest.mark.skipif(REFERENCE, reason="the EVE.js reference walk covers the research dialogue only")
 
@@ -326,3 +326,74 @@ def test_agent_decline_asks_first_and_a_yes_declines_the_offer():
         client.answer("YesNo", True)
         _, actions, info = do_action(client, handle, DECLINE)
         assert info.get("missionDeclined") is True
+
+
+def test_a_level_one_security_agent_offers_a_mission_through_the_agent_dialogue():
+    run = run_id()
+    with connect(f"l1-security-offer-{run}") as client:
+        character_id = new_pilot(client, run)
+        candidates = [
+            row for row in agents(client)
+            if row["agentTypeID"] == 2 and row["missionKind"] == "encounter"
+            and row["level"] == 1 and not row["isInSpace"] and not row["isLocatorAgent"]
+        ]
+        assert candidates, "the pinned SDE supplies level 1 station security agents"
+        agent = candidates[0]
+        issues = []
+        if agent["missionTypeLabel"] != "UI/Agents/MissionTypes/Encounter":
+            issues.append(f"GetAgents.missionTypeLabel must be a client localization path: {agent!r}")
+        seed_agent_standing(client, agent["corporationID"], character_id)
+        seed_personal_standing(client, agent["agentID"], character_id)
+        handle = client.call("agentMgr", "MachoBindObject", agent["agentID"])
+
+        # The V24 agent window calls DoAction(None), then sends the Request action
+        # returned by that conversation. This exercises both bound-object calls.
+        says, actions, _ = do_action(client, handle, None)
+        if (REQUEST, 2) in actions:
+            says, actions, _ = do_action(client, handle, REQUEST)
+        assert (ACCEPT, 3) in actions and (DECLINE, 9) in actions and (DEFER, 10) in actions, (agent, actions, client.dialogs)
+
+        offered = m.plain(client.call_bound(handle, "GetMissionJournalInfo", character_id, None))
+        assert isinstance(offered, dict) and offered["missionState"] == 1, offered
+        assert tuple(says) == (offered["briefingTextID"], offered["contentID"]), (says, offered)
+        objectives = offered["objectives"]
+        if "missionExtra" in objectives and not (isinstance(objectives["missionExtra"], (tuple, list)) and len(objectives["missionExtra"]) == 2):
+            issues.append(f"objectives.missionExtra must be absent or a two-value tuple: {objectives['missionExtra']!r}")
+        dungeon = objectives["dungeons"][0]
+        if not (isinstance(dungeon["briefingMessage"], (tuple, list)) and len(dungeon["briefingMessage"]) == 2):
+            issues.append(f"dungeons[0].briefingMessage must be (messageID, contentID): {dungeon['briefingMessage']!r}")
+        if not (isinstance(offered["missionNameID"], (int, str)) and offered["missionNameID"]):
+            issues.append(f"missionNameID must be a client-readable message ID or text: {offered['missionNameID']!r}")
+        if not isinstance(offered["missionImage"], str):
+            issues.append(f"missionImage must be a client image string: {offered['missionImage']!r}")
+        keywords = m.plain(client.call_bound(handle, "GetMissionKeywords", offered["contentID"]))
+        if keywords.get("dungeonLocationID") is None or keywords.get("dungeonSolarSystemID") is None:
+            issues.append(f"dungeon mission keywords must include both location IDs: {keywords!r}")
+
+        # The V24 Defer action keeps the same offer and leaves it available for later.
+        deferred_says, actions, _ = do_action(client, handle, DEFER)
+        assert (ACCEPT, 3) in actions and (DECLINE, 9) in actions and (DEFER, 10) in actions, (agent, actions, client.dialogs)
+        deferred = m.plain(client.call_bound(handle, "GetMissionJournalInfo", character_id, None))
+        assert deferred["missionState"] == 1 and deferred["contentID"] == offered["contentID"], deferred
+        assert tuple(deferred_says) == (deferred["briefingTextID"], deferred["contentID"]), (deferred_says, deferred)
+
+        client.notifications.clear()
+        accepted_says, actions, accepted_info = do_action(client, handle, ACCEPT)
+        accepted_actions = [(action, button) for action, button in actions if button in (6, 11)]
+        expected_actions = [(380, 6)]
+        if client.session.session_init.get("stationid") == agent.get("stationID"):
+            expected_actions.append((381, 11))
+        assert accepted_actions == expected_actions, (agent, actions, client.dialogs)
+        assert tuple(accepted_says) == (offered["briefingTextID"], offered["contentID"]), (accepted_says, offered)
+        assert accepted_info.get("missionCompleted") is False, accepted_info
+        assert accepted_info.get("missionQuit") is False, accepted_info
+        assert accepted_info.get("missionDeclined") is False, accepted_info
+        accepted = m.plain(client.call_bound(handle, "GetMissionJournalInfo", character_id, None))
+        assert isinstance(accepted, dict) and accepted["missionState"] == 2, accepted
+        journal = m.plain(client.call("agentMgr", "GetMyJournalDetails"))
+        mission_row = next(row for row in journal[0] if row[4] == agent["agentID"])
+        assert mission_row[0] == 2, mission_row
+        if mission_row[2] != "UI/Agents/MissionTypes/Encounter":
+            issues.append(f"GetMyJournalDetails.missionTypeLabel must be a client localization path: {mission_row!r}")
+        assert not issues, "; ".join(issues)
+        assert "OnAgentMissionChange" in names(client), sorted(names(client))

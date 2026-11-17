@@ -296,7 +296,7 @@ public partial class HostServerTests
         notifications.Clear();
         Assert.Equal(PyNone.Instance, Result(await Call("skillHandler", "ExtractSkills", new PyLong(extractorId),
             new PyList([Py.Tuple(new PyInt(target.TypeId), new PyLong(long.MaxValue))]))));
-        Assert.Equal(["OnServerSkillsChanged", "OnSkillsChanged"], notifications.Take(2));
+        Assert.Equal("OnServerSkillsChanged", notifications[0]);
         Assert.Equal(2, notifications.Count(name => name == "OnItemChange"));
         Assert.Equal(["OnItemChange", "OnItemChange"], notifications.TakeLast(2));
         Assert.Null(await items.GetAsync(extractorId));

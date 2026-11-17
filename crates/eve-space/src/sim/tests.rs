@@ -1,7 +1,7 @@
 use super::*;
 use crate::health::Condition;
 use crate::scene::tests::{NOON, SESSION, STATION, spec, system};
-use crate::world::SolarSystem;
+use crate::world::{Body, BodyKind, Detail, SolarSystem};
 
 #[path = "abyssal_environment_tests.rs"]
 mod abyssal_environment_tests;
@@ -981,6 +981,35 @@ fn scoop_removes_an_abandoned_ship_from_the_scene_before_acknowledging_it() {
 }
 
 #[test]
+fn an_unbound_ejected_staging_session_does_not_keep_a_ballpark_widow() {
+    let mut simulation = sim();
+    let scene_key = SceneKey::solar_system(SYSTEM);
+    let ship_id = spec().ship_id;
+    simulation
+        .handle(
+            Message::Enter(Box::new(Enter {
+                session_id: SESSION,
+                scene: scene_key,
+                how: How::InSpace,
+                station_id: 0,
+                ship: spec(),
+                position: Some([100.0, 0.0, 0.0]),
+                direction: Some([1.0, 0.0, 0.0]),
+            })),
+            NOON,
+        )
+        .unwrap();
+
+    simulation.handle(Message::Leave { session_id: SESSION, why: 3 }, NOON + SECOND).unwrap();
+
+    let scene = &simulation.scenes[&scene_key];
+    assert!(scene.unpiloted.contains_key(&ship_id), "the restored hull stays targetable");
+    assert!(!scene.awaiting_respawn(SESSION), "a synthetic session has no client ballpark to preserve");
+    assert!(!simulation.widowed.contains_key(&SESSION));
+    assert!(!simulation.sessions.contains_key(&SESSION));
+}
+
+#[test]
 fn host_wormhole_slim_updates_reach_bound_pilots_as_slim_item_changes() {
     let mut sim = undocked();
     sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
@@ -1153,6 +1182,99 @@ fn public_scene_body_query_uses_loaded_scene_and_reports_absence() {
 }
 
 #[test]
+fn deployment_ball_query_returns_live_balls_and_client_warp_in_points() {
+    let mut system = (*system()).clone();
+    let celestial = Body {
+        id: 70_000_001,
+        type_id: 2_000,
+        group_id: 7,
+        category_id: 2,
+        owner_id: 0,
+        name: "Test Planet".to_string(),
+        kind: BodyKind::Planet,
+        position: Vec3::new(50_000_000.0, 10_000.0, -25_000_000.0),
+        radius: 100_000.0,
+        graphic_id: None,
+        detail: Detail::None,
+    };
+    let belt = Body {
+        id: 70_000_002,
+        type_id: 15,
+        group_id: 9,
+        category_id: 2,
+        owner_id: 0,
+        name: "Large Test Belt".to_string(),
+        kind: BodyKind::Belt,
+        position: Vec3::new(-75_000_000.0, 0.0, 30_000_000.0),
+        radius: 106_355.0,
+        graphic_id: None,
+        detail: Detail::None,
+    };
+    let expected_warp_point = crate::warp::warp_in_point(&celestial).unwrap();
+    let expected_belt_warp_point = crate::warp::deployment_warp_in_point(&belt).unwrap();
+    system.bodies.push(celestial.clone());
+    system.bodies.push(belt.clone());
+    let scene = SceneKey::solar_system(SYSTEM);
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([system])));
+    sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+
+    let mut structure =
+        crate::scene::tests::structure_placement(&Scene::new(crate::scene::tests::system()), NOON);
+    structure.structure_id = 1_040_000_000_001;
+    structure.position = [25_000.0, 0.0, 0.0];
+    let structure_id = structure.structure_id;
+    let structure_type_id = structure.type_id;
+    sim.handle(Message::PlaceStructure(Box::new(structure)), NOON).unwrap();
+
+    let request = Message::GetDeploymentBalls { request_id: 104, scene };
+    assert_eq!(Message::decode(&request.payload()).unwrap(), request);
+    let reply = sim.handle(request, NOON).unwrap();
+    let Message::GetDeploymentBallsReply { outcome: Ok(balls), .. } = &reply[0] else {
+        panic!("deployment balls")
+    };
+    assert!(
+        balls.iter().any(|ball| ball.item_id == spec().ship_id
+            && ball.type_id == spec().type_id
+            && !ball.warp_in_point)
+    );
+    assert!(balls.iter().any(|ball| ball.item_id == celestial.id
+        && ball.type_id == celestial.type_id
+        && !ball.warp_in_point
+        && ball.position == [celestial.position.x, celestial.position.y, celestial.position.z]
+        && ball.radius == celestial.radius));
+    assert!(balls.iter().any(|ball| ball.item_id == structure_id
+        && ball.type_id == structure_type_id
+        && !ball.warp_in_point));
+    assert!(balls.iter().any(|ball| ball.item_id == celestial.id
+        && ball.type_id == celestial.type_id
+        && ball.warp_in_point
+        && ball.position == [expected_warp_point.x, expected_warp_point.y, expected_warp_point.z]
+        && ball.radius == 0.0));
+    assert!(
+        balls
+            .iter()
+            .any(|ball| ball.item_id == belt.id && ball.type_id == belt.type_id && !ball.warp_in_point)
+    );
+    assert!(balls.iter().any(|ball| ball.item_id == belt.id
+        && ball.type_id == belt.type_id
+        && ball.warp_in_point
+        && ball.position
+            == [expected_belt_warp_point.x, expected_belt_warp_point.y, expected_belt_warp_point.z]
+        && ball.radius == 0.0));
+    assert_eq!(Message::decode(&reply[0].payload()).unwrap(), reply[0]);
+
+    let missing = sim
+        .handle(
+            Message::GetDeploymentBalls { request_id: 105, scene: SceneKey::solar_system(SYSTEM + 1) },
+            NOON,
+        )
+        .unwrap();
+    assert!(
+        matches!(&missing[..], [Message::GetDeploymentBallsReply { outcome: Err(error), .. }] if error == "SCENE_NOT_LOADED")
+    );
+}
+
+#[test]
 fn a_source_system_pose_query_returns_position_and_direction_atomically_without_a_run_id() {
     let mut sim = sim();
     let scene = SceneKey::solar_system(SYSTEM);
@@ -1181,6 +1303,8 @@ fn a_source_system_pose_query_returns_position_and_direction_atomically_without_
             .any(|message| matches!(message, Message::EnterReply { session_id: SESSION, outcome: Ok(()) }))
     );
 
+    sim.scenes.get_mut(&scene).unwrap().pilots.get_mut(&SESSION).unwrap().ship.course =
+        crate::ship::Course::Follow { target: 8_900_000_002, range: 2_500.0 };
     let reply =
         sim.handle(Message::GetAbyssalParticipantPose { request_id: 7, scene, ship_id }, NOON).unwrap();
     let [
@@ -1190,6 +1314,7 @@ fn a_source_system_pose_query_returns_position_and_direction_atomically_without_
             ship_id: id,
             outcome: Ok((position, direction)),
             deployment,
+            following,
         },
     ] = reply.as_slice()
     else {
@@ -1200,6 +1325,14 @@ fn a_source_system_pose_query_returns_position_and_direction_atomically_without_
         (scene, ship_id, [100.0, 200.0, 300.0], [0.0, 0.0, 1.0])
     );
     assert_eq!(deployment.is_some(), scene.instance_id == 0);
+    assert_eq!(
+        *following,
+        Some(crate::link::AbyssalFollowApproach {
+            target_id: 8_900_000_002,
+            follow_range_meters: 2_500.0,
+            max_velocity_meters_per_second: 339.25,
+        })
+    );
 }
 
 fn afterburner(module: i64) -> crate::modules::Effect {
@@ -1741,8 +1874,8 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
         .collect();
     assert_eq!(
         session_notifications,
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"],
-        "the full bound state precedes its ship numbers and the bind acknowledgement"
+        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"],
+        "the full state and ship numbers share one bound Destiny batch before acknowledgement"
     );
     assert!(matches!(
         rebound.last(),
@@ -1758,11 +1891,19 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
         .filter(|message| matches!(message, Message::Notify { session_id: 77, name, .. } if name == "DoDestinyUpdate"))
         .map(destiny_actions)
         .collect();
-    assert_eq!(destiny_updates.len(), 2);
+    assert_eq!(destiny_updates.len(), 1);
     assert_eq!(
         destiny_updates[0].iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
-        ["SetState"],
-        "SetState is the first Destiny update for the rebound ballpark"
+        [
+            "SetState",
+            "SetBallAgility",
+            "SetBallMass",
+            "SetMaxSpeed",
+            "SetBallAgility",
+            "SetBallMass",
+            "SetMaxSpeed",
+        ],
+        "SetState and each visible dynamic ship's numbers share one Destiny update"
     );
     let set_state = destiny_updates[0][0].1.first().expect("SetState carries its full-state KeyVal");
     let slim_items = match object_field(set_state, "slims") {
@@ -1785,14 +1926,14 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
         );
     }
 
-    let number_actions = &destiny_updates[1];
-    let actual_numbers: BTreeSet<_> = number_actions
+    let number_actions = &destiny_updates[0][1..];
+    let actual_numbers: Vec<_> = number_actions
         .iter()
         .filter_map(|(name, args)| {
             args.first().and_then(wire_integer).map(|item_id| (name.as_str(), item_id))
         })
         .collect();
-    let expected_numbers: BTreeSet<_> = sim.scenes[&second]
+    let expected_numbers: Vec<_> = sim.scenes[&second]
         .ships_in_view(77)
         .into_iter()
         .filter(|ship| ship.spec.max_velocity > 0.0)
@@ -1804,7 +1945,7 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
         .collect();
     assert_eq!(
         actual_numbers, expected_numbers,
-        "the bound state is followed by each visible ship's numbers"
+        "the same bound Destiny update carries each visible ship's numbers after SetState"
     );
     let rebound_state = sim.handle(Message::UpdateState { session_id: 77 }, NOON + 2 * SECOND).unwrap();
     assert!(names(&rebound_state).iter().any(|name| name == "DoDestinyUpdate"));
@@ -2809,10 +2950,20 @@ fn an_undock_puts_the_ship_in_space_and_binding_sends_it_the_scene_as_marshalled
     let out = sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
     let (acknowledgement, notifications) =
         out.split_last().expect("ballpark bind returns its acknowledgement after the scene");
-    assert_eq!(
-        names(notifications),
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate", "DoDestinyUpdate"]
-    );
+    assert_eq!(names(notifications), ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"]);
+    let destiny_update = notifications
+        .iter()
+        .find(|message| matches!(message, Message::Notify { name, .. } if name == "DoDestinyUpdate"))
+        .expect("the bound scene has one Destiny update");
+    let actions = destiny_actions(destiny_update);
+    assert_eq!(actions.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["SetState"]);
+    let set_state = actions[0].1.first().expect("SetState carries its full-state KeyVal");
+    assert_eq!(wire_integer(object_field(set_state, "ego").expect("SetState ego")), Some(spec().ship_id));
+    let state_buffer = match object_field(set_state, "state") {
+        Some(Value::Buffer(bytes)) => bytes,
+        other => panic!("SetState must carry its ball buffer: {other:?}"),
+    };
+    assert!(state_buffer.windows(8).any(|window| window == spec().ship_id.to_le_bytes()));
     assert!(matches!(
         acknowledgement,
         Message::Accepted { session_id: SESSION, command: crate::link::COMMAND_BIND_BALLPARK, at: NOON }
@@ -2916,8 +3067,16 @@ fn an_undock_rejects_bad_locations_and_in_space_login_restores_the_saved_pose() 
                 _ => None,
             })
             .collect::<Vec<_>>(),
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"],
-        "the bind carries clock sync, full ego-ball state and ship numbers"
+        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"],
+        "the bind carries clock sync, full ego-ball state and ship numbers in one update"
+    );
+    let destiny_update = bound
+        .iter()
+        .find(|message| matches!(message, Message::Notify { name, .. } if name == "DoDestinyUpdate"))
+        .expect("in-space login has one Destiny update");
+    assert_eq!(
+        destiny_actions(destiny_update).iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]
     );
     assert!(matches!(
         bound.last(),
@@ -3724,9 +3883,14 @@ fn a_jump_takes_the_ship_to_the_scene_of_the_other_system_when_it_is_due() {
     // the client binds the ballpark of the new system and is sent it
     let bound = sim.handle(Message::Bind { session_id: SESSION }, NOON + 5 * SECOND).unwrap();
     let (acknowledgement, notifications) = bound.split_last().expect("the bound scene is acknowledged last");
+    assert_eq!(names(notifications), ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"]);
+    let destiny_update = notifications
+        .iter()
+        .find(|message| matches!(message, Message::Notify { name, .. } if name == "DoDestinyUpdate"))
+        .expect("jump arrival has one Destiny update");
     assert_eq!(
-        names(notifications),
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"]
+        destiny_actions(destiny_update).iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]
     );
     let Message::Accepted { session_id, command, at } = acknowledgement else {
         panic!("{acknowledgement:?}")
@@ -3746,6 +3910,71 @@ fn a_jump_takes_the_ship_to_the_scene_of_the_other_system_when_it_is_due() {
         out,
         [Message::Refused { session_id: SESSION, command: 9, reason: "TOO_FAR_FROM_STARGATE".to_string() }]
     );
+}
+
+#[test]
+fn a_ship_binding_after_a_gate_jump_sees_empire_sentries_before_the_first_destination_poll() {
+    use crate::scene::tests::{ARRIVAL_GATE, NEAR_GATE, OTHER_SYSTEM};
+
+    let (here, mut there) = crate::scene::tests::gated_systems();
+    there.security = 1.0;
+    there.faction_id = Some(500_006);
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([here, there])));
+    sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+    sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+    sim.handle(jump_command(NEAR_GATE, ARRIVAL_GATE), NOON).unwrap();
+    sim.poll(NOON + 6 * SECOND);
+
+    // Arrival happens after the poll has visited the existing scenes. The client binds the new ballpark immediately.
+    let bound = sim.handle(Message::Bind { session_id: SESSION }, NOON + 7 * SECOND).unwrap();
+    let set_state = bound
+        .iter()
+        .filter(|message| matches!(message, Message::Notify { session_id: SESSION, name, .. } if name == "DoDestinyUpdate"))
+        .flat_map(destiny_actions)
+        .find_map(|(name, args)| {
+            (name == "SetState").then(|| args.first().expect("SetState carries its full-state KeyVal").clone())
+        })
+        .expect("the first bound state contains SetState");
+    let slims = match object_field(&set_state, "slims") {
+        Some(Value::List(items)) => items,
+        other => panic!("SetState must carry slim items: {other:?}"),
+    };
+    let sentries = slims
+        .iter()
+        .filter(|item| matches!(object_field(item, "typeID").and_then(wire_integer), Some(3739..=3741)))
+        .count();
+    assert_eq!(sentries, 8, "the arrival gate's sentries are in the initial SetState");
+    assert_eq!(
+        sim.scenes[&SceneKey::solar_system(OTHER_SYSTEM)].pilots[&SESSION].ship.spec.ship_id,
+        spec().ship_id
+    );
+}
+
+#[test]
+fn a_jump_arrival_is_one_set_state_update_with_ship_numbers_and_no_owner_jump_in_effect() {
+    use crate::scene::tests::{ARRIVAL_GATE, NEAR_GATE};
+
+    let (here, there) = crate::scene::tests::gated_systems();
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([here, there])));
+    sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+    sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
+    sim.handle(jump_command(NEAR_GATE, ARRIVAL_GATE), NOON).unwrap();
+    sim.poll(NOON + 6 * SECOND);
+    let bound = sim.handle(Message::Bind { session_id: SESSION }, NOON + 7 * SECOND).unwrap();
+    let updates: Vec<_> = bound
+        .iter()
+        .filter(|message| matches!(message, Message::Notify { session_id: SESSION, name, .. } if name == "DoDestinyUpdate"))
+        .collect();
+    assert_eq!(updates.len(), 1, "the SetState and its ship numbers share one batch");
+    assert_eq!(
+        destiny_actions(updates[0]).iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]
+    );
+    let Message::Notify { args, .. } = updates[0] else { panic!("expected DoDestinyUpdate") };
+    let Value::Tuple(arguments) = eve_marshal::decode_exact(args).unwrap() else {
+        panic!("DoDestinyUpdate arguments must be a tuple")
+    };
+    assert_eq!(arguments.get(1), Some(&Value::Bool(false)));
 }
 
 #[test]
@@ -3838,8 +4067,12 @@ fn a_second_ship_that_undocks_is_answered_and_shown_to_the_first_that_has_bound(
     let reply = sim.handle(other_enter(), NOON + SECOND).unwrap();
     assert_eq!(
         recipients(&reply),
-        [(OTHER, "EnterReply".to_string()), (SESSION, "DoDestinyUpdate".to_string())],
-        "the answer first, then what the first ship is told"
+        [
+            (OTHER, "EnterReply".to_string()),
+            (SESSION, "DoDestinyUpdate".to_string()),
+            (SESSION, "DoDestinyUpdate".to_string()),
+        ],
+        "the answer first, then the AddBalls update and its movement prime"
     );
     assert_eq!(sim.ships(), 2);
 }
@@ -4989,5 +5222,6 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         )
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
-    assert_eq!(crate::link::PROTOCOL_VERSION, 97);
+    // The Host and simulation carry Abyssal FOLLOW pose state in SimLink v100.
+    assert_eq!(crate::link::PROTOCOL_VERSION, 101);
 }

@@ -50,10 +50,16 @@ public sealed partial class CharacterShips
             return null;
         }
 
+        // FitShips assembles one hull from a packaged stack. Split exactly one hull in this
+        // transaction so changing its packaging state cannot consume the other hulls.
+        var assemblyShip = ship.Quantity > 1
+            ? await items.MoveStackAsync(connection, transaction, ship, 1, characterId, stationId, ship.Flag, cancellationToken)
+            : ship;
+
         var plan = new List<(Item Subsystem, int Flag)>();
         if (shipType.GroupId == StrategicCruisers.GroupId)
         {
-            if (await PlanSubsystemsAsync(connection, transaction, characterId, stationId, ship, subsystemIds, cancellationToken) is not { } chosen)
+            if (await PlanSubsystemsAsync(connection, transaction, characterId, stationId, assemblyShip, subsystemIds, cancellationToken) is not { } chosen)
             {
                 return null;
             }
@@ -62,24 +68,28 @@ public sealed partial class CharacterShips
 
         foreach (var (subsystem, flag) in plan)
         {
-            await items.MoveAsync(connection, transaction, subsystem.Id, ship.Id, flag, cancellationToken);
+            await items.MoveAsync(connection, transaction, subsystem.Id, assemblyShip.Id, flag, cancellationToken);
             await modules.SetAsync(connection, transaction, subsystem.Id, ItemState.Offline, cancellationToken);
         }
-        await items.MakeSingletonAsync(connection, transaction, ship.Id, cancellationToken);
+        await items.MakeSingletonAsync(connection, transaction, assemblyShip.Id, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
 
         var label = NormalizeName(name);
-        var assembled = ship with { Singleton = true, Quantity = 1 };
-        if (label is not null && await items.SetCustomNameAsync(ship.Id, label, cancellationToken))
+        var assembled = assemblyShip with { Singleton = true, Quantity = 1 };
+        if (label is not null && await items.SetCustomNameAsync(assemblyShip.Id, label, cancellationToken))
         {
             assembled = assembled with { CustomName = label };
         }
-        var after = await LoadShipAsync(characterId, shipId, cancellationToken);
+        var after = await LoadShipAsync(characterId, assemblyShip.Id, cancellationToken);
         var events = before is null || after is null
             ? []
-            : ShipChanges(ship.Id, before.World.Attributes(ship.Id), after.World.Attributes(ship.Id)).Cast<DogmaEvent>().ToList();
-        var moved = plan.Select(p => new ItemMoved(p.Subsystem with { LocationId = ship.Id, Flag = p.Flag }, p.Subsystem.LocationId, p.Subsystem.Flag)).ToList();
-        return new ShipChanged(ship.Id, ship.Id, moved, events, [new ItemChanged(assembled, ship.LocationId, ship.Flag, ship.Quantity)]);
+            : ShipChanges(assemblyShip.Id, before.World.Attributes(ship.Id), after.World.Attributes(assemblyShip.Id)).Cast<DogmaEvent>().ToList();
+        var moved = plan.Select(p => new ItemMoved(p.Subsystem with { LocationId = assemblyShip.Id, Flag = p.Flag }, p.Subsystem.LocationId, p.Subsystem.Flag)).ToList();
+        var stacks = new List<ItemChanged>();
+        if (assemblyShip.Id != ship.Id)
+            stacks.Add(new ItemChanged(ship with { Quantity = ship.Quantity - 1 }, ship.LocationId, ship.Flag, ship.Quantity));
+        stacks.Add(new ItemChanged(assembled, ship.LocationId, ship.Flag, assemblyShip.Id == ship.Id ? ship.Quantity : 0));
+        return new ShipChanged(assemblyShip.Id, assemblyShip.Id, moved, events, stacks);
     }
 
     /// <summary>

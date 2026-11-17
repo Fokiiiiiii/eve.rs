@@ -170,13 +170,24 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         {
             if (await Containers.ControlTowerFuelAsync(context.Connection, context.Transaction,
                 context.Payload<SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token))
-                context.AfterCommit(_ => { Events.Wake(); return Task.CompletedTask; });
+            {
+                var towerId = context.Payload<SpaceContainers.ControlTowerFuelDue>()!.DeployableId;
+                context.AfterCommit(async afterCommitToken =>
+                {
+                    await Containers.SynchronizeControlTowerSlimStateAsync(towerId, afterCommitToken);
+                    Events.Wake();
+                });
+            }
         });
         Scheduler.Register(SpaceContainers.ControlTowerOnlineJob, async (context, token) =>
         {
             var due = context.Payload<SpaceContainers.ControlTowerOnlineDue>()!;
             if (await Containers.CompleteControlTowerOnlineAsync(context.Connection, context.Transaction, due.DeployableId, due.StartedAtMs, token))
-                context.AfterCommit(_ => { Events.Wake(); return Task.CompletedTask; });
+                context.AfterCommit(async afterCommitToken =>
+                {
+                    await Containers.SynchronizeControlTowerSlimStateAsync(due.DeployableId, afterCommitToken);
+                    Events.Wake();
+                });
         });
         Scheduler.Register(SpaceContainers.StarbaseModuleOnlineJob, async (context, token) =>
         {
@@ -196,7 +207,9 @@ private readonly Dictionary<long, ClientSession> _fleetSessions = new();
         Space.DirectionalScans = new Eve.Services.Space.Scanning.SpaceDirectionalScans(Space, Sim, statics);
         Drones = new SpaceDrones(Sim, Ships, statics, Space, () => Now, Log.Add);
         Inventory = new InvBrokerService(Items, new ItemTypeCatalog(new SdeReader(source)), Stations, Ships, statics, () => Now, Containers, Drones);
-        Ship = new ShipService(Space, () => ClockMs, Containers, Drones);
+        Ship = new ShipService(Space, () => ClockMs, Containers, Drones,
+            fitShips: call => Inventory.FitShipsAsync(call, (session, locationId, _) =>
+                ValueTask.FromResult(session.GetInt("stationid") == locationId && Stations.ServicesOf(locationId).Contains(17))));
         Beyonce = new BeyonceService(Space, () => ClockMs, FleetStore, characterId => _fleetSessions.GetValueOrDefault(characterId));
         Beyonce.SkillLevelOfCharacter = (_, _, _) => Task.FromResult(5);
         Entity = new EntityService(Drones, () => ClockMs);

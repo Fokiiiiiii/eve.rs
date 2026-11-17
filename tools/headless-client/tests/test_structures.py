@@ -26,7 +26,7 @@ from evecli.observe import _plain_name, timed_events
 from tests import dbseed
 from tests.runid import run_token
 from tests import test_login_to_character as base
-from tests.test_undock import STATION, UNDOCK, arrive, number
+from tests.test_undock import STATION, UNDOCK, actions_of, arrive, number
 
 LIVE = os.environ.get("EVE_LIVE_HOST", "")
 SEEDED_STRUCTURE = 1040000000777  # the Astrahus the module seeds (its item id; the structure store's key)
@@ -361,6 +361,39 @@ def keyval(described) -> dict:
 def _named(events: list, name: str) -> list:
     return [event for event in events if "name" in event and _plain_name(event["name"]) == name]
 
+def _ship_started_warp(events: list, ship_id: int) -> bool:
+    """The ship's own WarpTo action confirms that the simulation accepted its warp."""
+    for event in events:
+        if event.get("name") != "DoDestinyUpdate":
+            continue
+        actions, _ = actions_of(event)
+        for _, name, args in actions:
+            values = args.get("$tuple", [])
+            if name == "WarpTo" and values and _destiny_id(values[0]) == ship_id:
+                return True
+    return False
+
+def _destiny_id(value):
+    if isinstance(value, dict):
+        return value.get("$long", value.get("$bigunsigned"))
+    return value
+
+def _ship_saw_warp_drop_warning(events: list, ship_id: int) -> bool:
+    """A massless update follows WarpTo two seconds before the V24 warp drop."""
+    started = False
+    for event in events:
+        if event.get("name") != "DoDestinyUpdate":
+            continue
+        actions, _ = actions_of(event)
+        for _, name, args in actions:
+            values = args.get("$tuple", [])
+            if name == "WarpTo" and values and _destiny_id(values[0]) == ship_id:
+                started = True
+            if (started and name == "SetBallMassive" and len(values) > 1 and
+                    _destiny_id(values[0]) == ship_id and number(values[1]) == 0):
+                return True
+    return False
+
 def test_a_docked_pilot_takes_control_of_the_structure_and_the_structure_names_it():
     """structureControl.TakeControl by a pilot docked in the structure (V24.01 structureControlService.js Handle_TakeControl, which returns
     None): the structure's pilot is the character from then on. The reference's assumeStructureControl changes the session's shipid to the
@@ -491,8 +524,9 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
     sovPlayerDeployment.js; the wiki's Anchoring structures): the Astrahus leaves the ship (the item is consumed), the structure is created in the
     corporation in its anchoring state (AnchorVulnerable) with its default profile, the simulation places it in the system (the pilot sees it in
     the ballpark), and the corporation's sessions hear OnStructureStateChanged. The pilot warps 5000 km from the station first (the free-space rule),
-    and the anchor is asked again until the warp is over, as in the warp test. The 5,000 km destination is outside the pinned SDE moon
-    clearance; the former 2,000 km point was only 1,724,888 m from moon 40057788. Then the Director unanchors and cancels the unanchoring."""
+    then verifies the V24 ballpark deployment conflict with the ship at 1.4 km before anchoring 100 km away. The anchor is retried while the ship is in
+    warp. The 5,000 km destination is outside the pinned SDE moon clearance; the former 2,000 km point was only 1,724,888 m from moon 40057788. Then
+    the Director unanchors and cancels the unanchoring."""
     run = run_token()
     with base.connect(f"walk-anchor-ok-{run}") as client:
         character, ship_id, fitted, _ = arrive(client, RACE, run)
@@ -536,15 +570,27 @@ def test_a_director_anchors_an_astrahus_from_its_ship_in_a_legal_system_and_the_
         deadline = time.time() + 300
         while True:
             try:
-                assert client.call("structureDeployment", "Anchor", item, 1000.0, 1000.0, 0.0, None, "Live anchor", "", None, None, None) is None
-                break
+                client.call("structureDeployment", "Anchor", item, 1000.0, 1000.0, 0.0, None, "Live anchor", "", None, None, None)
             except p.MachoError as failure:
-                if _refusal(failure)[0] != "ShipInWarp" or time.time() > deadline:
-                    pytest.fail(f"the anchor was refused: {_refusal(failure)[0]}: {describe(failure.payload)}")
-            # a stop once the warp is over clears it on the server (refused while the ship is still in warp), as a pilot's stop does
-            client.call_bound(ballpark[0], "CmdStop")
-            client.call_bound(ballpark[0], "UpdateStateRequest")
-            timed_events(client, 3.0)
+                label, text = _refusal(failure)
+                if label == "ShipInWarp" and time.time() <= deadline:
+                    # Stopping the warp clears the server-side warp refusal, as a pilot's stop does.
+                    client.call_bound(ballpark[0], "CmdStop")
+                    client.call_bound(ballpark[0], "UpdateStateRequest")
+                    timed_events(client, 3.0)
+                    continue
+                assert label == "CantDeployBlocked", f"the too-close placement was refused as {label}: {text}"
+                ship_type_id = int(dbseed.sql(f"select type_id from {dbseed.schema('INVENTORY')}.items where id = {ship_id}"))
+                assert (f"['typeID', {ship_type_id}]" in text or
+                        f"'typeID', {{'$long': {ship_type_id}}}" in text), text
+                break
+            else:
+                pytest.fail("the Astrahus was allowed within the live ship's deployment clearance")
+        # V24's StructurePlacementEntity passes GetBallsAndItems into the deployment-conflict check; the live ship is a 5 km blocker.
+        # EveJS's scene validator includes dynamic entities for the same check. At 100 km the ship clearance is satisfied.
+        assert dbseed.sql(f"select count(*) from {dbseed.schema('INVENTORY')}.items where id = {item}") == "1", "the refused item was consumed"
+        assert dbseed.sql(f"select count(*) from {dbseed.schema('STRUCTURES')}.structures where structure_id = {item}") == "0", "the refused structure was persisted"
+        assert client.call("structureDeployment", "Anchor", item, 100_000.0, 0.0, 0.0, None, "Live anchor", "", None, None, None) is None
         assert dbseed.sql(f"select count(*) from {dbseed.schema('INVENTORY')}.items where id = {item}") == "0", "the anchored item was not consumed"
         row = dbseed.sql(f"select owner_corporation_id, solar_system_id, state from {dbseed.schema('STRUCTURES')}.structures where structure_id = {item}")
         assert row == f"{corporation}|{LEGAL_SYSTEM}|{ANCHOR_STATE}", f"the structure row is {row!r}"
@@ -661,6 +707,7 @@ def test_a_moon_chunk_is_refused_until_ready_then_fractured_and_completed_and_it
         assert _owner_notifications(205, STRUCTURE), "the laser-fired notice of the fire is not in the owners' rows any more"
         assert client.call("structureControl", "ReleaseControl") is None
 
+@pytest.mark.timeout(600)
 def test_a_corporation_unanchors_and_scoops_its_control_tower():
     """V24 ship.Drop, posMgr.UnanchorStructure and ship.Scoop walk: reject an online tower, then unanchor, drop and recover its hull."""
     run = uuid.uuid4().hex[:10]
@@ -685,6 +732,7 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
         ballpark = client.call("beyonce", "MachoBindObject", LEGAL_SYSTEM, None)
         x, y, z = LEGAL_STATION_POSITION
         client.call_bound(ballpark[0], "CmdWarpToStuff", "position", (x + WARP_OFF, y, z), minRange=0)
+        warp_events = []
         tower = dbseed.new_item(12235, owner=character, location=ship_id, flag=CARGO_FLAG, singleton=True)
         deadline = time.time() + 300
         while True:
@@ -696,7 +744,7 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
                     pytest.fail(f"the tower drop was refused: {_refusal(failure)[0]}: {describe(failure.payload)}")
             client.call_bound(ballpark[0], "CmdStop")
             client.call_bound(ballpark[0], "UpdateStateRequest")
-            timed_events(client, 3.0)
+            warp_events.extend(timed_events(client, 3.0))
 
         assert dbseed.sql(
             f"select count(*) from {dbseed.schema('SPACE')}.deployed "
@@ -726,7 +774,7 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
         while time.time() < deadline and dbseed.sql(
             f"select count(*) from {dbseed.schema('SPACE')}.deployed where deployable_id = {tower}"
         ) != "0":
-            timed_events(client, 2.0)
+            warp_events.extend(timed_events(client, 2.0))
         assert dbseed.sql(f"select count(*) from {dbseed.schema('SPACE')}.deployed where deployable_id = {tower}") == "0"
         assert dbseed.sql(f"select count(*) from {dbseed.schema('SPACE')}.space_items where item_id = {tower}") == "1"
         item = dbseed.sql(
@@ -734,10 +782,31 @@ def test_a_corporation_unanchors_and_scoops_its_control_tower():
         )
         assert item == f"{corporation}|{LEGAL_SYSTEM}|0|evejs:structure-unanchor:hull:{tower}", item
 
-        # A ship can drift away while the unanchor timer completes. Follow the
-        # newly placed hull to the client's 2,500 m scoop range before testing
-        # the cargo transition.
-        client.call_bound(ballpark[0], "CmdFollowBall", tower, 1_000)
+        # A ship can drift away while the unanchor timer completes. The sim's
+        # massless action is sent two seconds before warp drop; V24's autopilot
+        # waits for InWarp() to clear, then warps to an out-of-range target
+        # (minWarpDistance=150,000 m, end range 0) before it uses ShipApproach.
+        deadline = time.time() + 150
+        while not _ship_saw_warp_drop_warning(warp_events, ship_id) and time.time() < deadline:
+            warp_events.extend(timed_events(client, 2.0))
+        assert _ship_saw_warp_drop_warning(warp_events, ship_id), "the ship never received its warp-drop massless action"
+        timed_events(client, 2.5)
+        client.call_bound(ballpark[0], "UpdateStateRequest")
+        timed_events(client, 0.5)
+        client.call_bound(ballpark[0], "CmdWarpToStuff", "item", tower, minRange=0)
+        return_warp_events = []
+        deadline = time.time() + 150
+        while not _ship_started_warp(return_warp_events, ship_id) and time.time() < deadline:
+            return_warp_events.extend(timed_events(client, 2.0))
+        assert _ship_started_warp(return_warp_events, ship_id), "the ship never started its warp to the unanchored hull"
+        deadline = time.time() + 150
+        while not _ship_saw_warp_drop_warning(return_warp_events, ship_id) and time.time() < deadline:
+            return_warp_events.extend(timed_events(client, 2.0))
+        assert _ship_saw_warp_drop_warning(return_warp_events, ship_id), "the ship never received the hull warp-drop action"
+        # The server's generic entity stop distance leaves the ship within the
+        # V24 surface-distance scoop range, so navigation does not need a
+        # FollowBall order after this warp.
+        timed_events(client, 2.5)
         deadline = time.time() + 90
         while True:
             try:

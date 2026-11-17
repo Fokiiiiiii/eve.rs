@@ -184,13 +184,16 @@ fn a_space_login_sends_the_ego_ball_with_the_initial_bind() {
         .position(|out| actions_of(out).iter().any(|(name, _)| name == "SetState"))
         .expect("the bind must send the authoritative ballpark state");
     assert_eq!(set_state, 0, "SetState is the first bound Destiny update: {destiny_updates:?}");
-    assert_eq!(action_names(destiny_updates[set_state]), ["SetState"]);
+    assert_eq!(
+        action_names(destiny_updates[set_state]),
+        ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]
+    );
     assert!(
         !destiny_updates.iter().any(|out| actions_of(out).iter().any(|(name, _)| name == "AddBalls2")),
         "SetState already carries the ego and visible scene balls: {destiny_updates:?}"
     );
     assert!(holds_ball_of(&set_state_buffer(destiny_updates[set_state]), spec().ship_id));
-    assert_eq!(names.iter().filter(|name| **name == "DoDestinyUpdate").count(), 2);
+    assert_eq!(names.iter().filter(|name| **name == "DoDestinyUpdate").count(), 1);
 }
 
 fn seconds(n: i64) -> i64 {
@@ -217,6 +220,35 @@ fn action_names(out: &Out) -> Vec<String> {
             other => panic!("{other:?}"),
         })
         .collect()
+}
+
+fn expanded_action_names(out: &Out) -> Vec<String> {
+    let Out::Notify { args, .. } = out else { return Vec::new() };
+    let Some(Value::List(actions)) = args.first() else { return Vec::new() };
+    let mut names = Vec::new();
+    let decode_name = |value: &Value| match value {
+        Value::Str(name) | Value::WString(name) | Value::Token(name) => name.to_string(),
+        Value::Bytes(name) => String::from_utf8_lossy(name).into_owned(),
+        other => panic!("{other:?}"),
+    };
+    for action in actions {
+        let Value::Tuple(pair) = action else { panic!("{action:?}") };
+        let Value::Tuple(inner) = &pair[1] else { panic!("{:?}", pair[1]) };
+        if matches!(inner.first(), Some(Value::Str(name)) if name == "PackagedAction") {
+            let Value::Buffer(bytes) = &inner[1] else { panic!("{:?}", inner[1]) };
+            let Value::Tuple(unpacked) = eve_marshal::decode_exact(bytes).expect("package decodes") else {
+                panic!("the package contains a tuple of Destiny actions")
+            };
+            for action in unpacked {
+                let Value::Tuple(pair) = action else { panic!("{action:?}") };
+                let Value::Tuple(inner) = &pair[1] else { panic!("{:?}", pair[1]) };
+                names.push(decode_name(&inner[0]));
+            }
+        } else {
+            names.push(decode_name(&inner[0]));
+        }
+    }
+    names
 }
 
 fn stamps(out: &Out) -> Vec<i64> {
@@ -313,7 +345,7 @@ fn a_ship_cannot_undock_twice_or_from_a_station_that_is_not_there() {
 }
 
 #[test]
-fn binding_sends_the_time_the_ship_then_the_state() {
+fn binding_sends_the_time_then_the_authoritative_state() {
     let mut scene = scene();
     let out = scene.bind(SESSION, NOON);
     let names: Vec<_> = out
@@ -323,23 +355,8 @@ fn binding_sends_the_time_the_ship_then_the_state() {
             other => panic!("{other:?}"),
         })
         .collect();
-    assert_eq!(
-        names,
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate", "DoDestinyUpdate"]
-    );
-    assert_eq!(action_names(&out[2]), ["AddBalls2"]);
-    assert_eq!(
-        action_names(&out[3]),
-        [
-            "OnSpecialFX",
-            "SetBallPosition",
-            "SetBallMassive",
-            "SetBallMass",
-            "SetBallVelocity",
-            "GotoDirection"
-        ]
-    );
-    assert_eq!(action_names(&out[4]), ["SetState"]);
+    assert_eq!(names, ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"]);
+    assert_eq!(action_names(&out[2]), ["SetState"]);
     let ship = spec();
     let ship_id = ship.ship_id.to_le_bytes();
     let state = fields_in_state(&out)
@@ -359,14 +376,11 @@ fn binding_sends_the_time_the_ship_then_the_state() {
     let max_velocity = f32::from_le_bytes(state[ego + 63..ego + 67].try_into().unwrap());
     let agility = f32::from_le_bytes(state[ego + 91..ego + 95].try_into().unwrap());
     assert_eq!((max_velocity, agility), (ship.max_velocity as f32, ship.agility as f32));
-    // the ship comes at the stamp of the moment and the state a stamp after (the reference's 102 and 103)
+    // A fresh station undock uses SetState as its sole owner bootstrap update; it carries the
+    // ship's actual physical state, including its initial movement away from the station.
     let now_stamp = i64::from(stamp_at(NOON));
     assert_eq!(stamps(&out[2]), [now_stamp]);
-    assert_eq!(stamps(&out[4]), [now_stamp + 1]);
-    assert!(
-        matches!(&out[2], Out::Notify { args, .. } if args[1] == Value::Bool(true)),
-        "the client waits for the ship"
-    );
+    assert!(matches!(&out[2], Out::Notify { args, .. } if args[1] == Value::Bool(false)));
 }
 
 #[test]
@@ -1066,6 +1080,14 @@ fn holds_ball_of(buffer: &[u8], ship_id: i64) -> bool {
     buffer.windows(needle.len()).any(|window| window == needle)
 }
 
+fn cloak_mode_of(buffer: &[u8], ship_id: i64) -> u8 {
+    let needle = ship_id.to_le_bytes();
+    let offset = buffer.windows(needle.len()).position(|window| window == needle).unwrap();
+    // A free ball stores 8-byte IDs, one mode byte, a 4-byte radius, three 8-byte coordinates, one flags byte,
+    // and an 8-byte mass before the cloak mode.
+    buffer[offset + 46]
+}
+
 fn accepted(command: u8, at: i64) -> Out {
     Out::Accepted { session: SESSION, command, at }
 }
@@ -1338,10 +1360,119 @@ fn a_fleet_member_ship_is_a_warp_target_in_its_system() {
 }
 
 #[test]
+fn a_visible_control_tower_is_a_warp_target_at_the_entity_stop_distance() {
+    use crate::link::DisruptorPlacement;
+
+    const CONTROL_TOWER: i64 = 990_000_000_610;
+    const TOWER_RADIUS: f64 = 20_000.0;
+
+    let mut scene = scene_with_a_planet();
+    scene.bind(SESSION, NOON);
+    let ship = scene.ship(SESSION, NOON).unwrap().clone();
+    let target = Vec3::new(ship.position.x + 300_000.0, ship.position.y, ship.position.z);
+    let placed = scene.place_control_tower(
+        DisruptorPlacement {
+            deployable_id: CONTROL_TOWER,
+            solar_system_id: scene.solar_system_id(),
+            name: "Control Tower".to_string(),
+            type_id: 12_235,
+            group_id: 365,
+            position: [target.x, target.y, target.z],
+            radius: TOWER_RADIUS,
+            range: 0.0,
+            active: false,
+            owner_id: spec().owner_id,
+            corporation_id: spec().corporation_id,
+            alliance_id: 0,
+            ship_id: spec().ship_id,
+        },
+        NOON,
+    );
+    assert!(placed.iter().any(|out| format!("{out:?}").contains("AddBalls2")));
+
+    let stop_distance = TOWER_RADIUS + ship.spec.radius * 2.0;
+    let resolved =
+        scene.command(SESSION, Command::ResolveWarpTarget { target_id: CONTROL_TOWER, range: 0.0 }, NOON);
+    assert!(
+        matches!(resolved.last(), Some(Out::Position { command: 22, position, .. })
+            if *position == Vec3::new(target.x - stop_distance, target.y, target.z)),
+        "the visible tower resolves using EveJS's entity stop distance: {resolved:?}"
+    );
+
+    let warp = scene.command(SESSION, Command::WarpTo { target_id: CONTROL_TOWER, range: 0.0 }, NOON);
+    assert!(matches!(warp.last(), Some(Out::Accepted { command: 8, .. })), "{warp:?}");
+    assert!(matches!(
+        scene.ship(SESSION, NOON).unwrap().course,
+        Course::Warp { raw_destination, stop_distance: actual, .. }
+            if raw_destination == target && actual == stop_distance
+    ));
+}
+
+#[test]
+fn a_ship_can_follow_a_control_tower_after_dropping_out_of_warp() {
+    use crate::link::DisruptorPlacement;
+
+    const CONTROL_TOWER: i64 = 990_000_000_611;
+    let mut scene = scene_with_a_planet();
+    scene.bind(SESSION, NOON);
+    let initial = scene.ship(SESSION, NOON).unwrap().position;
+    let target = Vec3::new(initial.x + 300_000.0, initial.y, initial.z);
+    scene.place_control_tower(
+        DisruptorPlacement {
+            deployable_id: CONTROL_TOWER,
+            solar_system_id: scene.solar_system_id(),
+            name: "Control Tower".to_string(),
+            type_id: 12_235,
+            group_id: 365,
+            position: [target.x, target.y, target.z],
+            radius: 20_000.0,
+            range: 0.0,
+            active: false,
+            owner_id: spec().owner_id,
+            corporation_id: spec().corporation_id,
+            alliance_id: 0,
+            ship_id: spec().ship_id,
+        },
+        NOON,
+    );
+
+    let (_, first_drop) = warp_until_drop(&mut scene, PLANET);
+    let warp = scene.command(SESSION, Command::WarpTo { target_id: CONTROL_TOWER, range: 0.0 }, first_drop);
+    assert!(matches!(warp.last(), Some(Out::Accepted { command: 8, .. })), "{warp:?}");
+    let (_, tower_drop) = warp_until_drop(&mut scene, CONTROL_TOWER);
+    let before = scene.ship(SESSION, tower_drop).unwrap().position;
+    let before_distance =
+        ((before.x - target.x).powi(2) + (before.y - target.y).powi(2) + (before.z - target.z).powi(2))
+            .sqrt();
+    let follow_standoff = 1_000.0 * 0.999 + spec().radius + 20_000.0;
+    let before_error = (before_distance - follow_standoff).abs();
+
+    let follow = scene.command(
+        SESSION,
+        Command::FollowBall { target_id: CONTROL_TOWER, range: 1_000.0 },
+        tower_drop + seconds(1),
+    );
+    assert!(matches!(follow.last(), Some(Out::Accepted { command: 5, .. })), "{follow:?}");
+    assert!(scene.pilots[&SESSION].flight.is_none(), "a follow order replaces the coast after warp drop");
+
+    let now = tower_drop + seconds(21);
+    scene.update_state(SESSION, now);
+    let after = scene.ship(SESSION, now).unwrap().position;
+    let after_distance =
+        ((after.x - target.x).powi(2) + (after.y - target.y).powi(2) + (after.z - target.z).powi(2)).sqrt();
+    let after_error = (after_distance - follow_standoff).abs();
+    assert!(
+        after_error < before_error,
+        "the ship did not approach the FollowBall standoff: {before_distance} -> {after_distance}, expected {follow_standoff}"
+    );
+}
+
+#[test]
 fn a_ship_lining_up_for_warp_or_in_it_takes_no_orders() {
     let mut scene = scene_with_a_planet();
     let out = scene.command(SESSION, Command::WarpTo { target_id: PLANET, range: 0.0 }, NOON);
-    assert_eq!(action_names(&out[0]), ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"]);
+    assert_eq!(action_names(&out[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"]);
+    assert!(scene.pilots[&SESSION].flight.as_ref().unwrap().is_in_warp_mode());
     for command in [
         Command::Stop,
         Command::SetSpeedFraction(0.5),
@@ -1357,9 +1488,14 @@ fn a_ship_lining_up_for_warp_or_in_it_takes_no_orders() {
             "{command:?}"
         );
     }
-    // it is told to the client as a ball that is turning to warp, and, once in warp, as one in warp
+    // Fresh acquisition uses the ball's WARP state; EveJS encodes it in SetState rather than replaying WarpTo.
     let bound = scene.bind(SESSION, NOON + seconds(3));
-    assert_eq!(action_names(&bound[3]).last().map(String::as_str), Some("WarpTo"));
+    assert_eq!(action_names(&bound[2]), ["SetState"]);
+    let encoded = eve_destiny::encode_entity_ball(&scene.pilots[&SESSION].ship.ball()).unwrap();
+    assert!(
+        set_state_buffer(&bound[2]).windows(encoded.len()).any(|ball| ball == encoded),
+        "the SetState contains the warping ego ball exactly as encoded for the Destiny stream"
+    );
 }
 
 #[test]
@@ -1403,6 +1539,81 @@ fn a_warp_ends_with_the_ship_at_rest_by_the_planet_and_the_pilot_may_order_it_ab
     assert_eq!(action_names(&told[0]), ["SetSpeedFraction"]);
     let told = scene.command(SESSION, Command::WarpTo { target_id: PLANET, range: 0.0 }, t + seconds(1));
     assert_eq!(told, [Out::Refused { session: SESSION, command: 8, reason: "WARP_DISTANCE_TOO_CLOSE" }]);
+}
+
+fn warp_until_drop(scene: &mut Scene, destination: i64) -> (Vec<Out>, i64) {
+    scene.command(SESSION, Command::WarpTo { target_id: destination, range: 0.0 }, NOON);
+    let mut told = Vec::new();
+    let mut now = NOON;
+    while now < NOON + seconds(300)
+        && !scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_coasting())
+    {
+        now += seconds(1);
+        told.extend(scene.poll(now));
+    }
+    assert!(
+        scene.pilots[&SESSION].flight.as_ref().is_some_and(|flight| flight.is_coasting()),
+        "warp did not drop out by {now}"
+    );
+    (told, now)
+}
+
+#[test]
+fn a_ship_can_follow_a_target_after_the_warp_drop_while_it_is_still_coasting() {
+    let mut scene = scene_with_a_planet();
+    let (told, dropped_at) = warp_until_drop(&mut scene, PLANET);
+    assert!(told.contains(&Out::WarpExited { session: SESSION }), "{told:?}");
+
+    let now = dropped_at + seconds(1);
+    let before = scene.ship(SESSION, now).unwrap().clone();
+    assert_eq!(before.course, Course::Stop, "the client has left WARP mode");
+    assert!(scene.pilots[&SESSION].flight.as_ref().unwrap().is_coasting());
+    assert!(!scene.pilots[&SESSION].flight.as_ref().unwrap().is_in_warp_mode());
+    let target = scene.command(SESSION, Command::FollowBall { target_id: STATION, range: 1_000.0 }, now);
+
+    assert!(!target.iter().any(|out| matches!(out, Out::Refused { reason: "IN_WARP", .. })), "{target:?}");
+    let after = scene.ship(SESSION, now).unwrap();
+    assert_eq!(after.position, before.position);
+    assert_eq!(after.velocity, before.velocity, "the warp exit preserves the ship's coast velocity");
+    assert!(matches!(after.course, Course::Follow { target: STATION, range } if range == 1_000.0));
+    assert!(scene.pilots[&SESSION].flight.is_none());
+}
+
+#[test]
+fn a_ship_can_dock_after_warp_drop_without_waiting_for_its_coast_to_stop() {
+    let mut scene = scene_with_a_planet();
+    scene.pilots.get_mut(&SESSION).unwrap().ship.position = Vec3::new(1_301_047.0, 0.0, 0.0);
+    let (_, dropped_at) = warp_until_drop(&mut scene, STATION);
+    let ship = scene.ship(SESSION, dropped_at).unwrap().clone();
+    assert!(scene.pilots[&SESSION].flight.as_ref().unwrap().is_coasting());
+    assert!(
+        crate::gate::surface_distance(scene.system().body(STATION).unwrap(), ship.position, ship.spec.radius)
+            <= docking_range(BodyKind::Station)
+    );
+
+    let out = scene.command(SESSION, Command::Dock { station_id: STATION }, dropped_at);
+    assert!(out.iter().any(|out| matches!(out, Out::Accepted { command: 4, .. })), "{out:?}");
+    assert!(scene.pilots[&SESSION].flight.is_none());
+    assert_eq!(scene.pilots[&SESSION].ship.velocity, Vec3::ZERO);
+    let position = scene.ship(SESSION, dropped_at).unwrap().position;
+    scene.poll(dropped_at + seconds(1));
+    assert_eq!(scene.ship(SESSION, dropped_at + seconds(1)).unwrap().position, position);
+}
+
+#[test]
+fn a_ship_can_start_another_warp_after_the_drop_without_waiting_for_its_coast_to_stop() {
+    let mut scene = scene_with_a_planet();
+    let (told, dropped_at) = warp_until_drop(&mut scene, PLANET);
+    assert!(told.contains(&Out::WarpExited { session: SESSION }), "{told:?}");
+    let before = scene.ship(SESSION, dropped_at).unwrap().clone();
+
+    let next = scene.command(SESSION, Command::WarpTo { target_id: STATION, range: 0.0 }, dropped_at);
+    assert!(matches!(next.last(), Some(Out::Accepted { command: 8, .. })), "{next:?}");
+    let ship = scene.ship(SESSION, dropped_at).unwrap();
+    assert!(matches!(ship.course, Course::Warp { .. }));
+    assert_eq!(ship.position, before.position);
+    assert_eq!(ship.velocity, before.velocity, "the next warp starts from the coast's current motion");
+    assert!(!scene.pilots[&SESSION].flight.as_ref().unwrap().is_coasting());
 }
 
 #[test]
@@ -1619,14 +1830,21 @@ fn a_station_dock_approach_that_arrives_while_blocked_is_not_accepted() {
 }
 
 #[test]
-fn binding_a_ship_that_follows_sends_the_follow() {
+fn binding_a_ship_that_follows_restores_its_state_without_replaying_the_movement_command() {
     let mut scene = scene();
     scene.command(SESSION, Command::FollowBall { target_id: STATION, range: 3_000.0 }, NOON);
     let out = scene.bind(SESSION, NOON);
-    let heading = actions_of(&out[3]);
+    let state = out.last().unwrap();
+    assert_eq!(action_names(state), ["SetState"]);
+    let encoded = eve_destiny::encode_entity_ball(&scene.pilots[&SESSION].ship.ball()).unwrap();
+    assert!(
+        set_state_buffer(state).windows(encoded.len()).any(|ball| ball == encoded),
+        "SetState carries the followed ego ball without replaying FollowBall"
+    );
     assert_eq!(
-        heading.last().unwrap(),
-        &("FollowBall".to_string(), vec![Value::Int(STATION), Value::Int(3_000)])
+        scene.pilots[&SESSION].ship.course,
+        Course::Follow { target: STATION, range: 3_000.0 },
+        "the authoritative scene continues the existing follow after the client receives its full state"
     );
 }
 
@@ -2174,14 +2392,160 @@ fn binding_a_ship_that_came_through_a_gate_sends_the_ship_the_state_and_the_numb
             other => panic!("{other:?}"),
         })
         .collect();
-    assert_eq!(
-        notifications,
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"]
-    );
-    assert_eq!(names[2], ["SetState"]);
-    assert_eq!(names[3], ["SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
+    assert_eq!(notifications, ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"]);
+    assert_eq!(names[2], ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
+    assert_eq!(cloak_mode_of(&set_state_buffer(&bound[2]), spec().ship_id), 2);
+    assert!(matches!(&bound[2], Out::Notify { args, .. } if args[1] == Value::Bool(false)));
     // the ship's own ball says it is stopped
     assert_eq!(there.ship(SESSION, NOON + seconds(6)).unwrap().course, Course::Stop);
+}
+
+#[test]
+fn a_gate_arrival_is_not_sent_to_destination_observers_until_the_jump_cloak_ends() {
+    let mut destination = other_scene();
+    let mut observer = spec();
+    observer.ship_id += 100;
+    observer.character_id += 100;
+    observer.owner_id += 100;
+    let gate = destination.system.body(ARRIVAL_GATE).unwrap();
+    destination
+        .enter_in_space(
+            SESSION + 1,
+            observer,
+            [gate.position.x + 30_000.0, gate.position.y, gate.position.z],
+            [1.0, 0.0, 0.0],
+            NOON,
+        )
+        .unwrap();
+    destination.bind(SESSION + 1, NOON);
+
+    let traveller = jumped(&mut scene_by_a_gate());
+    let arrival = destination.arrive(traveller, NOON + seconds(5)).unwrap();
+
+    assert!(arrival.is_empty(), "a jump-cloaked arrival is not yet delivered to observers: {arrival:?}");
+    assert!(!destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
+}
+
+#[test]
+fn a_gate_cloak_expires_on_the_simulation_clock_and_introduces_the_ship_to_its_observers() {
+    let mut destination = other_scene();
+    let mut observer = spec();
+    observer.ship_id += 100;
+    observer.character_id += 100;
+    observer.owner_id += 100;
+    let gate = destination.system.body(ARRIVAL_GATE).unwrap();
+    destination
+        .enter_in_space(
+            SESSION + 1,
+            observer,
+            [gate.position.x + 30_000.0, gate.position.y, gate.position.z],
+            [1.0, 0.0, 0.0],
+            NOON,
+        )
+        .unwrap();
+    destination.bind(SESSION + 1, NOON);
+
+    let traveller = jumped(&mut scene_by_a_gate());
+    destination.arrive(traveller, NOON + seconds(5)).unwrap();
+    let bound = destination.bind(SESSION, NOON + seconds(6));
+    assert_eq!(cloak_mode_of(&set_state_buffer(&bound[2]), spec().ship_id), 2);
+    assert!(!destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
+
+    let expired = destination.poll(NOON + seconds(66));
+    let owner_updates: Vec<_> = expired
+        .iter()
+        .filter(
+            |out| matches!(out, Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == SESSION),
+        )
+        .collect();
+    let observer_updates: Vec<_> = expired
+        .iter()
+        .filter(|out| matches!(out, Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == SESSION + 1))
+        .collect();
+
+    assert!(
+        owner_updates.iter().any(|out| action_names(out).contains(&"UncloakBall".to_string())),
+        "the owner's ball cloak expires: {owner_updates:?}"
+    );
+    assert_eq!(
+        expanded_action_names(observer_updates.first().unwrap()),
+        ["AddBalls2", "SetBallAgility", "SetBallMass", "SetMaxSpeed", "OnSpecialFX"]
+    );
+    assert!(destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
+    assert!(!destination.pilots[&SESSION].jump_cloaked);
+}
+
+#[test]
+fn an_accepted_movement_cancels_gate_cloak_then_introduces_the_ship_to_observers() {
+    let mut destination = other_scene();
+    let mut observer = spec();
+    observer.ship_id += 100;
+    observer.character_id += 100;
+    observer.owner_id += 100;
+    let gate = destination.system.body(ARRIVAL_GATE).unwrap();
+    destination
+        .enter_in_space(
+            SESSION + 1,
+            observer,
+            [gate.position.x + 30_000.0, gate.position.y, gate.position.z],
+            [1.0, 0.0, 0.0],
+            NOON,
+        )
+        .unwrap();
+    destination.bind(SESSION + 1, NOON);
+
+    let traveller = jumped(&mut scene_by_a_gate());
+    destination.arrive(traveller, NOON + seconds(5)).unwrap();
+    destination.bind(SESSION, NOON + seconds(6));
+
+    let moved_at = NOON + seconds(7);
+    let moved = destination.command(SESSION, Command::SetSpeedFraction(1.0), moved_at);
+    assert_eq!(action_names(&moved[0]), ["UncloakBall", "OnSpecialFX"]);
+    assert_eq!(action_names(&moved[1]), ["SetSpeedFraction"]);
+    assert!(matches!(moved.last(), Some(Out::Accepted { command: 1, .. })));
+    assert!(!destination.pilots[&SESSION].jump_cloaked);
+    assert!(!destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
+
+    let reconciled = destination.poll(moved_at + 1);
+    let observer_update = reconciled.iter().find(
+        |out| matches!(out, Out::Notify { session, name: "DoDestinyUpdate", .. } if *session == SESSION + 1),
+    );
+    assert_eq!(
+        observer_update.map(expanded_action_names).unwrap_or_default(),
+        ["AddBalls2", "SetBallAgility", "SetBallMass", "SetMaxSpeed", "OnSpecialFX"]
+    );
+    assert!(destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
+}
+
+#[test]
+fn a_refused_movement_does_not_cancel_gate_cloak() {
+    let mut destination = other_scene();
+    let mut observer = spec();
+    observer.ship_id += 100;
+    observer.character_id += 100;
+    observer.owner_id += 100;
+    let gate = destination.system.body(ARRIVAL_GATE).unwrap();
+    destination
+        .enter_in_space(
+            SESSION + 1,
+            observer,
+            [gate.position.x + 30_000.0, gate.position.y, gate.position.z],
+            [1.0, 0.0, 0.0],
+            NOON,
+        )
+        .unwrap();
+    destination.bind(SESSION + 1, NOON);
+
+    let traveller = jumped(&mut scene_by_a_gate());
+    destination.arrive(traveller, NOON + seconds(5)).unwrap();
+    destination.bind(SESSION, NOON + seconds(6));
+    destination.pilots.get_mut(&SESSION).unwrap().immobile_until = NOON + seconds(10);
+
+    let refused =
+        destination.command(SESSION, Command::GotoDirection(Vec3::new(1.0, 0.0, 0.0)), NOON + seconds(7));
+    assert_eq!(refused, [Out::Refused { session: SESSION, command: 2, reason: "IMMOBILE" }]);
+    assert!(destination.pilots[&SESSION].jump_cloaked);
+    assert!(!destination.pilots[&(SESSION + 1)].sees.contains(&SESSION));
 }
 
 #[test]
@@ -2275,11 +2639,7 @@ fn a_warp_to_a_gate_ends_within_jump_range_of_it_and_the_jump_is_accepted() {
     scene.command(SESSION, Command::SetSpeedFraction(0.0), NOON);
     let warp_at = NOON + seconds(1);
     let told = scene.command(SESSION, Command::WarpTo { target_id: FAR_GATE, range: 0.0 }, warp_at);
-    assert_eq!(
-        action_names(&told[0]),
-        ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"],
-        "{told:?}"
-    );
+    assert_eq!(action_names(&told[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"], "{told:?}");
     let refused = scene.command(SESSION, jump(FAR_GATE, 0), warp_at);
     assert!(
         refused.iter().any(|out| matches!(out, Out::Refused { reason: "TOO_FAR_FROM_STARGATE", .. })),
@@ -2647,6 +3007,28 @@ fn a_cyno_jump_leaves_when_its_spool_is_over_and_appears_within_the_field_spawn_
 }
 
 #[test]
+fn a_cynosural_jump_stops_and_replaces_a_warp_in_progress() {
+    let mut scene = scene_by_a_gate();
+    let destination = other_scene().solar_system_id();
+    let origin = scene.ship(SESSION, NOON).unwrap().position;
+    let warp = scene.command(
+        SESSION,
+        Command::WarpToPoint {
+            destination: Vec3::new(origin.x + 1_000_000.0, origin.y, origin.z),
+            range: 0.0,
+        },
+        NOON,
+    );
+    assert!(matches!(warp.last(), Some(Out::Accepted { command: 21, .. })), "{warp:?}");
+    assert!(scene.pilots[&SESSION].flight.as_ref().unwrap().is_in_warp_mode());
+
+    let jump = scene.command(SESSION, cyno_jump(CYNO_FIELD, destination, 300_000.0), NOON + seconds(1));
+    assert!(jump.iter().any(|out| matches!(out, Out::Jumping { command: 26, .. })), "{jump:?}");
+    assert!(scene.pilots[&SESSION].flight.is_none());
+    assert_eq!(scene.pilots[&SESSION].ship.velocity, Vec3::ZERO);
+}
+
+#[test]
 fn a_cyno_jump_takes_its_share_of_the_capacitor_when_the_drive_spools() {
     let mut scene = scene_by_a_gate();
     let destination = other_scene().solar_system_id();
@@ -2801,6 +3183,30 @@ fn a_fleet_ship_in_range_passes_through_the_bridge_and_leaves_at_once_for_the_fi
     let traveller =
         travellers.into_iter().find(|t| t.session == passenger).expect("the passenger leaves at once");
     assert_eq!((traveller.to_system, traveller.to_field), (destination, Some(CYNO_FIELD)));
+}
+
+#[test]
+fn a_fleet_bridge_jump_stops_and_replaces_a_warp_in_progress() {
+    let mut scene = scene_by_a_gate();
+    let passenger = add_other_ship(&mut scene);
+    let destination = other_scene().solar_system_id();
+    scene.command(SESSION, open_bridge(CYNO_FIELD, destination, 60_000.0, 60_000.0), NOON);
+    let origin = scene.ship(passenger, NOON).unwrap().position;
+    let warp = scene.command(
+        passenger,
+        Command::WarpToPoint {
+            destination: Vec3::new(origin.x + 1_000_000.0, origin.y, origin.z),
+            range: 0.0,
+        },
+        NOON + seconds(1),
+    );
+    assert!(matches!(warp.last(), Some(Out::Accepted { command: 21, .. })), "{warp:?}");
+    assert!(scene.pilots[&passenger].flight.as_ref().unwrap().is_in_warp_mode());
+
+    let jump =
+        scene.command(passenger, bridge_jump(spec().ship_id, CYNO_FIELD, destination), NOON + seconds(1));
+    assert!(jump.iter().any(|out| matches!(out, Out::Jumping { .. })), "{jump:?}");
+    assert!(scene.pilots[&passenger].flight.is_none());
 }
 
 #[test]
@@ -3043,6 +3449,21 @@ fn structure_damage_in_state(out: &[Out], structure_id: i64) -> Option<Value> {
     entries.iter().find(|(key, _)| key == &structure_key).map(|(_, value)| value.clone())
 }
 
+fn state_contains_slim_id(out: &[Out], item_id: i64) -> bool {
+    let Some(fields) = fields_in_state(out) else { return false };
+    let slims_key = crate::wire::word("slims");
+    let Some((_, Value::List(slims))) = fields.iter().find(|(key, _)| key == &slims_key) else {
+        return false;
+    };
+    let item_key = crate::wire::word("itemID");
+    let item_value = crate::wire::id(item_id);
+    slims.iter().any(|slim| {
+        let Value::Object { args, .. } = slim else { return false };
+        let Value::Dict(entries) = args.as_ref() else { return false };
+        entries.iter().any(|(key, value)| key == &item_key && value == &item_value)
+    })
+}
+
 #[test]
 fn a_structure_put_in_space_is_a_body_with_its_slim_item_and_is_in_the_bind_of_a_pilot_who_comes_later() {
     let mut scene = scene();
@@ -3088,13 +3509,14 @@ fn a_customs_office_is_an_orbital_of_its_planet_with_the_planet_and_level_in_its
 }
 
 #[test]
-fn a_pilot_who_comes_in_is_told_the_structures_placed_while_it_was_away_as_balls() {
-    let without = format!("{:?}", scene().bind(SESSION, NOON)).matches("AddBalls2").count();
+fn a_pilot_who_comes_in_gets_structures_placed_while_it_was_away_in_set_state() {
+    let baseline = scene().bind(SESSION, NOON);
     let mut scene = scene();
     let placement = structure_placement(&scene, NOON);
     scene.place_structure(placement, NOON);
-    let with = format!("{:?}", scene.bind(SESSION, NOON)).matches("AddBalls2").count();
-    assert_eq!(with, without + 1, "the structure is one more ball in the first bind of a pilot");
+    let bound = scene.bind(SESSION, NOON);
+    assert!(state_contains_slim_id(&baseline, STATION), "the baseline state carries its station slim");
+    assert!(state_contains_slim_id(&bound, STRUCTURE), "the bound state carries the added structure slim");
 }
 
 #[test]
@@ -3361,6 +3783,50 @@ fn a_hit_on_a_structure_is_cut_to_its_layers_limit_each_second_and_an_emptied_sh
         scene.damage_structure(STRUCTURE + 1, [1_000.0, 0.0, 0.0, 0.0], NOON).is_empty(),
         "a structure not in space is left alone"
     );
+}
+
+#[test]
+fn faction_warfare_control_bunker_takes_damage_only_while_the_host_marks_it_vulnerable() {
+    let mut scene = scene();
+    let mut placement = structure_placement(&scene, NOON);
+    placement.group_id = 925;
+    placement.type_id = 29_286;
+    placement.vitals = crate::health::Vitals {
+        shield_capacity: 100.0,
+        armor_hp: 100.0,
+        structure_hp: 100.0,
+        ..Default::default()
+    };
+    placement.limits = crate::health::StructureLimits { per_second: [1_000.0; 3], repair_pause: [200.0; 3] };
+    placement.status.state = 118;
+    scene.place_structure(placement, NOON);
+
+    let shield = |scene: &Scene, at: i64| scene.structure_health[&STRUCTURE].state_at(at).shield;
+    assert!(scene.damage_structure(STRUCTURE, [100.0, 0.0, 0.0, 0.0], NOON).is_empty());
+    assert_eq!(shield(&scene, NOON), 1.0);
+
+    scene.set_structure_state(
+        STRUCTURE,
+        crate::world::StructureStatus { state: 110, upkeep_state: 1, ..Default::default() },
+        NOON + SECOND,
+    );
+    assert!(matches!(&scene.system.bodies[scene.structure_index(STRUCTURE).unwrap()].detail,
+        Detail::Structure { status, .. } if status.state == 110));
+    let hit = scene.damage_structure(STRUCTURE, [1_000.0, 0.0, 0.0, 0.0], NOON + SECOND);
+    assert!(shield(&scene, NOON + SECOND) < 1.0, "{hit:?}");
+    assert!(
+        hit.iter().any(|event| matches!(
+            event,
+            Out::StructureDamaged {
+                structure_id: STRUCTURE,
+                depleted: Some(crate::health::Layer::Shield),
+                ..
+            }
+        )),
+        "{hit:?} shield={}",
+        shield(&scene, NOON + SECOND)
+    );
+    assert_eq!(shield(&scene, NOON + SECOND), 0.0);
 }
 
 /// A scene with a structure of `type_id` in the given state, 5 000 km out, and a ship of `group` in its docking range.
@@ -4256,11 +4722,7 @@ fn a_warp_to_a_wormhole_end_under_the_minimum_warp_distance_is_refused_and_one_b
     );
     let told =
         scene.command(SESSION, Command::WarpTo { target_id: WORMHOLE_END, range: 0.0 }, NOON + seconds(1));
-    assert_eq!(
-        action_names(&told[0]),
-        ["SetMaxSpeed", "WarpTo", "OnSpecialFX", "SetSpeedFraction"],
-        "{told:?}"
-    );
+    assert_eq!(action_names(&told[0]), ["OnSpecialFX", "SetSpeedFraction", "WarpTo"], "{told:?}");
     let mut t = NOON + seconds(1);
     while t < NOON + seconds(300) {
         t += 2_500_000;

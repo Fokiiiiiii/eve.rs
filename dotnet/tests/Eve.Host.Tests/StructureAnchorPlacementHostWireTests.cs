@@ -7,6 +7,7 @@ using Eve.Macho;
 using Eve.Marshal;
 using Eve.Scheduler;
 using Eve.Sde;
+using Eve.Space;
 using Eve.Services;
 using Eve.Services.Core;
 using Eve.Services.Space;
@@ -30,6 +31,7 @@ public partial class HostServerTests
         const int moonId = 40_000_004;
         const long stargateId = 50_000_056;
         const long asteroidBeltId = 40_000_003;
+        const long dynamicStructureId = 9_871_007_399;
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL") ?? throw new InvalidOperationException("EVE_PG_URL is required");
         await using var source = NpgsqlDataSource.Create(PgConnection.ToConnectionString(url));
         var prefix = "anchor_moon_" + Guid.NewGuid().ToString("N")[..12];
@@ -87,6 +89,7 @@ public partial class HostServerTests
             long distantItemId;
             long gateItemId;
             long beltItemId;
+            long dynamicItemId;
             await using (var connection = await source.OpenConnectionAsync())
             await using (var transaction = await connection.BeginTransactionAsync())
             {
@@ -98,9 +101,12 @@ public partial class HostServerTests
                     new NewItem(astrahusTypeId, characterId, shipId, ItemFlags.Cargo, 1, true));
                 beltItemId = await items.CreateAsync(connection, transaction,
                     new NewItem(astrahusTypeId, characterId, shipId, ItemFlags.Cargo, 1, true));
+                dynamicItemId = await items.CreateAsync(connection, transaction,
+                    new NewItem(astrahusTypeId, characterId, shipId, ItemFlags.Cargo, 1, true));
                 await transaction.CommitAsync();
             }
 
+            IReadOnlyList<SimDeploymentBall> liveBalls = [];
             var authority = new StructureAnchorAuthority(
                 source,
                 structures,
@@ -114,7 +120,12 @@ public partial class HostServerTests
                 (_, _, _) => Task.FromResult<WarpCoordinates?>(shipAt),
                 _ => false,
                 _ => Task.CompletedTask,
-                (_, _) => ValueTask.FromResult<IReadOnlyList<StructureProfileRecord>>([new(41, "Default", "", true)]));
+                (_, _) => ValueTask.FromResult<IReadOnlyList<StructureProfileRecord>>([new(41, "Default", "", true)]),
+                readDeploymentBalls: (systemId, _) =>
+                {
+                    Assert.Equal(solarSystemId, systemId);
+                    return Task.FromResult(liveBalls);
+                });
             var callbacks = new StructureRpcCallbacks
             {
                 AnchorAsync = (call, request) => new ValueTask(authority.AnchorAsync(call, request, call.Cancellation)),
@@ -241,6 +252,28 @@ public partial class HostServerTests
             {
                 Assert.NotNull(await items.LockAndGetAsync(connection, transaction, beltItemId));
                 Assert.Null(await structures.GetAsync(connection, transaction, beltItemId, false));
+                await transaction.CommitAsync();
+            }
+
+            // The same registered RPC also checks a live simulation structure ball that is absent from the SDE and PostgreSQL structure rows.
+            // At this distant point the SDE-only check succeeds; the authoritative scene ball must refuse it and preserve the cargo item.
+            shipAt = new WarpCoordinates(solarSystemId, 1e16, 1e16, 1e16);
+            liveBalls = [new SimDeploymentBall(dynamicStructureId, astrahusTypeId, [shipAt.X, shipAt.Y, shipAt.Z], 0, false)];
+            var dynamicArgs = new PyTuple([
+                new PyLong(dynamicItemId), new PyReal(0), new PyReal(0), new PyReal(0), new PyLong(41),
+                new PyStr("Live Structure Clearance Regression"), new PyStr(""), new PyInt(2), new PyInt(10), new PyDict([]),
+            ]);
+            await front.SendAsync(new Packet(open.SessionId, MarshalCodec.Encode(Packets.CallWithKwargs(
+                open, 5, "structureDeployment", "Anchor", dynamicArgs, kwargs))));
+            var dynamicResponse = Assert.IsType<Send>(await front.ReceiveAsync());
+            var dynamicPacket = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(dynamicResponse.Payload)));
+            Assert.Equal(MachoMessage.ErrorResponse, dynamicPacket.Type);
+            Assert.Equal("CantDeployBlocked", UserErrorMessage(dynamicPacket));
+            await using (var connection = await source.OpenConnectionAsync())
+            await using (var transaction = await connection.BeginTransactionAsync())
+            {
+                Assert.NotNull(await items.LockAndGetAsync(connection, transaction, dynamicItemId));
+                Assert.Null(await structures.GetAsync(connection, transaction, dynamicItemId, false));
                 await transaction.CommitAsync();
             }
             Assert.Empty(rpcErrors);

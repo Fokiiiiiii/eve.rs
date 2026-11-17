@@ -187,7 +187,9 @@ enter_task!(
             Some(_) => DEFAULT_ANCHOR_ORBIT_RANGE,
         };
         // `random.randrange(min, max)`: a whole number from the first up to the last but one
-        let Some(orbit_range) = t.random_int(min_orbit_range as i64, max_orbit_range as i64 - 1) else { return };
+        let Some(orbit_range) = t.random_int(min_orbit_range as i64, max_orbit_range as i64 - 1) else {
+            return;
+        };
         let Some(address) = t.required_address("orbitRangeAddress") else { return };
         t.send_blackboard_value(&address, Value::Int(orbit_range));
     }

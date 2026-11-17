@@ -64,8 +64,6 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
             if (update.Finished.Count == 0) return;
             var skills = SkillWire.EntryDictionary(update.CharacterId, catalog, update.Finished);
             SkillNotifications.ServerSkillsChanged(session, skills, null, NowFileTime);
-            SkillNotifications.LevelsTrained(session, update.Finished);
-            SkillNotifications.SkillsChanged(session, skills);
             await SyncDogmaAsync(session, update, trainingAlreadySettled: true);
             SkillNotifications.QueueSaved(session, update.View.Queue);
             if (!update.View.State.Running)
@@ -89,7 +87,6 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
         if (changedSkills.Count == 0) return;
         var changed = SkillWire.EntryDictionary(characterId, catalog, changedSkills);
         SkillNotifications.ServerSkillsChanged(session, changed, null, NowFileTime);
-        SkillNotifications.SkillsChanged(session, changed);
         if (dogma is not null)
             await dogma.SkillsChangedAsync(session, characterId, before);
     }
@@ -118,18 +115,9 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
                     removed.Select(skill => skill with { Level = 0, SkillPoints = -1 })), fileTime);
         }
 
+        // OnServerSkillsChanged / OnServerSkillsRemoved make the client scatter
+        // its local skill events; do not send those event names over the wire.
         var scattered = changed.Concat(removed.Select(skill => skill with { Level = 0, SkillPoints = 0 })).ToList();
-        if (scattered.Count > 0)
-        {
-            var before = update.Before.ToDictionary(skill => skill.TypeId);
-            var trained = changed.Where(skill => skill.Level > 0 &&
-                (!before.TryGetValue(skill.TypeId, out var old) || skill.Level > old.Level)).ToList();
-            if (trained.Count > 0)
-            {
-                SkillNotifications.LevelsTrained(session, trained);
-            }
-            SkillNotifications.SkillsChanged(session, SkillWire.EntryDictionary(update.CharacterId, catalog, scattered));
-        }
 
         if (scattered.Count > 0 || update.QueueChanged)
         {
@@ -205,14 +193,11 @@ public sealed class TrainingAnnouncer(CharacterTraining training, SkillCatalog c
         {
             var finished = SkillWire.EntryDictionary(update.CharacterId, catalog, update.Finished);
             SkillNotifications.ServerSkillsChanged(session, finished, null, NowFileTime);
-            SkillNotifications.LevelsTrained(session, update.Finished);
-            SkillNotifications.SkillsChanged(session, finished);
         }
         if (update.Rebased is { } rebased && update.RebaseChanged)
         {
             var changed = SkillWire.EntryDictionary(update.CharacterId, catalog, [rebased], metadata: false);
             SkillNotifications.ServerSkillsChanged(session, changed, null, NowFileTime);
-            SkillNotifications.SkillsChanged(session, changed);
         }
         if (withDogma && (update.Finished.Count > 0 || update.RebaseChanged))
             await SyncDogmaAsync(session, update);

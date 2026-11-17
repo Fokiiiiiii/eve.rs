@@ -95,6 +95,86 @@ async fn run_with_token<A: Authenticator + 'static>(
     (server.await.unwrap(), session)
 }
 
+async fn send_value<W: tokio::io::AsyncWrite + Unpin>(writer: &mut W, value: &Value) {
+    let payload = eve_marshal::encode(value).unwrap();
+    let mut frame = bytes::BytesMut::new();
+    eve_net::frame::put_frame(&mut frame, &payload);
+    writer.write_all(&frame).await.unwrap();
+}
+
+async fn receive_value<R: tokio::io::AsyncRead + Unpin>(reader: &mut FrameReader<R>) -> Value {
+    let payload = reader.next().await.unwrap().expect("the server sends a handshake frame");
+    eve_marshal::decode_exact(&payload).unwrap()
+}
+
+#[tokio::test]
+async fn the_signed_function_uses_the_integer_placebo_marker_the_v24_client_expects() {
+    let (client_end, server_end) = duplex(1 << 16);
+    let server = tokio::spawn(async move {
+        let (read, mut write) = split(server_end);
+        let mut reader = FrameReader::new(read, MAX_FRAME);
+        handshake::perform(
+            &mut reader,
+            &mut write,
+            &Accept(42),
+            &environment(),
+            "127.0.0.1",
+            1_790_646_377_000,
+        )
+        .await
+    });
+    let (read, mut write) = split(client_end);
+    let mut reader = FrameReader::new(read, MAX_FRAME);
+
+    let Value::Tuple(version) = receive_value(&mut reader).await else {
+        panic!("version exchange must be a tuple")
+    };
+    send_value(
+        &mut write,
+        &Value::Tuple(vec![
+            version[0].clone(),
+            version[1].clone(),
+            Value::Int(0),
+            version[3].clone(),
+            version[4].clone(),
+            version[5].clone(),
+            Value::None,
+        ]),
+    )
+    .await;
+    send_value(&mut write, &Value::Tuple(vec![Value::None, Value::str("VK"), Value::None])).await;
+    send_value(&mut write, &Value::Tuple(vec![Value::str("placebo"), Value::Dict(vec![])])).await;
+    assert_eq!(text_of(&receive_value(&mut reader).await).as_deref(), Some("OK CC"));
+
+    send_value(
+        &mut write,
+        &Value::Tuple(vec![
+            Value::Buffer(Bytes::from_static(&[7; 64])),
+            Value::dict([
+                ("macho_version", version[1].clone()),
+                ("user_name", Value::str("pilot")),
+                ("user_password_hash", Value::Buffer(Bytes::from_static(&[0xAB; 20]))),
+                ("user_languageid", Value::str("EN")),
+                ("user_sso_token", Value::None),
+            ]),
+        ]),
+    )
+    .await;
+    assert_eq!(receive_value(&mut reader).await, Value::Int(2));
+    let Value::Tuple(server_handshake) = receive_value(&mut reader).await else {
+        panic!("server challenge must be a tuple")
+    };
+    let Value::Tuple(signed_function) = &server_handshake[1] else {
+        panic!("signed function and verification marker must be a tuple")
+    };
+    assert_eq!(signed_function[1], Value::Int(0), "the V24 Placebo verifier receives integer zero");
+
+    send_value(&mut write, &Value::Tuple(vec![Value::str("0"), Value::Buffer(Bytes::new()), Value::None]))
+        .await;
+    assert!(matches!(receive_value(&mut reader).await, Value::Dict(_)));
+    assert!(server.await.unwrap().is_ok());
+}
+
 #[tokio::test]
 async fn a_login_completes_and_the_client_sees_what_the_evecli_tests_expect() {
     let (login, session) = run(Accept(42), "pilot").await;
@@ -128,9 +208,22 @@ async fn a_login_completes_and_the_client_sees_what_the_evecli_tests_expect() {
         Some((account_role | handshake::SESSION_BASE_ROLE) as i64)
     );
     assert_eq!(dict_get(&session.session_init, "address").and_then(text_of).as_deref(), Some("127.0.0.1"));
-    // the reference's keys, in its order; maxSessionTime is not sent (the client reads it only behind a guard)
+    // the acknowledgement's session_init keys and order from the EVE.js Placebo handshake
     let keys: Vec<String> = session.session_init.iter().filter_map(|(key, _)| text_of(key)).collect();
-    assert_eq!(keys, ["languageID", "countryCode", "userid", "userType", "role", "address", "inDetention"]);
+    assert_eq!(
+        keys,
+        [
+            "languageID",
+            "countryCode",
+            "userid",
+            "maxSessionTime",
+            "userType",
+            "role",
+            "address",
+            "inDetention"
+        ]
+    );
+    assert_eq!(dict_get(&session.session_init, "maxSessionTime"), Some(&Value::None));
     assert_eq!(dict_get(&session.session_init, "inDetention"), Some(&Value::None));
 
     // the authentication result the client reads after its login (connectionService.LoginSso, GPS.py merge): both keys are

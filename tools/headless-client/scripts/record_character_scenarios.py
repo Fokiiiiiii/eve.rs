@@ -31,11 +31,15 @@ from evecli import marshal as m  # noqa: E402
 from evecli import packet as p  # noqa: E402
 from evecli.client import Client  # noqa: E402
 from evecli.describe import describe  # noqa: E402
-from evecli.observe import ego_state, events_of, hangar_and_ship, notifications_of, ship_of, timed_events, training_view, wait_for_events, wait_quietly  # noqa: E402
+from evecli.observe import _notification_call_args, ego_state, events_of, hangar_and_ship, notifications_of, ship_of, timed_events, training_view, wait_for_events, wait_quietly  # noqa: E402
 
 # The school the reference offers each playable race (its minimal map), as the client would send one.
 SCHOOL_OF_RACE = {1: 35, 2: 33, 4: 31, 8: 37}
 RACE_OF_BLOODLINE = {1: 1, 2: 1, 3: 2, 4: 2, 5: 4, 6: 4, 7: 8, 8: 8, 11: 1, 12: 8, 13: 4, 14: 2}
+
+def client_item_id(value: int) -> m.Long:
+    """Keep item-ID arguments on the V24 Python-2 long wire type in small-ID fixtures."""
+    return m.Long(int(value))
 
 def load_jsonl(directory: str, name: str) -> list[dict]:
     with open(os.path.join(directory, name + ".jsonl"), encoding="utf-8") as handle:
@@ -48,7 +52,7 @@ def first_ancestry(sde: str) -> dict[int, int]:
     return found
 
 def hangar_rows(who, hangar) -> list[m.PackedRow]:
-    rows = who.call_bound(hangar, "List")
+    rows = who.call_bound(hangar, "List", 4)  # V24 flagHangar; the client always supplies it.
     if isinstance(rows, m.ObjectEx):
         header = rows.header
         if (
@@ -67,6 +71,28 @@ def hangar_rows(who, hangar) -> list[m.PackedRow]:
 
 def hangar_ship_id(who, hangar) -> int:
     return int(hangar_rows(who, hangar)[0].fields()["itemID"])
+
+def online_modules_from_dogma(info) -> m.Dict:
+    """V24 GetOnlineModules: flagID -> moduleID for fitted modules marked online by dogma."""
+    name, dogma = m.plain(info[1])
+    if name != "util.KeyVal" or not isinstance(dogma, dict):
+        raise TypeError("dogma GetAllInfo did not return util.KeyVal")
+    active_ship_id = int(dogma["activeShipID"])
+    pairs = []
+    for module_id, module_info in dogma["shipInfo"].items():
+        if int(module_id) == active_ship_id:
+            continue
+        module_name, module = module_info
+        if module_name != "util.KeyVal":
+            raise TypeError("dogma shipInfo item did not return util.KeyVal")
+        online = module["attributes"].get(2)
+        if online is None:
+            raise ValueError(f"dogma item {module_id} has no attributeIsOnline")
+        if online:
+            pairs.append((int(module["invItem"]["flagID"]), m.Long(int(module_id))))
+    if len({flag for flag, _ in pairs}) != len(pairs):
+        raise ValueError(f"dogma reported duplicate online module flags: {pairs}")
+    return m.Dict(pairs)
 
 class Recorder:
     def __init__(self, host: str, port: int, run: str) -> None:
@@ -420,7 +446,7 @@ def record_training(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
         who = rec.login(f"training{bloodline}")
         created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Trained {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
         char_id = int(created["ok"])
-        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
         before = training_view(who)
         speed = describe(who.call("skillHandler", "GetAttributes"))["$dict"][0][1] / 20
         ship_id = ship_of(who)
@@ -432,15 +458,16 @@ def record_training(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
         item = char_id * 100000 + first
         queue = m.Dict([(0, (first, first_level + 1)), (1, (first, first_level + 2)), (2, (second, before["skills"][second]["level"] + 1))])
         reordered = m.Dict([(0, (second, before["skills"][second]["level"] + 1)), (1, (first, first_level + 1))])
+        one_skill_queue = m.Dict([(0, (first, first_level + 1))])
         plan = [
             ("empty queue", "skillHandler", "GetSkillQueue", (), {}),
             ("empty queue and free points", "skillHandler", "GetSkillQueueAndFreePoints", (), {}),
-            ("start by type", "skillHandler", "CharStartTrainingSkillByTypeID", (first,), {}),
-            ("start by type again", "skillHandler", "CharStartTrainingSkillByTypeID", (first,), {}),
-            ("start two levels ahead", "skillHandler", "CharStartTrainingSkillByTypeID", (first, first_level + 2), {}),
-            ("start unknown type", "skillHandler", "CharStartTrainingSkillByTypeID", (99,), {}),
-            ("start by item", "skillHandler", "CharStartTrainingSkill", (item,), {}),
-            ("start by unknown item", "skillHandler", "CharStartTrainingSkill", (12345,), {}),
+            ("save one", "skillHandler", "SaveNewQueue", (one_skill_queue,), {}),
+            ("save the same one again", "skillHandler", "SaveNewQueue", (one_skill_queue,), {}),
+            ("queue two levels ahead", "skillHandler", "SaveNewQueue", (m.Dict([(0, (first, first_level + 2))]),), {}),
+            ("queue unknown type", "skillHandler", "SaveNewQueue", (m.Dict([(0, (99, 1))]),), {}),
+            ("start by item", "skillHandler", "CharStartTrainingSkill", (item, 60015249), {}),
+            ("start by unknown item", "skillHandler", "CharStartTrainingSkill", (12345, 60015249), {}),
             ("save three", "skillHandler", "SaveNewQueue", (queue,), {}),
             ("save the same again", "skillHandler", "SaveNewQueue", (queue,), {}),
             ("save reordered", "skillHandler", "SaveNewQueue", (reordered,), {}),
@@ -455,7 +482,7 @@ def record_training(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
             ("abort", "skillHandler", "AbortTraining", (), {}),
             ("abort again", "skillHandler", "AbortTraining", (), {}),
             ("stop while stopped", "skillHandler", "CharStopTrainingSkill", (), {}),
-            ("start again", "skillHandler", "CharStartTrainingSkillByTypeID", (second,), {}),
+            ("start again", "skillHandler", "CharStartTrainingSkill", (char_id * 100000 + second, 60015249), {}),
             ("stop", "skillHandler", "CharStopTrainingSkill", (), {}),
             ("save empty", "skillHandler", "SaveNewQueue", (m.Dict([]),), {}),
             ("history", "skillHandler", "GetSkillHistory", (), {}),
@@ -488,19 +515,22 @@ def record_training_fast(rec: Recorder, out: str, meta: dict, ancestry: dict, ru
     who = rec.login("trainfast")
     created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Swift {run}", 1, 1, ancestry[1]))
     char_id = int(created["ok"])
-    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
     before = training_view(who)
     speed = describe(who.call("skillHandler", "GetAttributes"))["$dict"][0][1] / 20
     ship_id = ship_of(who)
     notifications_of(who)
+    time.sleep(1)
+    if training_view(who) != before:
+        raise AssertionError("training changed while the new character's selection was settling")
+    notifications_of(who)
     if speed < 1000:
         raise SystemExit(f"the reference trains at speed {speed}: start it with EVEJS_SKILL_TRAINING_SPEED=60000 to record this")
     skills = before["skills"]
-    ranked = {t: v for t, v in skills.items() if v["level"] == 1}
     plan = [
         ("two levels in a queue", "SaveNewQueue", (m.Dict([(0, (3301, 2)), (1, (3301, 3))]),), 2),
-        ("a rank five skill", "CharStartTrainingSkillByTypeID", (3317,), 1),
-        ("a rank one skill from level three", "CharStartTrainingSkillByTypeID", (3327,), 1),
+        ("a rank five skill", "SaveNewQueue", (m.Dict([(0, (3317, skills[3317]["level"] + 1))]),), 1),
+        ("a rank one skill from level three", "SaveNewQueue", (m.Dict([(0, (3327, skills[3327]["level"] + 1))]),), 1),
     ]
     steps = []
     for label, method, args, levels in plan:
@@ -520,9 +550,12 @@ def record_training_fast(rec: Recorder, out: str, meta: dict, ancestry: dict, ru
     who.close()
     time.sleep(4)
     back = rec.login("trainfast")
-    back.notifications.clear()
+    notifications_of(back)
     rec.call(back, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
-    step["notifications"] = notifications_of(back)
+    received = notifications_of(back)
+    if not received or received[0].get("name") != "OnSubscriptionTimeUpdateServer":
+        raise AssertionError("character selection did not send OnSubscriptionTimeUpdateServer first")
+    step["notifications"] = received[1:]
     step["after"] = training_view(back)
     steps.append(step)
     back.close()
@@ -541,11 +574,12 @@ def record_undock(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         who = rec.login(f"undock{bloodline}")
         created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Undocker {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
         char_id = int(created["ok"])
-        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, True)
         manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
         ship_id = hangar_ship_id(who, hangar)
-        who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+        info = who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+        online_modules = online_modules_from_dogma(info)
         events_of(who)
 
         def step(label, call, wait=1.5, until=None):
@@ -560,7 +594,7 @@ def record_undock(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         steps = []
         ship = who.call("ship", "MachoBindObject", (60015249, 15), None)
         steps.append({"label": "bind the ship service", "ok": describe(ship), "events": wait_quietly(who, 0.5)})
-        steps.append(step("undock", lambda: who.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List([ship_id + 1, ship_id + 2, ship_id + 3])), 2.0))
+        steps.append(step("undock", lambda: who.call_bound(ship[0], "Undock", client_item_id(ship_id), False, onlineModules=online_modules), 2.0))
         beyonce = who.call("beyonce", "MachoBindObject", 30100032, None)
         steps.append({"label": "bind the ballpark", "ok": describe(beyonce), "events": wait_quietly(who, 2.5)})
         steps.append(step("formations", lambda: who.call_bound(beyonce[0], "GetFormations"), 0.5))
@@ -592,13 +626,14 @@ def record_approach(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
     manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
     ship_id = hangar_ship_id(who, hangar)
-    who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+    info = who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+    online_modules = online_modules_from_dogma(info)
     events_of(who)
 
     steps = []
     ship = who.call("ship", "MachoBindObject", (60015249, 15), None)
     steps.append({"label": "bind the ship service", "ok": describe(ship), "events": wait_quietly(who, 0.5)})
-    undock = {"label": "undock", "ok": describe(who.call_bound(ship[0], "Undock", ship_id, False))}
+    undock = {"label": "undock", "ok": describe(who.call_bound(ship[0], "Undock", client_item_id(ship_id), False, onlineModules=online_modules))}
     undock["events"] = wait_quietly(who, 2.0)
     steps.append(undock)
     beyonce = who.call("beyonce", "MachoBindObject", 30100032, None)
@@ -666,11 +701,12 @@ def record_movement(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
     who = rec.login(f"movement{bloodline}")
     created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Mover {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
     char_id = int(created["ok"])
-    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
     manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
     ship_id = hangar_ship_id(who, hangar)
-    who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+    info = who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+    online_modules = online_modules_from_dogma(info)
     events_of(who)
 
     def step(label, call, wait=1.5):
@@ -685,7 +721,7 @@ def record_movement(rec: Recorder, out: str, meta: dict, ancestry: dict, run: st
     steps = []
     ship = who.call("ship", "MachoBindObject", (60015249, 15), None)
     steps.append({"label": "bind the ship service", "ok": describe(ship), "events": wait_quietly(who, 0.5)})
-    steps.append(step("undock", lambda: who.call_bound(ship[0], "Undock", ship_id, False), 2.0))
+    steps.append(step("undock", lambda: who.call_bound(ship[0], "Undock", client_item_id(ship_id), False), 2.0))
     beyonce = who.call("beyonce", "MachoBindObject", 30100032, None)
     steps.append({"label": "bind the ballpark", "ok": describe(beyonce), "events": wait_quietly(who, 2.5)})
     call = lambda name, *args: (lambda: who.call_bound(beyonce[0], name, *args))
@@ -715,17 +751,20 @@ def record_warp(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     who = rec.login(f"warp{bloodline}")
     created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Warper {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
     char_id = int(created["ok"])
-    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    # This scenario needs the starter ship in its station hangar. With the tutorial
+    # enabled, EveJS starts the new pilot in its tutorial space instead.
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, True)
     manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
     ship_id = hangar_ship_id(who, hangar)
-    who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+    info = who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+    online_modules = online_modules_from_dogma(info)
     events_of(who)
 
     steps = []
     ship = who.call("ship", "MachoBindObject", (60015249, 15), None)
     steps.append({"label": "bind the ship service", "ok": describe(ship), "events": wait_quietly(who, 0.5)})
-    undock = {"label": "undock", "ok": describe(who.call_bound(ship[0], "Undock", ship_id, False))}
+    undock = {"label": "undock", "ok": describe(who.call_bound(ship[0], "Undock", client_item_id(ship_id), False, onlineModules=online_modules))}
     undock["events"] = wait_quietly(who, 2.0)
     steps.append(undock)
     beyonce = who.call("beyonce", "MachoBindObject", 30100032, None)
@@ -756,7 +795,7 @@ def record_warp(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
         if state is not None:
             readings.append({"seconds": round(time.time() - warp_started, 1), "position": list(state[0])})
         warp["events"] += [e for e in seen if not (e["name"] == "DoDestinyUpdate" and dest_names(e) == ["SetState"])]
-        if any("Stop" in dest_names(e) for e in warp["events"]):
+        if any(any(name in dest_names(e) for name in ("Stop", "SetBallMassive")) for e in warp["events"]):
             break
     warp["readings"] = readings
     steps.append(warp)
@@ -784,18 +823,19 @@ def record_jump(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     who = rec.login(f"jump{bloodline}")
     created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Jumper {bloodline} {run}", bloodline, 1, ancestry[bloodline]))
     char_id = int(created["ok"])
-    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, True)
     manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
     ship_id = hangar_ship_id(who, hangar)
-    who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+    info = who.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
+    online_modules = online_modules_from_dogma(info)
     events_of(who)
 
     gate, next_gate, next_system = 50016630, 50016839, 30100034
     steps = []
     ship = who.call("ship", "MachoBindObject", (60015249, 15), None)
     steps.append({"label": "bind the ship service", "ok": describe(ship), "events": wait_quietly(who, 0.5)})
-    undock = {"label": "undock", "ok": describe(who.call_bound(ship[0], "Undock", ship_id, False))}
+    undock = {"label": "undock", "ok": describe(who.call_bound(ship[0], "Undock", client_item_id(ship_id), False, onlineModules=online_modules))}
     undock["events"] = wait_quietly(who, 2.0)
     steps.append(undock)
     beyonce = who.call("beyonce", "MachoBindObject", 30100032, None)
@@ -820,11 +860,18 @@ def record_jump(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
         for event in seen:
             event["at"] = round(event["at"] + (time.time() - warp_started) - 3.0, 2)
         warp["events"] += [e for e in seen if not (e["name"] == "DoDestinyUpdate" and dest_names(e) == ["SetState"])]
-        if any("Stop" in dest_names(e) for e in warp["events"]):
+        if any(any(name in dest_names(e) for name in ("Stop", "SetBallMassive")) for e in warp["events"]):
             break
     steps.append(warp)
     steps.append(timed("look at the state", lambda: who.call_bound(beyonce[0], "UpdateStateRequest"), 2.0))
-    jump = timed("jump", lambda: who.call_bound(beyonce[0], "CmdStargateJump", gate, next_gate, ship_id), 12.0)
+    # The client binds the destination as soon as the session changes. Waiting the full timeout here
+    # drops the short-lived JumpIn bubble effect before the destination ballpark is bound.
+    jump = timed(
+        "jump",
+        lambda: who.call_bound(beyonce[0], "CmdStargateJump", gate, next_gate, client_item_id(ship_id)),
+        12.0,
+        until=lambda seen: any(event["name"] == "$sessionchange" for event in seen),
+    )
     steps.append(jump)
     landed = who.call("beyonce", "MachoBindObject", next_system, None)
     steps.append({"label": "bind the ballpark of the next system", "ok": describe(landed), "events": wait_quietly(who, 4.0)})
@@ -859,7 +906,7 @@ def record_others(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         who = rec.login(name)
         created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"{name} {run}", 1, 1, ancestry[1]))
         char_id = int(created["ok"])
-        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
         manager = who.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
         ship_id = hangar_ship_id(who, hangar)
@@ -875,7 +922,7 @@ def record_others(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     a_service = a.call("ship", "MachoBindObject", (60015249, 15), None)
     b_service = b.call("ship", "MachoBindObject", (60015249, 15), None)
     watch(both, 0.5)
-    steps.append({"label": "the watcher undocks", "ok": describe(a.call_bound(a_service[0], "Undock", a_ship, False)), **watch(both, 2.0)})
+    steps.append({"label": "the watcher undocks", "ok": describe(a.call_bound(a_service[0], "Undock", client_item_id(a_ship), False)), **watch(both, 2.0)})
     a_ballpark = a.call("beyonce", "MachoBindObject", 30100032, None)
     steps.append({"label": "the watcher binds the ballpark", "ok": describe(a_ballpark), **watch(both, 2.5)})
 
@@ -888,7 +935,7 @@ def record_others(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         entry.update(watch(both, seconds, until))
         return entry
 
-    steps.append(step("the actor undocks", lambda: b.call_bound(b_service[0], "Undock", b_ship, False), 2.5))
+    steps.append(step("the actor undocks", lambda: b.call_bound(b_service[0], "Undock", client_item_id(b_ship), False), 2.5))
     b_ballpark = None
 
     def bind():
@@ -909,7 +956,7 @@ def record_others(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     # the actor goes out again and warps to a planet two AU away while the watcher stays where it is
     b_service = b.call("ship", "MachoBindObject", (60015249, 15), None)
     watch(both, 0.5)
-    steps.append({"label": "the actor undocks again", "ok": describe(b.call_bound(b_service[0], "Undock", b_ship, False)), **watch(both, 2.5)})
+    steps.append({"label": "the actor undocks again", "ok": describe(b.call_bound(b_service[0], "Undock", client_item_id(b_ship), False)), **watch(both, 2.5)})
     b_ballpark = b.call("beyonce", "MachoBindObject", 30100032, None)
     steps.append({"label": "the actor binds the ballpark again", "ok": describe(b_ballpark), **watch(both, 3.0)})
     planet = 40491233
@@ -950,7 +997,7 @@ def record_target(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         who = rec.login(name)
         created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"{name} {run}", 1, 1, ancestry[1]))
         char_id = int(created["ok"])
-        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
         manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
         ship_id = hangar_ship_id(who, hangar)
@@ -976,10 +1023,10 @@ def record_target(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     a_service = a.call("ship", "MachoBindObject", (station, 15), None)
     b_service = b.call("ship", "MachoBindObject", (station, 15), None)
     watch(both, 0.5)
-    step("the watcher undocks", lambda: a.call_bound(a_service[0], "Undock", a_ship, False), 2.0)
+    step("the watcher undocks", lambda: a.call_bound(a_service[0], "Undock", client_item_id(a_ship), False), 2.0)
     a_ballpark = a.call("beyonce", "MachoBindObject", system, None)
     step("the watcher binds the ballpark", lambda: a_ballpark, 2.5)
-    step("the actor undocks", lambda: b.call_bound(b_service[0], "Undock", b_ship, False), 2.5)
+    step("the actor undocks", lambda: b.call_bound(b_service[0], "Undock", client_item_id(b_ship), False), 2.5)
     b_ballpark = b.call("beyonce", "MachoBindObject", system, None)
     step("the actor binds the ballpark", lambda: b_ballpark, 3.0)
     a_dogma = a.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -1059,7 +1106,7 @@ def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
         who = rec.login(name)
         created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"{name} {run}", 1, 1, ancestry[1]))
         char_id = int(created["ok"])
-        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+        rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
         manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
         hangar = who.call_bound(manager, "GetInventory", 10004)
         ship_id = hangar_ship_id(who, hangar)
@@ -1071,6 +1118,30 @@ def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     b, b_created, b_char, b_ship = character("Actor")
     both = {"events": b, "seen": a}
     steps: list = []
+
+    def sequence(value):
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict) and isinstance(value.get("$tuple"), list):
+            return value["$tuple"]
+        return None
+
+    def dogma_rows(events):
+        for event in events:
+            if event["name"] != "OnMultiEvent":
+                if event["name"] in ("OnGodmaShipEffect", "OnTarget"):
+                    try:
+                        yield event["name"], event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
+                    except (KeyError, TypeError):
+                        continue
+                continue
+            args = _notification_call_args(event["args"])
+            pairs = sequence(args[0]) if args else None
+            for pair in pairs or []:
+                timed = sequence(pair)
+                call = sequence(timed[0]) if timed else None
+                if call and call[0] in ("OnGodmaShipEffect", "OnTarget"):
+                    yield call[0], call[1:]
 
     def step(label, call, seconds=2.0, until=None):
         entry = {"label": label}
@@ -1085,10 +1156,10 @@ def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     a_service = a.call("ship", "MachoBindObject", (station, 15), None)
     b_service = b.call("ship", "MachoBindObject", (station, 15), None)
     watch(both, 0.5)
-    step("the watcher undocks", lambda: a.call_bound(a_service[0], "Undock", a_ship, False), 2.0)
+    step("the watcher undocks", lambda: a.call_bound(a_service[0], "Undock", client_item_id(a_ship), False), 2.0)
     a_ballpark = a.call("beyonce", "MachoBindObject", system, None)
     step("the watcher binds the ballpark", lambda: a_ballpark, 2.5)
-    step("the actor undocks", lambda: b.call_bound(b_service[0], "Undock", b_ship, False), 2.5)
+    step("the actor undocks", lambda: b.call_bound(b_service[0], "Undock", client_item_id(b_ship), False), 2.5)
     b_ballpark = b.call("beyonce", "MachoBindObject", system, None)
     step("the actor binds the ballpark", lambda: b_ballpark, 3.0)
     a_dogma = a.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -1107,14 +1178,18 @@ def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
 
     fly = lambda name, *args: (lambda: b.call_bound(b_ballpark[0], name, *args))  # noqa: E731
     activate = lambda module, effect, target=None: (lambda: b.call_bound(b_dogma[0], "Activate", module, effect, target, 1000))  # noqa: E731
-    stopped = lambda seen: any(e["name"] == "OnGodmaShipEffect" and len(args_of_effect(e)) > 3 and args_of_effect(e)[3] == 0 for e in seen["events"])  # noqa: E731
+    stopped = lambda seen: any(  # noqa: E731
+        name == "OnGodmaShipEffect" and len(args) > 3 and args[3] == 0
+        for name, args in dogma_rows(seen["events"])
+    )
+    got_lock = lambda events: any(name == "OnTarget" for name, _ in dogma_rows(events))  # noqa: E731
     step("the actor flies at full speed", fly("CmdGotoDirection", 1.0, 0.0, 0.0), 3.0)
     step("the actor starts the afterburner", activate(afterburner, "moduleBonusAfterburner"), 13.0)
     step("the actor starts the afterburner again", activate(afterburner, "moduleBonusAfterburner"), 1.0)
     step("the actor stops the afterburner", lambda: b.call_bound(b_dogma[0], "Deactivate", afterburner, "moduleBonusAfterburner"), 12.0, until=stopped)
     step("the actor stops the afterburner again", lambda: b.call_bound(b_dogma[0], "Deactivate", afterburner, "moduleBonusAfterburner"), 2.0)
     step("the actor fires the gun with no target", activate(gun, "targetAttack"), 2.0)
-    step("the actor locks the watcher", lambda: b.call_bound(b_dogma[0], "AddTarget", a_ship), 8.0, until=lambda seen: any(e["name"] == "OnTarget" for e in seen["events"]))
+    step("the actor locks the watcher", lambda: b.call_bound(b_dogma[0], "AddTarget", a_ship), 8.0, until=lambda seen: got_lock(seen["events"]))
     step("the actor fires the gun at the watcher without a charge", activate(gun, "targetAttack", a_ship), 3.0)
     step("the actor works the miner on the watcher", activate(miner, "miningLaser", a_ship), 3.0)
     step("the actor works the miner with no target", activate(miner, "miningLaser"), 2.0)
@@ -1166,7 +1241,7 @@ def record_weapon(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
 
     service = who.call("ship", "MachoBindObject", (station, 15), None)
     watch(only, 0.5)
-    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", client_item_id(ship_id), False), 2.5)
     ballpark = who.call("beyonce", "MachoBindObject", system, None)
     step("the pilot binds the ballpark", lambda: ballpark, 3.0)
     dogma = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -1278,7 +1353,7 @@ def record_ammo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     step("the pilot loads the iron in the place of the antimatter", load(iron), 2.0)
 
     service = who.call("ship", "MachoBindObject", (station, 15), None)
-    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", client_item_id(ship_id), False), 2.5)
     ballpark = who.call("beyonce", "MachoBindObject", system, None)
     step("the pilot binds the ballpark", lambda: ballpark, 3.0)
     space = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -1361,7 +1436,7 @@ def record_missile(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str
     step("the pilot asks for its ship with the launcher loaded", lambda: who.call_bound(docked[0], "GetAllInfo", True, True, None), 1.5)
 
     service = who.call("ship", "MachoBindObject", (station, 15), None)
-    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", client_item_id(ship_id), False), 2.5)
     ballpark = who.call("beyonce", "MachoBindObject", system, None)
     step("the pilot binds the ballpark", lambda: ballpark, 3.0)
     space = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -1460,7 +1535,7 @@ def record_drones(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     step("the pilot puts a drone in the drone bay for the flight", lambda: who.call_bound(docked, "Add", drones, station, qty=1, flag=87), 1.5)
 
     service = who.call("ship", "MachoBindObject", (station, 15), None)
-    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", client_item_id(ship_id), False), 2.5)
     ballpark = who.call("beyonce", "MachoBindObject", system, None)
     step("the pilot binds the ballpark", lambda: ballpark, 3.0)
     space = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -1509,7 +1584,7 @@ def record_drone_flight(rec: Recorder, out: str, meta: dict, ancestry: dict, run
     docked = who.call("invbroker", "MachoBindObject", (station, 15), ("GetInventoryFromId", (ship_id, 0), None))[1]
     step("the pilot puts the drone in the drone bay", lambda: who.call_bound(docked, "Add", drone_stack, station, qty=1, flag=87), 1.5)
     service = who.call("ship", "MachoBindObject", (station, 15), None)
-    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", client_item_id(ship_id), False), 2.5)
     ballpark = who.call("beyonce", "MachoBindObject", system, None)
     step("the pilot binds the ballpark", lambda: ballpark, 3.0)
     space = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -1608,7 +1683,7 @@ def record_reload(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     step("the pilot puts more antimatter in the hold", lambda: who.call_bound(hold_docked, "Add", ids_by_type(hangar)[222], station, qty=40, flag=5), 1.5)
 
     service = who.call("ship", "MachoBindObject", (station, 15), None)
-    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", client_item_id(ship_id), False), 2.5)
     ballpark = who.call("beyonce", "MachoBindObject", system, None)
     step("the pilot binds the ballpark", lambda: ballpark, 3.0)
     space = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -1719,7 +1794,7 @@ def record_cargo(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) 
     step("the pilot asks for its hold after", lambda: who.call_bound(docked, "List", 5))
 
     service = who.call("ship", "MachoBindObject", (station, 15), None)
-    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", client_item_id(ship_id), False), 2.5)
     ballpark = who.call("beyonce", "MachoBindObject", system, None)
     step("the pilot binds the ballpark", lambda: ballpark, 3.0)
     space = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -1789,7 +1864,7 @@ def record_crimewatch(rec: Recorder, out: str, meta: dict, ancestry: dict, run: 
     step("the client asks for the transactions of its security status", lambda: who.call_bound(handle, "GetSecurityStatusTransactions"))
 
     service = who.call("ship", "MachoBindObject", (station, 15), None)
-    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", client_item_id(ship_id), False), 2.5)
     ballpark = who.call("beyonce", "MachoBindObject", system, None)
     step("the pilot binds the ballpark", lambda: ballpark, 3.0)
     flying = who.call("crimewatch", "MachoBindObject", (system, 5), ("GetClientStates", (), None))
@@ -1837,10 +1912,10 @@ def record_aggression(rec: Recorder, out: str, meta: dict, ancestry: dict, run: 
     a_service = a.call("ship", "MachoBindObject", (station, 15), None)
     b_service = b.call("ship", "MachoBindObject", (station, 15), None)
     watch(both, 0.5)
-    step("the victim undocks", lambda: a.call_bound(a_service[0], "Undock", a_ship, False), 2.0)
+    step("the victim undocks", lambda: a.call_bound(a_service[0], "Undock", client_item_id(a_ship), False), 2.0)
     a_ballpark = a.call("beyonce", "MachoBindObject", system, None)
     step("the victim binds the ballpark", lambda: a_ballpark, 2.5)
-    step("the aggressor undocks", lambda: b.call_bound(b_service[0], "Undock", b_ship, False), 2.5)
+    step("the aggressor undocks", lambda: b.call_bound(b_service[0], "Undock", client_item_id(b_ship), False), 2.5)
     b_ballpark = b.call("beyonce", "MachoBindObject", system, None)
     step("the aggressor binds the ballpark", lambda: b_ballpark, 3.0)
     a_dogma = a.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -1926,7 +2001,7 @@ def record_loot(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) -
     step("the pilot puts the tritanium in the hold", lambda: who.call_bound(docked, "Add", trit, station, qty=100, flag=5), 1.5)
     step("the pilot puts the pyerite in the hold", lambda: who.call_bound(docked, "Add", pye, station, qty=60, flag=5), 1.5)
     service = who.call("ship", "MachoBindObject", (station, 15), None)
-    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", ship_id, False), 2.5)
+    step("the pilot undocks", lambda: who.call_bound(service[0], "Undock", client_item_id(ship_id), False), 2.5)
     ballpark = who.call("beyonce", "MachoBindObject", system, None)
     step("the pilot binds the ballpark", lambda: ballpark, 3.0)
     space = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -1962,7 +2037,7 @@ def record_health(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     who = rec.login("Damaged")
     created = rec.call(who, "charUnboundMgr", "CreateCharacterWithDoll", *create_args(f"Damaged {run}", 1, 1, ancestry[1]))
     char_id = int(created["ok"])
-    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, False)
+    rec.call(who, "charUnboundMgr", "SelectCharacterID", char_id, None, os.environ.get("EVE_LIVE_SERVER") == "reference")
     manager = who.call("invbroker", "MachoBindObject", (station, 15), None)[0]
     hangar = who.call_bound(manager, "GetInventory", 10004)
     ship_id = hangar_ship_id(who, hangar)
@@ -1993,7 +2068,7 @@ def record_health(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     step("the pilot asks for its healed ship", info)
     step("heavy damage before the undock", slash("/dmg heavy"), 1.5)
     ship = who.call("ship", "MachoBindObject", (station, 15), None)
-    step("the damaged ship undocks", lambda: who.call_bound(ship[0], "Undock", ship_id, False, onlineModules=m.List([ship_id + 1, ship_id + 2, ship_id + 3])), 2.5)
+    step("the damaged ship undocks", lambda: who.call_bound(ship[0], "Undock", client_item_id(ship_id), False, onlineModules=m.List([ship_id + 1, ship_id + 2, ship_id + 3])), 2.5)
     ballpark = who.call("beyonce", "MachoBindObject", system, None)
     step("the pilot binds the ballpark", lambda: ballpark, 3.0)
     space = who.call("dogmaIM", "MachoBindObject", (system, 5), None)
@@ -2047,10 +2122,10 @@ def record_death(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str) 
     a_service = a.call("ship", "MachoBindObject", (station, 15), None)
     b_service = b.call("ship", "MachoBindObject", (station, 15), None)
     watch(both, 0.5)
-    step("the watcher undocks", lambda: a.call_bound(a_service[0], "Undock", a_ship, False), 2.0)
+    step("the watcher undocks", lambda: a.call_bound(a_service[0], "Undock", client_item_id(a_ship), False), 2.0)
     a_ballpark = a.call("beyonce", "MachoBindObject", system, None)
     step("the watcher binds the ballpark", lambda: a_ballpark, 2.5)
-    step("the victim undocks", lambda: b.call_bound(b_service[0], "Undock", b_ship, False), 2.5)
+    step("the victim undocks", lambda: b.call_bound(b_service[0], "Undock", client_item_id(b_ship), False), 2.5)
     b_ballpark = b.call("beyonce", "MachoBindObject", system, None)
     step("the victim binds the ballpark", lambda: b_ballpark, 3.0)
     a_dogma = a.call("dogmaIM", "MachoBindObject", (system, 5), None)

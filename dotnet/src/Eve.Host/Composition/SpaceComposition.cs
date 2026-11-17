@@ -497,6 +497,7 @@ internal sealed partial class CharacterServicesComposition
             foundations.Scheduler.Register("space.ess.tick", async (_, token) => await TickEssAsync(token));
             await foundations.Scheduler.EnsureRecurringAsync("space.ess.tick", "tick", TimeSpan.FromSeconds(10));
             deployedStore = new PgDeployedStore(source, spaceSchema);
+            spaceSessions.DeployedRecords = deployedStore;
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: deployedStore, scheduler: foundations.Scheduler, source: source);
             spaceContainers.CharacterSessions = characterSessions;
             new Eve.Services.Space.ControlTowerFuelNotifications(characterSessions, dogma).Subscribe(foundations.Events);
@@ -546,7 +547,14 @@ internal sealed partial class CharacterServicesComposition
             {
                 if (await spaceContainers.ControlTowerFuelAsync(context.Connection, context.Transaction,
                     context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerFuelDue>()!.DeployableId, context.ScheduledForMs, token))
-                    context.AfterCommit(_ => { foundations.Events.Wake(); return Task.CompletedTask; });
+                {
+                    var towerId = context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerFuelDue>()!.DeployableId;
+                    context.AfterCommit(async afterCommitToken =>
+                    {
+                        await spaceContainers.SynchronizeControlTowerSlimStateAsync(towerId, afterCommitToken);
+                        foundations.Events.Wake();
+                    });
+                }
             });
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerProductionCycleJob,
                 async (context, token) => await spaceContainers.RunScheduledProductionCycleAsync(context, token));
@@ -555,7 +563,11 @@ internal sealed partial class CharacterServicesComposition
             {
                 var due = context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerOnlineDue>()!;
                 if (await spaceContainers.CompleteControlTowerOnlineAsync(context.Connection, context.Transaction, due.DeployableId, due.StartedAtMs, token))
-                    context.AfterCommit(_ => { foundations.Events.Wake(); return Task.CompletedTask; });
+                    context.AfterCommit(async afterCommitToken =>
+                    {
+                        await spaceContainers.SynchronizeControlTowerSlimStateAsync(due.DeployableId, afterCommitToken);
+                        foundations.Events.Wake();
+                    });
             });
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.StarbaseModuleOnlineJob, async (context, token) =>
             {

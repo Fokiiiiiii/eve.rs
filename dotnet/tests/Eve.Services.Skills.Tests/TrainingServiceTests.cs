@@ -204,21 +204,19 @@ public class TrainingServiceTests
         await Call(rig, session, "GetSkills", []); // any question settles what the clock finished
         var notes = Notes.Of(sink);
         Assert.Equal(
-            ["OnServerSkillsChanged", "OnSkillLevelsTrained", "OnSkillsChanged", "OnNewSkillQueueSaved"], notes.Select(n => n.Name));
-        Assert.Equal(["charid", "clientID", "clientID", "charid"], notes.Select(n => n.IdType));
+            ["OnServerSkillsChanged", "OnNewSkillQueueSaved"], notes.Select(n => n.Name));
+        Assert.Equal(["charid", "charid"], notes.Select(n => n.IdType));
         Assert.Equal(PyNone.Instance, notes[0].Args[1]);
         var changed = (PyObjectEx)((PyDict)notes[0].Args[0]).Entries.Single().Value;
         Assert.Equal(3, ((PyTuple)changed.Header).Items.Count); // with its item fields
         Assert.Equal((2L, 1415L), (Notes.Number(((PyTuple)((PyTuple)changed.Header).Items[1]).Items[1]), Notes.Number(((PyTuple)((PyTuple)changed.Header).Items[1]).Items[2])));
-        var pair = Assert.Single(((PyList)notes[1].Args[0]).Items.Cast<PyTuple>());
-        Assert.Equal((3301L, 2L), (Notes.Number(pair.Items[0]), Notes.Number(pair.Items[1])));
-        Assert.Single(((PyList)notes[3].Args[0]).Items); // the second line is left
+        Assert.Single(((PyList)notes[1].Args[0]).Items); // the second line is left
 
         rig.Wait(TimeSpan.FromMinutes(500));
         await Call(rig, session, "GetSkills", []);
         var last = Notes.Of(sink);
-        Assert.Equal(["OnServerSkillsChanged", "OnSkillLevelsTrained", "OnSkillsChanged", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"], last.Select(n => n.Name));
-        Assert.Empty(((PyList)last[3].Args[0]).Items);
+        Assert.Equal(["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"], last.Select(n => n.Name));
+        Assert.Empty(((PyList)last[1].Args[0]).Items);
     }
 
     [PgFact]
@@ -266,7 +264,11 @@ public class TrainingServiceTests
 
         var history = ((PyList)await Call(rig, session, "GetSkillHistory", [])).Items.Select(Notes.Fields).ToArray();
         Assert.Equal([38L], history.Select(h => Notes.Number(h["eventTypeID"])));
-        Assert.Equal((3301L, 550L, 2L), (Notes.Number(history[0]["skillTypeID"]), Notes.Number(history[0]["absolutePoints"]), Notes.Number(history[0]["level"])));
+        Assert.Equal((3301L, 300L, 550L), (
+            Notes.Number(history[0]["skillTypeID"]),
+            Notes.Number(history[0]["relativePoints"]),
+            Notes.Number(history[0]["absolutePoints"])));
+        Assert.DoesNotContain("level", history[0].Keys);
         Assert.IsType<PyLong>(history[0]["logDate"]);
         Assert.Equal("util.KeyVal", JsSemantics.StringValue(((PyObject)((PyList)await Call(rig, session, "GetSkillHistory", [])).Items[0]).Name));
         var limited = Assert.IsType<PyList>(await Call(rig, session, "GetSkillHistory", [new PyInt(1)]));

@@ -2236,6 +2236,37 @@ fn smartbomb_effect(module_id: i64, damage: Damage) -> Effect {
 }
 
 #[test]
+fn a_smartbomb_reports_each_pilot_ship_it_hits_to_the_host() {
+    let (mut scene, _, now) = duel();
+    crate::scene::tests::clear_of_the_station(&mut scene);
+    let position = scene.pilots[&PLAYER].ship.position;
+    let mut target = spec();
+    target.ship_id += 100;
+    target.character_id += 100;
+    scene
+        .enter_in_space(
+            PLAYER + 100,
+            target,
+            [position.x + 2_000.0, position.y, position.z],
+            [1.0, 0.0, 0.0],
+            now,
+        )
+        .unwrap();
+
+    let module_id = spec().ship_id + 1;
+    let out = scene.activate(PLAYER, smartbomb_effect(module_id, [40.0; 4]), now + 1);
+
+    assert!(
+        out.iter().any(|message| matches!(message,
+            Out::SmartbombHit { session: PLAYER, ship_id, module_id: emitted_module, targets }
+                if *ship_id == spec().ship_id && *emitted_module == module_id
+                    && targets == &[(spec().ship_id + 100, spec().character_id + 100, spec().type_id)]
+        )),
+        "{out:?}"
+    );
+}
+
+#[test]
 fn a_smartbomb_shoots_down_the_missiles_of_others_in_its_reach_and_spares_its_own_pilot_s() {
     let (mut scene, npc, now) = duel();
     crate::scene::tests::clear_of_the_station(&mut scene);

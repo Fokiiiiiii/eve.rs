@@ -374,7 +374,7 @@ internal sealed partial class CharacterServicesComposition
                 corporationId => npcFactions.GetValueOrDefault(corporationId),
 
 
-                // agents have no official mission link and offer nothing.
+                // Pick from the versioned mission catalog; the documented agent-to-mission pool is still incomplete.
                 PickOfferAsync,
                 () => DateTimeOffset.UtcNow,
 
@@ -408,7 +408,12 @@ internal sealed partial class CharacterServicesComposition
                             characterSessions.Of(characterId)?.SendNotification("OnStandingsModified", "charid", modifications);
                             return Task.CompletedTask;
                         });
-                }));
+                },
+                ReadMissionMessageId: (missionId, key) =>
+                    clientMissionMessages.TryGetValue(missionId, out var messages) && messages.TryGetValue(key, out var messageId)
+                        ? messageId
+                        : null),
+            nowUnixMs: () => foundations.Scheduler.Now);
         await AttachMissionDungeonsAsync();
     }
 
@@ -690,9 +695,20 @@ internal sealed partial class CharacterServicesComposition
         static double? FiniteNumber(JsonNode? value) => value is JsonValue json && json.TryGetValue<double>(out var number) && double.IsFinite(number) ? number : null;
         var systemId = PositiveLong(storedMission?["missionSystemID"])
             ?? (agentMissionAgentById.TryGetValue(agentId, out var agent) ? agent.SolarSystemId : null);
+        var x = FiniteNumber(position?["x"]);
+        var y = FiniteNumber(position?["y"]);
+        var z = FiniteNumber(position?["z"]);
+        if (mission.Kill?.DungeonId is { } dungeonId && systemId is > 0 &&
+            (x is null || y is null || z is null) && dungeonWavesDirector is { } dungeonDirector)
+        {
+            var pocket = (await dungeonDirector.ActivePocketsAsync(cancellationToken))
+                .FirstOrDefault(candidate => candidate.OwnerId == characterId &&
+                    candidate.DungeonId == dungeonId && candidate.SolarSystemId == systemId.Value);
+            if (pocket is not null && pocket.Origin.Length >= 3)
+                (x, y, z) = (pocket.Origin[0], pocket.Origin[1], pocket.Origin[2]);
+        }
         var location = systemId is > 0
-            ? new Eve.Services.Core.MissionDungeonLocation(systemId.Value,
-                FiniteNumber(position?["x"]), FiniteNumber(position?["y"]), FiniteNumber(position?["z"]))
+            ? new Eve.Services.Core.MissionDungeonLocation(systemId.Value, x, y, z)
             : null;
         return new Eve.Services.Core.HeldMissionView(mission, record, briefing, await FetchObjectiveAsync(characterId, record, cancellationToken),
             await CourierObjectiveAsync(characterId, record, cancellationToken), loyaltyAmount, location);

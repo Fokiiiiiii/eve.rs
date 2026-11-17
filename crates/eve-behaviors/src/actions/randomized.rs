@@ -21,7 +21,9 @@ enter_task!(
     |t| {
         t.set_status_to_success();
         let Some(value) = t.value_at("valueAddress") else { return };
-        let (Some(min), Some(max)) = (t.required_float("minValue"), t.required_float("maxValue")) else { return };
+        let (Some(min), Some(max)) = (t.required_float("minValue"), t.required_float("maxValue")) else {
+            return;
+        };
         let scalar = t.world().random_uniform(min, max);
         let Some(number) = value.as_float() else {
             t.raise(BehaviorError::Task(format!("TypeError: can't multiply {value} by a float")));

@@ -41,7 +41,8 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
     public sealed record IndustryFacility(
         long FacilityId, long SolarSystemId, long OwnerId, decimal TaxRate, double TimeMultiplier, bool IsOnline,
         double? ResearchTimeMultiplier = null, IReadOnlySet<int>? StationServices = null, IReadOnlySet<int>? Activities = null,
-        IReadOnlyList<IndustryBonus>? Bonuses = null, IReadOnlyDictionary<int, decimal>? ServiceTaxRates = null)
+        IReadOnlyList<IndustryBonus>? Bonuses = null, IReadOnlyDictionary<int, decimal>? ServiceTaxRates = null,
+        long StarbaseTowerId = 0, int StarbaseAssemblyTypeId = 0)
     {
         /// <summary>The facility's rig and role bonuses (null for none): the client's facility modifiers.</summary>
         public IReadOnlyList<IndustryBonus> ModifierBonuses => Bonuses ?? [];
@@ -178,6 +179,7 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
             throw InvalidJob();
         if (facility.Activities is { } supported && !supported.Contains(job.ActivityId))
             throw InvalidJob();
+        await ValidateStarbaseAssemblyRestrictionAsync(job, facility, cancellationToken);
         var products = SelectProducts(job, recipe);
         if (job.ActivityId == InventionActivity && products.Count != 1)
             throw InvalidJob();
@@ -381,6 +383,48 @@ public sealed partial class PersistenceIndustryJobOperations : Eve.Services.Core
         await transaction.CommitAsync(cancellationToken);
         Announce(settlement);
         return jobId;
+    }
+
+    private async Task ValidateStarbaseAssemblyRestrictionAsync(
+        Eve.Services.Core.IndustryJobInstallSubmission job,
+        IndustryFacility facility,
+        CancellationToken cancellationToken)
+    {
+        if (facility.StarbaseAssemblyTypeId <= 0)
+            return;
+        if (!StarbaseAssemblyProfiles.TryGet(facility.StarbaseAssemblyTypeId, out var profile) ||
+            !profile.Activities.TryGetValue(job.ActivityId, out var activity))
+            throw InvalidJob();
+        if (activity.Categories.Count == 0 && activity.Groups.Count == 0)
+            return;
+
+        // The array filters the product of the source blueprint. Copying and invention jobs still use
+        // that original product even though their selected job output may itself be a blueprint copy.
+        var rows = await _sde.ReadAsync("blueprints", [job.BlueprintTypeId], cancellationToken);
+        var productTypeId = 0;
+        if (rows.Count > 0 && rows[0].Doc.TryGetProperty("activities", out var activities))
+        {
+            foreach (var sourceActivity in new[] { Eve.Services.Core.IndustryRules.Manufacturing, Eve.Services.Core.IndustryRules.Reaction })
+            {
+                if (!activities.TryGetProperty(Eve.Services.Core.IndustryRules.ActivityKey(sourceActivity), out var source) ||
+                    !source.TryGetProperty("products", out var products) || products.ValueKind != System.Text.Json.JsonValueKind.Array)
+                    continue;
+                foreach (var product in products.EnumerateArray())
+                    if (product.TryGetProperty("typeID", out var type) && type.ValueKind == System.Text.Json.JsonValueKind.Number)
+                    {
+                        productTypeId = type.GetInt32();
+                        break;
+                    }
+                if (productTypeId > 0)
+                    break;
+            }
+        }
+        if (productTypeId <= 0)
+            throw InvalidJob();
+        var (categoryId, groupId) = await ReadProductContextAsync(productTypeId, cancellationToken);
+        if ((categoryId is null || !activity.Categories.Contains(categoryId.Value)) &&
+            (groupId is null || !activity.Groups.Contains(groupId.Value)))
+            throw InvalidJob();
     }
 
     /// <summary>

@@ -116,6 +116,8 @@ public class DogmaServiceTests
             var entry = shipInfo.Entries[module].Value;
             var row = (PyPackedRow)Field(entry, "invItem");
             Assert.Equal((new PyInt(expectedType), new PyInt(expectedFlag), PyNone.Instance), (row.Values[1], row.Values[4], row.Values[8]));
+            var moduleAttributes = Dict(Field(entry, "attributes"));
+            Assert.DoesNotContain(moduleAttributes.Entries, e => Id(e.Key) == 18);
             var running = Dict(Field(entry, "activeEffects"));
             Assert.Equal([16L], running.Entries.Select(e => Id(e.Key)));
             var effect = (PyTuple)running.Entries[0].Value;
@@ -160,7 +162,7 @@ public class DogmaServiceTests
                 new PyInt(0), new PyReal(Number(ShipAttribute(266))), new PyReal(Number(ShipAttribute(264))), PyBool.False],
             ((PyPackedRow)rows[0].Value).Values);
         var pilot = ((PyPackedRow)rows[1].Value).Values;
-        Assert.Equal((PyBool.True, new PyReal(0)), (pilot[1], pilot[3]));
+        Assert.Equal((PyBool.False, new PyReal(0)), (pilot[1], pilot[3]));
         Assert.Equal(new PyInt(await rig.Skills.ForCharacterAsync(character.CharacterId) is var skills ? skills.Sum(s => s.SkillPoints) : 0), pilot[4]);
         Assert.All(rows.Skip(2), r => Assert.Equal(PyBool.True, ((PyPackedRow)r.Value).Values[1]));
         Assert.Empty(Dict(state.Items[1]).Entries);
@@ -389,14 +391,15 @@ public class ShipEventTests
 
         var events = Events.Of(session);
         Assert.Equal(["OnModuleAttributeChanges", "OnModuleAttributeChanges", "OnServerBrainUpdated"], events.Select(e => e.Name));
-        Assert.All(events, e => Assert.Equal("clientID", e.IdType));
+        Assert.Equal(["clientID", "clientID", "charid"], events.Select(e => e.IdType));
         var industry = ((PyList)events[0].Args[0]).Items.Cast<PyTuple>().ToArray();
         Assert.Equal([196L, 219, 385, 387, 398, 467, 1959, 2662, 2664], industry.Select(t => Events.Number(t.Items[3])));
         Assert.All(industry, t => Assert.Equal((new PyStr("OnModuleAttributeChange"), (PyValue)PyNone.Instance), (t.Items[0], t.Items[6])));
+        Assert.IsType<PyReal>(industry[0].Items[5]);
         Assert.Equal(new PyReal(0.96), industry[1].Items[5]);
         var learning = ((PyList)events[1].Args[0]).Items.Cast<PyTuple>().ToArray();
         Assert.Equal([164L, 165, 166, 167, 168], learning.Select(t => Events.Number(t.Items[3])));
-        Assert.All(learning, t => Assert.Equal(new PyInt(20), t.Items[5]));
+        Assert.Equal([new PyInt(19), new PyInt(20), new PyInt(20), new PyInt(20), new PyInt(20)], learning.Select(t => t.Items[5]));
 
         var brain = (PyTuple)events[2].Args[0];
         Assert.Equal(new PyInt(1), brain.Items[0]);
@@ -406,6 +409,24 @@ public class ShipEventTests
         await rig.CallAsync(session, "GetAllInfo", oid, PyBool.True, PyBool.True, PyNone.Instance);
         session.RunAfterResponse();
         Assert.Equal(new PyInt(2), ((PyTuple)Events.Of(session).Last().Args[0]).Items[0]);
+    }
+
+    [PgFact]
+    public async Task Accelerated_training_keeps_the_character_dogma_attributes_unscaled()
+    {
+        var rig = await Rig.CreateAsync(trainingSpeed: 60_000);
+        await using var owned = rig;
+        var character = await rig.NewCharacterAsync();
+        var session = Rig.Session(character.CharacterId);
+        var dogma = await rig.BindAsync(session);
+
+        await rig.CallAsync(session, "GetAllInfo", dogma, PyBool.True, PyBool.True, PyNone.Instance);
+        session.RunAfterResponse();
+
+        var events = Events.Of(session);
+        var learning = ((PyList)events[1].Args[0]).Items.Cast<PyTuple>().ToArray();
+        Assert.Equal([164L, 165, 166, 167, 168], learning.Select(t => Events.Number(t.Items[3])));
+        Assert.Equal([new PyInt(19), new PyInt(20), new PyInt(20), new PyInt(20), new PyInt(20)], learning.Select(t => t.Items[5]));
     }
 
     [PgFact]
@@ -463,6 +484,29 @@ public class ShipEventTests
         await sync.ExpertGrantsChangedAsync(session, character.CharacterId, [], new Dictionary<int, int>());
         Assert.Equal(2, refreshes);
         Assert.Contains(Events.Of(session), notification => notification.Name == "OnModuleAttributeChanges");
+    }
+
+    [PgFact]
+    public async Task Skill_point_progress_without_a_level_change_sends_character_attributes_before_the_brain()
+    {
+        var (rig, character, session, _, _) = await ReadyAsync();
+        await using var owned = rig;
+        var before = (await rig.Ships.LoadAsync(character.CharacterId))!.Skills;
+        var skill = before.First();
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Skills.GrantAsync(connection, transaction, character.CharacterId,
+                [skill with { SkillPoints = skill.SkillPoints + 1 }]);
+            await transaction.CommitAsync();
+        }
+
+        var sync = new CharacterDogmaSync(rig.Statics, rig.Ships, () => Rig.ClockMs);
+        await sync.SkillsChangedAsync(session, character.CharacterId, before);
+
+        var events = Events.Of(session);
+        Assert.Equal(["OnModuleAttributeChanges", "OnModuleAttributeChanges", "OnServerBrainUpdated"], events.Select(e => e.Name));
+        Assert.Equal(["clientID", "clientID", "charid"], events.Select(e => e.IdType));
     }
 
     [PgFact]

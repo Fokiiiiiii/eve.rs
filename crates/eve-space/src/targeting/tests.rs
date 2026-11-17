@@ -325,6 +325,15 @@ fn a_ship_spec_signature_radius_change_rebases_incoming_locks_without_losing_pro
 fn the_damage_state_of_what_is_locked_is_told_to_everyone_who_can_see_it_and_the_one_that_locks() {
     let (mut scene, t) = crowd(3);
     let (out, _) = locked(&mut scene, t, B, ship_id(A));
+    let order: Vec<&str> = out
+        .iter()
+        .filter_map(|event| match event {
+            Out::Notify { name: "DoDestinyUpdate", .. } => Some("DoDestinyUpdate"),
+            Out::Notify { name: "OnTarget", .. } => Some("OnTarget"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["DoDestinyUpdate", "DoDestinyUpdate", "DoDestinyUpdate", "OnTarget", "OnTarget"]);
     let recipients: Vec<SessionId> = told(&out, "DoDestinyUpdate").into_iter().map(|(s, _)| s).collect();
     assert_eq!(
         recipients,
@@ -788,7 +797,10 @@ fn a_ship_that_warps_lets_go_of_all_it_has_locked_when_the_warp_is_entered_and_c
     let (later, t) = poll_until(&mut scene, t, 20.0);
     assert_eq!(
         on_target(&later),
-        vec![(A, words(&["otherlost", &ship_id(B).to_string()])), (B, words(&["clear"])),]
+        vec![
+            (A, words(&["otherlost", &ship_id(B).to_string()])),
+            (B, words(&["clear", &ship_id(B).to_string(), "WarpingOut"])),
+        ]
     );
     assert_eq!(refusal(&scene.target_order(B, Order::Lock(ship_id(A)), t)).reason, "SOURCE_WARPING");
     assert_eq!(refusal(&scene.target_order(A, Order::Lock(ship_id(B)), t)).reason, "TARGET_WARPING");

@@ -727,6 +727,22 @@ impl Sim {
         vec![Message::GetSceneBodyReply { request_id, scene: scene_key, item_id, outcome }]
     }
 
+    pub(super) fn get_deployment_balls(
+        &mut self,
+        request_id: u64,
+        scene_key: SceneKey,
+        now: i64,
+    ) -> Vec<Message> {
+        let outcome = if request_id == 0 || !scene_key.is_valid() || scene_key.instance_id != 0 {
+            Err("BAD_DEPLOYMENT_BALLS_REQUEST".to_string())
+        } else if let Some(scene) = self.scenes.get_mut(&scene_key) {
+            Ok(scene.deployment_balls(now))
+        } else {
+            Err("SCENE_NOT_LOADED".to_string())
+        };
+        vec![Message::GetDeploymentBallsReply { request_id, scene: scene_key, outcome }]
+    }
+
     pub(super) fn get_abyssal_participant_pose(
         &mut self,
         request_id: u64,
@@ -735,6 +751,7 @@ impl Sim {
         now: i64,
     ) -> Vec<Message> {
         let mut deployment = None;
+        let mut following = None;
         let mut outcome = Err("ABYSSAL_RESIDENT_SHIP_NOT_FOUND".to_string());
         if request_id == 0 || !scene_key.is_valid() || ship_id <= 0 {
             outcome = Err("BAD_RESIDENT_POSE_REQUEST".to_string());
@@ -752,6 +769,13 @@ impl Sim {
                 if let Some(ship) = scene.pilots.get(&session_id).map(|pilot| &pilot.ship) {
                     let position = [ship.position.x, ship.position.y, ship.position.z];
                     let direction = [ship.direction.x, ship.direction.y, ship.direction.z];
+                    if let crate::ship::Course::Follow { target, range } = ship.course {
+                        following = Some(crate::link::AbyssalFollowApproach {
+                            target_id: target,
+                            follow_range_meters: range,
+                            max_velocity_meters_per_second: ship.spec.max_velocity,
+                        });
+                    }
                     if position.iter().chain(&direction).all(|value| value.is_finite())
                         && direction.iter().any(|value| *value != 0.0)
                     {
@@ -766,6 +790,7 @@ impl Sim {
         }
         if outcome.is_err() {
             deployment = None;
+            following = None;
         }
         vec![Message::GetAbyssalParticipantPoseReply {
             request_id,
@@ -773,6 +798,7 @@ impl Sim {
             ship_id,
             outcome,
             deployment,
+            following,
         }]
     }
 

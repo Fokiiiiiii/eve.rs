@@ -3,6 +3,7 @@ using Eve.Inventory;
 using Eve.Macho;
 using Eve.Planets;
 using Eve.Marshal;
+using Eve.Ships;
 using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
@@ -37,12 +38,9 @@ public sealed class FleetLoginHookTests
 
 internal static class WarpArrivalAssertions
 {
-    public static void TellOwnShipStopped(Rig rig, ClientSession session)
+    public static void TellOwnShipWarpExited(Rig rig, ClientSession session)
     {
-        var shipId = session.GetInt("shipid")!.Value;
-        var stop = Py.Tuple(new PyInt(1), Py.Tuple(new PyStr("Stop"), Py.Tuple(new PyLong(shipId))));
-        var args = MarshalCodec.Encode(Py.Tuple(new PyList([stop]), PyBool.False));
-        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "DoDestinyUpdate", "clientID", args));
+        rig.Sim.Say(new SimWarpExited((ulong)session.SessionId));
     }
 
     public static async Task AssertArrivalAllowsAnotherWarpAndDockAsync(
@@ -51,8 +49,8 @@ internal static class WarpArrivalAssertions
         string beyonceObjectId)
     {
         Assert.True(rig.Space.IsWarping(session), "the accepted warp is still tracked before its own Stop arrives");
-        TellOwnShipStopped(rig, session);
-        Assert.False(rig.Space.IsWarping(session), "the pilot's own Stop ends the warp");
+        TellOwnShipWarpExited(rig, session);
+        Assert.False(rig.Space.IsWarping(session), "the simulation's drop event ends the Host warp state");
 
         var shipId = session.GetInt("shipid")!.Value;
         var warp = await rig.BeyonceCallAsync(
@@ -62,8 +60,8 @@ internal static class WarpArrivalAssertions
         var warpCommand = Assert.IsType<SimCommand>(rig.Sim.Heard.Last());
         Assert.Equal(((ulong)session.SessionId, SimCommands.WarpTo), (warpCommand.SessionId, warpCommand.Code));
         Assert.Equal([(double)Rig.Station, 0d], warpCommand.Args);
-        TellOwnShipStopped(rig, session);
-        Assert.False(rig.Space.IsWarping(session), "the second warp's own Stop ends the warp");
+        TellOwnShipWarpExited(rig, session);
+        Assert.False(rig.Space.IsWarping(session), "the second warp's drop event ends the Host warp state");
 
         var dock = await rig.BeyonceCallAsync(
             session, "CmdDock", beyonceObjectId, new PyLong(Rig.Station), new PyLong(shipId));
@@ -235,7 +233,7 @@ public class SpaceServiceTests
             ? Py.Tuple(new PyStr(action), new PyLong(id))
             : Py.Tuple(new PyStr(action));
         return new SimNotify((ulong)session.SessionId, "OnTarget", "shipid",
-            MarshalCodec.Encode(Py.Tuple(new PyInt(0), Py.Tuple(new PyInt(1), args))));
+            MarshalCodec.Encode(args));
     }
 
     private static Eve.Scheduler.LocalTimers CooldownElapsedTimers() => new(delay: (duration, token) =>
@@ -559,7 +557,8 @@ public class SpaceServiceTests
 
         rig.Sim.Say(TargetNotification(session, "add", target));
         var added = Assert.Single(Events.Of(session));
-        Assert.Equal(("OnTarget", "shipid"), (added.Name, added.IdType));
+        Assert.Equal(("OnMultiEvent", "clientID"), (added.Name, added.IdType));
+        AssertTargetDogmaEvent(added, "add", target);
         Assert.NotEmpty(Assert.IsType<PyList>(await rig.ShipCallAsync(session, "SafeLogoff", oid)).Items);
 
         rig.Sim.Say(TargetNotification(session, "lost", target));
@@ -1569,6 +1568,10 @@ public class SpaceServiceTests
         var shipId = session.GetInt("shipid")!.Value;
         Stop(shipId + 1);
         Assert.True(rig.Space.IsWarping(session));
+        rig.Sim.Say(new SimWarpExited((ulong)session.SessionId + 1));
+        Assert.True(rig.Space.IsWarping(session), "another session's warp exit cannot clear this pilot's state");
+        rig.Sim.Say(new SimWarpExited((ulong)session.SessionId));
+        Assert.False(rig.Space.IsWarping(session), "the simulation's warp-drop event ends this pilot's warp state");
         Stop(shipId);
         Assert.False(rig.Space.IsWarping(session));
 
@@ -3704,7 +3707,7 @@ public class SpaceServiceTests
         await using var _ = rig;
         await InSpaceAsync(rig, session);
         const long other = 9988400002187;
-        PyValue Targeted(params PyValue[] words) => Py.Tuple(new PyInt(0), Py.Tuple(new PyInt(1), new PyTuple(words)));
+        PyValue Targeted(params PyValue[] arguments) => Py.Tuple(arguments);
         var targets = new[]
         {
             Targeted(new PyStr("lost"), new PyLong(other)),
@@ -3713,10 +3716,11 @@ public class SpaceServiceTests
         };
         foreach (var args in targets)
         {
-            var sent = ((PyTuple)args).Items;
             rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnTarget", "shipid",
-                MarshalCodec.Encode(Py.Tuple(sent[0], sent[1]))));
+                MarshalCodec.Encode((PyTuple)args)));
         }
+        var exploding = Py.Tuple(new PyStr("otherlost"), new PyLong(other), new PyStr("Exploding"));
+        rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnTarget", "shipid", MarshalCodec.Encode(exploding)));
         var damage = Py.Tuple(
             Py.Tuple(new PyReal(0.5), new PyReal(110000.0), new PyLong(134351527136350000)), new PyReal(1.0), new PyReal(0.25));
         var action = Py.Tuple(new PyInt(1790679103), Py.Tuple(new PyStr("OnDamageStateChange"), Py.Tuple(new PyLong(other), damage)));
@@ -3724,15 +3728,37 @@ public class SpaceServiceTests
             MarshalCodec.Encode(Py.Tuple(new PyList([action]), PyBool.False))));
 
         var events = Events.Of(session);
-        Assert.Equal(["OnTarget", "OnTarget", "OnTarget", "DoDestinyUpdate"], events.Select(e => e.Name));
-        Assert.All(events.Take(3), e => Assert.Equal("shipid", e.IdType));
+        Assert.Equal(["OnMultiEvent", "OnMultiEvent", "OnMultiEvent", "OnTarget", "DoDestinyUpdate"], events.Select(e => e.Name));
+        Assert.All(events.Take(3), e => Assert.Equal("clientID", e.IdType));
+        Assert.Equal("shipid", events[3].IdType);
         Assert.Equal(
             ["lost", "otherlost", "clear"],
-            events.Take(3).Select(e => JsSemantics.StringValue(((PyTuple)((PyTuple)e.Args[1]).Items[1]).Items[0])));
-        Assert.Equal(other, Id(((PyTuple)((PyTuple)events[0].Args[1]).Items[1]).Items[1]));
-        var delivered = (PyTuple)((PyTuple)((PyList)events[3].Args[0]).Items.Single()).Items[1];
+            events.Take(3).Select(e => JsSemantics.StringValue(TargetEvent(e).Items[0])));
+        Assert.Equal(other, Id(TargetEvent(events[0]).Items[1]));
+        Assert.Equal(3, events[3].Args.Length);
+        Assert.Equal("otherlost", JsSemantics.StringValue(events[3].Args[0]));
+        Assert.Equal(other, Id(events[3].Args[1]));
+        Assert.Equal("Exploding", JsSemantics.StringValue(events[3].Args[2]));
+        var delivered = (PyTuple)((PyTuple)((PyList)events[4].Args[0]).Items.Single()).Items[1];
         Assert.Equal("OnDamageStateChange", JsSemantics.StringValue(delivered.Items[0]));
         Assert.Equal(damage, ((PyTuple)delivered.Items[1]).Items[1]);
+    }
+
+    private static PyTuple TargetEvent(Events.Event notification)
+    {
+        var pair = Assert.Single(Assert.IsType<PyList>(Assert.Single(notification.Args)).Items);
+        var timedEvent = Assert.IsType<PyTuple>(pair);
+        Assert.True(Id(timedEvent.Items[1]) > 0);
+        var words = (PyTuple)timedEvent.Items[0];
+        Assert.Equal("OnTarget", JsSemantics.StringValue(words.Items[0]));
+        return new PyTuple(words.Items.Skip(1).ToArray());
+    }
+
+    private static void AssertTargetDogmaEvent(Events.Event notification, string action, long target)
+    {
+        var words = TargetEvent(notification);
+        Assert.Equal(action, JsSemantics.StringValue(words.Items[0]));
+        Assert.Equal(target, Id(words.Items[1]));
     }
 
     [PgFact]
@@ -3772,6 +3798,7 @@ public class SpaceServiceTests
         var (rig, _, session) = await DockedAsync(localTimers: timers);
         await using var _ = rig;
         await InSpaceAsync(rig, session);
+        await Rig.UntilAsync(() => !rig.Space.IsSessionChanging(session));
         var oid = await rig.BindBeyonceAsync(session);
 
         var answer = await rig.BeyonceCallAsync(session, "CmdDock", oid, new PyInt((int)Rig.Station), new PyLong(session.GetInt("shipid")!.Value));
@@ -3928,6 +3955,44 @@ public class SpaceServiceTests
         Assert.Equal(Eve.Ships.CharacterShips.InSpaceFlag, ship.Flag);
         Assert.Equal(system, (await rig.SpaceItems.GetAsync(character.ShipId))?.SolarSystemId);
         Assert.False(rig.Space.IsInSpace(session));
+    }
+
+    [PgFact]
+    public async Task A_ship_disconnected_during_its_capsuleer_logoff_timer_stays_targetable_in_space()
+    {
+        var (rig, character, session) = await DockedAsync();
+        await using var _ = rig;
+        await InSpaceAsync(rig, session);
+        var systemId = session.GetInt("solarsystemid")!.Value;
+        var pvpUntil = rig.Now + Eve.Crimewatch.CombatState.PvpDurationMs;
+        rig.Space.CrimewatchStateOf = (_, _) => Task.FromResult(
+            new Eve.Crimewatch.CombatState(0, pvpUntil, 0, 0, Eve.Crimewatch.Flag.None, 0, systemId));
+
+        session.Close();
+        await rig.Space.QuiesceAsync();
+
+        Assert.Contains(rig.Sim.Heard, message => message is SimLeave
+        {
+            SessionId: var sessionId,
+            Why: LeaveWhy.Ejected
+        } && sessionId == (ulong)session.SessionId);
+        Assert.DoesNotContain(rig.Sim.Heard, message => message is SimLeave
+        {
+            SessionId: var sessionId,
+            Why: LeaveWhy.LoggedOff
+        } && sessionId == (ulong)session.SessionId);
+        var saved = Assert.IsType<SpaceItem>(await rig.SpaceItems.GetAsync(character.ShipId));
+        Assert.Equal(SpaceItemKind.CombatLogoffShip, saved.Kind);
+        Assert.Equal(pvpUntil, saved.ExpiresAtMs);
+
+        rig.Now = pvpUntil;
+        await rig.Containers.SweepAsync();
+
+        Assert.Contains(rig.Sim.Heard, message => message is SimRemoveUnpilotedShip removal
+            && removal.ShipId == character.ShipId && removal.Scene.LocationId == systemId);
+        saved = Assert.IsType<SpaceItem>(await rig.SpaceItems.GetAsync(character.ShipId));
+        Assert.Equal(SpaceItemKind.ActiveShip, saved.Kind);
+        Assert.Equal(long.MaxValue, saved.ExpiresAtMs);
     }
 
     [PgFact]

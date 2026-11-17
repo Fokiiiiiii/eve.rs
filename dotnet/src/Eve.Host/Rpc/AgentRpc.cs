@@ -194,8 +194,8 @@ internal sealed partial class CharacterServicesComposition
             publicQaSlashService = new SlashService(new ShipHealthCommands(ships, dogma, now, spaceSessions), spaceSessions is null ? null : new DeathTestCommands(spaceSessions, new ShipTypeNames(sde)), spaceSessions is null ? null : new SuicideCommands(spaceSessions), spaceSessions is null ? null : new NpcCommands(spaceSessions), new ItemCommands(new ItemTypeNames(sde), ships, dogma, now, spaceSessions), new SkillCommands(skillCatalog, characters, training, announcer, characterSessions.Of), new IskCommands(economyWallets, source, now, wallets, loyaltyPoints),
                 new LoyaltyCommands(loyaltyPoints, new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), now),
                 new StandingCommands(new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), foundations.Relations,
-                    (character, owner, standing) => characterSessions.Of(character)?.SendNotification("OnStandingSet", "clientID", new PyList(
-                    [new PyInt(owner), new PyLong(character), new PyReal(standing)]))),
+                    (character, owner, standing) => StandingSetNotification.Send(
+                        characterSessions.Of(character), character, owner, standing)),
                 spaceSessions is null ? null : new TeleportCommands(new HostGmRelocation(spaceSessions, solarSystems, new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), characterSessions)),
                 missionDungeons is null ? null : new AgentCommands(new HostAgentControl(agentMissionStore, agentId => agentMissionAgentById.GetValueOrDefault(agentId), PickOfferAsync, missionDungeons, () => DateTimeOffset.UtcNow)),
                 new FwCommands(new HostFwControl(factionWarfare, new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())),
@@ -224,7 +224,14 @@ internal sealed partial class CharacterServicesComposition
                 shipConfigurations: new PgShipConfigurationStore(source,
                     string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")) ? PgSpaceItemStore.DefaultSchema : Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")!),
                 shipDirts: new PgShipDirtStore(source,
-                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")) ? PgSpaceItemStore.DefaultSchema : Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")!)), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter)
+                    string.IsNullOrEmpty(Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")) ? PgSpaceItemStore.DefaultSchema : Environment.GetEnvironmentVariable("EVE_SPACE_SCHEMA")!),
+                fitShips: call => marketInventoryBroker.FitShipsAsync(call, async (session, locationId, token) =>
+                {
+                    if (session.GetInt("stationid") == locationId)
+                        return stations.ServicesOf(locationId).Contains(17); // V24 appConst.stationServiceFitting.
+                    return session.CharacterId is { } characterId && session.GetInt("structureid") == locationId
+                        && await structureDirectoryReadModel.CharacterHasServiceAsync(characterId, locationId, Eve.Structures.StructureServiceIds.Fitting, token);
+                })), new BeyonceService(spaceSessions, now, fleetStore, FleetSessionForCharacter)
                 {
                     CynoJammerOnlineSimTimeForSystem = CynoJammerOnlineSimTimeAsync,
                     InitiateBeaconLink = AnalysisBeaconLink,

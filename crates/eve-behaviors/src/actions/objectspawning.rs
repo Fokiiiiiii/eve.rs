@@ -144,8 +144,19 @@ enter_task!(
             t.set_status_to_failed();
             return;
         };
-        let (Some(type_id), Some(solar_system_id)) = (t.required_int("typeId"), t.world().solar_system_id()) else { return };
-        t.world().add_fake_location(FakeLocation { type_id, owner_id, solar_system_id, flag: FLAG_NONE, position, object_name_id: None, custom_info: None });
+        let (Some(type_id), Some(solar_system_id)) = (t.required_int("typeId"), t.world().solar_system_id())
+        else {
+            return;
+        };
+        t.world().add_fake_location(FakeLocation {
+            type_id,
+            owner_id,
+            solar_system_id,
+            flag: FLAG_NONE,
+            position,
+            object_name_id: None,
+            custom_info: None,
+        });
         t.set_status_to_success();
     }
 );
@@ -160,8 +171,19 @@ enter_task!(
             t.set_status_to_failed();
             return;
         };
-        let (Some(type_id), Some(solar_system_id)) = (t.required_int("typeId"), t.world().solar_system_id()) else { return };
-        t.world().insert_location(FakeLocation { type_id, owner_id, solar_system_id, flag: FLAG_NONE, position, object_name_id: None, custom_info: None });
+        let (Some(type_id), Some(solar_system_id)) = (t.required_int("typeId"), t.world().solar_system_id())
+        else {
+            return;
+        };
+        t.world().insert_location(FakeLocation {
+            type_id,
+            owner_id,
+            solar_system_id,
+            flag: FLAG_NONE,
+            position,
+            object_name_id: None,
+            custom_info: None,
+        });
         t.set_status_to_success();
     }
 );

@@ -20,6 +20,13 @@ pub const SET_STRUCTURE_MOON_MINING_STATE: u8 = 160;
 pub const EMPIRE_SENTRY_OFFENSE: u8 = 161;
 /// The simulation confirms a still-running offensive module effect for bounded Crimewatch activity (protocol 97).
 pub const MODULE_ACTIVITY_REFRESH: u8 = 162;
+/// The simulation reports player ships hit by a smartbomb so the Host can apply Crimewatch (protocol 98).
+pub const SMARTBOMB_HIT: u8 = 164;
+/// The ship left warp and may receive movement orders while coasting (protocol 100).
+pub const WARP_EXITED: u8 = 165;
+/// The Host asks what the client ballpark currently holds for deployment placement (protocol 101).
+pub const GET_DEPLOYMENT_BALLS: u8 = 166;
+pub const GET_DEPLOYMENT_BALLS_REPLY: u8 = 167;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

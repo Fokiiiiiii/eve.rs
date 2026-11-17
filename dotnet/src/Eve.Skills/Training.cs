@@ -69,7 +69,7 @@ public static class SkillEvents
 }
 
 /// <summary>A line of the history (a skill started, finished or stopped).</summary>
-public sealed record HistoryEntry(long LogDate, int EventType, int TypeId, long Points, int Level);
+public sealed record HistoryEntry(long LogDate, int EventType, int TypeId, long Points, int Level, long RelativePoints = 0);
 
 /// <summary>What settling a queue found: the queue and skills as they are now, what finished, and what to write in the history.</summary>
 public sealed record Settlement(QueueState State, IReadOnlyDictionary<int, CharacterSkill> Skills, IReadOnlyList<CharacterSkill> Finished, IReadOnlyList<HistoryEntry> History, bool QueueChanged);
@@ -319,7 +319,13 @@ public static class Training
             var trained = new CharacterSkill(line.TypeId, SkillPoints.LevelAt(rank, line.DestinationPoints), line.DestinationPoints);
             current[line.TypeId] = trained;
             finished.Add(trained);
-            history.Add(new HistoryEntry(end, queue.Count > 1 ? SkillEvents.QueueTrainingCompleted : SkillEvents.TrainingComplete, line.TypeId, line.DestinationPoints, line.ToLevel));
+            history.Add(new HistoryEntry(
+                end,
+                queue.Count > 1 ? SkillEvents.QueueTrainingCompleted : SkillEvents.TrainingComplete,
+                line.TypeId,
+                line.DestinationPoints,
+                line.ToLevel,
+                Math.Max(0, line.DestinationPoints - skill.SkillPoints)));
             queue.RemoveAt(0);
             active = queue.Count > 0;
             activeStart = active ? end : null;

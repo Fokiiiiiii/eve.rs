@@ -245,7 +245,7 @@ public sealed class DogmaInfo(DogmaStatic statics)
                 armorDamage: shipAttributes.GetValueOrDefault(ArmorDamage),
                 shieldCharge: shipAttributes.GetValueOrDefault(ShieldCharge),
                 incapacitated: s.Condition.Incapacitated)),
-            new(InventoryWire.Id(s.Character.Id), DogmaWire.InstanceRow(s.Character.Id, online: true, skillPoints: (int)s.TotalSkillPoints)),
+            new(InventoryWire.Id(s.Character.Id), DogmaWire.InstanceRow(s.Character.Id, skillPoints: (int)s.TotalSkillPoints)),
         };
         rows.AddRange(s.Fitted.Select(m =>
         {
@@ -264,6 +264,10 @@ public sealed class DogmaInfo(DogmaStatic statics)
             InventoryWire.Id(bank.Key), new PyList([.. bank.Value.Select(InventoryWire.Id)]))).ToArray());
         return Py.Tuple(new PyDict(rows), loaded, weaponBanks, DogmaWire.HeatState(now));
     }
+
+    /// <summary>The four-part state returned when the client activates a ship: instance rows, loaded charges, weapon banks, and heat.</summary>
+    public PyValue ActivationState(ShipSnapshot snapshot, long fileTime) =>
+        ShipState(snapshot, ShipAttributes(snapshot), fileTime);
 
     /// <summary>
     /// <c>GetAllInfo</c> for a character in its ship in a station. What is left out follows the reference: the character and

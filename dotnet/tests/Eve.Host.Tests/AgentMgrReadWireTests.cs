@@ -228,13 +228,13 @@ public partial class HostServerTests
                 new PyList([
                     new PyInt(AgentRpcFirstAgent), new PyInt(8), new PyInt(24), new PyInt(3),
                     new PyInt(60_000_001), new PyInt(1_000_036), PyBool.False, PyBool.False,
-                    new PyInt(17), PyBool.False, new PyStr("courier"), new PyStr("courier"),
+                    new PyInt(17), PyBool.False, new PyStr("courier"), new PyStr("UI/Agents/MissionTypes/Courier"),
                     new PyInt(18), new PyInt(1_531), new PyInt(1),
                 ]),
                 new PyList([
                     new PyInt(AgentRpcSecondAgent), new PyInt(8), new PyInt(24), new PyInt(3),
                     new PyInt(60_000_001), new PyInt(1_000_036), PyBool.False, PyBool.False,
-                    new PyInt(17), PyBool.False, new PyStr("encounter"), new PyStr("courier"),
+                    new PyInt(17), PyBool.False, new PyStr("encounter"), new PyStr("UI/Agents/MissionTypes/Courier"),
                     new PyInt(18), new PyInt(1_531), new PyInt(1),
                 ]),
             ])));
@@ -247,8 +247,11 @@ public partial class HostServerTests
         Assert.Equal(PyBool.False, Get(completed, new PyInt(AgentRpcSecondAgent)));
         Assert.Equal(new PyList([new PyInt(5101), new PyInt(5102)]),
             await CallAsync(3, "GetDisabledMissions", new PyTuple([])));
-        var messages = Assert.IsType<PyDict>(
+        var cachedMessages = Assert.IsType<PyObject>(
             await CallAsync(4, "GetMessagesForEpicArcMissions", new PyTuple([])));
+        Assert.Equal("carbon.common.script.net.objectCaching.CachedMethodCallResult", T(cachedMessages.Name));
+        var cachedMessageParts = Assert.IsType<PyTuple>(cachedMessages.Args).Items;
+        var messages = Assert.IsType<PyDict>(Assert.IsType<PySubStream>(cachedMessageParts[1]).Decoded);
         var starts = Assert.IsType<PyDict>(Get(messages, new PyBytes("start"u8.ToArray())));
         Assert.Equal("UI/Agent/EpicArc/Start", T(Get(starts, new PyInt(430001))));
 
@@ -332,7 +335,7 @@ public partial class HostServerTests
             24, oid, "GetMissionKeywords", new PyTuple([new PyStr("courier-12")])));
         Assert.Equal("Unknown Agent", T(Get(keywords, new PyStr("agentName"))));
         Assert.Equal("Courier Assignment", T(Get(keywords, new PyStr("missionName"))));
-        Assert.Equal("courier", T(Get(keywords, new PyStr("missionTypeLabel"))));
+        Assert.Equal("UI/Agents/MissionTypes/Courier", T(Get(keywords, new PyStr("missionTypeLabel"))));
         var entryPoint = Assert.IsType<PyList>(
             await BoundCallAsync(25, oid, "GetEntryPoint", new PyTuple([])));
         Assert.Equal(new PyList([new PyReal(10), new PyReal(20), new PyReal(30)]), entryPoint);

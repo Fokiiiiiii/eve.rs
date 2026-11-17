@@ -10,7 +10,7 @@ impl Scene {
         if let Some(pilot) = self.pilots.get(&session) {
             return Some(Presence {
                 position: pilot.ship.position,
-                warping: pilot.flight.as_ref().is_some_and(|f| f.is_warping()),
+                warping: pilot.flight.as_ref().is_some_and(|f| f.is_in_warp_mode()),
             });
         }
         let observer = self.controlled_structures.get(&session)?;
@@ -21,7 +21,8 @@ impl Scene {
     pub(super) fn visible_to(&self, observer: SessionId, subject: SessionId) -> bool {
         match (self.presence(observer), self.presence(subject)) {
             (Some(observer), Some(subject_presence)) => {
-                let cloak = self.pilots.get(&subject).map_or(CloakState::Uncloaked, |pilot| pilot.cloak);
+                let cloak =
+                    self.pilots.get(&subject).map_or(CloakState::Uncloaked, |pilot| pilot.effective_cloak());
                 can_see_subject(observer, subject_presence, cloak)
             }
             _ => false,
@@ -164,7 +165,11 @@ impl Scene {
     }
 
     pub(crate) fn update(session: SessionId, actions: Vec<Value>) -> Out {
-        Scene::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
+        Self::update_wait(session, actions, false)
+    }
+
+    fn update_wait(session: SessionId, actions: Vec<Value>, wait: bool) -> Out {
+        Scene::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, wait))
     }
 
     /// What happened to a ship, told to it and to everyone who has it in view: one update each, the same stamp.
@@ -184,18 +189,27 @@ impl Scene {
         out
     }
 
-    /// `AddBalls2` of a ship followed by its numbers, as a watcher is sent a ship that has come into view.
+    /// A packaged `AddBalls2` of a ship followed by its numbers, as a watcher is sent a ship that has come into view.
     pub(crate) fn introduction(&mut self, subject: SessionId, now: i64) -> Option<Vec<Value>> {
         let stamp = self.next_stamp(now);
-        let ship = &self.pilots.get(&subject)?.ship;
+        self.introduction_at(subject, stamp, now)
+    }
+
+    fn introduction_at(&self, subject: SessionId, stamp: u32, now: i64) -> Option<Vec<Value>> {
+        let pilot = self.pilots.get(&subject)?;
+        let ship = &pilot.ship;
         let ship_id = id(ship.spec.ship_id);
-        let added = payload::add_ships(stamp, &[ship], now).ok()?;
-        Some(vec![
+        let added = payload::packaged_actions(stamp, [payload::add_ships(stamp, &[ship], now).ok()?]);
+        let mut actions = vec![
             added,
             payload::action(stamp, "SetBallAgility", [ship_id.clone(), real(ship.spec.agility)]),
             payload::action(stamp, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]),
             payload::action(stamp, "SetMaxSpeed", [ship_id, real(ship.spec.max_velocity)]),
-        ])
+        ];
+        if pilot.jump_cloak_ended {
+            actions.push(payload::uncloak(stamp, ship.spec.ship_id));
+        }
+        Some(actions)
     }
 
     /// A ship has come into the scene: every bound view that can see it is sent the ship.
@@ -208,11 +222,18 @@ impl Scene {
         if watchers.is_empty() {
             return Vec::new();
         }
-        let Some(actions) = self.introduction(subject, now) else { return Vec::new() };
+        let stamp = self.next_stamp(now);
+        let Some(actions) = self.introduction_at(subject, stamp, now) else { return Vec::new() };
+        let movement_prime = self.station_undock_movement_prime(subject, stamp);
+        let wait_for_add = self.pilots.get(&subject).is_some_and(|pilot| pilot.leaving_station.is_some());
         let mut out = Vec::new();
         for watcher in watchers {
             self.set_sees_ship(watcher, subject, true);
-            out.push(Self::update(watcher, actions.clone()));
+            // Keep the AddBalls update waiting until its same-stamp movement-prime update arrives.
+            out.push(Self::update_wait(watcher, actions.clone(), wait_for_add));
+            if let Some(prime) = movement_prime.as_ref() {
+                out.push(Self::update(watcher, prime.clone()));
+            }
         }
         out
     }
@@ -254,7 +275,8 @@ impl Scene {
                 warping |= presence.warping;
             }
         }
-        if !warping && !self.warped_last && boxes == self.boxes {
+        let jump_cloak_ended = self.pilots.values().any(|pilot| pilot.jump_cloak_ended);
+        if !warping && !self.warped_last && boxes == self.boxes && !jump_cloak_ended {
             return Vec::new();
         }
         self.boxes = boxes;
@@ -292,6 +314,9 @@ impl Scene {
             let Some(actions) = self.introduction(subject, now) else { continue };
             self.set_sees_ship(observer, subject, true);
             out.push(Self::update(observer, actions));
+        }
+        for pilot in self.pilots.values_mut() {
+            pilot.jump_cloak_ended = false;
         }
         out
     }

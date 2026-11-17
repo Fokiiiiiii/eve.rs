@@ -31,7 +31,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
-         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160}
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164, "WarpExited": 165, "GetDeploymentBalls": 166, "GetDeploymentBallsReply": 167}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -507,6 +507,17 @@ def build(m):
         else:
             body += b"\x01" + s(m["error"])
         return frame(k, body)
+    if k == "GetDeploymentBalls":
+        return frame(k, u64(m["requestId"]) + scene_key(m))
+    if k == "GetDeploymentBallsReply":
+        error = m.get("error")
+        body = u64(m["requestId"]) + scene_key(m) + bytes([1 if error is not None else 0])
+        if error is None:
+            body += struct.pack("<H", len(m["balls"]))
+            for ball in m["balls"]:
+                body += i64(ball["itemId"]) + struct.pack("<i4dB", ball["typeId"], *ball["position"], ball["radius"],
+                                                            1 if ball["warpInPoint"] else 0)
+        return frame(k, body + s(error or ""))
     if k == "GetAbyssalParticipantPose":
         return frame(k, u64(m["requestId"]) + scene_key({"scene": m["scene"]}) + i64(m["shipId"]))
     if k == "GetAbyssalParticipantPoseReply":
@@ -523,6 +534,10 @@ def build(m):
             body += struct.pack("<I", len(deployment["nearbyObjects"]))
             for obj in deployment["nearbyObjects"]:
                 body += i64(obj["itemId"]) + struct.pack("<id", obj["typeId"], obj["centerDistanceMeters"])
+        following = m.get("following")
+        body += bytes([1 if following else 0])
+        if following:
+            body += i64(following["targetId"]) + struct.pack("<2d", following["followRangeMeters"], following["maxVelocityMetersPerSecond"])
         return frame(k, body)
     if k in ("EnsureAbyssalSceneReply", "MoveAbyssalParticipantReply", "RebindAbyssalSessionReply", "RemoveAbyssalSceneReply"):
         return frame(k, abyssal_result(m))
@@ -661,6 +676,8 @@ def build(m):
         return frame(k, u64(m["sessionId"]) + i64(m["containerId"]) + struct.pack("<6d", *m["position"], *m["direction"]))
     if k == "Arrived":
         return frame(k, u64(m["sessionId"]) + i64(m["beltId"]) + struct.pack("<3d", *m["position"]))
+    if k == "WarpExited":
+        return frame(k, u64(m["sessionId"]))
     if k == "ChangeWreck":
         is_empty = m["isEmpty"]
         abandoned = m["abandoned"]
@@ -823,6 +840,12 @@ def build(m):
     if k == "EcmBurst":
         return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + struct.pack("<I", len(m["reached"]))
                      + b"".join(i64(r["shipId"]) + bytes([1 if r["jammed"] else 0]) for r in m["reached"]))
+    # protocol 98: each player ship actually hit by a smartbomb, with its owner and type for Host Crimewatch.
+    if k == "SmartbombHit":
+        return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + i64(m["moduleId"])
+                     + struct.pack("<I", len(m["targets"]))
+                     + b"".join(i64(t["shipId"]) + i64(t["characterId"]) + struct.pack("<i", t["typeId"])
+                                 for t in m["targets"]))
     if k == "Destroy":
         return frame(k, i64(m["shipId"]) + i64(m["characterId"]) + i64(m["corporationId"]) + i64(m["allianceId"]) + i64(m["warFactionId"]))
     raise ValueError(k)
@@ -845,8 +868,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 82},
-    {"name": "hello ack", "kind": "HelloAck", "version": 82, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 101},
+    {"name": "hello ack", "kind": "HelloAck", "version": 101, "pollHz": 4},
     {"name": "active Crimewatch flag", "kind": "CrimewatchFlagActive", "sessionId": "1001",
      "isCriminal": True, "expiresAtUnixMs": "1800000000000"},
     {"name": "Empire sentry offense", "kind": "EmpireSentryOffense", "sessionId": "1001"},
@@ -941,6 +964,14 @@ valid = [
      "typeId": 10645, "groupId": 310, "categoryId": 2, "position": [1.0, 2.0, 3.0], "error": None},
     {"name": "public scene body absent", "kind": "GetSceneBodyReply", "requestId": "53",
      "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000002", "error": "SCENE_BODY_NOT_FOUND"},
+    {"name": "read public deployment balls", "kind": "GetDeploymentBalls", "requestId": "60",
+     "solarSystemId": 30000142},
+    {"name": "public deployment balls include real and warp-in blockers", "kind": "GetDeploymentBallsReply", "requestId": "60",
+     "solarSystemId": 30000142, "balls": [
+        {"itemId": "400000001", "typeId": 14, "position": [1.0, 2.0, 3.0], "radius": 600000.0, "warpInPoint": False},
+        {"itemId": "30000077", "typeId": 15, "position": [4.0, 5.0, 6.0], "radius": 0.0, "warpInPoint": True}], "error": None},
+    {"name": "deployment balls query refuses an unloaded scene", "kind": "GetDeploymentBallsReply", "requestId": "61",
+     "solarSystemId": 30000143, "balls": [], "error": "SCENE_NOT_LOADED"},
     {"name": "read a public-system source ship pose", "kind": "GetAbyssalParticipantPose", "requestId": "50",
      "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940"},
     {"name": "public-system source ship pose receipt", "kind": "GetAbyssalParticipantPoseReply", "requestId": "50",
@@ -951,6 +982,10 @@ valid = [
      "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "error": None,
      "deployment": {"warping": True, "cloaked": False, "cynoActive": True, "undockInvulnerable": False, "warpScrambled": True,
         "nearbyObjects": [{"itemId": "400000001", "typeId": 23, "centerDistanceMeters": 1000000.0}]}},
+    {"name": "private pose receipt carries the committed FOLLOW approach", "kind": "GetAbyssalParticipantPoseReply", "requestId": "52",
+     "scene": {"locationId": 30000142, "instanceId": "9000000000001", "roomIndex": 1}, "shipId": "9988400001940",
+     "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "error": None,
+     "following": {"targetId": "9988400001942", "followRangeMeters": 2500.0, "maxVelocityMetersPerSecond": 339.25}},
     {"name": "enter by undocking", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
      "how": 0, "stationId": "60015249", "ship": IBIS},
     {"name": "enter ship with a weapon bank", "kind": "Enter", "sessionId": "1790646377000015", "solarSystemId": 30100032,
@@ -1437,6 +1472,10 @@ valid = [
      "fighterIds": ["9988400004100"], "point": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
     {"name": "an ECM burst that jammed one ship it reached and not another", "kind": "EcmBurst", "sessionId": "1790646377000015",
      "shipId": "9988400001939", "reached": [{"shipId": "9988400004100", "jammed": True}, {"shipId": "9988400004101", "jammed": False}]},
+     {"name": "a smartbomb reports each player ship it hit", "kind": "SmartbombHit", "sessionId": "1790646377000015",
+      "shipId": "9988400001939", "moduleId": "9988400001940",
+      "targets": [{"shipId": "9988400004100", "characterId": "2000001", "typeId": 638},
+                  {"shipId": "9988400004101", "characterId": "2000002", "typeId": 29}]},
     {"name": "destroy for a pilot to loot", "kind": "Destroy", "shipId": "980050000077", "characterId": "140000001",
      "corporationId": "1000006", "allianceId": "0", "warFactionId": "500001"},
     {"name": "respawn of a capsule where the ship was", "kind": "Respawn", "sessionId": "1790646377000015",
@@ -1471,6 +1510,7 @@ valid = [
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "direction": [0.6159, 0.01306, 0.78769]},
     {"name": "player's warp ended at a belt", "kind": "Arrived", "sessionId": "1790646377000015", "beltId": "40009256",
      "position": [311989835983.1308, -13069154020.916222, 156646308895.76187]},
+    {"name": "ship left warp and can steer during its coast", "kind": "WarpExited", "sessionId": "1790646377000015"},
     {"name": "wreck with something to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002948", "isEmpty": False, "abandoned": None},
     {"name": "wreck with nothing to take", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002417", "isEmpty": True, "abandoned": None},
     {"name": "wreck loot rights abandoned", "kind": "ChangeWreck", "sessionId": "1790646377000015", "wreckId": "9988400002948", "isEmpty": None, "abandoned": True},
@@ -2050,7 +2090,11 @@ invalid = [
     {"name": "ECM burst that promises two ships and carries one", "reason": "truncated",
      "hex": frame("EcmBurst", u64(1) + i64(9) + struct.pack("<I", 2) + i64(10) + bytes([1])).hex()},
     {"name": "ECM burst cut short before its ship", "reason": "truncated",
-     "hex": frame("EcmBurst", u64(1) + bytes([0, 0, 0])).hex()},    {"name": "warp probe with no lifetime", "reason": "bad-value",
+      "hex": frame("EcmBurst", u64(1) + bytes([0, 0, 0])).hex()},
+     {"name": "smartbomb hit promises a target whose owner record is truncated", "reason": "truncated",
+      "hex": frame("SmartbombHit", u64(1) + i64(2) + i64(3) + struct.pack("<I", 1)
+                   + i64(4) + i64(5) + struct.pack("<i", 6)[:3]).hex()},
+     {"name": "warp probe with no lifetime", "reason": "bad-value",
      "hex": build(dict(named("activate an interdiction probe"), effect=dict(named("activate an interdiction probe")["effect"],
                        action=dict(named("activate an interdiction probe")["effect"]["action"], lifetimeMs=0.0)))).hex()},
     {"name": "bomb of an unknown kind", "reason": "bad-value",

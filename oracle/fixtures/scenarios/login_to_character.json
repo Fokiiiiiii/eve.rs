@@ -1,8 +1,8 @@
 {
  "reference": "EVE.js",
- "referenceCommit": "b637d2a55469ee23d24411ed5a7646391de314d9",
- "recordedAt": "2026-09-29T03:48:04Z",
- "note": "School corporationID and selected-session corpid refreshed from EveJS 261108.1 school 35; all other values remain from the 2026-09-29 recording.",
+ "referenceCommit": "evejs-261108.1",
+ "recordedAt": "2026-11-16T06:16:33Z",
+ "note": "Recorded by tools/headless-client/scripts/record_character_scenarios.py",
  "login": {
   "serverVersion": {
    "$tuple": [
@@ -15,16 +15,12 @@
    ]
   },
   "sessionInit": {
-   "languageID": "EN",
-   "countryCode": "GB",
-   "userid": 34,
-   "maxSessionTime": null,
+   "userid": 19,
    "userType": 30,
-   "role": {
-    "$long": 90071993086640128
-   },
+   "role": 7348784299939993600,
    "address": "127.0.0.1",
-   "inDetention": null
+   "languageID": "EN",
+   "countryCode": "GB"
   }
  },
  "steps": [
@@ -63,7 +59,7 @@
          ],
          [
           "userName",
-          "rec-1790653684-walk"
+          "rec-1794809793-walk"
          ],
          [
           "creationDate",
@@ -130,7 +126,7 @@
      1
     ]
    ],
-   "ok": "Noura Aikinen"
+   "ok": "Daemi Aikinen"
   },
   {
    "call": [
@@ -140,7 +136,7 @@
      2
     ]
    ],
-   "ok": "Tarkon Yrjot"
+   "ok": "Jorvik Matar"
   },
   {
    "call": [
@@ -150,7 +146,7 @@
      4
     ]
    ],
-   "ok": "Mikram Zerk"
+   "ok": "Nabih Nafr"
   },
   {
    "call": [
@@ -160,14 +156,14 @@
      8
     ]
    ],
-   "ok": "Corin Lafleur"
+   "ok": "Yvonne Talon"
   },
   {
    "call": [
     "charUnboundMgr",
     "CreateCharacterWithDoll",
     [
-     "Recorded Pilot 1790653684",
+     "Recorded Pilot 1794809793",
      1,
      1,
      1,
@@ -193,7 +189,7 @@
      null
     ]
    ],
-   "ok": 140000038
+   "ok": 140000022
   },
   {
    "call": [
@@ -216,11 +212,11 @@
       "$dict": [
        [
         "characterID",
-        140000038
+        140000022
        ],
        [
         "characterName",
-        "Recorded Pilot 1790653684"
+        "Recorded Pilot 1794809793"
        ],
        [
         "deletePrepareDateTime",
@@ -258,7 +254,7 @@
          ],
          [
           "userName",
-          "rec-1790653684-walk"
+          "rec-1794809793-walk"
          ],
          [
           "creationDate",
@@ -293,11 +289,11 @@
         "$dict": [
          [
           "characterID",
-          140000038
+          140000022
          ],
          [
           "characterName",
-          "Recorded Pilot 1790653684"
+          "Recorded Pilot 1794809793"
          ],
          [
           "deletePrepareDateTime",
@@ -406,7 +402,7 @@
          [
           "logoffDate",
           {
-           "$long": 134351272842510000
+           "$long": 134392833940290000
           }
          ],
          [
@@ -454,7 +450,7 @@
     "charUnboundMgr",
     "ValidateNameEx",
     [
-     "Recorded Pilot 1790653684"
+     "Recorded Pilot 1794809793"
     ]
    ],
    "ok": -101
@@ -464,7 +460,7 @@
     "charUnboundMgr",
     "ValidateNameEx",
     [
-     "recorded pilot 1790653684"
+     "recorded pilot 1794809793"
     ]
    ],
    "ok": -101
@@ -542,7 +538,7 @@
     "charUnboundMgr",
     "CreateCharacterWithDoll",
     [
-     "Recorded Pilot 1790653684",
+     "Recorded Pilot 1794809793",
      1,
      1,
      1,
@@ -610,7 +606,7 @@
     "charUnboundMgr",
     "CreateCharacterWithDoll",
     [
-     "Recorded X2 1790653684",
+     "Recorded X2 1794809793",
      1,
      2,
      2,
@@ -636,14 +632,14 @@
      null
     ]
    ],
-   "ok": 140000039
+   "ok": 140000023
   },
   {
    "call": [
     "charUnboundMgr",
     "CreateCharacterWithDoll",
     [
-     "Recorded X3 1790653684",
+     "Recorded X3 1794809793",
      1,
      2,
      2,
@@ -669,14 +665,14 @@
      null
     ]
    ],
-   "ok": 140000040
+   "ok": 140000024
   },
   {
    "call": [
     "charUnboundMgr",
     "CreateCharacterWithDoll",
     [
-     "Recorded X4 1790653684",
+     "Recorded X4 1794809793",
      2,
      3,
      1,
@@ -702,7 +698,7 @@
      null
     ]
    ],
-   "ok": 140000041
+   "ok": 140000025
   },
   {
    "call": [
@@ -727,7 +723,7 @@
     "charUnboundMgr",
     "SelectCharacterID",
     [
-     140000042
+     140000026
     ]
    ],
    "error": {
@@ -782,7 +778,7 @@
     "charUnboundMgr",
     "SelectCharacterID",
     [
-     140000038
+     140000022
     ]
    ],
    "ok": null
@@ -794,7 +790,7 @@
     []
    ],
    "ok": {
-    "$long": 134351272844960000
+    "$long": 134392833948060000
    }
   }
  ],
@@ -885,7 +881,7 @@
    "charUnboundMgr",
    "CreateCharacterWithDoll",
    [
-    "Recorded Other 1790653684",
+    "Recorded Other 1794809793",
     8,
     7,
     1,
@@ -911,9 +907,65 @@
     null
    ]
   ],
-  "ok": 140000042
+  "ok": 140000026
  },
  "afterSelect": [
+  {
+   "$tuple": [
+    12,
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       1,
+       65450,
+       null,
+       null
+      ]
+     }
+    },
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       4,
+       "OnSubscriptionTimeUpdateServer",
+       [],
+       "clientID"
+      ]
+     }
+    },
+    19,
+    {
+     "$tuple": [
+      {
+       "$tuple": [
+        0,
+        {
+         "$buffer": "7e000000002c082c0925030000647763712f02"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "$dict": [
+      [
+       "sn",
+       2
+      ]
+     ]
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
   {
    "$tuple": [
     16,
@@ -933,17 +985,19 @@
      "args": {
       "$tuple": [
        2,
-       34065450,
+       {
+        "$long": 230000065450
+       },
        null,
        null
       ]
      }
     },
-    34,
+    19,
     {
      "$tuple": [
       {
-       "$long": 26859805263195
+       "$long": 26922146909440
       },
       {
        "$tuple": [
@@ -951,29 +1005,20 @@
         {
          "$dict": [
           [
-           "charid",
-           {
-            "$tuple": [
-             null,
-             140000038
-            ]
-           }
-          ],
-          [
-           "corpid",
-           {
-            "$tuple": [
-             null,
-             1000045
-            ]
-           }
-          ],
-          [
            "genderID",
            {
             "$tuple": [
              null,
              1
+            ]
+           }
+          ],
+          [
+           "corpAccountKey",
+           {
+            "$tuple": [
+             null,
+             1000
             ]
            }
           ],
@@ -996,56 +1041,22 @@
            }
           ],
           [
-           "schoolID",
+           "corprole",
            {
             "$tuple": [
              null,
-             35
+             {
+              "$long": 0
+             }
             ]
            }
           ],
           [
-           "factionid",
+           "corpid",
            {
             "$tuple": [
              null,
-             500001
-            ]
-           }
-          ],
-          [
-           "stationid",
-           {
-            "$tuple": [
-             null,
-             60015249
-            ]
-           }
-          ],
-          [
-           "stationid2",
-           {
-            "$tuple": [
-             null,
-             60015249
-            ]
-           }
-          ],
-          [
-           "solarsystemid2",
-           {
-            "$tuple": [
-             null,
-             30100032
-            ]
-           }
-          ],
-          [
-           "constellationid",
-           {
-            "$tuple": [
-             null,
-             20010001
+             1000045
             ]
            }
           ],
@@ -1055,66 +1066,6 @@
             "$tuple": [
              null,
              10001004
-            ]
-           }
-          ],
-          [
-           "shipid",
-           {
-            "$tuple": [
-             null,
-             {
-              "$long": 9988400000246
-             }
-            ]
-           }
-          ],
-          [
-           "locationid",
-           {
-            "$tuple": [
-             null,
-             60015249
-            ]
-           }
-          ],
-          [
-           "corpAccountKey",
-           {
-            "$tuple": [
-             null,
-             1000
-            ]
-           }
-          ],
-          [
-           "hqID",
-           {
-            "$tuple": [
-             0,
-             null
-            ]
-           }
-          ],
-          [
-           "role",
-           {
-            "$tuple": [
-             null,
-             {
-              "$long": 7348784299939993600
-             }
-            ]
-           }
-          ],
-          [
-           "corprole",
-           {
-            "$tuple": [
-             null,
-             {
-              "$long": 0
-             }
             ]
            }
           ],
@@ -1141,6 +1092,53 @@
            }
           ],
           [
+           "locationid",
+           {
+            "$tuple": [
+             null,
+             30100032
+            ]
+           }
+          ],
+          [
+           "hqID",
+           {
+            "$tuple": [
+             0,
+             null
+            ]
+           }
+          ],
+          [
+           "solarsystemid2",
+           {
+            "$tuple": [
+             null,
+             30100032
+            ]
+           }
+          ],
+          [
+           "solarsystemid",
+           {
+            "$tuple": [
+             null,
+             30100032
+            ]
+           }
+          ],
+          [
+           "shipid",
+           {
+            "$tuple": [
+             null,
+             {
+              "$long": 9988400000230
+             }
+            ]
+           }
+          ],
+          [
            "rolesAtHQ",
            {
             "$tuple": [
@@ -1152,6 +1150,15 @@
            }
           ],
           [
+           "charid",
+           {
+            "$tuple": [
+             null,
+             140000022
+            ]
+           }
+          ],
+          [
            "rolesAtOther",
            {
             "$tuple": [
@@ -1159,6 +1166,15 @@
              {
               "$long": 0
              }
+            ]
+           }
+          ],
+          [
+           "constellationid",
+           {
+            "$tuple": [
+             null,
+             20010001
             ]
            }
           ]
@@ -1209,14 +1225,14 @@
       ]
      }
     },
-    34,
+    19,
     {
      "$tuple": [
       {
        "$tuple": [
         0,
         {
-         "$buffer": "7e000000002c082c09140316012214030240636861726163746572736b696c6c732e636f6d6d6f6e2e6368617261637465725f736b696c6c5f656e7472792e436861726163746572536b696c6c456e747279140505e40c060404c7b000000901160903a4e840a1bb0c0000112704263b5808113f04263b5808112c06071306666c6167494405ff0011230610110a130747756e6e657279130967726f75704e616d651f13097075626c697368656420130a696e547261696e696e672d2d05e40c010350f30955c54fdd01"
+         "$buffer": "7e000000002c082c09140316012214030240636861726163746572736b696c6c732e636f6d6d6f6e2e6368617261637465725f736b696c6c5f656e7472792e436861726163746572536b696c6c456e747279140505e40c060404c7b000000901160903a47e28a1bb0c0000112704163b5808113f04163b5808112c06071306666c6167494405ff0011230610110a130747756e6e657279130967726f75704e616d651f13097075626c697368656420130a696e547261696e696e672d2d05e40c010370afab079275dd01"
         }
        ]
       }
@@ -1226,7 +1242,343 @@
      "$dict": [
       [
        "sn",
-       0
+       3
+      ]
+     ]
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "$tuple": [
+    12,
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       1,
+       65450,
+       null,
+       null
+      ]
+     }
+    },
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       4,
+       "OnItemChange",
+       [],
+       "clientID"
+      ]
+     }
+    },
+    19,
+    {
+     "$tuple": [
+      {
+       "$tuple": [
+        0,
+        {
+         "$buffer": "7e000000002c082c0914032a2214030214626c75652e4442526f7744657363726970746f722514092c112706142c114a06032c113f06032c112c06142c1306666c6167494406022c114106032c112306032c110a06032c111705810015022c1309737461636b73697a6502266576652e636f6d6d6f6e2e7363726970742e7379732e6576654366672e537461636b53697a652c114702266576652e636f6d6d6f6e2e7363726970742e7379732e6576654366672e53696e676c65746f6e2d2d1d92e7ac089b1509b491c293039679e570163b5808ffffffff197a067a040e160001"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "$dict": [
+      [
+       "sn",
+       4
+      ]
+     ]
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "$tuple": [
+    12,
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       1,
+       65450,
+       null,
+       null
+      ]
+     }
+    },
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       4,
+       "OnItemChange",
+       [],
+       "clientID"
+      ]
+     }
+    },
+    19,
+    {
+     "$tuple": [
+      {
+       "$tuple": [
+        0,
+        {
+         "$buffer": "7e000000002c082c0914032a2214030214626c75652e4442526f7744657363726970746f722514092c112706142c114a06032c113f06032c112c06142c1306666c6167494406022c114106032c112306032c110a06032c111705810015022c1309737461636b73697a6502266576652e636f6d6d6f6e2e7363726970742e7379732e6576654366672e537461636b53697a652c114702266576652e636f6d6d6f6e2e7363726970742e7379732e6576654366672e53696e676c65746f6e2d2d1b92e7ac089b1509b4404acb019679e570163b5808ffffffff197a060e16020491c2930306030604060401"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "$dict": [
+      [
+       "sn",
+       5
+      ]
+     ]
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "$tuple": [
+    12,
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       1,
+       65450,
+       null,
+       null
+      ]
+     }
+    },
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       4,
+       "OnStartClientNodeGraph",
+       [],
+       "charid"
+      ]
+     }
+    },
+    19,
+    {
+     "$tuple": [
+      {
+       "$tuple": [
+        0,
+        {
+         "$buffer": "7e000000002c082c09140305cc02132f35383237356436392d616566632d343262362d393232642d6331653336353833316163353a636c69656e743a373136161104163b5808130c6368617261637465725f69640491c29303131062697274685f73746174696f6e5f696404404acb01130f62697274685f73797374656d5f696404404acb01130f736f6c61725f73797374656d5f696401131064756e67656f6e5f737061776e5f696404404acb011314766f69645f736f6c61725f73797374656d5f696406221312737061776e5f69645f64756e67656f6e5f3106231312737061776e5f69645f64756e67656f6e5f3216030a3c0d194e472466420f780a707f1a94db5708c20f790a95db4b02cf3e42420f7a1315656e7472795f706f696e745f64756e67656f6e5f3116030afc6bbc6cb0c961420f780a7039da72da5708c20f790a5532bef2ce3e42420f7a1315656e7472795f706f696e745f64756e67656f6e5f320322a0953f2f0600001317656e7472795f6974656d5f69645f64756e67656f6e5f310323a0953f2f0600001317656e7472795f6974656d5f69645f64756e67656f6e5f3203e7ac089b15090000130e7461726765745f6974656d5f69640479e50000130e7461726765745f747970655f6964132435383237356436392d616566632d343262362d393232642d63316533363538333161633513187365727665725f67726170685f696e7374616e63655f69641303312e31130c6163746976655f7363656e65130a626f6172645f73686970130b6163746976655f7461736b"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "$dict": [
+      [
+       "sn",
+       6
+      ]
+     ]
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "$tuple": [
+    12,
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       1,
+       65450,
+       null,
+       null
+      ]
+     }
+    },
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       4,
+       "OnClientNodeGraphMessage",
+       [],
+       "charid"
+      ]
+     }
+    },
+    19,
+    {
+     "$tuple": [
+      {
+       "$tuple": [
+        0,
+        {
+         "$buffer": "7e000000002c082c091403132f35383237356436392d616566632d343262362d393232642d6331653336353833316163353a636c69656e743a37313613127365727665725f73746172745f7363656e651303312e31"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "$dict": [
+      [
+       "sn",
+       7
+      ]
+     ]
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "$tuple": [
+    12,
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       1,
+       65450,
+       null,
+       null
+      ]
+     }
+    },
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       4,
+       "OnClientNodeGraphUpdate",
+       [],
+       "charid"
+      ]
+     }
+    },
+    19,
+    {
+     "$tuple": [
+      {
+       "$tuple": [
+        0,
+        {
+         "$buffer": "7e000000002c082c092c132f35383237356436392d616566632d343262362d393232642d6331653336353833316163353a636c69656e743a3731361601130a626f6172645f73686970130b6163746976655f7461736b"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "$dict": [
+      [
+       "sn",
+       8
+      ]
+     ]
+    },
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null,
+    null
+   ]
+  },
+  {
+   "$tuple": [
+    12,
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       1,
+       65450,
+       null,
+       null
+      ]
+     }
+    },
+    {
+     "$object": "carbon.common.script.net.machoNetPacket.MachoAddress",
+     "args": {
+      "$tuple": [
+       4,
+       "OnClientNodeGraphMessage",
+       [],
+       "charid"
+      ]
+     }
+    },
+    19,
+    {
+     "$tuple": [
+      {
+       "$tuple": [
+        0,
+        {
+         "$buffer": "7e000000002c082c091403132f35383237356436392d616566632d343262362d393232642d6331653336353833316163353a636c69656e743a37313613117365727665725f73746172745f7461736b130a626f6172645f73686970"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "$dict": [
+      [
+       "sn",
+       9
       ]
      ]
     },

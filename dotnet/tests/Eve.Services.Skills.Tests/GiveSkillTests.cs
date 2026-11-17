@@ -21,7 +21,11 @@ public class GiveSkillTests
         var skill = Assert.Single(await rig.Store.ForCharacterAsync(character));
         // the points of the level for a skill of its rank (1): 250 * sqrt(32)^2
         Assert.Equal(new CharacterSkill(3301, 3, 8000), skill);
-        Assert.Equal(5, sink.Sent.Count); // skill changes, queue snapshot and paused state
+        var notes = Notes.Of(sink);
+        Assert.Equal(
+            ["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"],
+            notes.Select(note => note.Name));
+        Assert.Equal(["charid", "charid", "clientID"], notes.Select(note => note.IdType));
     }
 
     [PgFact]

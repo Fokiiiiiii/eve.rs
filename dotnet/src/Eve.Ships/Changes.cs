@@ -90,6 +90,8 @@ public sealed record ShipRefused(
 /// What was done: the items that moved, and what dogma reports of it, in the order the client is told. A move that is not a fitting one (goods into the hold, out of it,
 /// stacks split and stacked) is told as the items it changed, each with what it was before (<paramref name="Stacks"/>).
 /// </summary>
-public sealed record ShipChanged(long ItemId, long ShipId, IReadOnlyList<ItemMoved> Items, IReadOnlyList<DogmaEvent> Events, IReadOnlyList<ItemChanged>? Stacks = null) : ShipOutcome;
+public sealed record ShipChanged(
+    long ItemId, long ShipId, IReadOnlyList<ItemMoved> Items, IReadOnlyList<DogmaEvent> Events,
+    IReadOnlyList<ItemChanged>? Stacks = null, IReadOnlyList<Item>? CreatedItems = null) : ShipOutcome;
 
 public sealed record RepackageItemRequest(long ItemId, long StationId, long OwnerId, long LocationId, int Flag);

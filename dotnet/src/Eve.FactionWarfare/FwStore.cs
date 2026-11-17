@@ -4,7 +4,10 @@ using Npgsql;
 namespace Eve.FactionWarfare;
 
 /// <summary>An occupied system: its warzone, occupier, LP pool and the victory points of the occupier's enemy.</summary>
-public sealed record FwSystem(long SolarSystemId, long WarzoneId, long OccupierId, long LpPool, long AttackerPoints, long UpdatedMs);
+public sealed record FwSystem(long SolarSystemId, long WarzoneId, long OccupierId, long LpPool, long AttackerPoints, long UpdatedMs,
+    long ControlBunkerId = 0, long PendingOccupierId = 0, long PendingCaptureMs = 0);
+
+public sealed record FwControlBunkerTransition(FwSystem Previous, FwSystem Current, bool Captured);
 
 /// <summary>A corporation's or alliance's enlistment: the faction it is in (0: none) and the change that takes effect at <see cref="EffectiveMs"/> (0: none pending).</summary>
 public sealed record FwEnlistment(int OwnerKind, long OwnerId, long FactionId, long NextFactionId, long EffectiveMs, long ChangedMs);
@@ -25,7 +28,7 @@ public sealed partial class FwStore
     public const int CorporationKind = 1;
     public const int AllianceKind = 2;
 
-    private const string SystemColumns = "solar_system_id, warzone_id, occupier_id, lp_pool, attacker_points, updated_ms";
+    private const string SystemColumns = "solar_system_id, warzone_id, occupier_id, lp_pool, attacker_points, updated_ms, control_bunker_id, pending_occupier_id, pending_capture_ms";
 
     private readonly NpgsqlDataSource _source;
     private readonly string _schema;
@@ -79,6 +82,74 @@ public sealed partial class FwStore
         return await reader.ReadAsync(cancellationToken) ? ReadSystem(reader) : null;
     }
 
+    /// <summary>Returns the persistent Control Bunker ID, assigning one from CCP's documented range on first use.</summary>
+    public async Task<long?> ControlBunkerIdAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId,
+        CancellationToken cancellationToken = default)
+    {
+        var system = await SystemAsync(connection, transaction, solarSystemId, forUpdate: true, cancellationToken);
+        if (system is null)
+            return null;
+        if (system.ControlBunkerId > 0)
+            return system.ControlBunkerId;
+        var next = await Sql.ScalarAsync(connection, transaction, Q("SELECT nextval('{schema}.fw_control_bunker_ids')"), cancellationToken);
+        if (next is not long itemId || itemId is < 80_000_000 or > 80_099_999)
+            throw new InvalidOperationException("the Control Bunker item ID sequence exhausted CCP's documented range");
+        await Sql.ExecuteAsync(connection, transaction, Q("UPDATE {schema}.fw_systems SET control_bunker_id = $2 WHERE solar_system_id = $1"),
+            cancellationToken, solarSystemId, itemId);
+        return itemId;
+    }
+
+    /// <summary>The occupied FW system whose persisted Control Bunker has this item ID.</summary>
+    public async Task<FwSystem?> SystemOfControlBunkerAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long bunkerId,
+        bool forUpdate, CancellationToken cancellationToken = default)
+    {
+        await using var command = Sql.Command(connection, transaction,
+            Q($"SELECT {SystemColumns} FROM {{schema}}.fw_systems WHERE control_bunker_id = $1{(forUpdate ? " FOR UPDATE" : "")}"), bunkerId);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? ReadSystem(reader) : null;
+    }
+
+    /// <summary>Marks a vulnerable system's bunker as destroyed and records the next downtime capture. Null means it was not vulnerable.</summary>
+    public async Task<FwSystem?> ScheduleBunkerCaptureAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId,
+        long nowMs, CancellationToken cancellationToken = default)
+    {
+        var system = await SystemAsync(connection, transaction, solarSystemId, forUpdate: true, cancellationToken);
+        if (system is null || FwRules.Contest(system.AttackerPoints) != ContestState.Vulnerable || system.PendingCaptureMs > 0)
+            return null;
+        var attacker = FwFactions.OccupationEnemyOf(system.OccupierId);
+        if (attacker <= 0)
+            return null;
+        var due = FwRules.NextDowntimeMs(nowMs);
+        await Sql.ExecuteAsync(connection, transaction, Q(
+            "UPDATE {schema}.fw_systems SET pending_occupier_id = $2, pending_capture_ms = $3, updated_ms = $4 WHERE solar_system_id = $1"),
+            cancellationToken, solarSystemId, attacker, due, nowMs);
+        return system with { PendingOccupierId = attacker, PendingCaptureMs = due, UpdatedMs = nowMs };
+    }
+
+    /// <summary>Applies a due bunker capture if the system remains vulnerable; otherwise clears the capture and lets the old bunker be restored.</summary>
+    public async Task<FwControlBunkerTransition?> ApplyBunkerCaptureAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long solarSystemId, long nowMs, CancellationToken cancellationToken = default)
+    {
+        var previous = await SystemAsync(connection, transaction, solarSystemId, forUpdate: true, cancellationToken);
+        if (previous is null || previous.PendingCaptureMs <= 0 || previous.PendingCaptureMs > nowMs)
+            return null;
+        var captured = FwRules.Contest(previous.AttackerPoints) == ContestState.Vulnerable &&
+            previous.PendingOccupierId == FwFactions.OccupationEnemyOf(previous.OccupierId);
+        if (captured)
+        {
+            await Sql.ExecuteAsync(connection, transaction, Q(
+                "UPDATE {schema}.fw_systems SET occupier_id = $2, lp_pool = 0, attacker_points = 0, pending_occupier_id = 0, pending_capture_ms = 0, updated_ms = $3 WHERE solar_system_id = $1"),
+                cancellationToken, solarSystemId, previous.PendingOccupierId, nowMs);
+            return new FwControlBunkerTransition(previous,
+                previous with { OccupierId = previous.PendingOccupierId, LpPool = 0, AttackerPoints = 0, PendingOccupierId = 0, PendingCaptureMs = 0, UpdatedMs = nowMs }, true);
+        }
+        await Sql.ExecuteAsync(connection, transaction, Q(
+            "UPDATE {schema}.fw_systems SET pending_occupier_id = 0, pending_capture_ms = 0, updated_ms = $2 WHERE solar_system_id = $1"),
+            cancellationToken, solarSystemId, nowMs);
+        return new FwControlBunkerTransition(previous,
+            previous with { PendingOccupierId = 0, PendingCaptureMs = 0, UpdatedMs = nowMs }, false);
+    }
+
     /// <summary>Adds an LP donation to a system's pool, records it, and returns the new pool.</summary>
     public async Task<long> AddLpAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, long characterId, long corporationId,
         long factionId, long amount, long donatedLp, string operationId, long donatedMs, CancellationToken cancellationToken = default)
@@ -128,6 +199,16 @@ public sealed partial class FwStore
         if (!await reader.ReadAsync(cancellationToken))
             return null;
         return ReadEnlistment(reader);
+    }
+
+    /// <summary>The faction an organization belonged to at an event timestamp, honoring the recorded downtime boundary.</summary>
+    public async Task<long> FactionAtAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, int ownerKind, long ownerId, long atMs,
+        CancellationToken cancellationToken = default)
+    {
+        var faction = await Sql.ScalarAsync(connection, transaction, Q(
+            "SELECT CASE WHEN effective_ms > 0 AND effective_ms <= $3 THEN next_faction_id ELSE faction_id END::bigint " +
+            "FROM {schema}.fw_enlistments WHERE owner_kind = $1 AND owner_id = $2"), cancellationToken, ownerKind, ownerId, atMs);
+        return faction is long value ? value : 0;
     }
 
     /// <summary>Creates the owner's empty enlistment row if needed so a following <see cref="EnlistmentAsync"/> can lock its key.</summary>
@@ -252,7 +333,7 @@ public sealed partial class FwStore
     public Task SetOccupierAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long solarSystemId, long occupierId, long nowMs,
         CancellationToken cancellationToken = default) =>
         Sql.ExecuteAsync(connection, transaction, Q(
-            "UPDATE {schema}.fw_systems SET occupier_id = $2, attacker_points = 0, lp_pool = 0, updated_ms = $3 WHERE solar_system_id = $1"),
+            "UPDATE {schema}.fw_systems SET occupier_id = $2, attacker_points = 0, lp_pool = 0, pending_occupier_id = 0, pending_capture_ms = 0, updated_ms = $3 WHERE solar_system_id = $1"),
             cancellationToken, solarSystemId, occupierId, nowMs);
 
     /// <summary>Adds victory points to the attacking side of an occupied system (null when the system is not occupied).</summary>
@@ -335,5 +416,6 @@ public sealed partial class FwStore
             Math.Max(top.VictoryPointsTotal, next.VictoryPointsTotal)));
 
     private static FwSystem ReadSystem(NpgsqlDataReader reader) =>
-        new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5));
+        new(reader.GetInt64(0), reader.GetInt64(1), reader.GetInt64(2), reader.GetInt64(3), reader.GetInt64(4), reader.GetInt64(5),
+            reader.GetInt64(6), reader.GetInt64(7), reader.GetInt64(8));
 }

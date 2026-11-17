@@ -107,8 +107,7 @@ public sealed partial class CharacterHostTests
             Assert.True(undockDilation >= 0 && undockDilation < undockRebase && undockRebase < undockDestiny,
                 $"Undock ballpark clock setup precedes Destiny updates: {string.Join(" | ", undockBindNames)}");
             var undockActions = DestinyActions(undockBindPackets).ToArray();
-            Assert.Equal("AddBalls2", undockActions[0].Name);
-            Assert.Equal("SetState", undockActions[^1].Name);
+            Assert.Equal(["SetState"], undockActions.Select(action => action.Name));
             var undockState = Assert.IsType<PyObject>(Assert.Single(undockActions, action => action.Name == "SetState").Arguments.Items[0]);
             Assert.Equal(dockedShipId, IntegerValue(Field(undockState, "ego")));
             var undockStateBuffer = Assert.IsType<PyBuffer>(Field(undockState, "state")).Value.ToArray();

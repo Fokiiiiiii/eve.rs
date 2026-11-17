@@ -223,13 +223,58 @@ public sealed partial class SpaceSessions
             var wreckTypeId = abandoned.ShipTypeId == CharacterShips.CapsuleTypeId
                 ? null
                 : destroyed.WreckKind?.TypeId;
+            var damageTaken = 0d;
+            var killmailAttackers = abandoned.CombatLogoff
+                ? TakeKillmailAttackers(destroyed.ShipId, destroyed.KillerShipId, out damageTaken, out _)
+                : [];
+            if (abandoned.CombatLogoff)
+                await _statics.EnsureTypesAsync([CharacterShips.CapsuleTypeId]);
+            Func<NpgsqlConnection, NpgsqlTransaction, AbandonedShipDeath, CancellationToken, Task>? persistOfflineDeath = null;
+            if (abandoned.CombatLogoff && _spaceItems is { } spaceItems)
+            {
+                persistOfflineDeath = async (connection, transaction, lost, cancellationToken) =>
+                {
+                    await spaceItems.RemoveAsync(connection, transaction, destroyed.ShipId, cancellationToken).ConfigureAwait(false);
+                    if (lost.Capsule is { } capsule)
+                    {
+                        var capsuleType = _statics.Type(capsule.TypeId)
+                            ?? throw new InvalidOperationException($"capsule type {capsule.TypeId} is unavailable after offline ship loss");
+                        await spaceItems.SaveAsync(connection, transaction, new SpaceItem(
+                            capsule.Id,
+                            abandoned.SolarSystemId,
+                            destroyed.Position,
+                            destroyed.Direction,
+                            Math.Max(1d, capsuleType.Attributes.GetValueOrDefault(162)),
+                            capsuleType.GroupId,
+                            0,
+                            abandoned.OwnerCharacterId,
+                            abandoned.OwnerCorporationId,
+                            abandoned.OwnerAllianceId,
+                            abandoned.OwnerWarFactionId,
+                            long.MaxValue,
+                            Kind: SpaceItemKind.ActiveShip), cancellationToken).ConfigureAwait(false);
+                    }
+
+                    if (Events is { } events && lost.Character is { } character)
+                    {
+                        await events.PublishOnceInTransactionAsync(connection, transaction, ShipKillmailEvent.Topic,
+                            new ShipKillmailEvent(
+                                character.Id, character.CorporationId, character.AllianceId ?? 0, character.FactionId ?? 0,
+                                lost.Ship.Id, lost.Ship.TypeId, abandoned.SolarSystemId, _nowUnixMs(), damageTaken,
+                                destroyed.KillerShipId, killmailAttackers, lost.KillmailItems,
+                                VictimWarFactionId: abandoned.OwnerWarFactionId),
+                            $"ship:{lost.Ship.Id}", cancellationToken).ConfigureAwait(false);
+                    }
+                };
+            }
             var death = await _ships.DestroyAbandonedShipAsync(
                 abandoned.OwnerCharacterId,
                 abandoned.SolarSystemId,
                 destroyed.ShipId,
                 wreckTypeId,
                 seed,
-                replaceActiveShip: abandoned.StructureControlSessionId is not null);
+                replaceActiveShip: abandoned.CombatLogoff || abandoned.StructureControlSessionId is not null,
+                inTransaction: persistOfflineDeath);
             if (death is null)
             {
                 _log?.Invoke($"unpiloted ship {destroyed.ShipId} was destroyed in space but is no longer owned by character {abandoned.OwnerCharacterId} at system {abandoned.SolarSystemId}");
@@ -275,7 +320,8 @@ public sealed partial class SpaceSessions
                     && _npcShips.TryGetValue(destroyed.KillerShipId, out var npc)
                     ? npc
                     : null;
-                var cause = npcKiller?.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true
+                var cause = npcKiller?.Profile?.EntityType.Equals("concord", StringComparison.OrdinalIgnoreCase) == true
+                    || npcKiller?.Profile?.Id.Contains("concord_response", StringComparison.OrdinalIgnoreCase) == true
                     ? ShipLossCause.Concord
                     : killer is not null
                         ? ShipLossCause.Player
@@ -316,15 +362,39 @@ public sealed partial class SpaceSessions
                     destroyed.Direction,
                     destroyed.Radius,
                     destroyed.ShipId,
-                    new SimCredit(abandoned.OwnerCharacterId, abandoned.OwnerCorporationId, 0, 0),
+                    new SimCredit(abandoned.OwnerCharacterId, abandoned.OwnerCorporationId, abandoned.OwnerAllianceId, abandoned.OwnerWarFactionId),
                     death.Changes.All(change => change.Destroyed)));
             }
         }
         catch (Exception error)
         {
-            if (abandoned.StructureControlSessionId is not null)
+            if (abandoned.StructureControlSessionId is not null || abandoned.CombatLogoff)
                 _ejectedShips.TryAdd(destroyed.ShipId, abandoned);
             _log?.Invoke($"the loss of unpiloted ship {destroyed.ShipId} of character {abandoned.OwnerCharacterId} could not be processed: {error}");
+        }
+    }
+
+    /// <summary>Settles a combat-logoff hull destroyed after its in-memory owner map was lost on Host restart.</summary>
+    private async Task FinishPersistedCombatLogoffShipDeathAsync(SimDestroyed destroyed)
+    {
+        try
+        {
+            if (_spaceItems is null ||
+                await _spaceItems.GetAsync(destroyed.ShipId).ConfigureAwait(false) is not
+                    { Kind: SpaceItemKind.CombatLogoffShip } persisted)
+                return;
+
+            if (await FindOfflineCombatLogoffShipAsync(
+                    persisted.CharacterId, persisted.SolarSystemId, persisted.ItemId, CancellationToken.None)
+                .ConfigureAwait(false) is null)
+                return;
+
+            if (_ejectedShips.TryRemove(destroyed.ShipId, out var abandoned))
+                await FinishAbandonedShipDeathAsync(abandoned, destroyed).ConfigureAwait(false);
+        }
+        catch (Exception error)
+        {
+            _log?.Invoke($"the loss of combat-logoff ship {destroyed.ShipId} could not be restored after Host restart: {error}");
         }
     }
 
@@ -476,7 +546,8 @@ public sealed partial class SpaceSessions
                                       lost.Character.Id, lost.Character.CorporationId, lost.Character.AllianceId ?? 0,
                                       lost.Character.FactionId ?? 0, lost.Ship.Id, lost.Ship.TypeId,
                                       pilot.SolarSystemId, _nowUnixMs(), killmailDamageTaken,
-                                      destroyed.KillerShipId, killmailAttackers, lost.KillmailItems),
+                                      destroyed.KillerShipId, killmailAttackers, lost.KillmailItems,
+                                      VictimWarFactionId: WarFactionOf(pilot.Session)),
                                   $"ship:{lost.Ship.Id}", innerToken);
                       }),
                 result => result is not null,

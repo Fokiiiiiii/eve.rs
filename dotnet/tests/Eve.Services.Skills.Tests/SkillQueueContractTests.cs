@@ -39,7 +39,7 @@ public sealed class SkillQueueContractTests
             new TrainingView(QueueState.Empty, [], [new CharacterSkill(3300, 1, 250)], 250));
         await announcer.OnSettledAsync(finished);
         Assert.Equal(
-            ["OnServerSkillsChanged", "OnSkillLevelsTrained", "OnSkillsChanged", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"],
+            ["OnServerSkillsChanged", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"],
             Notes.Of(sink).Select(note => note.Name));
     }
 }

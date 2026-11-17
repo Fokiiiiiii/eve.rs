@@ -329,11 +329,15 @@ pub fn remove_ships(stamp: u32, ship_ids: impl IntoIterator<Item = i64>) -> Valu
     action(stamp, "RemoveBalls", [list(ship_ids.into_iter().map(id))])
 }
 
+/// Several Destiny actions carried in one `PackagedAction` buffer.
+pub fn packaged_actions(stamp: u32, actions: impl IntoIterator<Item = Value>) -> Value {
+    let inner = eve_marshal::encode(&tuple(actions)).expect("the sim's own values encode");
+    tuple([id(i64::from(stamp)), tuple([word("PackagedAction"), Value::Buffer(inner.into())])])
+}
+
 /// The same removal as the reference sends it while a ship is warping away or in: inside a `PackagedAction`, the action marshalled whole.
 pub fn remove_ships_packaged(stamp: u32, ship_ids: impl IntoIterator<Item = i64>) -> Value {
-    let inner =
-        eve_marshal::encode(&tuple([remove_ships(stamp, ship_ids)])).expect("the sim's own values encode");
-    tuple([id(i64::from(stamp)), tuple([word("PackagedAction"), Value::Buffer(inner.into())])])
+    packaged_actions(stamp, [remove_ships(stamp, ship_ids)])
 }
 
 /// The ball of a body of the system: a structure is a station's ball (rigid, global, dockable).
@@ -386,8 +390,41 @@ pub(crate) fn set_state_for_ego(
     structure_health: &std::collections::BTreeMap<i64, crate::health::StructureHealth>,
     now: i64,
 ) -> Result<Value, BallError> {
+    set_state_for_ego_with_cloak_mode(
+        stamp,
+        system,
+        EgoShipState { ship_id: ego_id, cloak_mode: 0 },
+        ships,
+        wrecks,
+        structure_health,
+        now,
+    )
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct EgoShipState {
+    pub(crate) ship_id: i64,
+    pub(crate) cloak_mode: u8,
+}
+
+/// Builds a ballpark state with the cloak mode of the ego ship that owns this view.
+pub(crate) fn set_state_for_ego_with_cloak_mode(
+    stamp: u32,
+    system: &SolarSystem,
+    ego: EgoShipState,
+    ships: &[&Ship],
+    wrecks: &[&Wreck],
+    structure_health: &std::collections::BTreeMap<i64, crate::health::StructureHealth>,
+    now: i64,
+) -> Result<Value, BallError> {
     let mut balls: Vec<BallEntity> = (0..system.bodies.len()).map(|i| rigid_ball(system, i)).collect();
-    balls.extend(ships.iter().map(|ship| ship.ball()));
+    balls.extend(ships.iter().map(|ship| {
+        let mut ball = ship.ball();
+        if ship.spec.ship_id == ego.ship_id {
+            ball.cloak_mode = f64::from(ego.cloak_mode);
+        }
+        ball
+    }));
     balls.extend(wrecks.iter().map(|wreck| wreck.ball()));
 
     let mut damage: Vec<(Value, Value)> = system
@@ -415,7 +452,7 @@ pub(crate) fn set_state_for_ego(
     let state = key_val([
         ("stamp", id(i64::from(stamp))),
         ("state", state_buffer(SET_STATE, stamp, &balls)?),
-        ("ego", id(ego_id)),
+        ("ego", id(ego.ship_id)),
         ("industryLevel", int(0)),
         ("researchLevel", int(0)),
         ("damageState", Value::Dict(damage)),
@@ -453,4 +490,9 @@ pub fn uncloak(stamp: u32, ship_id: i64) -> Value {
             Value::None,
         ],
     )
+}
+
+/// `UncloakBall` clears the owner's native cloaked flag when a gate cloak ends.
+pub(crate) fn uncloak_ball(stamp: u32, ship_id: i64) -> Value {
+    action(stamp, "UncloakBall", [id(ship_id)])
 }

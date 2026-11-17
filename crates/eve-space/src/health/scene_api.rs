@@ -33,7 +33,9 @@ impl Scene {
         let lines: Vec<Value> = changes
             .iter()
             .map(|&(attribute, new, old)| {
-                attribute_change(owner, ship, attribute, when, number(new), number(old))
+                // Dogma health values are reals on the V24 wire even when a
+                // repair lands exactly on zero or a whole-number capacity.
+                attribute_change(owner, ship, attribute, when, real(new), real(old))
             })
             .collect();
         Some(Self::dogma_notify(session, "OnModuleAttributeChanges", vec![Value::List(lines)]))

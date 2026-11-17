@@ -7,7 +7,7 @@ import time
 from . import marshal as m
 from . import packet as p
 from .client import Client
-from .describe import buffer_bytes, decode_marshaled, describe, destiny_state_header
+from .describe import buffer_bytes, decode_marshaled, describe, destiny_state_fields, destiny_state_header
 
 def _sequence(value):
     if isinstance(value, (list, tuple)):
@@ -172,18 +172,34 @@ def _destiny_update_view(args):
     if len(payload) > 2:
         view["dogmaMessages"] = payload[2]
     resets = []
+    ball_updates = []
     for action in actions:
-        if action.get("name") != "SetState":
-            continue
-        fields = _set_state_fields(action.get("args"))
-        resets.append({
-            "stamp": action.get("stamp"),
-            "ego": fields.get("ego"),
-            "stateHeader": destiny_state_header(fields.get("state")),
-            "slimCount": len(_sequence(fields.get("slims")) or []),
-        })
+        action_name = action.get("name")
+        action_args = _sequence(action.get("args"))
+        state = None
+        if action_name == "SetState":
+            fields = _set_state_fields(action.get("args"))
+            state = fields.get("state")
+            resets.append({
+                "stamp": action.get("stamp"),
+                "ego": fields.get("ego"),
+                "stateHeader": destiny_state_header(state),
+                "ballFields": destiny_state_fields(state),
+                "slimCount": len(_sequence(fields.get("slims")) or []),
+            })
+        elif action_name == "AddBalls2" and action_args:
+            state = action_args[0]
+            extra_ball_data = action_args[1] if len(action_args) > 1 else None
+            ball_updates.append({
+                "stamp": action.get("stamp"),
+                "name": action_name,
+                "ballFields": destiny_state_fields(state),
+                "extraBallDataCount": len(_sequence(extra_ball_data) or []),
+            })
     if resets:
         view["ballparkResets"] = resets
+    if ball_updates:
+        view["ballUpdates"] = ball_updates
     return view
 
 def notifications_of(client: Client) -> list[dict]:
@@ -197,17 +213,22 @@ def notifications_of(client: Client) -> list[dict]:
     client.notifications.clear()
     return out
 
-def events_of(client: Client) -> list[dict]:
+def events_of(client: Client, *, include_received_at: bool = False) -> list[dict]:
     """Notifications and session state received since the previous read, in wire order."""
     client.ping()
     out = []
     for packet in client.notifications:
         if packet.command == p.NOTIFICATION:
-            out.append(_notification_event(packet))
+            event = _notification_event(packet)
         elif packet.command == p.SESSIONCHANGENOTIFICATION:
-            out.append(_session_event(packet))
+            event = _session_event(packet)
         elif packet.command == p.SESSIONINITIALSTATENOTIFICATION:
-            out.append(_session_event(packet, initial=True))
+            event = _session_event(packet, initial=True)
+        else:
+            continue
+        if include_received_at:
+            event["_received_at"] = packet.received_at
+        out.append(event)
     client.notifications.clear()
     return out
 
@@ -230,7 +251,7 @@ def open_buffers(described):
 def hangar_and_ship(client: Client, mgr, ship_id: int) -> dict:
     """What the station hangar and the dogma manager say is where, after a change: the hangar's rows and the ship's info."""
     hangar = client.call_bound(mgr, "GetInventory", 10004)
-    rows = [{k: v for k, v in describe(r)["$row"].items() if k in ("itemID", "typeID", "locationID", "flagID", "quantity")} for r in client.call_bound(hangar, "List")]
+    rows = [{k: v for k, v in describe(r)["$row"].items() if k in ("itemID", "typeID", "locationID", "flagID", "quantity")} for r in collection_items(client.call_bound(hangar, "List"))]
     bound = client.call("dogmaIM", "MachoBindObject", (60015249, 15), ("GetAllInfo", (True, True, None), None))
     info = {k: v for k, v in describe(bound[1])["args"]["$dict"]}
     fitted = []
@@ -240,10 +261,32 @@ def hangar_and_ship(client: Client, mgr, ship_id: int) -> dict:
     return {"hangar": rows, "shipInfo": fitted}
 
 def ship_of(client: Client) -> int:
-    """The item id of the ship a character docked in its station has: the one the hangar lists."""
+    """The active ship id, from the session when available or from its station hangar."""
+    if client.session is not None:
+        ship_id = client.session.session_init.get("shipid")
+        if ship_id:
+            return int(ship_id)
     manager = client.call("invbroker", "MachoBindObject", (60015249, 15), None)[0]
     hangar = client.call_bound(manager, "GetInventory", 10004)
-    return int(client.call_bound(hangar, "List")[0].fields()["itemID"])
+    first = collection_items(client.call_bound(hangar, "List"))[0]
+    fields = first.fields() if isinstance(first, m.PackedRow) else first
+    return int(fields["itemID"])
+
+def collection_items(value):
+    """Rows of a Python collection decoded as a PyObjectEx, or the ordinary list response."""
+    if not isinstance(value, m.ObjectEx):
+        return value
+    header = m.plain(value.header)
+    if not isinstance(header, tuple) or not header or header[0] != "__builtin__.set":
+        raise AssertionError(f"expected a set ObjectEx reply, got {header!r}")
+    # Python's ObjectEx body carries the members. Some recorded/client paths
+    # instead put the constructor's one list argument in the header.
+    if value.items:
+        return value.items
+    arguments = header[1] if len(header) > 1 else ()
+    if len(arguments) == 1 and isinstance(arguments[0], (m.List, list, tuple)):
+        return arguments[0]
+    return []
 
 def queue_of(described) -> list:
     """A queue as the client reads it: each entry as its fields (`{"trainingTypeID": ..}`), in order."""
@@ -285,11 +328,13 @@ def wait_quietly(client: Client, seconds: float, until=None) -> list:
 
 def timed_events(who: Client, seconds: float, until=None) -> list:
     """`wait_quietly` with the seconds since the call each event arrived at (`at`): what a ship that flies somewhere takes to get there."""
-    started = time.time()
+    started = time.monotonic()
     seen: list = []
-    while time.time() - started < seconds:
-        for event in events_of(who):
-            event["at"] = round(time.time() - started, 2)
+    while time.monotonic() - started < seconds:
+        for event in events_of(who, include_received_at=True):
+            received_at = event.pop("_received_at", None)
+            arrived_at = received_at if isinstance(received_at, (int, float)) else time.monotonic()
+            event["at"] = round(max(0.0, arrived_at - started), 2)
             seen.append(event)
         if until is not None and until(seen):
             break

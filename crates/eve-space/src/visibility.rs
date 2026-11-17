@@ -21,7 +21,7 @@ fn distance(a: Vec3, b: Vec3) -> f64 {
     ((a.x - b.x).powi(2) + (a.y - b.y).powi(2) + (a.z - b.z).powi(2)).sqrt()
 }
 
-/// Where a ship is for the purpose of seeing: its place, and whether it is in warp (a ship that is aligning for warp is an ordinary one).
+/// Where a ship is for the purpose of seeing: its place and whether its Destiny ball is in WARP mode, from WarpTo until dropout.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Presence {
     pub position: Vec3,

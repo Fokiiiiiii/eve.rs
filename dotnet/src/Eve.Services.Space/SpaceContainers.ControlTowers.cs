@@ -108,7 +108,8 @@ public sealed partial class SpaceContainers
         if (record.ActivateAtMs == NeverAnchored || record.ActivateAtMs > _nowUnixMs())
         {
             await _deployed.SetTowerStateAsync(connection, transaction, towerId, TowerOffline, cancellationToken);
-            return false;
+            await OfflineStarbaseModulesAsync(connection, transaction, towerId, cancellationToken);
+            return true;
         }
         await _statics.EnsureTypesAsync([record.TypeId], cancellationToken);
         var type = _statics.Type(record.TypeId)
@@ -123,9 +124,9 @@ public sealed partial class SpaceContainers
         if (!payment.Paid)
             await UpdateProductionScheduleForTowerStateAsync(connection, transaction, record, false, cancellationToken);
         if (!payment.Paid)
-            SetControlTowerSlimState(towerId, StructureAnchored, null);
+            await OfflineStarbaseModulesAsync(connection, transaction, towerId, cancellationToken);
         if (!payment.Paid)
-            return false;
+            return true;
         var published = await PublishControlTowerFuelInventoryChangedAsync(connection, transaction, record, periodStartMs, payment.Changes, cancellationToken);
         await _scheduler.ScheduleAsync(connection, transaction, new JobSpec(ControlTowerFuelJob, periodStartMs + resources.PeriodMs)
         {
@@ -148,7 +149,8 @@ public sealed partial class SpaceContainers
         if (record.ActivateAtMs == NeverAnchored || record.ActivateAtMs > _nowUnixMs())
         {
             await _deployed.SetTowerStateAsync(connection, transaction, towerId, TowerOffline, cancellationToken);
-            return false;
+            await OfflineStarbaseModulesAsync(connection, transaction, towerId, cancellationToken);
+            return true;
         }
         await _statics.EnsureTypesAsync([record.TypeId], cancellationToken);
         var type = _statics.Type(record.TypeId)
@@ -161,7 +163,8 @@ public sealed partial class SpaceContainers
             : new TowerResourcePayment(false, []);
         await _deployed.SetTowerStateAsync(connection, transaction, towerId, payment.Paid ? TowerOnline : TowerOffline, cancellationToken);
         await UpdateProductionScheduleForTowerStateAsync(connection, transaction, record, payment.Paid, cancellationToken);
-        SetControlTowerSlimState(towerId, payment.Paid ? StructureOnline : StructureAnchored, null);
+        if (!payment.Paid)
+            await OfflineStarbaseModulesAsync(connection, transaction, towerId, cancellationToken);
         var published = false;
         if (payment.Paid)
         {
@@ -173,7 +176,7 @@ public sealed partial class SpaceContainers
                 OnDuplicate = OnDuplicate.Replace,
             }, cancellationToken);
         }
-        return published;
+        return published || !payment.Paid;
     }
 
     private async Task<bool> PublishControlTowerFuelInventoryChangedAsync(
@@ -503,6 +506,55 @@ public sealed partial class SpaceContainers
     public void PublishStarbaseModuleOnlineState(long moduleId, bool online) =>
         SetControlTowerSlimState(moduleId, online ? StructureOnline : StructureAnchored, null);
 
+    /// <summary>Publishes persisted tower and module state after their database transaction commits.</summary>
+    public async Task SynchronizeControlTowerSlimStateAsync(long towerId, CancellationToken cancellationToken = default)
+    {
+        if (_deployed is null || await _deployed.GetAsync(towerId, cancellationToken).ConfigureAwait(false) is not { Kind: ControlTowerKind })
+            return;
+
+        var towerState = await _deployed.TowerStateAsync(towerId, cancellationToken).ConfigureAwait(false);
+        var towerStartedAt = await _deployed.TowerStateStartedAtMsAsync(towerId, cancellationToken).ConfigureAwait(false);
+        SetControlTowerSlimState(towerId, towerState switch
+        {
+            TowerOnline => StructureOnline,
+            TowerOnlining => StructureOnlining,
+            TowerUnanchored or TowerUnanchoring => StructureUnanchored,
+            _ => StructureAnchored,
+        }, towerStartedAt);
+
+        foreach (var module in await _deployed.ByControlTowerAsync(towerId, cancellationToken).ConfigureAwait(false))
+        {
+            var moduleState = await _deployed.TowerStateAsync(module.DeployableId, cancellationToken).ConfigureAwait(false);
+            var startedAt = await _deployed.TowerStateStartedAtMsAsync(module.DeployableId, cancellationToken).ConfigureAwait(false);
+            SetControlTowerSlimState(module.DeployableId, moduleState switch
+            {
+                TowerOnline => StructureOnline,
+                TowerOnlining => StructureOnlining,
+                TowerUnanchored or TowerUnanchoring => StructureUnanchored,
+                _ => StructureAnchored,
+            }, startedAt);
+        }
+    }
+
+    /// <summary>Turns every associated online or onlining module off in the tower's state transaction.</summary>
+    private async Task OfflineStarbaseModulesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long towerId, CancellationToken cancellationToken)
+    {
+        if (_deployed is null)
+            return;
+
+        foreach (var module in await _deployed.ByControlTowerAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false))
+        {
+            var state = await _deployed.TowerStateAsync(connection, transaction, module.DeployableId, cancellationToken).ConfigureAwait(false);
+            if (state is not (TowerOnline or TowerOnlining))
+                continue;
+
+            await _deployed.SetTowerStateAsync(connection, transaction, module.DeployableId, TowerOffline, cancellationToken).ConfigureAwait(false);
+            if (_scheduler is not null)
+                await _scheduler.CancelAsync(connection, transaction, StarbaseModuleOnlineJob, $"module:{module.DeployableId}", cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     private async Task<string?> StarbaseModuleResourceErrorAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         DeployedRecord tower, DeployedRecord candidate, CancellationToken cancellationToken)
     {
@@ -608,17 +660,20 @@ public sealed partial class SpaceContainers
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
         if (state == TowerOffline)
         {
+            await OfflineStarbaseModulesAsync(connection, transaction, towerId, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
+            await SynchronizeControlTowerSlimStateAsync(towerId, cancellationToken);
             return;
         }
         if (state is not (TowerOnline or TowerOnlining))
             throw Refuse("The control tower is not online or onlining.");
         await _deployed.SetTowerStateAsync(connection, transaction, towerId, TowerOffline, cancellationToken);
         await UpdateProductionScheduleForTowerStateAsync(connection, transaction, record, false, cancellationToken);
+        await OfflineStarbaseModulesAsync(connection, transaction, towerId, cancellationToken);
         await _scheduler.CancelAsync(connection, transaction, ControlTowerOnlineJob, $"tower:{towerId}", cancellationToken);
         await _scheduler.CancelAsync(connection, transaction, ControlTowerFuelJob, $"tower:{towerId}", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
-        SetControlTowerSlimState(towerId, StructureAnchored, null);
+        await SynchronizeControlTowerSlimStateAsync(towerId, cancellationToken);
         _scheduler.Wake();
     }
 

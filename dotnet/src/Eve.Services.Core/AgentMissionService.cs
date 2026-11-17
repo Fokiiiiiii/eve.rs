@@ -55,11 +55,13 @@ public sealed class AgentMissionService(
     Func<long, CancellationToken, ValueTask<JsonArray?>> readResearchRows,
     Func<long, long, ClientSession, bool>? isAtAgentLocation = null,
     AgentMissionRpcCallbacks? rpcCallbacks = null,
-    AgentDialogueSources? dialogue = null) : IService, IBoundObjectReleaseHandler
+    AgentDialogueSources? dialogue = null,
+    Func<long>? nowUnixMs = null) : IService, IBoundObjectReleaseHandler
 {
 
 
     private readonly AgentDialogueMachine? _dialogue = dialogue is null ? null : new AgentDialogueMachine(dialogue);
+    private readonly Func<long> _nowUnixMs = nowUnixMs ?? (static () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 
 
     private readonly ConcurrentDictionary<string, long> _agentByBoundObject = new(StringComparer.Ordinal);
@@ -573,6 +575,12 @@ public sealed class AgentMissionService(
                 .OrderBy(entry => entry.AgentId)
                 .ToArray();
 
+        var agents = entries.Length > 0 && rpcCallbacks?.ReadAgents is { } readAgents
+            ? await readAgents(call.Cancellation)
+            : Array.Empty<AgentMissionAgentData>();
+        call.Cancellation.ThrowIfCancellationRequested();
+        var agentsById = agents.ToDictionary(agent => agent.AgentId);
+
         var bookmarkIds = entries
             .SelectMany(entry => BookmarkIds(entry.Record!))
             .ToArray();
@@ -584,7 +592,13 @@ public sealed class AgentMissionService(
         var missionRows = new List<PyValue>(entries.Length);
         foreach (var entry in entries)
         {
-            if (MissionRow(entry.AgentId, entry.Record!, call.Session, characterId, bookmarkRecords) is { } row)
+            var mission = rpcCallbacks?.ReadHeldMission is { } readHeld
+                ? await readHeld(characterId, entry.AgentId, call.Cancellation)
+                : null;
+            call.Cancellation.ThrowIfCancellationRequested();
+            var runtimeBookmarks = mission is null ? [] : MissionViews.Bookmarks(mission).Items;
+            agentsById.TryGetValue(entry.AgentId, out var agent);
+            if (MissionRow(entry.AgentId, entry.Record!, call.Session, characterId, bookmarkRecords, runtimeBookmarks, agent) is { } row)
                 missionRows.Add(row);
         }
 
@@ -676,13 +690,14 @@ public sealed class AgentMissionService(
             ? await readMessages(call.Cancellation)
             : null;
         call.Cancellation.ThrowIfCancellationRequested();
-        return new PyDict(
+        var result = new PyDict(
         [
             .. (messages ?? new JsonObject()).Select(pair =>
                 new KeyValuePair<PyValue, PyValue>(
                     new PyStr(pair.Key),
                     NumericJsonDictionary(pair.Value as JsonObject))),
         ]);
+        return ObjectCaching.MethodResult(result, _nowUnixMs(), "never");
     }
 
     private async ValueTask<PyValue> ReadMyEpicArcStatusAsync(ServiceCall call)
@@ -736,7 +751,8 @@ public sealed class AgentMissionService(
         OptionalPositive(agent.CareerId),
         agent.ImportantMission ? PyBool.True : PyBool.False,
         new PyStr(agent.MissionKind ?? ""),
-        new PyStr(agent.MissionTypeLabel ?? ""),
+        new PyStr(AgentMissionKindRules.ClientMissionTypeLabel(
+            agent.AgentTypeId, agent.MissionKind ?? "", agent.MissionTypeLabel)),
         OptionalPositive(agent.SpecialityId),
         OptionalPositive(agent.StationTypeId),
         OptionalPositive(agent.BloodlineId),
@@ -890,7 +906,9 @@ public sealed class AgentMissionService(
         JsonObject record,
         ClientSession session,
         long characterId,
-        IReadOnlyDictionary<long, JsonObject> bookmarkRecords)
+        IReadOnlyDictionary<long, JsonObject> bookmarkRecords,
+        IReadOnlyList<PyValue>? runtimeBookmarks = null,
+        AgentMissionAgentData? agent = null)
     {
         var status = Text(record["runtimeStatus"]).ToLowerInvariant() switch
         {
@@ -904,7 +922,11 @@ public sealed class AgentMissionService(
                 ? new PyStr(title)
                 : null;
         var missionType = Text(record["missionTypeLabel"]);
-        if (missionName is null || missionType.Length == 0) return null;
+        var clientMissionType = AgentMissionKindRules.ClientMissionTypeLabel(
+            agent?.AgentTypeId ?? 0,
+            missionType.Length > 0 ? missionType : agent?.MissionKind ?? "",
+            agent?.MissionTypeLabel);
+        if (missionName is null || clientMissionType.Length == 0) return null;
 
         var clientMission = record["clientMissionRecord"] as JsonObject;
         var objectiveMode = Text(record["objectiveMode"]);
@@ -917,12 +939,13 @@ public sealed class AgentMissionService(
         var bookmarks = BookmarkIds(record)
             .Where(bookmarkRecords.ContainsKey)
             .Select(id => (PyValue)Bookmark(bookmarkRecords[id]))
+            .Concat(runtimeBookmarks ?? [])
             .ToArray();
 
         return Tuple(
             new PyInt(status),
             new PyInt(BooleanValue(record["importantMission"]) == true ? 1 : 0),
-            new PyStr(missionType),
+            new PyStr(clientMissionType),
             missionName,
             new PyInt(agentId),
             Py.FileTimeLong(Integer(record["expiresAtFileTime"])),

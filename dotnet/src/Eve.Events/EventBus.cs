@@ -358,8 +358,10 @@ public sealed class EventBus
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         // a new subscriber starts at the horizon (events published from now on) or at the beginning; every event up to the horizon is final, so none is half-seen
+        // This idempotent statement must finish before the connection is returned to the pool. Canceling an Npgsql command while PostgreSQL is still
+        // executing it can race the command's cancellation and make the next pump observe an in-progress command on the same connection.
         await Sql.ExecuteAsync(connection, null,
-            Q("INSERT INTO {schema}.subscribers (name, cursor_id, updated_ms) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING"), cancellationToken,
+            Q("INSERT INTO {schema}.subscribers (name, cursor_id, updated_ms) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING"), CancellationToken.None,
             subscription.Name, subscription.StartAt == StartAt.Beginning ? 0L : horizon, Now);
     }
 
@@ -408,20 +410,12 @@ public sealed class EventBus
             if (next is null)
             {
                 // nothing for this subscriber: move the cursor over what it does not care about, so that it is not looked at again
-                try
-                {
-                    await Sql.ExecuteAsync(connection, transaction,
-                        Q("UPDATE {schema}.subscribers SET cursor_id = $2, updated_ms = $3 WHERE name = $1 AND cursor_id < $2"), cancellationToken, subscription.Name, horizon, Now);
-                    // Once the update completed, committing this housekeeping cursor is safe and keeps a stop
-                    // cancellation from landing between the statement and COMMIT.
-                    await transaction.CommitAsync(CancellationToken.None);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    // The update itself may still be in flight when the pump is stopped.
-                    await transaction.RollbackAsync(CancellationToken.None);
-                    throw;
-                }
+                // This short housekeeping write is already protected by the cursor lock. Let it and its commit
+                // finish before releasing the connection: canceling ExecuteNonQuery while PostgreSQL is still
+                // running it can race the rollback and leave the pooled connection idle in a transaction.
+                await Sql.ExecuteAsync(connection, transaction,
+                    Q("UPDATE {schema}.subscribers SET cursor_id = $2, updated_ms = $3 WHERE name = $1 AND cursor_id < $2"), CancellationToken.None, subscription.Name, horizon, Now);
+                await transaction.CommitAsync(CancellationToken.None);
                 return (delivered, null);
             }
 

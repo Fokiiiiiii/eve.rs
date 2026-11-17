@@ -17,10 +17,14 @@ Skipped unless EVE_LIVE_HOST is set. tools/dev/run-eve-live.sh starts eve.rs and
 from __future__ import annotations
 
 import base64
+import copy
 import json
 import math
 import os
 import re
+import time
+import subprocess
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -31,6 +35,7 @@ from evecli import packet as p
 from evecli.client import Client
 from evecli.describe import describe, differences, type_name
 from evecli.observe import hangar_and_ship, notifications_of, ship_of, training_view, wait_for_events
+from tests.runid import run_token
 
 LIVE = os.environ.get("EVE_LIVE_HOST", "")
 SERVER = os.environ.get("EVE_LIVE_SERVER", "eve.rs")
@@ -72,6 +77,46 @@ def connect(name: str, *, timeout: float = 30.0) -> Client:
     client = Client(*address, timeout=timeout)
     client.login(name, "walk-password")
     return client
+
+
+def notification_type_ids(value) -> list[int]:
+    """Read the V24 notification manager's CRowset or the reference-compatible util.KeyVal list."""
+    required_fields = {"notificationID", "typeID", "senderID", "receiverID", "processed", "created", "data"}
+    if isinstance(value, m.ObjectEx):
+        described = describe(value)
+        object_header = described["$objectex"]["$tuple"][0]
+        first = object_header.get("$tuple", [None])[0] if isinstance(object_header, dict) else None
+        first = first.get("$tuple", [first])[0] if isinstance(first, dict) else first
+        class_name = first.get("$token") if isinstance(first, dict) else None
+        assert class_name == "carbon.common.script.sys.crowset.CRowset", class_name
+        rows = value.items
+        row_kind = "CRowset"
+    else:
+        assert isinstance(value, m.List), type(value).__name__
+        rows = value
+        row_kind = "list"
+
+    result = []
+    for row in rows:
+        if isinstance(row, m.PackedRow):
+            fields = row.fields()
+            assert required_fields.issubset(fields), f"{row_kind} DTO is missing {required_fields - set(fields)}"
+            result.append(int(m.plain(fields["typeID"])))
+            continue
+        assert isinstance(row, m.Object), f"{row_kind} row has marshal type {type(row).__name__}"
+        name, fields = m.plain(row)
+        assert name == "util.KeyVal", name
+        assert required_fields.issubset(fields), f"{row_kind} DTO is missing {required_fields - set(fields)}"
+        result.append(int(fields["typeID"]))
+    return result
+
+
+def packet_event_name(described: dict) -> str:
+    packet = described["$tuple"]
+    if packet[0] == p.SESSIONCHANGENOTIFICATION:
+        return "$sessionchange"
+    destination = packet[2]
+    return destination["args"]["$tuple"][1]
 
 def attempt(client: Client, service: str, method: str, *args):
     """("ok", description) or ("error", {"code", "payload"})."""
@@ -137,7 +182,7 @@ def test_the_session_starts_with_the_recorded_keys_and_types():
     assert same_way(recorded, ours, "sessionInit", volatile=set(WALK["login"]["sessionInit"]) - not_sent) == []
 
 def test_the_recorded_walk_replays():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     walker = connect(f"walk-{run}")
     other = None
     ids: dict[int, int] = {}  # a recorded character id -> the id this server gave
@@ -200,7 +245,10 @@ def test_the_recorded_walk_replays():
         character_id = walker.session.session_init.get("charid")
         assert isinstance(user_id, int) and user_id > 0
         assert isinstance(character_id, int) and character_id > 0
-        assert walker.call("achievementTrackerMgr", "HasEverWarped") is False
+        ever_warped = walker.call("achievementTrackerMgr", "HasEverWarped")
+        # EveJS defaults a missing achievement record to True. eve.rs derives this from the new character's
+        # authoritative achievement state, False, which lets V24 enter through its first-space camera.
+        assert ever_warped is (True if REFERENCE else False)
         token = walker.call("userSvc", "GetUserToken")
         if REFERENCE:
             assert token == f"evejs-local-token-{user_id}-{character_id}".encode("utf-8")
@@ -213,17 +261,50 @@ def test_the_recorded_walk_replays():
             assert int(claims["exp"]) > int(datetime.now(timezone.utc).timestamp())
             assert signature
 
-        # Match the selection-time notices, then compare the recorded session and skills packets.
+        # Selection notices depend on the configured AIR experience mode. The reference starts the
+        # NodeGraph tutorial; the local live Host defaults it to disabled. Compare the full ordered
+        # stream for each mode and compare the shared session/skills payloads below.
         walker.ping()
         seen = [describe(n.raw) for n in walker.notifications if n.command in (p.SESSIONCHANGENOTIFICATION, p.NOTIFICATION)]
         notification_names = [event["name"] for event in notifications_of(walker)]
         assert notification_names[0] == "OnSubscriptionTimeUpdateServer"
         assert "OnCharacterSelected" not in notification_names
-        seen = seen[1:]
         recorded_changes = WALK["afterSelect"]
-        assert len(seen) == len(recorded_changes), f"{len(seen)} notifications after selecting, {len(recorded_changes)} recorded"
-        problems += _compare_session_change(recorded_changes[0], seen[0])
-        problems += _compare_skills_notification(recorded_changes[1], seen[1])
+        recorded_names = [packet_event_name(event) for event in recorded_changes]
+        actual_names = [packet_event_name(event) for event in seen]
+        if REFERENCE:
+            expected_names = recorded_names
+        else:
+            # Character ships are persisted before selection and fetched from the station inventory;
+            # the disabled Host does not start NodeGraph's AIR tutorial for this character.
+            absent_when_air_npe_disabled = {
+                "OnItemChange",
+                "OnStartClientNodeGraph",
+                "OnClientNodeGraphMessage",
+                "OnClientNodeGraphUpdate",
+            }
+            expected_names = [name for name in recorded_names if name not in absent_when_air_npe_disabled]
+        assert actual_names == expected_names, f"selection notifications {actual_names} in place of {expected_names}"
+        expected_skills = next(event for event, event_name in zip(recorded_changes, recorded_names) if event_name == "OnServerSkillsChanged")
+        actual_skills = next(event for event, event_name in zip(seen, actual_names) if event_name == "OnServerSkillsChanged")
+        problems += _compare_skills_notification(expected_skills, actual_skills)
+
+        # These are two distinct selection modes. EveJS puts the character directly into the
+        # tutorial system and starts its AIR NodeGraph; the local Host defaults AIR NPE off and
+        # places a new character in its starter station. Check the session the V24 client sees
+        # in each mode instead of treating one mode's session delta as the other's contract.
+        session_state = walker.session.session_init
+        assert session_state.get("solarsystemid2") == 30100032
+        assert isinstance(session_state.get("shipid"), int) and session_state["shipid"] > 0
+        if REFERENCE:
+            assert session_state.get("stationid") is None
+            assert session_state.get("locationid") == 30100032
+            assert session_state.get("solarsystemid") == 30100032
+        else:
+            assert session_state.get("stationid") == 60015249
+            assert session_state.get("stationid2") == 60015249
+            assert session_state.get("locationid") == 60015249
+            assert session_state.get("solarsystemid") is None
     finally:
         walker.close()
         if other is not None:
@@ -231,7 +312,7 @@ def test_the_recorded_walk_replays():
     assert problems == [], "\n".join(problems)
 
 def test_new_account_enters_a_new_character_with_named_arguments():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-named-{run}") as client:
         assert m.plain(client.call("charUnboundMgr", "GetNumCharacters")) == 0
 
@@ -276,15 +357,22 @@ def test_new_account_enters_a_new_character_with_named_arguments():
         mail = m.plain(client.call("mailMgr", "SyncMail", None, None))
         expected_title = "Welcome to EveJS Elysian" if REFERENCE else "Welcome to New Eden"
         assert any(header[1]["title"] == expected_title for header in mail[1]["newMail"])
-        notifications = m.plain(client.call("notificationMgr", "GetAllNotifications"))
-        assert any(row[1]["typeID"] == 1004 for row in notifications)
+        notifications = client.call("notificationMgr", "GetAllNotifications")
+        notification_types = notification_type_ids(notifications)
+        if REFERENCE:
+            # EveJS retains its CRowset shape but has no welcome-mail notification for this new character.
+            assert isinstance(notifications, m.ObjectEx)
+            assert notification_types == []
+        else:
+            assert isinstance(notifications, m.List)
+            assert notification_types == [1004]
 
 OMEGA_END_FILETIME = 157469184000000000  # 2100-01-01T00:00:00Z: the end time every new account is written with
 
 def test_a_new_account_is_omega_until_2100_on_every_answer():
     """The Omega state is one stored value per account (its subscription end time). A new account is Omega until 2100:
     the clone grade, the subscription time, the lapsed-Omega check and the selection screen's account row must agree."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-omega-{run}") as client:
         assert m.plain(client.call("subscriptionMgr", "GetCloneGrade")) == 1
         assert m.plain(client.call("subscriptionMgr", "GetSubscriptionTime")) == OMEGA_END_FILETIME
@@ -308,7 +396,7 @@ def test_a_new_account_is_omega_until_2100_on_every_answer():
 def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
     """The client's "log off character": userSvc.UserLogOffCharacter answers True, the connection stays open, the
     selection screen lists the character again, and selecting it enters the game again (the session's charid)."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-logoff-{run}") as client:
         creation = next(
             step
@@ -327,9 +415,45 @@ def test_a_character_logs_off_to_the_selection_screen_and_selects_again():
         assert m.plain(client.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=False)) is None
         assert client.session.session_init.get("charid") == character_id
 
+
+def test_a_selected_character_can_be_selected_again_after_an_abrupt_client_exit():
+    run = run_token()
+    account = f"walk-relogin-{run}"
+    creation = next(step for step in WALK["steps"] if step["call"][1] == "CreateCharacterWithDoll" and "ok" in step)
+    service, method, recorded_args = creation["call"]
+    with connect(account) as client:
+        character_id = int(m.plain(client.call(service, method, *[revive(value, run) for value in recorded_args])))
+
+    host, _, port = LIVE.partition(":")
+    code = (
+        "import os, sys; "
+        "from evecli.client import Client; "
+        "client = Client(sys.argv[1], int(sys.argv[2]), timeout=20); "
+        "client.login(sys.argv[3], sys.argv[4]); "
+        "client.call('charUnboundMgr', 'SelectCharacterID', int(sys.argv[5]), None, True); "
+        "os._exit(0)"
+    )
+    exited = subprocess.run(
+        [sys.executable, "-c", code, host or "127.0.0.1", port or "26000", account, "walk-password", str(character_id)],
+        capture_output=True,
+        timeout=30,
+        cwd=os.path.dirname(os.path.dirname(__file__)),
+    )
+    assert exited.returncode == 0, exited.stderr.decode(errors="replace")
+
+    with Client(host or "127.0.0.1", int(port or 26000), timeout=30) as reconnected:
+        reconnected.login(account, "walk-password")
+        assert reconnected.session.session_init.get("charid") is None
+        rows = m.plain(reconnected.call("charUnboundMgr", "GetCharacterSelectionData"))[2]
+        assert [row[1]["characterID"] for row in rows] == [character_id]
+        assert reconnected.call("charUnboundMgr", "SelectCharacterID", charID=character_id, secondChoiceID=None, skipTutorial=True) is None
+        assert reconnected.session.session_init.get("charid") == character_id
+        assert reconnected.session.session_init.get("stationid") == 60015249
+        assert reconnected.session.session_init.get("solarsystemid") is None
+
 def test_search_query_and_quickquery_use_the_registered_host_route():
     """The client's item type lookup reads Query's category map and QuickQuery's flat ID list."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-search-{run}") as client:
         query = m.plain(client.call("search", "Query", "Rifter", [10], exact=2))
         quick = m.plain(client.call("search", "QuickQuery", "Rifter", [10], exact=2, machoVersion=496))
@@ -342,7 +466,7 @@ def test_search_query_and_quickquery_use_the_registered_host_route():
 
 def test_login_configuration_and_loyalty_rpc_routes_keep_their_wire_contracts():
     """The selection UI and wallet services use the registered Host methods, not local stubs."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-rpc-coverage-{run}") as client:
         creation = next(
             step
@@ -377,7 +501,7 @@ def test_login_configuration_and_loyalty_rpc_routes_keep_their_wire_contracts():
 def test_the_loyalty_point_wallet_answers_and_the_concord_exchange_is_refused():
     """LPSvc (the loyalty point wallet): a new character's balance rowset is answered (no source credits points yet), and
     ExchangeConcordLP is refused with the reason rather than answered as done (AG-1, DEVIATIONS.md)."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-lp-{run}") as client:
         creation = next(
             step
@@ -398,7 +522,7 @@ def test_the_population_cap_answers_through_its_moniker():
     """The selection screen's populationCap moniker: bind with (charID, groupCharacter) and a nested GetCharacterLoadSlot,
     then call the bound object. A new character's system has room, so one entry; a move to a system that was not offered is
     refused, and so is a move with a wrong slot key."""
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-cap-{run}") as client:
         creation = next(
             step
@@ -488,7 +612,7 @@ def test_name_validation_answers_as_recorded(entry):
 
 @pytest.mark.parametrize("starter", STARTERS, ids=lambda s: f"bloodline-{s['bloodlineID']}")
 def test_each_bloodline_starts_as_recorded(starter):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"walk-bl{starter['bloodlineID']}-{run}") as client:
         service, method, *args = _call(starter["create"], run)
         kind, made = attempt(client, service, method, *args)
@@ -573,7 +697,7 @@ def _client_skill_totals(race):
 
 @pytest.mark.parametrize("race", SKILLS["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_character_has_the_skills_the_reference_gives(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     if not REFERENCE:
         recorded_total, client_total = _client_skill_totals(race)
@@ -671,7 +795,7 @@ def with_description(described, text: str):
 
 @pytest.mark.parametrize("race", INFO["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_character_is_described_as_the_reference_describes_it(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     with connect(f"walk-info-{run}") as client:
         service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_INFO_RUN) for a in race["create"]["call"][2]]]
@@ -771,7 +895,7 @@ def lines_dropped(rowset: dict) -> dict:
 
 @pytest.mark.parametrize("race", INVENTORY["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_characters_inventories_are_those_of_the_reference(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     with connect(f"walk-inventory-{run}") as client:
         service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_INVENTORY_RUN) for a in race["create"]["call"][2]]]
@@ -873,6 +997,40 @@ def events_form(events: list[dict]) -> list:
     """Recorded events (plain dictionaries: name, id type, arguments) in the form `differences` compares."""
     return [as_dict({"name": e["name"], "idType": e["idType"], "args": e["args"]}) for e in events]
 
+def _current_evejs_event_payload(value):
+    """Apply the current EveJS wire types to old event captures without relaxing value checks."""
+    if isinstance(value, list):
+        result = [_current_evejs_event_payload(item) for item in value]
+        if len(result) >= 7 and result[0] == "OnModuleAttributeChange":
+            attribute = number(result[3])
+            if attribute not in (2, 805, 164, 165, 166, 167, 168):
+                for index in (5, 6):
+                    if isinstance(result[index], (int, float)) and not isinstance(result[index], bool):
+                        result[index] = float(result[index])
+        return result
+    if isinstance(value, dict):
+        return {key: _current_evejs_event_payload(item) for key, item in value.items()}
+    return value
+
+def _current_evejs_notifications(events: list[dict]) -> list[dict]:
+    """The current EveJS sends character brain updates by charid and dogma changes with retail numeric wire kinds."""
+    normalized = copy.deepcopy(events)
+    for event in normalized:
+        if event["name"] == "OnServerBrainUpdated":
+            event["idType"] = "charid"
+        event["args"] = _current_evejs_event_payload(event["args"])
+    return normalized
+
+def _current_evejs_character_status(info, character_id: int):
+    """Current EveJS leaves the character's instance status row at its default offline values."""
+    normalized = copy.deepcopy(info)
+    ship_state = keyval(normalized)["shipState"]["$tuple"][0]
+    for item_id, row in pairs(ship_state):
+        if number(item_id) == character_id:
+            row["$row"]["online"] = False
+            break
+    return normalized
+
 def where_form(state: dict) -> dict:
     """Where things are (plain dictionaries of lists) in the form `differences` compares."""
     return as_dict({k: json_list(rows) for k, rows in state.items()})
@@ -886,6 +1044,18 @@ def set_attribute(attributes: list, attribute: int, value) -> None:
             pair[1] = value
             return
     raise AssertionError(f"attribute {attribute} is not in the recording")
+
+def _client_ship_state_amounts(described):
+    """A GetAllInfo shipState row carries the same absolute amounts as shipInfo's condition attributes."""
+    fields = keyval(described)
+    ship_key, ship_info = pairs(fields["shipInfo"])[0]
+    ship_id = number(ship_key)
+    attributes = dict(pairs(keyval(ship_info)["attributes"]))
+    ship_state = fields["shipState"]["$tuple"][0]
+    state_row = next(row["$row"] for key, row in pairs(ship_state) if number(key) == ship_id)
+    for field, attribute in (("damage", 3), ("charge", 18), ("armorDamage", 266), ("shieldCharge", 264)):
+        if attribute in attributes:
+            state_row[field] = float(attributes[attribute])
 
 def _client_character_attributes(described):
     if isinstance(described, list):
@@ -918,7 +1088,7 @@ def _client_charisma_events(described, character_id):
 
 @pytest.mark.parametrize("race", DOGMA["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_characters_dogma_is_that_of_the_reference(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     with connect(f"walk-dogma-{run}") as client:
         service, method, *args = [race["create"]["call"][0], race["create"]["call"][1], *[revive(a, run, ids, RECORDED_DOGMA_RUN) for a in race["create"]["call"][2]]]
@@ -939,6 +1109,7 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
     recorded_ids, given_ids = dogma_ids(expected_info), dogma_ids(actual_info)
     assert len(recorded_ids) == len(given_ids), f"ids {recorded_ids} against {given_ids}"
     expected_info = substitute(expected_info, dict(zip(recorded_ids, given_ids)))
+    expected_info = _current_evejs_character_status(expected_info, given_ids[0])
     if not REFERENCE:
         skills_race = next(skill_race for skill_race in SKILLS["races"] if skill_race["raceID"] == race["raceID"])
         recorded_total, client_total = _client_skill_totals(skills_race)
@@ -955,12 +1126,18 @@ def test_a_new_characters_dogma_is_that_of_the_reference(race):
         set_attribute(character_attributes, 443, 0.9)
         if race["raceID"] == 8:
             set_attribute(character_attributes, 428, 120)
+    # The original EveJS capture recorded ratios in shipState, while V24.01
+    # consumes its rows beside the absolute dogma amounts in shipInfo:
+    # baseDogmaLocation.GetDamageStateEx divides shieldCharge by shieldCapacity,
+    # armorDamage by armorHP, and damage by hp. EveJS v0.12.9 now derives these
+    # rows from the same attributes in shipConditionAmounts.readShipConditionAmounts.
+    _client_ship_state_amounts(expected_info)
     problems += differences(
         blank_times(expected_info), blank_times(actual_info), "GetAllInfo", volatile_keys=set(), float_tolerance=DOGMA_TOLERANCE)
 
     # the events that come with the answer: the character's attributes, then its brain (the client's copy of the character is made from them)
     mapping = dict(zip(recorded_ids, given_ids))
-    expected_events = events_form(substitute(race["notifications"], mapping))
+    expected_events = events_form(_current_evejs_notifications(substitute(race["notifications"], mapping)))
     if not REFERENCE:
         skills_race = next(skill_race for skill_race in SKILLS["races"] if skill_race["raceID"] == race["raceID"])
         recorded_total, client_total = _client_skill_totals(skills_race)
@@ -980,7 +1157,7 @@ RECORDED_FITTING_RUN = re.search(r"(\d{6,})$", FITTING["races"][0]["create"]["ca
 
 @pytest.mark.parametrize("race", FITTING["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_switching_and_moving_modules_is_what_the_reference_does(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     problems: list[str] = []
     with connect(f"walk-fitting-{run}") as client:
@@ -1015,7 +1192,8 @@ def test_switching_and_moving_modules_is_what_the_reference_does(race):
             notifications_of(client)
             problems += differences(substitute(step["ok"], mapping), outcome, f"{where}: answer")
             problems += differences(
-                blank_times(events_form(substitute(step["notifications"], mapping))), blank_times(events_form(sent)), f"{where}: events",
+                blank_times(events_form(_current_evejs_notifications(substitute(step["notifications"], mapping)))),
+                blank_times(events_form(sent)), f"{where}: events",
                 float_tolerance=DOGMA_TOLERANCE)
             problems += differences(where_form(blank_times(substitute(step["after"], mapping))), where_form(blank_times(after)), f"{where}: after")
     assert problems == [], "\n".join(problems[:30])
@@ -1078,11 +1256,14 @@ def training_client(name: str, recording: dict, recorded_run: str, run: str, ids
     service, method, *args = [recording["create"]["call"][0], recording["create"]["call"][1], *[revive(a, run, ids, recorded_run) for a in recording["create"]["call"][2]]]
     kind, made = attempt(client, service, method, *args)
     assert kind == "ok", brief(made)
-    assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, False) == ("ok", None)
+    # This walk exercises skills, not first-login onboarding. EveJS otherwise
+    # enters the tutorial in space; the V24 creation path also skips it when
+    # AIR NPE is disabled (characterCreationContainer.CheckSkipTutorial).
+    assert attempt(client, "charUnboundMgr", "SelectCharacterID", int(made), None, REFERENCE) == ("ok", None)
     return client, int(made)
 
 def test_project_discovery_availability_is_enabled_after_character_selection():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     race = TRAINING["races"][0]
     client, _character = training_client(f"walk-project-discovery-{run}", race, RECORDED_TRAINING_RUN, run, {})
     try:
@@ -1092,7 +1273,7 @@ def test_project_discovery_availability_is_enabled_after_character_selection():
 
 
 def test_global_assets_moniker_resolves_and_lists_the_active_ship():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     race = TRAINING["races"][0]
     client, character = training_client(f"walk-global-assets-{run}", race, RECORDED_TRAINING_RUN, run, {})
     try:
@@ -1106,7 +1287,7 @@ def test_global_assets_moniker_resolves_and_lists_the_active_ship():
 
 
 def test_personal_calendar_event_notifies_an_online_invitee_after_commit():
-    run = uuid.uuid4().hex[:8]
+    run = run_token()
     creator_run, invitee_run = f"{run}a", f"{run}b"
     race = TRAINING["races"][0]
     creator, creator_id = training_client(f"walk-calendar-owner-{run}", race, RECORDED_TRAINING_RUN, creator_run, {})
@@ -1138,12 +1319,13 @@ def id_mapping(recorded_character: int, character: int, skills) -> dict[int, int
     return {recorded_character: character, **{recorded_character * 100000 + int(t): character * 100000 + int(t) for t in skills}}
 
 def speed_of(client: Client) -> float:
-    """How fast this server trains: its learning attributes over the game's 20 (the server's multiplier is in them)."""
-    return describe(client.call("skillHandler", "GetAttributes"))["$dict"][0][1] / 20
+    """How fast this server trains: Intelligence starts at 20, so its value isolates the server multiplier."""
+    attributes = dict(describe(client.call("skillHandler", "GetAttributes"))["$dict"])
+    return attributes[165] / 20
 
 @pytest.mark.parametrize("race", TRAINING["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_the_skill_queue_is_what_the_reference_does(race):
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     problems: list[str] = []
     client, character = training_client(f"walk-training-{run}", race, RECORDED_TRAINING_RUN, run, ids)
@@ -1159,16 +1341,14 @@ def test_the_skill_queue_is_what_the_reference_does(race):
         for step in race["steps"]:
             service, method, recorded_args, kwargs = step["call"]
             args = [revive(a, run, mapping, RECORDED_TRAINING_RUN) for a in recorded_args]
-            if step["label"] == "start by item":
-                args = [character * 100000 + race["skills"]["first"]]
             where = f"race {race['raceID']} {step['label']}"
             expected_events = step["notifications"]
             expected_after = step.get("after")
             if step["label"] == "start by item" and not REFERENCE:
                 # DEVIATION (starting a skill by its item): the reference cannot find a skill's item and does nothing; eve.rs starts the skill,
-                # which for the skill that is training already is the same queue told again (DEVIATIONS.md #13)
-                expected_events = recorded_steps["start by type again"]["notifications"]
-                expected_after = recorded_steps["start by type again"]["after"]
+                # which here is the same one-skill queue told again (DEVIATIONS.md #13)
+                expected_events = recorded_steps["save the same one again"]["notifications"]
+                expected_after = recorded_steps["save the same one again"]["after"]
             try:
                 outcome = describe(client.call(service, method, *args, **kwargs))
                 error = None
@@ -1181,8 +1361,11 @@ def test_the_skill_queue_is_what_the_reference_does(race):
                 problems.append(f"{where}: error {brief(error)}")
             else:
                 problems += differences(blank_times(step["ok"]), blank_times(outcome), f"{where}: answer") if method != "GetSkillHistory" else _history_problems(step["ok"], outcome, where)
+            expected_events = events_form(substitute(expected_events, mapping))
+            if not REFERENCE:
+                expected_events = _client_charisma_events(expected_events, character)
             problems += differences(
-                blank_times(events_form(substitute(expected_events, mapping))), blank_times(events_form(sent)), f"{where}: events", float_tolerance=DOGMA_TOLERANCE)
+                blank_times(expected_events), blank_times(events_form(sent)), f"{where}: events", float_tolerance=DOGMA_TOLERANCE)
             if expected_after is not None:
                 problems += view_problems(expected_after, training_view(client), f"{where}: after")
                 notifications_of(client)
@@ -1192,11 +1375,83 @@ def test_the_skill_queue_is_what_the_reference_does(race):
 def _history_problems(expected: list, actual: list, where: str) -> list[str]:
     """What the history lists, without its dates."""
     def form(entries):
-        return [{k: v for k, v in e["args"]["$dict"] if k != "logDate"} for e in entries]
+        if isinstance(entries, dict) and "$objectex" in entries:
+            # The reference returns a CRowset whose rows are packed-row
+            # members; eve.rs currently returns the same rows as KeyVals.
+            entries = entries.get("list", [])
+        rows = []
+        for entry in entries:
+            if isinstance(entry, dict) and "$row" in entry:
+                values = entry["$row"]
+            elif isinstance(entry, dict) and entry.get("$object") == "util.KeyVal":
+                values = dict(entry["args"]["$dict"])
+            else:
+                raise AssertionError(f"unexpected skill history row in {where}: {entry!r}")
+            rows.append({key: value for key, value in values.items() if key != "logDate"})
+        return rows
     return [] if form(expected) == form(actual) else [f"{where}: history {form(actual)} instead of {form(expected)}"]
 
+def _training_notification_payload(event: dict) -> list:
+    return event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
+
+def _training_tuple(value):
+    if isinstance(value, dict) and isinstance(value.get("$tuple"), list):
+        return value["$tuple"]
+    return value
+
+def _training_skill_update(event: dict) -> dict[int, tuple[int, int]]:
+    entries = _training_notification_payload(event)[0]["$dict"]
+    result = {}
+    for type_id, value in entries:
+        header = value["$objectex"]["$tuple"][1]["$tuple"]
+        result[int(type_id)] = (int(header[1]), int(header[2]))
+    return result
+
+def _training_queue_update(event: dict) -> list[tuple[int, int]]:
+    result = []
+    for value in _training_notification_payload(event)[0]:
+        fields = dict(value["args"]["$dict"])
+        result.append((int(fields["trainingTypeID"]), int(fields["trainingToLevel"])))
+    return result
+
+def _training_attribute_update(event: dict) -> list[tuple[int, int, int, int | float]]:
+    return [
+        (int(row[1]), int(row[2]), int(row[3]), row[5])
+        for row in (_training_tuple(value) for value in _training_notification_payload(event)[0])
+    ]
+
+def _training_rank(type_id: int) -> int:
+    path = os.path.join(os.environ["EVE_SDE_DIR"], "typeDogma.jsonl")
+    with open(path, encoding="utf-8") as source:
+        for line in source:
+            type_data = json.loads(line)
+            if type_data.get("_key") == type_id:
+                return int(next(attribute["value"] for attribute in type_data["dogmaAttributes"] if attribute["attributeID"] == 275))
+    raise AssertionError(f"skill type {type_id} is absent from the pinned SDE")
+
+def _fast_training_oracle(events: list[dict], character: int, speed: float) -> list[dict]:
+    """EVE.js's test speed scales dogma learning attributes; the client receives raw attributes from eve.rs."""
+    normalized = json.loads(json.dumps(events))
+    for event in normalized:
+        if event["name"] == "OnModuleAttributeChanges":
+            for encoded_row in _training_notification_payload(event)[0]:
+                row = _training_tuple(encoded_row)
+                if row[0] == "OnModuleAttributeChange" and row[1] == character and row[2] == character and row[3] in (164, 165, 166, 167, 168):
+                    value = row[5] / speed
+                    row[5] = int(value) if float(value).is_integer() else value
+        elif event["name"] == "OnServerBrainUpdated":
+            _training_notification_payload(event)[0] = "$brain-version"
+    return normalized
+
+def _blank_brain_versions(events: list[dict]) -> list[dict]:
+    normalized = json.loads(json.dumps(events))
+    for event in normalized:
+        if event["name"] == "OnServerBrainUpdated":
+            _training_notification_payload(event)[0] = "$brain-version"
+    return normalized
+
 def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     ids: dict[int, int] = {}
     problems: list[str] = []
     client, character = training_client(f"walk-swift-{run}", TRAINING_FAST, RECORDED_FAST_RUN, run, ids)
@@ -1206,6 +1461,9 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
         mapping = {**id_mapping(int(TRAINING_FAST["characterID"]), character, TRAINING_FAST["before"]["skills"]), int(TRAINING_FAST["shipID"]): ship_of(client)}
         problems += view_problems(TRAINING_FAST["before"], training_view(client), "before")
         notifications_of(client)
+        time.sleep(1)
+        problems += view_problems(TRAINING_FAST["before"], training_view(client), "before after character selection settled")
+        notifications_of(client)
 
         for step in TRAINING_FAST["steps"][:-1]:
             service, method, recorded_args, kwargs = step["call"]
@@ -1213,8 +1471,63 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
             where = step["label"]
             problems += differences(step["ok"], describe(client.call(service, method, *args, **kwargs)), f"{where}: answer")
             sent = wait_for_events(client, lambda seen: any(e["name"] == "OnSkillQueuePausedServer" for e in seen))
-            problems += differences(
-                blank_times(events_form(substitute(step["notifications"], mapping))), blank_times(events_form(sent)), f"{where}: events", float_tolerance=DOGMA_TOLERANCE)
+            if not REFERENCE and step["label"] == "two levels in a queue":
+                # eve.rs publishes each completed level before the next queue row starts. The reference settles both overdue levels
+                # together; V24 skillsvc.py and skillQueueSvc.py consume both forms and expose the same level sequence locally.
+                expected_names = [
+                    "OnNewSkillQueueSaved", "OnServerSkillsChanged", "OnModuleAttributeChanges", "OnModuleAttributeChanges",
+                    "OnServerBrainUpdated", "OnNewSkillQueueSaved", "OnServerSkillsChanged", "OnModuleAttributeChanges",
+                    "OnModuleAttributeChanges", "OnServerBrainUpdated", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer",
+                ]
+                assert [event["name"] for event in sent] == expected_names
+                assert [event["idType"] for event in sent] == [
+                    "charid", "charid", "clientID", "clientID", "charid", "charid",
+                    "charid", "clientID", "clientID", "charid", "charid", "clientID",
+                ]
+
+                skill_rank = _training_rank(3301)
+                level_two_points = math.ceil(250 * skill_rank * 2 ** (2.5 * (2 - 1)))
+                assert [_training_skill_update(event) for event in sent if event["name"] == "OnServerSkillsChanged"] == [
+                    {3301: (2, level_two_points)}, {3301: (3, 8000)},
+                ]
+                queues = [_training_queue_update(event) for event in sent if event["name"] == "OnNewSkillQueueSaved"]
+                assert queues == [[(3301, 2), (3301, 3)], [(3301, 3)], []]
+
+                expected = _fast_training_oracle(substitute(step["notifications"], mapping), character, TRAINING_FAST["trainingSpeed"])
+                expected = _client_charisma_events(expected, character)
+                final_level_expected = [expected[0], *expected[6:]]
+                actual = [sent[index] for index in (0, 6, 7, 8, 9, 10, 11)]
+                problems += differences(
+                    blank_times(events_form(final_level_expected)), blank_times(events_form(_blank_brain_versions(actual))),
+                    f"{where}: final-level wire events", float_tolerance=DOGMA_TOLERANCE)
+
+                skill_event = substitute([next(event for event in step["notifications"] if event["name"] == "OnServerSkillsChanged")], mapping)[0]
+                header = _training_notification_payload(skill_event)[0]["$dict"][0][1]["$objectex"]["$tuple"][1]["$tuple"]
+                header[1], header[2] = 2, level_two_points
+                problems += differences(
+                    blank_times(events_form([skill_event])), blank_times(events_form([sent[1]])),
+                    f"{where}: first-level skill update", float_tolerance=DOGMA_TOLERANCE)
+
+                expected_attributes = [event for event in step["notifications"] if event["name"] == "OnModuleAttributeChanges"]
+                expected_attributes = _fast_training_oracle(substitute(expected_attributes, mapping), character, TRAINING_FAST["trainingSpeed"])
+                expected_attributes = _client_charisma_events(expected_attributes, character)
+                expected_groups = [_training_attribute_update(event) for event in expected_attributes]
+                actual_groups = [_training_attribute_update(event) for event in sent[2:4] + sent[7:9]]
+                assert actual_groups == expected_groups
+                assert _training_queue_update(sent[5]) == [(3301, 3)]
+                brains = [event for event in sent if event["name"] == "OnServerBrainUpdated"]
+                versions = [_training_tuple(_training_notification_payload(event)[0])[0] for event in brains]
+                assert len(versions) == 2 and versions[0] > 0 and versions[1] == versions[0] + 1
+            else:
+                expected_events = substitute(step["notifications"], mapping)
+                actual_events = sent
+                if not REFERENCE:
+                    expected_events = _fast_training_oracle(expected_events, character, TRAINING_FAST["trainingSpeed"])
+                    expected_events = _client_charisma_events(expected_events, character)
+                    actual_events = _blank_brain_versions(actual_events)
+                problems += differences(
+                    blank_times(events_form(expected_events)), blank_times(events_form(actual_events)), f"{where}: events", float_tolerance=DOGMA_TOLERANCE)
+            problems += view_problems(step["after"], training_view(client), f"{where}: after")
             # V24.01 applies these skill and queue notifications locally after each level; it does not fetch a full snapshot here.
             notifications_of(client)
 
@@ -1222,7 +1535,6 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
         away = TRAINING_FAST["steps"][-1]
         client.call("skillHandler", "SaveNewQueue", m.Dict([(0, (3319, 2))]))
         notifications_of(client)
-    import time
     time.sleep(4)
     with connect(f"walk-swift-{run}") as back:
         notifications_of(back)
@@ -1231,8 +1543,14 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
         assert received[0]["name"] == "OnSubscriptionTimeUpdateServer"
         assert "OnCharacterSelected" not in [event["name"] for event in received]
         received = received[1:]
+        expected_events = substitute(away["notifications"], mapping)
+        actual_events = received
+        if not REFERENCE:
+            expected_events = _fast_training_oracle(expected_events, character, TRAINING_FAST["trainingSpeed"])
+            expected_events = _client_charisma_events(expected_events, character)
+            actual_events = _blank_brain_versions(actual_events)
         problems += differences(
-            blank_times(events_form(substitute(away["notifications"], mapping))), blank_times(events_form(received)), "finished while away: events", float_tolerance=DOGMA_TOLERANCE)
+            blank_times(events_form(expected_events)), blank_times(events_form(actual_events)), "finished while away: events", float_tolerance=DOGMA_TOLERANCE)
         problems += view_problems(away["after"], training_view(back), "finished while away: after")
     assert problems == [], "\n".join(problems[:30])
 
@@ -1240,7 +1558,7 @@ def test_a_queue_that_finishes_while_the_client_watches_is_told_level_by_level()
 def test_authentication_age_gate_uses_verified_account_state():
     from tests import dbseed
 
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     user_name = f"underage-{run}"
     # Password-login headless sessions have no SSO JWT; exercise the RPC with its accepted Unicode token type.
     login_jwt = m.WString("test.header.signature")
@@ -1256,7 +1574,7 @@ def test_authentication_age_gate_uses_verified_account_state():
 
 
 def test_active_survey_id_uses_reference_default():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     with connect(f"survey-default-{run}") as client:
         kind, outcome = attempt(client, "survey", "GetActiveSurveyID")
         assert kind == "ok", brief(outcome)
@@ -1264,7 +1582,7 @@ def test_active_survey_id_uses_reference_default():
 
 
 def test_localization_text_changes_keep_the_reference_empty_shape():
-    run = uuid.uuid4().hex[:10]
+    run = run_token()
     expected = {"$tuple": [{"$dict": []}, {"$dict": []}, {"$dict": []}]}
     with connect(f"localization-{run}") as client:
         kind, outcome = attempt(client, "localizationServer", "GetAllTextChanges", m.Dict([]))

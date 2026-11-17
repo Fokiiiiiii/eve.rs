@@ -31,8 +31,8 @@ public static class SkillNotifications
         ("logDate", new PyLong(entry.LogDate)),
         ("eventTypeID", new PyInt(entry.EventType)),
         ("skillTypeID", new PyInt(entry.TypeId)),
-        ("absolutePoints", new PyInt(entry.Points)),
-        ("level", new PyInt(entry.Level))))]);
+        ("relativePoints", new PyInt(entry.RelativePoints)),
+        ("absolutePoints", new PyInt(entry.Points))))]);
 
     /// <summary>The queue was kept: the client shows it. (<c>charid</c>)</summary>
     public static void QueueSaved(ClientSession session, IEnumerable<ProjectedEntry> lines) =>
@@ -55,10 +55,4 @@ public static class SkillNotifications
     public static void ServerSkillsRemoved(ClientSession session, PyValue skills, long fileTime) =>
         session.SendNotification("OnServerSkillsRemoved", "clientID", skills, new PyLong(fileTime));
 
-    /// <summary>Levels were trained: which skill reached which level. (<c>clientID</c>)</summary>
-    public static void LevelsTrained(ClientSession session, IEnumerable<CharacterSkill> skills) =>
-        session.SendNotification("OnSkillLevelsTrained", "clientID", new PyList([.. skills.Select(s => (PyValue)Py.Tuple(new PyInt(s.TypeId), new PyInt(s.Level)))]));
-
-    /// <summary>The skills the client has changed. (<c>clientID</c>)</summary>
-    public static void SkillsChanged(ClientSession session, PyValue skills) => session.SendNotification("OnSkillsChanged", "clientID", skills);
 }

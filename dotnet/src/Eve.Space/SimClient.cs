@@ -40,6 +40,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRemoveAbyssalParticipantReply>> _removingAbyssalParticipants = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimGetAbyssalParticipantPoseReply>> _abyssalParticipantPoses = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimGetSceneBodyReply>> _sceneBodies = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimGetDeploymentBallsReply>> _deploymentBalls = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReleaseTournamentCutoffReply>> _cutoffReleases = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRegisterTournamentCutoffReply>> _cutoffRegistrations = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReadTournamentCutoffReply>> _cutoffReads = new();
@@ -355,6 +356,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 break;
             case SimGetSceneBodyReply:
                 break;
+            case SimGetDeploymentBallsReply reply when _deploymentBalls.TryRemove(reply.RequestId, out var deploymentRequest):
+                deploymentRequest.TrySetResult(reply);
+                break;
+            case SimGetDeploymentBallsReply:
+                break;
             case SimGetAbyssalParticipantPoseReply reply when _abyssalParticipantPoses.TryRemove(reply.RequestId, out var poseRequest):
                 poseRequest.TrySetResult(reply);
                 break;
@@ -535,6 +541,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             if (_sceneBodies.TryRemove(request, out var pending))
                 pending.TrySetException(new SimUnavailableException("the link to the simulation broke"));
         }
+        foreach (var request in _deploymentBalls.Keys)
+            if (_deploymentBalls.TryRemove(request, out var pending)) pending.TrySetException(new SimUnavailableException("the link to the simulation broke"));
         foreach (var session in _entering.Keys)
         {
             if (_entering.TryRemove(session, out var pending))
@@ -1010,6 +1018,14 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         var reply = await AwaitAsync(_sceneBodies, request.RequestId, request, cancellationToken).ConfigureAwait(false);
         if (reply.RequestId != request.RequestId || reply.Scene != request.Scene || reply.ItemId != request.ItemId)
             throw new SimLinkException(SimLinkError.BadValue, "scene body reply does not match its request");
+        return reply;
+    }
+
+    public async Task<SimGetDeploymentBallsReply> GetDeploymentBallsAsync(SimGetDeploymentBalls request, CancellationToken cancellationToken = default)
+    {
+        var reply = await AwaitAsync(_deploymentBalls, request.RequestId, request, cancellationToken).ConfigureAwait(false);
+        if (reply.RequestId != request.RequestId || reply.Scene != request.Scene)
+            throw new SimLinkException(SimLinkError.BadValue, "deployment balls reply does not match its request");
         return reply;
     }
 

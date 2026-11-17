@@ -6,8 +6,9 @@ use eve_space::link::SlimValue;
 use eve_space::link::{
     AbyssalAttributeModifier, AbyssalBoundaryDamagePoint, AbyssalBoundaryProfile, AbyssalEnvironmentField,
     AbyssalEnvironmentProfile, AbyssalModifierOperation, AbyssalSceneObject, AbyssalSceneSpec, AbyssalTrace,
-    AbyssalTraceStatus, ChargeOp, ContainerPlacement, DecodeError, DirectionalTarget, Enter, How,
-    LaunchDrone, Message, MoonChunkPlacement, ScanTarget, SceneKey, Spawn, StructureModule, WreckPlacement,
+    AbyssalTraceStatus, ChargeOp, ContainerPlacement, DecodeError, DeploymentBall, DirectionalTarget, Enter,
+    How, LaunchDrone, Message, MoonChunkPlacement, ScanTarget, SceneKey, Spawn, StructureModule,
+    WreckPlacement,
 };
 use eve_space::missiles::{Blast, Missile};
 use eve_space::modules::{Action, Applies, Change, Effect, MiningFamily, Numbers, Reach, Remote, Rules};
@@ -1296,6 +1297,30 @@ fn message_of(case: &Value) -> Message {
                 |error| Err(error.to_owned()),
             ),
         },
+        "GetDeploymentBalls" => {
+            Message::GetDeploymentBalls { request_id: number("requestId"), scene: scene_key_of(case) }
+        }
+        "GetDeploymentBallsReply" => Message::GetDeploymentBallsReply {
+            request_id: number("requestId"),
+            scene: scene_key_of(case),
+            outcome: case.get("error").and_then(Value::as_str).map_or_else(
+                || {
+                    Ok(case["balls"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|ball| DeploymentBall {
+                            item_id: wide(ball, "itemId"),
+                            type_id: ball["typeId"].as_i64().unwrap() as i32,
+                            position: vector3(&ball["position"]),
+                            radius: ball["radius"].as_f64().unwrap(),
+                            warp_in_point: ball["warpInPoint"].as_bool().unwrap(),
+                        })
+                        .collect())
+                },
+                |error| Err(error.to_owned()),
+            ),
+        },
         "GetAbyssalParticipantPose" => Message::GetAbyssalParticipantPose {
             request_id: number("requestId"),
             scene: scene_key(&case["scene"]),
@@ -1305,6 +1330,11 @@ fn message_of(case: &Value) -> Message {
             request_id: number("requestId"),
             scene: scene_key(&case["scene"]),
             ship_id: wide(case, "shipId"),
+            following: case.get("following").map(|following| eve_space::link::AbyssalFollowApproach {
+                target_id: following["targetId"].as_str().unwrap().parse().unwrap(),
+                follow_range_meters: following["followRangeMeters"].as_f64().unwrap(),
+                max_velocity_meters_per_second: following["maxVelocityMetersPerSecond"].as_f64().unwrap(),
+            }),
             deployment: case.get("deployment").map(|snapshot| eve_space::link::AbyssalDeploymentSnapshot {
                 warping: snapshot["warping"].as_bool().unwrap(),
                 cloaked: snapshot["cloaked"].as_bool().unwrap(),
@@ -1651,6 +1681,7 @@ fn message_of(case: &Value) -> Message {
             belt_id: wide(case, "beltId"),
             position: vector_of(case, "position"),
         },
+        "WarpExited" => Message::WarpExited { session_id: session_id() },
         "ChangeWreck" => Message::ChangeWreck {
             session_id: session_id(),
             wreck_id: wide(case, "wreckId"),
@@ -2187,6 +2218,23 @@ fn message_of(case: &Value) -> Message {
                 .map(|r| (wide(r, "shipId"), r["jammed"].as_bool().unwrap()))
                 .collect(),
         },
+        "SmartbombHit" => Message::SmartbombHit {
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            module_id: wide(case, "moduleId"),
+            targets: case["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|target| {
+                    (
+                        wide(target, "shipId"),
+                        wide(target, "characterId"),
+                        target["typeId"].as_i64().unwrap() as i32,
+                    )
+                })
+                .collect(),
+        },
         "Destroy" => Message::Destroy {
             ship_id: wide(case, "shipId"),
             credit: Credit {
@@ -2233,6 +2281,26 @@ fn public_scene_body_frames_match_shared_fixtures() {
         })
         .collect();
     assert_eq!(cases.len(), 7);
+    for case in cases {
+        let expected = hex(case["hex"].as_str().unwrap());
+        let message = message_of(case);
+        assert_eq!(message.encode(), expected);
+        assert_eq!(Message::decode(&expected[4..]).unwrap(), message);
+    }
+}
+
+#[test]
+fn deployment_ball_frames_match_shared_fixtures() {
+    let fixtures = fixtures();
+    let cases: Vec<_> = fixtures["valid"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| {
+            matches!(case["kind"].as_str(), Some("GetDeploymentBalls" | "GetDeploymentBallsReply"))
+        })
+        .collect();
+    assert_eq!(cases.len(), 3);
     for case in cases {
         let expected = hex(case["hex"].as_str().unwrap());
         let message = message_of(case);
@@ -2607,7 +2675,8 @@ fn abyssal_scene_object_and_content_keyed_spawn_fixtures_roundtrip() {
                 || case.get("settledNpcIds").is_some()
         })
         .collect();
-    assert_eq!(selected.len(), 18);
+    // The v99 committed-approach pose receipt is now part of this roundtrip set.
+    assert_eq!(selected.len(), 19);
 
     for case in selected {
         let message = message_of(case);

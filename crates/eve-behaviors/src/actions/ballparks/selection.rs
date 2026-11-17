@@ -92,7 +92,9 @@ enter_task!(
         match t.world().check_ball(me) {
             Ok(()) => {}
             Err(WorldError::User(_) | WorldError::Runtime(_)) => {
-                t.raise(BehaviorError::Unrecoverable("Entity no longer in ballpark. Probably dead.".to_string()));
+                t.raise(BehaviorError::Unrecoverable(
+                    "Entity no longer in ballpark. Probably dead.".to_string(),
+                ));
                 return;
             }
             Err(other) => {
@@ -570,7 +572,9 @@ enter_task!(
         for probe_id in warp_disrupt_probe_ids {
             // `_get_targetable_source_for_probe`
             let Some(probe) = get_inventory_item(t, probe_id) else {
-                t.raise(BehaviorError::Task("AttributeError: 'NoneType' object has no attribute 'categoryID'".to_string()));
+                t.raise(BehaviorError::Task(
+                    "AttributeError: 'NoneType' object has no attribute 'categoryID'".to_string(),
+                ));
                 return;
             };
             let probe_category_id = t.world().type_category_id(probe.type_id);
@@ -590,7 +594,10 @@ enter_task!(
             }
         }
         let Some(address) = t.required_address("itemIdSetAddress") else { return };
-        t.send_blackboard_value(&address, Value::List(warp_disrupt_ship_ids.into_iter().map(Value::Int).collect()));
+        t.send_blackboard_value(
+            &address,
+            Value::List(warp_disrupt_ship_ids.into_iter().map(Value::Int).collect()),
+        );
     }
 );
 
@@ -617,7 +624,10 @@ enter_task!(
             }
         }
         let Some(items_address) = t.required_address("itemsOfInterestAddress") else { return };
-        t.send_blackboard_value(&items_address, Value::List(slims_list.iter().copied().map(Value::Int).collect()));
+        t.send_blackboard_value(
+            &items_address,
+            Value::List(slims_list.iter().copied().map(Value::Int).collect()),
+        );
         // `select_location`
         let mut location = None;
         if !slims_list.is_empty() {
@@ -646,9 +656,13 @@ enter_task!(
     |t| {
         let Some(my_ball) = get_my_ball(t) else { return };
         let Some(type_list_id) = t.required_int("typeListId") else { return };
-        let balls_of_interest = get_id_and_types_in_bubble_by_typelist(t, my_ball.new_bubble_id, type_list_id);
+        let balls_of_interest =
+            get_id_and_types_in_bubble_by_typelist(t, my_ball.new_bubble_id, type_list_id);
         let Some(address) = t.required_address("selectedTargetsAddress") else { return };
-        t.send_blackboard_value(&address, Value::List(balls_of_interest.into_iter().map(|(id, _)| Value::Int(id)).collect()));
+        t.send_blackboard_value(
+            &address,
+            Value::List(balls_of_interest.into_iter().map(|(id, _)| Value::Int(id)).collect()),
+        );
         t.set_status_to_success();
     }
 );
@@ -659,7 +673,8 @@ enter_task!(
     |t| {
         let Some(my_ball) = get_my_ball(t) else { return };
         let Some(type_list_id) = t.required_int("typeListId") else { return };
-        let balls_of_interest = get_id_and_types_in_bubble_by_typelist(t, my_ball.new_bubble_id, type_list_id);
+        let balls_of_interest =
+            get_id_and_types_in_bubble_by_typelist(t, my_ball.new_bubble_id, type_list_id);
         let Some(address) = t.required_address("itemCountAddress") else { return };
         t.send_blackboard_value(&address, Value::Int(balls_of_interest.len() as i64));
         t.set_status_to_success();

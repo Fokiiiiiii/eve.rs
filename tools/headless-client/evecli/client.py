@@ -148,6 +148,7 @@ class Client:
             if reason:
                 raise handshake.TransportClosed(reason)
             received = packet.Packet.parse(value)
+            received.received_at = time.monotonic()
             if received.command == packet.CALL_REQ:
                 self._answer_server_call(received)
                 continue

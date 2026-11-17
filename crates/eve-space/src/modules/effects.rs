@@ -323,7 +323,7 @@ impl Scene {
             category_id: Some(spec.category_id),
             position: [pilot.ship.position.x, pilot.ship.position.y, pilot.ship.position.z],
             radius: spec.radius,
-            warping: pilot.flight.as_ref().is_some_and(|flight| flight.is_warping()),
+            warping: pilot.flight.as_ref().is_some_and(|flight| flight.is_in_warp_mode()),
             item: session,
         }
     }

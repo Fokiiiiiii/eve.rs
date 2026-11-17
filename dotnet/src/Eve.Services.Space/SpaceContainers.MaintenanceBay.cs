@@ -212,7 +212,144 @@ public sealed partial class SpaceContainers
         }
     }
 
-    private async Task<bool> MayUseMaintenanceBayAsync(long characterId, Item source, CancellationToken cancellationToken)
+    /// <summary>
+    /// Atomically stores the active hull and takes the selected assembled ship from a maintenance bay into space, then hands the committed swap to the pilot session.
+    /// </summary>
+    public async Task<PyValue> BoardStoredShipAsync(ClientSession session, long sourceId, long shipId, CancellationToken cancellationToken)
+    {
+        if (sourceId <= 0 || shipId <= 0 || sourceId == shipId || session.CharacterId is not { } characterId ||
+            session.GetInt("shipid") is not { } activeShipId || activeShipId <= 0 || !_space.IsInSpace(session) ||
+            _space.SolarSystemOf(session) is not { } systemId || _source is null)
+            return PyNone.Instance;
+        if (sourceId == activeShipId)
+            throw MaintenanceBayRefuse("Unable to board this ship from the maintenance bay.");
+        if (_space.IsWarping(session))
+            throw MachoErrors.ThrowUserError("ShipInWarp");
+        if (_space.IsInAbyssalRun(session))
+            throw MaintenanceBayRefuse("You cannot eject, board, launch, or store ships inside Abyssal Deadspace.");
+        _space.RequirePublicMoveSettled(session);
+        if (_space.LifecycleBlockers is not { } readBlockers)
+            return PyNone.Instance;
+        var blockers = await readBlockers(ShipLifecycleAction.Board, session, shipId, cancellationToken);
+        if (blockers.Count != 0)
+            return new PyList([.. blockers.Select(label => new PyStr(label))]);
+
+        var source = await _items.GetAsync(sourceId, cancellationToken);
+        if (source is not { LocationId: var sourceLocation, Flag: CharacterShips.InSpaceFlag } || sourceLocation != systemId)
+            throw MaintenanceBayRefuse("That container is not a ship maintenance bay.");
+        await _statics.EnsureTypesAsync([source.TypeId], cancellationToken);
+        var sourceType = _statics.Type(source.TypeId);
+        var hasMaintenanceBay = _statics.AttributeId("hasShipMaintenanceBay");
+        var maintenanceCapacity = _statics.AttributeId("shipMaintenanceBayCapacity");
+        var isShipBay = sourceType is not null && _statics.CategoryName(sourceType.CategoryId) == "Ship" &&
+            (hasMaintenanceBay is { } has && sourceType.Attributes.GetValueOrDefault(has) > 0 ||
+                maintenanceCapacity is { } capacity && sourceType.Attributes.GetValueOrDefault(capacity) > 0);
+        var deployment = _deployed is null ? null : await _deployed.GetAsync(sourceId, cancellationToken);
+        var isPosArray = sourceType is { CategoryId: 23, GroupId: ShipMaintenanceArrayGroup or AssemblyArrayGroup } &&
+            deployment is { Kind: StarbaseModuleKind };
+        if (sourceType is null || !isShipBay && !isPosArray)
+            throw MaintenanceBayRefuse("That container is not a ship maintenance bay.");
+        if (isShipBay && !await MayUseMaintenanceBayAsync(characterId, source, cancellationToken))
+            throw MaintenanceBayRefuse("You do not have access to this ship maintenance bay.");
+
+        DeployedRecord? tower = null;
+        var currentShip = await _items.GetAsync(activeShipId, cancellationToken);
+        if (currentShip is null)
+            throw MaintenanceBayRefuse("Unable to board this ship from the maintenance bay.");
+        var currentShipNeedsPut = currentShip.TypeId != CharacterShips.CapsuleTypeId;
+        if (isPosArray)
+        {
+            if (deployment is null || _deployed is null ||
+                await _deployed.GetAsync(deployment.ControlTowerId, cancellationToken) is not { } foundTower)
+                throw MaintenanceBayRefuse(PosMaintenanceTowerUnavailable);
+            tower = foundTower;
+            if (await PosMaintenanceArrayErrorAsync(session, deployment, tower, null, null, cancellationToken,
+                requireViewPut: currentShipNeedsPut) is { } accessError)
+                throw MaintenanceBayRefuse(accessError);
+        }
+
+        CommandReply measure;
+        CommandReply pose;
+        try
+        {
+            measure = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.Measure, [sourceId], cancellationToken);
+            pose = await _sim.CommandAsync((ulong)session.SessionId, SimCommands.PositionOf, [sourceId], cancellationToken);
+        }
+        catch (SimUnavailableException)
+        {
+            throw Unavailable();
+        }
+        if (!measure.Accepted || measure.Distance is not { } distance || !pose.Accepted || pose.Position.Count < 3 || pose.Direction.Count < 3)
+            throw MaintenanceBayRefuse("That container is not a ship maintenance bay.");
+
+        var withinTowerShield = false;
+        if (isPosArray && tower is not null)
+        {
+            var activePosition = await _space.PositionOfAsync(session, activeShipId, cancellationToken);
+            var towerPosition = await _space.PositionOfAsync(session, tower.DeployableId, cancellationToken);
+            if (activePosition is null || towerPosition is null || activePosition.Value.SolarSystemId != systemId || towerPosition.Value.SolarSystemId != systemId)
+                throw MaintenanceBayRefuse("Unable to board the ship from this maintenance array.");
+            await _statics.EnsureTypesAsync([tower.TypeId], cancellationToken);
+            var shieldRadiusAttribute = _statics.AttributeId("shieldRadius") ?? 680;
+            var shieldRadius = _statics.Type(tower.TypeId)?.Attributes.GetValueOrDefault(shieldRadiusAttribute) ?? 0;
+            withinTowerShield = shieldRadius > 0 && MetersBetween(
+                [activePosition.Value.X, activePosition.Value.Y, activePosition.Value.Z],
+                [towerPosition.Value.X, towerPosition.Value.Y, towerPosition.Value.Z]) < shieldRadius;
+        }
+        var maxConfigureDistanceAttribute = _statics.AttributeId("maxConfigureDistance") ?? 715;
+        var maximumDistance = isPosArray
+            ? Math.Max(0, sourceType.Attributes.GetValueOrDefault(maxConfigureDistanceAttribute, 2_500))
+            : MaintenanceBayUseRange;
+        if (!withinTowerShield && distance > maximumDistance)
+            throw MaintenanceBayRefuse(isPosArray ? PosMaintenanceArrayTooFar : "You are too far away from the ship maintenance bay.");
+
+        var direction = pose.Direction.Take(3).ToArray();
+        var length = Math.Sqrt(direction.Sum(value => value * value));
+        if (!double.IsFinite(length) || length <= 0)
+            direction = [1, 0, 0];
+        else
+            direction = direction.Select(value => value / length).ToArray();
+        var offset = Math.Max(0, sourceType.Attributes.GetValueOrDefault(162, 0)) + MaintenanceBayLaunchOffset;
+        var position = new[]
+        {
+            pose.Position[0] + direction[0] * offset,
+            pose.Position[1] + direction[1] * offset,
+            pose.Position[2] + direction[2] * offset,
+        };
+
+        Func<NpgsqlConnection, NpgsqlTransaction, CancellationToken, Task<bool>> authorizeSource = isShipBay
+            ? async (connection, transaction, token) =>
+            {
+                var lockedSource = await _items.LockAndGetAsync(connection, transaction, sourceId, token);
+                return lockedSource is not null && lockedSource.TypeId == source.TypeId &&
+                    lockedSource.LocationId == systemId && lockedSource.Flag == CharacterShips.InSpaceFlag &&
+                    await MayUseMaintenanceBayAsync(characterId, lockedSource, token, connection, transaction);
+            }
+            : async (connection, transaction, token) =>
+            {
+                if (_deployed is null || deployment is null)
+                    return false;
+                var lockedModule = await _deployed.LockAndGetAsync(connection, transaction, sourceId, token);
+                if (lockedModule is null || lockedModule.Kind != StarbaseModuleKind ||
+                    lockedModule.TypeId != source.TypeId || lockedModule.SolarSystemId != systemId ||
+                    lockedModule.ControlTowerId != deployment.ControlTowerId)
+                    return false;
+                var lockedTower = await _deployed.LockAndGetAsync(connection, transaction, lockedModule.ControlTowerId, token);
+                return lockedTower is not null &&
+                    await PosMaintenanceArrayErrorAsync(session, lockedModule, lockedTower, connection, transaction, token,
+                        requireViewPut: currentShipNeedsPut) is null;
+            };
+        var storedBoarding = await _ships.BoardStoredShipFromMaintenanceBayAsync(
+            characterId, systemId, activeShipId, sourceId, shipId, isShipBay, mayTakeForeignShip: true,
+            cancellationToken, authorizeSource);
+        if (storedBoarding is null)
+            throw MaintenanceBayRefuse("Unable to board this ship from the maintenance bay.");
+        return await _space.ApplyStoredShipBoardingAsync(session, storedBoarding, position, direction, cancellationToken);
+    }
+
+    private async Task<bool> MayUseMaintenanceBayAsync(
+        long characterId, Item source, CancellationToken cancellationToken,
+        NpgsqlConnection? connection = null, NpgsqlTransaction? transaction = null)
     {
         if (source.OwnerId == characterId)
             return true;
@@ -229,7 +366,9 @@ public sealed partial class SpaceContainers
             var ownerFleet = await fleetIdForCharacter(owner.Id, cancellationToken);
             sameFleet = callerFleet is > 0 && callerFleet == ownerFleet;
         }
-        var configuration = await _shipConfigurations.GetAsync(source.Id, cancellationToken);
+        var configuration = connection is not null && transaction is not null
+            ? await _shipConfigurations.GetAsync(connection, transaction, source.Id, cancellationToken)
+            : await _shipConfigurations.GetAsync(source.Id, cancellationToken);
         return (sameCorporation && configuration.SmbCorpAccess) ||
                (sameFleet && configuration.SmbFleetAccess);
     }
@@ -240,7 +379,8 @@ public sealed partial class SpaceContainers
         DeployedRecord tower,
         NpgsqlConnection? connection,
         NpgsqlTransaction? transaction,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool requireViewPut = false)
     {
         if (_deployed is null || _source is null || module.Kind != StarbaseModuleKind || tower.Kind != ControlTowerKind ||
             module.ControlTowerId != tower.DeployableId || module.SolarSystemId != tower.SolarSystemId ||
@@ -282,7 +422,8 @@ public sealed partial class SpaceContainers
             var canConfigure = sameCorporation && (isCeo || (roles & (DirectorRole | StarbaseConfigRole)) != 0);
             return canConfigure ||
                 HasPosUsagePermission(usage.Use, sameCorporation, sameAlliance, roles) &&
-                HasPosUsagePermission(usage.ViewPutTake, sameCorporation, sameAlliance, roles)
+                HasPosUsagePermission(usage.ViewPutTake, sameCorporation, sameAlliance, roles) &&
+                (!requireViewPut || HasPosUsagePermission(usage.ViewPut, sameCorporation, sameAlliance, roles))
                     ? null
                     : PosMaintenanceArrayAccessDenied;
         }

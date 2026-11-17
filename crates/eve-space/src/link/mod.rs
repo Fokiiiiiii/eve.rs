@@ -47,7 +47,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 97;
+pub const PROTOCOL_VERSION: u16 = 101;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -679,6 +679,14 @@ pub struct AbyssalDeploymentSnapshot {
     pub nearby_objects: Vec<AbyssalDeploymentObject>,
 }
 
+/// The authoritative FOLLOW course of a resident ship, when it is following a target.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AbyssalFollowApproach {
+    pub target_id: i64,
+    pub follow_range_meters: f64,
+    pub max_velocity_meters_per_second: f64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AbyssalTrace {
     pub solar_system_id: i32,
@@ -697,6 +705,16 @@ pub struct AbyssalTrace {
     pub filament_type_id: i32,
     pub difficulty_tier: i32,
     pub expires_at_ms: i64,
+}
+
+/// A client-visible ball or its client-calculated warp-in point, used by deployment placement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeploymentBall {
+    pub item_id: i64,
+    pub type_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub warp_in_point: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1042,6 +1060,15 @@ pub enum Message {
         item_id: i64,
         outcome: Result<(i32, i32, i32, [f64; 3]), String>,
     },
+    GetDeploymentBalls {
+        request_id: u64,
+        scene: SceneKey,
+    },
+    GetDeploymentBallsReply {
+        request_id: u64,
+        scene: SceneKey,
+        outcome: Result<Vec<DeploymentBall>, String>,
+    },
     GetAbyssalParticipantPose {
         request_id: u64,
         scene: SceneKey,
@@ -1053,6 +1080,7 @@ pub enum Message {
         ship_id: i64,
         outcome: Result<([f64; 3], [f64; 3]), String>,
         deployment: Option<AbyssalDeploymentSnapshot>,
+        following: Option<AbyssalFollowApproach>,
     },
     Enter(Box<Enter>),
     /// Whether an `Enter` was done (`Err` carries why not).
@@ -1141,6 +1169,10 @@ pub enum Message {
         session_id: u64,
         belt_id: i64,
         position: [f64; 3],
+    },
+    /// The ship has left warp and may take a new movement order during its coast.
+    WarpExited {
+        session_id: u64,
     },
     /// What the ship has taken and how full its capacitor is (the answer to command 19).
     Condition {
@@ -1618,6 +1650,13 @@ pub enum Message {
         ship_id: i64,
         reached: Vec<(i64, bool)>,
     },
+    /// A smartbomb hit ships on the simulation's account; the host records player targets for Crimewatch.
+    SmartbombHit {
+        session_id: u64,
+        ship_id: i64,
+        module_id: i64,
+        targets: Vec<(i64, i64, i32)>,
+    },
     /// The answer to `COMMAND_MEASURE`: metres from the centre of the ship to the surface of the wreck or can, or none when there is no such wreck.
     Measured {
         session_id: u64,
@@ -1758,6 +1797,8 @@ impl Message {
             Self::RemoveUnpilotedShipReply { .. } => kind::REMOVE_UNPILOTED_SHIP_REPLY,
             Self::GetSceneBody { .. } => kind::GET_SCENE_BODY,
             Self::GetSceneBodyReply { .. } => kind::GET_SCENE_BODY_REPLY,
+            Self::GetDeploymentBalls { .. } => kind::GET_DEPLOYMENT_BALLS,
+            Self::GetDeploymentBallsReply { .. } => kind::GET_DEPLOYMENT_BALLS_REPLY,
             Self::GetAbyssalParticipantPose { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE,
             Self::GetAbyssalParticipantPoseReply { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE_REPLY,
             Self::Enter(_) => kind::ENTER,
@@ -1778,6 +1819,7 @@ impl Message {
             Self::ServiceNotify { .. } => kind::SERVICE_NOTIFY,
             Self::Docked { .. } => kind::DOCKED,
             Self::Arrived { .. } => kind::ARRIVED,
+            Self::WarpExited { .. } => kind::WARP_EXITED,
             Self::Refused { .. } => kind::REFUSED,
             Self::Accepted { .. } => kind::ACCEPTED,
             Self::Position { .. } => kind::POSITION,
@@ -1824,6 +1866,7 @@ impl Message {
             Self::ModuleEnded { .. } => kind::MODULE_ENDED,
             Self::ModuleActivityRefresh { .. } => kind::MODULE_ACTIVITY_REFRESH,
             Self::EcmBurst { .. } => kind::ECM_BURST,
+            Self::SmartbombHit { .. } => kind::SMARTBOMB_HIT,
             Self::Measured { .. } => kind::MEASURED,
             Self::AdjustCharge { .. } => kind::ADJUST_CHARGE,
             Self::UpdateEffect { .. } => kind::UPDATE_EFFECT,

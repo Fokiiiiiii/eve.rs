@@ -198,6 +198,7 @@ impl Sim {
                 belt_id,
                 position: [position.x, position.y, position.z],
             },
+            Out::WarpExited { session } => Message::WarpExited { session_id: session },
             Out::Condition { session, command, condition } => {
                 Message::Condition { session_id: session, command, condition }
             }
@@ -269,6 +270,9 @@ impl Sim {
             },
             Out::EcmBurst { session, ship_id, reached } => {
                 Message::EcmBurst { session_id: session, ship_id, reached }
+            }
+            Out::SmartbombHit { session, ship_id, module_id, targets } => {
+                Message::SmartbombHit { session_id: session, ship_id, module_id, targets }
             }
             Out::FighterSize { session, fighter_id, size } => {
                 Message::FighterSize { session_id: session, fighter_id, size }
@@ -812,6 +816,7 @@ impl Sim {
             | Message::RemoveTournamentWreck { .. }
             | Message::RemoveUnpilotedShip { .. }
             | Message::GetSceneBody { .. }
+            | Message::GetDeploymentBalls { .. }
             | Message::GetAbyssalParticipantPose { .. }
             | Message::Enter(..)
             | Message::Leave { .. }
@@ -1126,6 +1131,9 @@ impl Sim {
             Message::GetSceneBody { request_id, scene, item_id } => {
                 return Ok(self.get_scene_body(request_id, scene, item_id));
             }
+            Message::GetDeploymentBalls { request_id, scene } => {
+                return Ok(self.get_deployment_balls(request_id, scene, now));
+            }
             Message::GetAbyssalParticipantPose { request_id, scene, ship_id } => {
                 return Ok(self.get_abyssal_participant_pose(request_id, scene, ship_id, now));
             }
@@ -1141,11 +1149,13 @@ impl Sim {
                     3 => Departure::Ejected,
                     _ => Departure::Boarded,
                 };
+                let preserve_client_ballpark = matches!(why, Departure::Ejected | Departure::Boarded)
+                    && self.scene_of(session_id).is_some_and(|scene| scene.is_bound(session_id));
                 let mut told = match self.scene_of(session_id) {
                     Some(scene) => scene.leave(session_id, why, now).unwrap_or_default(),
                     None => Vec::new(),
                 };
-                if matches!(why, Departure::Ejected | Departure::Boarded) {
+                if preserve_client_ballpark {
                     if let Some(system) = self.sessions.remove(&session_id) {
                         self.widowed.insert(session_id, system);
                     }

@@ -125,7 +125,10 @@ enter_task!(
             t.raise(crate::env::WorldError::Key("myDungeonSpawnId".to_string()).into());
             return;
         };
-        let item_id = object.as_int().and_then(|object_id| t.world().dungeon_item_id_for_object(spawn_id, object_id)).filter(|i| *i != 0);
+        let item_id = object
+            .as_int()
+            .and_then(|object_id| t.world().dungeon_item_id_for_object(spawn_id, object_id))
+            .filter(|i| *i != 0);
         let Some(item_id) = item_id else {
             t.set_status_to_failed();
             return;

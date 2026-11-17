@@ -92,8 +92,6 @@ public sealed class SkillsHostTests
         var changedSkill = Assert.Single(Assert.IsType<PyDict>(notifications[serverSkillsIndex].Args[0]).Entries,
             entry => entry.Key == new PyInt(grant.TypeId));
         Assert.Equal(new PyInt(0), SkillLevel(changedSkill.Value));
-        Assert.Equal("OnSkillsChanged", names[serverSkillsIndex + 1]);
-
         var dogmaIndex = Array.IndexOf(names, "OnServerBrainUpdated");
         Assert.True(dogmaIndex > serverSkillsIndex, string.Join(", ", names));
         Assert.Equal(2, names.Count(name => name == "OnExpertSystemExpired"));

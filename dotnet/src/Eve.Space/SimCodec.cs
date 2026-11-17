@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 97;
+    public const ushort ProtocolVersion = 101;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -466,6 +466,39 @@ public static partial class SimCodec
                     message = new SimGetSceneBodyReply(id, scene, item, type, group, category, position, status == 0 ? null : error);
                     break;
                 }
+            case Kind.GetDeploymentBalls:
+                {
+                    var request = new SimGetDeploymentBalls(r.U64(), ReadSceneKey(ref r));
+                    if (request.RequestId == 0 || !request.Scene.IsValid || request.Scene.InstanceId != 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad deployment balls request");
+                    message = request;
+                    break;
+                }
+            case Kind.GetDeploymentBallsReply:
+                {
+                    var id = r.U64(); var scene = ReadSceneKey(ref r); var status = r.U8();
+                    if (id == 0 || !scene.IsValid || scene.InstanceId != 0 || status > 1)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad deployment balls reply identity");
+                    var balls = new List<SimDeploymentBall>();
+                    if (status == 0)
+                    {
+                        var count = r.U16();
+                        if (count > 8192)
+                            throw new SimLinkException(SimLinkError.BadValue, "too many deployment balls");
+                        for (var index = 0; index < count; index++)
+                        {
+                            var item = r.I64(); var type = r.I32(); var position = ReadVector(ref r); var radius = r.F64(); var warpFlag = r.U8();
+                            if (item <= 0 || type <= 0 || !IsVector(position) || !double.IsFinite(radius) || radius < 0 || warpFlag > 1 || (warpFlag == 1 && radius != 0))
+                                throw new SimLinkException(SimLinkError.BadValue, "bad deployment ball");
+                            balls.Add(new SimDeploymentBall(item, type, position, radius, warpFlag == 1));
+                        }
+                    }
+                    var error = r.Text();
+                    if ((status == 0 && error.Length > 0) || (status == 1 && error.Length == 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "invalid deployment balls result");
+                    message = new SimGetDeploymentBallsReply(id, scene, balls, status == 1 ? error : null);
+                    break;
+                }
             case Kind.GetAbyssalParticipantPose:
                 {
                     var request = new SimGetAbyssalParticipantPose(r.U64(), ReadSceneKey(ref r), r.I64());
@@ -514,6 +547,17 @@ public static partial class SimCodec
                             objects.Add(item);
                         }
                         reply = reply with { Deployment = new(flags[0], flags[1], flags[2], flags[3], flags[4], objects) };
+                    }
+                    var followingFlag = r.U8();
+                    if (followingFlag > 1) throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal FOLLOW state flag");
+                    if (followingFlag == 1)
+                    {
+                        if (reply.Error is not null) throw new SimLinkException(SimLinkError.BadValue, "Abyssal FOLLOW state without pose");
+                        var following = new SimAbyssalFollowApproach(r.I64(), r.F64(), r.F64());
+                        if (following.TargetId <= 0 || !double.IsFinite(following.FollowRangeMeters) || following.FollowRangeMeters < 0 ||
+                            !double.IsFinite(following.MaxVelocityMetersPerSecond) || following.MaxVelocityMetersPerSecond <= 0)
+                            throw new SimLinkException(SimLinkError.BadValue, "bad Abyssal FOLLOW state");
+                        reply = reply with { Following = following };
                     }
                     message = reply;
                     break;
@@ -985,6 +1029,21 @@ public static partial class SimCodec
                     message = new SimEcmBurst(session, ship, reached);
                     break;
                 }
+            case Kind.SmartbombHit:
+                {
+                    var session = r.U64();
+                    var ship = r.I64();
+                    var module = r.I64();
+                    var count = r.U32();
+                    if (count > r.Remaining / 20)
+                    {
+                        throw new SimLinkException(SimLinkError.Truncated, "the frame ends before the message does");
+                    }
+                    var targets = new SimSmartbombTarget[count];
+                    for (var i = 0; i < targets.Length; i++) targets[i] = new SimSmartbombTarget(r.I64(), r.I64(), r.I32());
+                    message = new SimSmartbombHit(session, ship, module, targets);
+                    break;
+                }
             case Kind.FighterGotoPoint:
                 {
                     var session = r.U64();
@@ -1271,6 +1330,9 @@ public static partial class SimCodec
                 }
             case Kind.Arrived:
                 message = new SimArrived(r.U64(), r.I64(), ReadVector(ref r));
+                break;
+            case Kind.WarpExited:
+                message = new SimWarpExited(r.U64());
                 break;
             case Kind.ContainerPlaced:
                 message = new SimContainerPlaced(r.U64(), r.I64(), ReadVector(ref r), ReadVector(ref r));

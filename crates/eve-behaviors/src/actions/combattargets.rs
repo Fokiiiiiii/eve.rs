@@ -914,8 +914,16 @@ enter_task!(
         let Some((effect_optimal, effect_falloff)) = min_range::my_min_effect_range(t) else { return };
         let Some((weapon_optimal, weapon_falloff)) = min_range::my_min_weapon_range(t) else { return };
         let (min_optimal, min_falloff) =
-            if weapon_optimal == 0.0 || (effect_optimal != 0.0 && effect_optimal < weapon_optimal) { (effect_optimal, effect_falloff) } else { (weapon_optimal, weapon_falloff) };
-        let (Some(optimal_address), Some(falloff_address)) = (t.required_address("minOptimalAddress"), t.required_address("minFalloffAddress")) else { return };
+            if weapon_optimal == 0.0 || (effect_optimal != 0.0 && effect_optimal < weapon_optimal) {
+                (effect_optimal, effect_falloff)
+            } else {
+                (weapon_optimal, weapon_falloff)
+            };
+        let (Some(optimal_address), Some(falloff_address)) =
+            (t.required_address("minOptimalAddress"), t.required_address("minFalloffAddress"))
+        else {
+            return;
+        };
         t.send_blackboard_value(&optimal_address, Value::Float(min_optimal));
         t.send_blackboard_value(&falloff_address, Value::Float(min_falloff));
     }
@@ -930,11 +938,14 @@ enter_task!(
         let Some(falloff) = t.value_at("minFalloffAddress") else { return };
         let falloff = if falloff.truthy() { falloff } else { Value::Int(0) };
         let (Some(optimal_range), Some(falloff_range)) = (optimal.as_float(), falloff.as_float()) else {
-            t.raise(BehaviorError::Task("TypeError: unsupported operand type(s) for the effective range".to_string()));
+            t.raise(BehaviorError::Task(
+                "TypeError: unsupported operand type(s) for the effective range".to_string(),
+            ));
             return;
         };
         let value = if falloff_range != 0.0 {
-            (optimal_range + falloff_range * COMBAT_MAX_EFFECTIVE_FALLOFF_DISTANCE_FACTOR) * COMBAT_MAX_EFFECTIVE_DISTANCE_FACTOR
+            (optimal_range + falloff_range * COMBAT_MAX_EFFECTIVE_FALLOFF_DISTANCE_FACTOR)
+                * COMBAT_MAX_EFFECTIVE_DISTANCE_FACTOR
         } else {
             optimal_range
         };
@@ -956,7 +967,11 @@ enter_task!(
             if commander_id.is_none_or(|c| !is_ball_in_park(t, c)) {
                 t.world().log_error("behavior task is missing its commander");
             } else if let Some(commander_id) = commander_id {
-                let max_range = range_by_entity_type.dict_entries().iter().filter_map(|(_, r)| r.as_float()).fold(f64::NEG_INFINITY, f64::max);
+                let max_range = range_by_entity_type
+                    .dict_entries()
+                    .iter()
+                    .filter_map(|(_, r)| r.as_float())
+                    .fold(f64::NEG_INFINITY, f64::max);
                 balls_in_range = t.world().ball_ids_and_dist_in_range(commander_id, max_range);
             }
         }
@@ -975,7 +990,10 @@ enter_task!(
             for (entity_type, max_range) in range_by_entity_type.dict_entries() {
                 let Some(max_range) = max_range.as_float() else { continue };
                 if max_range * max_range > distance_squared {
-                    let mut set = targets_by_type.dict_get(entity_type).cloned().unwrap_or_else(|| Value::set(std::iter::empty()));
+                    let mut set = targets_by_type
+                        .dict_get(entity_type)
+                        .cloned()
+                        .unwrap_or_else(|| Value::set(std::iter::empty()));
                     set.set_add(Value::Int(ball_id));
                     targets_by_type.dict_insert(entity_type.clone(), set);
                 }

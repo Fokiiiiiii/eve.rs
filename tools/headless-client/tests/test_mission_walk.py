@@ -18,7 +18,7 @@ import uuid
 
 import pytest
 
-from evecli import packet
+from evecli import marshal as m, packet
 from evecli.observe import timed_events, wait_quietly
 from tests import test_login_to_character as base
 from tests.test_death import DEATH
@@ -197,6 +197,23 @@ def walk_into_dungeon(who, race, run: str):
                 arrived_types[item] = type_id
     assert arrived, "the mission's dungeon did not bring any NPC into space"
 
+    journal_data = m.plain(who.call("agentMgr", "GetMyJournalDetails"))
+    mission_row = next(row for row in journal_data[0] if row[4] == AGENT)
+    dungeon_bookmarks = [
+        bookmark[1] for bookmark in mission_row[6]
+        if isinstance(bookmark, tuple) and len(bookmark) == 2 and bookmark[0] == "util.KeyVal"
+        and isinstance(bookmark[1], dict) and bookmark[1].get("locationType") == "dungeon"
+    ]
+    assert dungeon_bookmarks, f"the accepted mission journal lacks its active dungeon bookmark: {mission_row!r}"
+    character_id = who.session.session_init["charid"]
+    mission_info = m.plain(who.call_bound(agent[0], "GetMissionJournalInfo", character_id, None))
+    detail_bookmarks = [
+        bookmark[1] for bookmark in mission_info["bookmarks"]
+        if isinstance(bookmark, tuple) and len(bookmark) == 2 and bookmark[0] == "util.KeyVal"
+        and isinstance(bookmark[1], dict) and bookmark[1].get("locationType") == "dungeon"
+    ]
+    assert detail_bookmarks, f"the active mission details lack their warpable dungeon bookmark: {mission_info!r}"
+    assert detail_bookmarks[0]["solarsystemID"] == NEXT_SYSTEM, detail_bookmarks[0]
     journal = reply_text(who.call("agentMgr", "GetMyJournalDetails"))
     assert "891" in journal, journal[:400]
     return ship_id, bomb, next_ballpark, dogma, arrived, arrived_types

@@ -154,6 +154,10 @@ public sealed class PgSkillStore
                     plan_id uuid REFERENCES skill_plans (plan_id) ON DELETE SET NULL
                 );
                 """),
+            new Migration("0010_skill_history_relative_points", """
+                ALTER TABLE skill_history
+                    ADD COLUMN relative_points bigint NOT NULL DEFAULT 0;
+                """),
         ];
 
     public static Task<IReadOnlyList<string>> MigrateAsync(NpgsqlDataSource source, string schema = DefaultSchema, CancellationToken cancellationToken = default) =>

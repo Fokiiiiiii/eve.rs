@@ -165,6 +165,11 @@ public sealed record SimGetSceneBody(ulong RequestId, SimSceneKey Scene, long It
 public sealed record SimGetSceneBodyReply(ulong RequestId, SimSceneKey Scene, long ItemId,
     int TypeId, int GroupId, int CategoryId, IReadOnlyList<double> Position, string? Error) : SimMessage;
 
+/// <summary>A ball the client can see in a solar-system ballpark when it checks a structure deployment point.</summary>
+public sealed record SimDeploymentBall(long ItemId, int TypeId, IReadOnlyList<double> Position, double Radius, bool IsWarpInPoint);
+public sealed record SimGetDeploymentBalls(ulong RequestId, SimSceneKey Scene) : SimMessage;
+public sealed record SimGetDeploymentBallsReply(ulong RequestId, SimSceneKey Scene, IReadOnlyList<SimDeploymentBall> Balls, string? Error) : SimMessage;
+
 public sealed record SimGetAbyssalParticipantPose(
     ulong RequestId, SimSceneKey Scene, long ShipId) : SimMessage;
 
@@ -173,11 +178,15 @@ public sealed record SimAbyssalDeploymentSnapshot(
     bool Warping, bool Cloaked, bool CynoActive, bool UndockInvulnerable, bool WarpScrambled,
     IReadOnlyList<SimAbyssalDeploymentObject> NearbyObjects);
 
+/// <summary>The resident ship's current FOLLOW command, if it is approaching a target.</summary>
+public sealed record SimAbyssalFollowApproach(long TargetId, double FollowRangeMeters, double MaxVelocityMetersPerSecond);
+
 public sealed record SimGetAbyssalParticipantPoseReply(
     ulong RequestId, SimSceneKey Scene, long ShipId,
     IReadOnlyList<double> Position, IReadOnlyList<double> Direction, string? Error) : SimMessage
 {
     public SimAbyssalDeploymentSnapshot? Deployment { get; init; }
+    public SimAbyssalFollowApproach? Following { get; init; }
 }
 
 public sealed record SimHello(ushort Version) : SimMessage;
@@ -1110,6 +1119,10 @@ public sealed record SimFighterReleased(ulong SessionId, long FighterId, IReadOn
 /// <summary>One ship an ECM burst reached: its item id, and whether the roll of the burst jammed it.</summary>
 public readonly record struct SimBurstReach(long ShipId, bool Jammed);
 
+/// <summary>A pilot's smartbomb actually hit a ship in its blast: Host Crimewatch records the offense for that module and target.</summary>
+public readonly record struct SimSmartbombTarget(long ShipId, long CharacterId, int TypeId);
+public sealed record SimSmartbombHit(ulong SessionId, long ShipId, long ModuleId, IReadOnlyList<SimSmartbombTarget> Targets) : SimMessage;
+
 /// <summary>
 /// An ECM burst reached the ships about it on the simulation's account: the ship that runs it, and each ship reached (a cloaked ship is not reached), with whether its
 /// roll jammed it. The host records the attack on each pilot reached.
@@ -1241,6 +1254,8 @@ public sealed record SimPlaceContainer(ulong SessionId, long ContainerId, SimWre
 /// simulation does not send it for NPC ships.
 /// </summary>
 public sealed record SimArrived(ulong SessionId, long BeltId, IReadOnlyList<double> Position) : SimMessage;
+/// <summary>The ship has left warp and can take new movement orders while its velocity coasts down.</summary>
+public sealed record SimWarpExited(ulong SessionId) : SimMessage;
 
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;

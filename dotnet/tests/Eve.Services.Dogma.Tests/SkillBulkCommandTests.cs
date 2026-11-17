@@ -96,8 +96,10 @@ public class SkillBulkCommandTests
         Assert.StartsWith($"Copied", reply);
         Assert.Equal(callerEventCount, Events.Of(gm).Count);
         var targetNotices = Events.Of(takerSession).Select(notice => notice.Name).ToList();
-        Assert.Contains("OnSkillsChanged", targetNotices);
-        Assert.Contains("OnNewSkillQueueSaved", targetNotices);
+        Assert.Equal(
+            ["OnServerSkillsRemoved", "OnNewSkillQueueSaved", "OnSkillQueuePausedServer"],
+            targetNotices);
+        Assert.DoesNotContain("OnSkillsChanged", targetNotices);
         var donorRows = (await rig.Skills.ForCharacterAsync(donor.CharacterId)).OrderBy(skill => skill.TypeId).Select(skill => (skill.TypeId, skill.Level, skill.SkillPoints)).ToList();
         var takerRows = (await rig.Skills.ForCharacterAsync(taker.CharacterId)).OrderBy(skill => skill.TypeId).Select(skill => (skill.TypeId, skill.Level, skill.SkillPoints)).ToList();
         Assert.Equal(donorRows, takerRows);

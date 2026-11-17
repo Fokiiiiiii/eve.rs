@@ -1,3 +1,4 @@
+using Eve.Ships;
 using Eve.Space;
 
 namespace Eve.Services.Space.Tests;
@@ -5,6 +6,60 @@ namespace Eve.Services.Space.Tests;
 /// <summary>The host's side of an ECM burst (FP-C7): the simulation says which ships the burst reached, and the attack is recorded on each pilot among them.</summary>
 public class EcmBurstHostTests
 {
+    [PgFact]
+    public async Task An_ECM_burst_extends_the_timer_of_an_offline_combat_logoff_ship_it_reaches()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var burster = await rig.NewCharacterAsync("Burst Pilot", 1);
+        var session = await WeaponHostTests.InSpaceAsync(rig, burster, 1);
+        var victim = await rig.NewCharacterAsync("Offline Burst Victim", 2);
+        var target = await WeaponHostTests.InSpaceAsync(rig, victim, 2);
+        var targetShipId = target.GetInt("shipid")!.Value;
+        var systemId = session.GetInt("solarsystemid")!.Value;
+        var schema = "cw_logoff_burst_" + Guid.NewGuid().ToString("N")[..12];
+        await Eve.Crimewatch.PgCrimewatchStore.MigrateAsync(rig.Source, schema);
+        try
+        {
+            using var timers = new Eve.Scheduler.LocalTimers(delay: static (_, token) => Task.Delay(Timeout.InfiniteTimeSpan, token));
+            using var crimewatch = new Eve.Services.Crimewatch.CrimewatchRuntime(
+                new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema), rig.CharacterSessions, () => rig.Now,
+                new WeaponHostTests.EmptyCrimewatchPersistence(), localTimers: timers);
+            var store = new Eve.Crimewatch.PgCrimewatchStore(rig.Source, schema);
+            var originalExpiresAt = rig.Now + Eve.Crimewatch.CombatState.PvpDurationMs;
+            await store.UpdateAsync(victim.CharacterId, state => state with
+            {
+                PvpUntilMs = originalExpiresAt,
+                SolarSystemId = systemId,
+            }, rig.Now);
+            rig.Space.CrimewatchStateOf = crimewatch.StateOfAsync;
+            rig.Space.Aggression = (request, token) => crimewatch.RecordAggressionAsync(request, token);
+
+            target.Close();
+            await rig.Space.QuiesceAsync();
+            Assert.Equal(SpaceItemKind.CombatLogoffShip, (await rig.SpaceItems.GetAsync(targetShipId))?.Kind);
+            rig.Now += 10_000;
+
+            rig.Sim.Deliver(new SimEcmBurst(
+                (ulong)session.SessionId,
+                session.GetInt("shipid")!.Value,
+                [new SimBurstReach(targetShipId, Jammed: false)]));
+            await rig.Space.QuiesceAsync();
+
+            var extendedUntil = rig.Now + Eve.Crimewatch.CombatState.PvpDurationMs;
+            Assert.Equal(extendedUntil, (await crimewatch.StateOfAsync(victim.CharacterId)).PvpUntilMs);
+
+            rig.Now = originalExpiresAt;
+            await rig.Containers.SweepAsync();
+            var retained = Assert.IsType<SpaceItem>(await rig.SpaceItems.GetAsync(targetShipId));
+            Assert.Equal((SpaceItemKind.CombatLogoffShip, extendedUntil), (retained.Kind, retained.ExpiresAtMs));
+        }
+        finally
+        {
+            await using var drop = rig.Source.CreateCommand($"DROP SCHEMA IF EXISTS {schema} CASCADE");
+            await drop.ExecuteNonQueryAsync();
+        }
+    }
+
     [PgFact]
     public async Task An_ECM_burst_records_the_attack_on_each_pilot_it_reached_and_skips_a_ship_that_is_no_pilots()
     {

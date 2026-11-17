@@ -21,7 +21,11 @@ public sealed record ShipDeathItem(
 /// <param name="Wreck">The wreck, in space where the ship was; null when the ship left none.</param>
 /// <param name="Changes">What happened to what the ship held, in the order the rules did it (a stack that dropped in part shows as the new stack that is in the wreck, and the rest as destroyed).</param>
 /// <param name="Events">What dogma reports of the ship's modules leaving it: the ship's attributes that changed, and each module's, in the order of the slots.</param>
-public sealed record AbandonedShipDeath(Item Ship, Item? Wreck, IReadOnlyList<DeathChange> Changes, Item? Capsule = null);
+public sealed record AbandonedShipDeath(Item Ship, Item? Wreck, IReadOnlyList<DeathChange> Changes, Item? Capsule = null)
+{
+    public Character? Character { get; init; }
+    public IReadOnlyList<ShipDeathItem> KillmailItems { get; init; } = [];
+}
 
 public sealed record ShipDeath(
     Item Ship,
@@ -219,7 +223,8 @@ public sealed partial class CharacterShips
     /// <summary>What is in a place and in what is in it, as the death rules look at it (the ids of the snapshot are those of the items).</summary>
     public async Task<AbandonedShipDeath?> DestroyAbandonedShipAsync(
         long ownerCharacterId, int solarSystemId, long shipId, int? wreckTypeId, string seed,
-        CancellationToken cancellationToken = default, bool replaceActiveShip = false)
+        CancellationToken cancellationToken = default, bool replaceActiveShip = false,
+        Func<NpgsqlConnection, NpgsqlTransaction, AbandonedShipDeath, CancellationToken, Task>? inTransaction = null)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -247,7 +252,8 @@ public sealed partial class CharacterShips
 
         var snapshot = new Dictionary<long, Item>();
         var tree = await TreeAsync(ship.Id, snapshot, cancellationToken);
-        var actions = DeathOutcome.Resolve(tree, seed, new DeathOptions(ForceAllDestroyed: wreck is null));
+        var outcome = DeathOutcome.ResolveWithItems(tree, seed, new DeathOptions(ForceAllDestroyed: wreck is null));
+        var actions = outcome.Actions;
         var changes = new List<DeathChange>();
         foreach (var action in actions)
         {
@@ -289,12 +295,19 @@ public sealed partial class CharacterShips
                 new ShipTransitionEvent("ship-destroyed", ownerCharacterId, ship.Id, capsuleId,
                     ship.LocationId, InSpaceFlag, ship.LocationId, InSpaceFlag), cancellationToken);
         }
+        var result = new AbandonedShipDeath(ship, wreck, changes, capsule)
+        {
+            Character = wasActiveShip && capsule is not null ? character with { ShipId = capsule.Id } : character,
+            KillmailItems = outcome.Items.Select(ShipDeathItemOf).ToArray(),
+        };
+        if (inTransaction is not null)
+            await inTransaction(connection, transaction, result, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         await modules.SetShipConditionAsync(ship.Id, ShipCondition.Full, cancellationToken);
         await modules.SetModuleConditionsAsync(
             changes.Where(change => change.Destroyed).ToDictionary(change => change.Item.Id, _ => ModuleCondition.Untouched),
             cancellationToken);
-        return new AbandonedShipDeath(ship, wreck, changes, capsule);
+        return result;
     }
 
     private async Task<IReadOnlyList<DeathNode>> TreeAsync(long locationId, Dictionary<long, Item> snapshot, CancellationToken cancellationToken, int depth = 0)

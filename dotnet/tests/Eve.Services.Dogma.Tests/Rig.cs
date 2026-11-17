@@ -76,7 +76,7 @@ internal sealed class Rig : IAsyncDisposable
     private readonly string[] _schemas;
     private readonly Dictionary<long, ClientSession> _sessions = [];
 
-    private Rig(NpgsqlDataSource source, string suffix, SdeReader sde, DogmaStatic statics, CharacterCreation creation, PgModuleStateStore modules, SkillBoosterActivationHandler? activateBooster, SkillCatalog catalog, Random? skillRandom)
+    private Rig(NpgsqlDataSource source, string suffix, SdeReader sde, DogmaStatic statics, CharacterCreation creation, PgModuleStateStore modules, SkillBoosterActivationHandler? activateBooster, SkillCatalog catalog, Random? skillRandom, double trainingSpeed)
     {
         Source = source;
         Catalog = catalog;
@@ -85,12 +85,12 @@ internal sealed class Rig : IAsyncDisposable
         Items = new PgItemStore(source, _schemas[1]);
         Skills = new PgSkillStore(source, _schemas[2]);
         Training = new CharacterTraining(source, catalog, Skills, new PgTrainingStore(source, _schemas[2]),
-            new TrainingSettings { Attribute = Skills.LearningAttribute }, () => ClockMs);
+            new TrainingSettings { Speed = trainingSpeed, Attribute = Skills.LearningAttribute }, () => ClockMs);
         Announcer = new TrainingAnnouncer(Training, catalog, new CharacterSessions(), null, () => ClockMs, schedule: false);
         Statics = statics;
         Creation = creation;
         Modules = modules;
-        Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules);
+        Ships = new CharacterShips(source, statics, Characters, Items, Skills, modules, Training);
         Timers = new Eve.Scheduler.LocalTimers(delay: Delay.WaitAsync);
         var boosterActivation = activateBooster ?? ((long _, long _, string _, long? _, long? _, CancellationToken _) => ValueTask.FromResult<bool?>(null));
         Service = new DogmaIMService(statics, Ships, () => ClockMs, boosterActivation, null, Targeting, SpaceModules, Health, Rounds, Delay.WaitAsync, localTimers: Timers).ListeningForDryGuns();
@@ -201,7 +201,8 @@ internal sealed class Rig : IAsyncDisposable
     public static async Task<Rig> CreateAsync(
         SkillBoosterActivationHandler? activateBooster = null,
         Random? skillRandom = null,
-        Func<DogmaStatic, Task<DogmaStatic>>? staticsOverride = null)
+        Func<DogmaStatic, Task<DogmaStatic>>? staticsOverride = null,
+        double trainingSpeed = 1)
     {
         CharacterNames.EnsureUnicodeSupport();
         var source = NpgsqlDataSource.Create(PgConnection.ForTest(Url!));
@@ -230,7 +231,7 @@ internal sealed class Rig : IAsyncDisposable
         {
             statics = await staticsOverride(statics);
         }
-        return new Rig(source, suffix, sde, statics, creation, modules, activateBooster, catalog, skillRandom);
+        return new Rig(source, suffix, sde, statics, creation, modules, activateBooster, catalog, skillRandom, trainingSpeed);
     }
 
     /// <summary>A new character of a race (Caldari by default), on the Cockroach test hull.</summary>

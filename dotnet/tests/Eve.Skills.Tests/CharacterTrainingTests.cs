@@ -216,7 +216,7 @@ public class CharacterTrainingTests
         var update = Assert.Single(rig.Settlements);
         Assert.Equal([new CharacterSkill(3301, 2, 1415)], update.Finished);
         Assert.Equal(new CharacterSkill(3301, 1, 250), update.SkillsBefore.Single(s => s.TypeId == 3301));
-        Assert.Equal([new HistoryEntry(line.End!.Value, SkillEvents.TrainingComplete, 3301, 1415, 2)], await rig.Training.HistoryAsync(TrainingRig.Character));
+        Assert.Equal([new HistoryEntry(line.End!.Value, SkillEvents.TrainingComplete, 3301, 1415, 2, 1165)], await rig.Training.HistoryAsync(TrainingRig.Character));
 
         await rig.Training.ViewAsync(TrainingRig.Character, TrainingRig.Account); // settled already: nothing more to tell
         Assert.Single(rig.Settlements);
@@ -235,7 +235,7 @@ public class CharacterTrainingTests
         Assert.Equal((3301, 3, first.End), (line.TypeId, line.ToLevel, line.Start));
         var live = view.Skills.Single(s => s.TypeId == 3301);
         Assert.Equal((2, 1415 + (long)Math.Floor((100 * 600_000_000d - 23_300_000_000d) / 600_000_000d * 30)), (live.Level, live.SkillPoints)); // level II done, and level III gaining
-        Assert.Equal([new HistoryEntry(first.End!.Value, SkillEvents.QueueTrainingCompleted, 3301, 1415, 2)], await rig.Training.HistoryAsync(TrainingRig.Character));
+        Assert.Equal([new HistoryEntry(first.End!.Value, SkillEvents.QueueTrainingCompleted, 3301, 1415, 2, 1165)], await rig.Training.HistoryAsync(TrainingRig.Character));
     }
 
     [PgFact]
@@ -252,8 +252,8 @@ public class CharacterTrainingTests
 
         Assert.Equal(
         [
-            new HistoryEntry(second.End!.Value, SkillEvents.TrainingComplete, 3301, 8000, 3),
-            new HistoryEntry(first.End!.Value, SkillEvents.QueueTrainingCompleted, 3301, 1415, 2),
+            new HistoryEntry(second.End!.Value, SkillEvents.TrainingComplete, 3301, 8000, 3, 6585),
+            new HistoryEntry(first.End!.Value, SkillEvents.QueueTrainingCompleted, 3301, 1415, 2, 1165),
         ], await rig.Training.HistoryAsync(TrainingRig.Character));
     }
 
@@ -272,7 +272,7 @@ public class CharacterTrainingTests
         Assert.Equal((false, null, 2), (after.Active, after.ActiveStart, after.Entries.Count));
         Assert.All(stopped.View.Queue, line => Assert.Equal((null, null), (line.Start, line.End)));
         Assert.Equal((550L, 1415L), (stopped.View.Queue[0].StartPoints, stopped.View.Queue[0].DestinationPoints)); // it resumes from where it was
-        Assert.Equal(new HistoryEntry(rig.Training.Now, SkillEvents.TrainingCancelled, 3301, 550, 2), (await rig.Training.HistoryAsync(TrainingRig.Character))[0]);
+        Assert.Equal(new HistoryEntry(rig.Training.Now, SkillEvents.TrainingCancelled, 3301, 550, 2, 300), (await rig.Training.HistoryAsync(TrainingRig.Character))[0]);
 
         Assert.Null(await rig.Training.AbortAsync(TrainingRig.Character, TrainingRig.Account));
         rig.Wait(500 * Minute);
@@ -496,7 +496,7 @@ public class CharacterTrainingTests
             Assert.Equal(0, overlappingRefreshes);
             Assert.True(settledUnderGate);
             Assert.Single(rig.Settlements);
-            Assert.Equal([new HistoryEntry(scheduledEnd, SkillEvents.TrainingComplete, 3301, 1415, 2)], await rig.Training.HistoryAsync(TrainingRig.Character));
+            Assert.Equal([new HistoryEntry(scheduledEnd, SkillEvents.TrainingComplete, 3301, 1415, 2, 1165)], await rig.Training.HistoryAsync(TrainingRig.Character));
         }
         finally
         {

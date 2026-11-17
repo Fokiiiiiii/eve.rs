@@ -45,6 +45,79 @@ public static class AgentMissionKindRules
     public const long TypeCareerAgent = 12;
     public const long TypeHeraldryAgent = 13;
 
+    /// <summary>
+    /// The V24 journal sends this value to localization.GetByLabel. SDE mission kinds are
+    /// concise internal values, so translate them at the wire boundary.
+    /// </summary>
+    public static string ClientMissionTypeLabel(long agentTypeId, string missionKind, string? configuredLabel = null)
+    {
+        var configured = configuredLabel?.Trim() ?? "";
+        if (configured.StartsWith("UI/Agents/MissionTypes/", StringComparison.Ordinal)) return configured;
+
+        var kind = MissionKindOf(configured.Length > 0 ? configured : missionKind);
+        if (agentTypeId is TypeGenericStorylineMissionAgent or TypeStorylineMissionAgent)
+            return kind switch
+            {
+                "courier" => "UI/Agents/MissionTypes/StorylineCourier",
+                "mining" => "UI/Agents/MissionTypes/StorylineMining",
+                "trade" => "UI/Agents/MissionTypes/StorylineTrade",
+                "encounter" => "UI/Agents/MissionTypes/StorylineEncounter",
+                _ => "UI/Agents/MissionTypes/Storyline",
+            };
+
+        if (agentTypeId == TypeEpicArcAgent)
+            return kind switch
+            {
+                "courier" => "UI/Agents/MissionTypes/EpicArcCourier",
+                "mining" => "UI/Agents/MissionTypes/EpicArcMining",
+                "trade" => "UI/Agents/MissionTypes/EpicArcTrade",
+                "encounter" => "UI/Agents/MissionTypes/EpicArcEncounter",
+                _ => "UI/Agents/MissionTypes/EpicArc",
+            };
+
+        if (agentTypeId == TypeResearchAgent)
+            return kind switch
+            {
+                "courier" => "UI/Agents/MissionTypes/ResearchCourier",
+                "trade" => "UI/Agents/MissionTypes/ResearchTrade",
+                "encounter" => "UI/Agents/MissionTypes/ResearchEncounter",
+                _ => "UI/Agents/MissionTypes/Research",
+            };
+
+        if (agentTypeId == TypeHeraldryAgent || kind == "heraldry") return "UI/Agents/MissionTypes/Heraldry";
+
+        return kind switch
+        {
+            "courier" => "UI/Agents/MissionTypes/Courier",
+            "mining" => "UI/Agents/MissionTypes/Mining",
+            "trade" => "UI/Agents/MissionTypes/Trade",
+            "encounter" => "UI/Agents/MissionTypes/Encounter",
+            "epicArc" => "UI/Agents/MissionTypes/EpicArc",
+            "storyline" => "UI/Agents/MissionTypes/Storyline",
+            "research" => "UI/Agents/MissionTypes/Research",
+            _ => configured,
+        };
+    }
+
+    public static string MissionKindOf(string missionKindOrLabel)
+    {
+        var value = missionKindOrLabel.Trim();
+        const string standardMissionPrefix = "UI/Agents/StandardMission/";
+        if (value.StartsWith(standardMissionPrefix, StringComparison.Ordinal))
+            value = value[standardMissionPrefix.Length..];
+
+        var normalized = value.ToLowerInvariant();
+        if (normalized is "courier" or "distribution" || normalized.EndsWith("courier", StringComparison.Ordinal)) return "courier";
+        if (normalized is "mining" || normalized.EndsWith("mining", StringComparison.Ordinal)) return "mining";
+        if (normalized is "encounter" or "security" || normalized.EndsWith("encounter", StringComparison.Ordinal)) return "encounter";
+        if (normalized is "trade" || normalized.EndsWith("trade", StringComparison.Ordinal)) return "trade";
+        if (normalized is "research" || normalized.EndsWith("research", StringComparison.Ordinal)) return "research";
+        if (normalized is "epicArc" or "epicarc" || normalized.StartsWith("epicarc", StringComparison.Ordinal)) return "epicArc";
+        if (normalized is "storyline" || normalized.StartsWith("storyline", StringComparison.Ordinal)) return "storyline";
+        if (normalized is "heraldry") return "heraldry";
+        return normalized;
+    }
+
 
     public static string? DivisionMissionKind(long divisionId) => divisionId switch
     {

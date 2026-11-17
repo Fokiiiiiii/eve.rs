@@ -9,6 +9,15 @@ public interface IOmegaAccountStore
 {
     /// <summary>The account's stored end time as FILETIME text, trimmed, or null when it has none.</summary>
     string? GetOmegaExpiry(long accountId);
+
+    /// <summary>The ordered entitlement frames that determine which skill-training rates applied at each time.</summary>
+    IReadOnlyList<(long FromFileTime, long ExpiryFileTime)>? GetOmegaTrainingHistory(long accountId)
+    {
+        var expiry = JsNumber.BigIntFromString(GetOmegaExpiry(accountId) ?? string.Empty);
+        return expiry is { } value && value >= long.MinValue && value <= long.MaxValue
+            ? [(0, (long)value)]
+            : [];
+    }
 }
 
 /// <summary>The outcome of looking up an account's Omega licence.</summary>
@@ -55,6 +64,13 @@ public sealed class OmegaLicenses(IOmegaAccountStore accounts, Func<long> nowUni
 
     /// <summary>The clone grade derived from the same stored licence used by subscription services.</summary>
     public long CloneGradeOf(PyValue? userId) => Resolve(userId).HasLicense ? 1 : 0;
+
+    /// <summary>The persisted entitlement history, used to project historical skill-training rates.</summary>
+    public IReadOnlyList<(long FromFileTime, long ExpiryFileTime)> TrainingHistory(PyValue? userId)
+    {
+        var accountId = JsSemantics.ToPositiveInteger(userId);
+        return accountId > 0 ? accounts.GetOmegaTrainingHistory(accountId) ?? [] : [];
+    }
 
 }
 

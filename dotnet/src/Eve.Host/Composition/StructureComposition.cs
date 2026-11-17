@@ -391,7 +391,17 @@ internal sealed partial class CharacterServicesComposition
             anchorWithDuration: (connection, transaction, structure, anchoringMs, ct) =>
                 structureTimers.AnchorAsync(connection, transaction, structure with { AnchoringMs = anchoringMs }, ct),
             solarSystemOf: session => spaceSessions?.SolarSystemOf(session),
-            shipIdOf: session => spaceSessions?.ShipIdOf(session));
+            shipIdOf: session => spaceSessions?.ShipIdOf(session),
+            readDeploymentBalls: async (systemId, ct) =>
+            {
+                if (sim is null)
+                    throw new SimUnavailableException("the space simulation is unavailable for deployment placement");
+                var response = await sim.GetDeploymentBallsAsync(
+                    new SimGetDeploymentBalls(SimClient.NextRequestId(), SimSceneKey.SolarSystem(systemId)), ct);
+                if (response.Error is { } error)
+                    throw new InvalidOperationException($"the simulation could not read deployment balls for system {systemId}: {error}");
+                return response.Balls;
+            });
         // ST-6a: the moon drill starts a chunk (StartNewExtraction); the fracture and the cancel follow in (d)
         var moonRules = await MoonRulesSource.LoadAsync(sde);
         var moonRigRules = new MoonRigReadModel(items, dogma, moonRules, structureStore);

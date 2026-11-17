@@ -113,6 +113,9 @@ const JUMP_DELAY: i64 = 4 * TICKS_PER_SECOND;
 
 const JUMP_EFFECT_DELAY: i64 = 3 * TICKS_PER_SECOND;
 
+/// EVE.js keeps a gate-arriving ship cloaked for one minute unless the pilot flies first.
+pub(crate) const STARGATE_JUMP_CLOAK: i64 = 60 * TICKS_PER_SECOND;
+
 /// How many ships deep a ship that follows a ship that follows a ship is moved after the one it follows.
 const MAX_FOLLOW_CHAIN: u8 = 4;
 
@@ -319,6 +322,8 @@ pub enum Out {
     /// A player's ship came to rest at a belt after a warp (the belt it warped to, or the nearest within [`BELT_LANDING_RADIUS`] of it): the host
     /// decides whether anything lives there. `position` is where the belt is (what the host places what lives there around).
     Arrived { session: SessionId, belt_id: i64, position: Vec3 },
+    /// A ship left warp and can receive new movement orders while its existing velocity coasts down.
+    WarpExited { session: SessionId },
     /// The answer to a question about the ship's condition.
     Condition { session: SessionId, command: u8, condition: Condition },
     /// A cynosural field was lit by the ship of `session`: the host keeps its record (`Message::Deployed`).
@@ -375,6 +380,8 @@ pub enum Out {
     FighterSize { session: SessionId, fighter_id: i64, size: i32 },
     /// An ECM burst reached the ships about it (not cloaked ones): the ship that runs it, and each ship reached with whether its roll jammed it.
     EcmBurst { session: SessionId, ship_id: i64, reached: Vec<(i64, bool)> },
+    /// A pilot's smartbomb hit the ships in its blast; the host records each player victim for Crimewatch.
+    SmartbombHit { session: SessionId, ship_id: i64, module_id: i64, targets: Vec<(i64, i64, i32)> },
     /// The answer to an order to drones: for each drone `None` when it took the order, the reason when it did not.
     DroneResults { session: SessionId, command: u8, results: Vec<(i64, Option<&'static str>)> },
     /// A completed drone work cycle waiting for authoritative inventory/cargo settlement by the host.
@@ -480,6 +487,7 @@ impl Out {
             | Out::Jumping { session, .. }
             | Out::Docked { session, .. }
             | Out::Arrived { session, .. }
+            | Out::WarpExited { session }
             | Out::Destroyed { session, .. }
             | Out::Condition { session, .. }
             | Out::TetherChanged { session, .. }
@@ -503,6 +511,7 @@ impl Out {
             | Out::FighterResults { session, .. }
             | Out::FighterSize { session, .. }
             | Out::EcmBurst { session, .. }
+            | Out::SmartbombHit { session, .. }
             | Out::TargetRefused { session, .. }
             | Out::DeployedLit { session, .. }
             | Out::Position { session, .. }
@@ -647,6 +656,12 @@ pub(crate) struct Pilot {
     pub(crate) jump: Option<PendingJump>,
     /// The ship arrived already in space (through a gate or on login), not by undocking.
     jumped_in: bool,
+    /// Until when a gate-arriving ship remains hidden from other ballparks.
+    pub(crate) jump_cloak_until: Option<i64>,
+    /// Whether the simulation clock has passed the end of the gate cloak or an accepted action has cancelled it.
+    pub(crate) jump_cloaked: bool,
+    /// The gate cloak ended this tick; observers receive the appearance effect with their AddBalls2.
+    pub(crate) jump_cloak_ended: bool,
     /// The client has bound the ballpark: it can be sent destiny updates.
     pub(crate) bound: bool,
     /// The login List sent the visual half; the later bind still owes the authoritative state.
@@ -703,6 +718,9 @@ impl Pilot {
             warp_target: None,
             jump: None,
             jumped_in: false,
+            jump_cloak_until: None,
+            jump_cloaked: false,
+            jump_cloak_ended: false,
             bound: false,
             login_visuals_sent: false,
             entered,
@@ -736,6 +754,14 @@ impl Pilot {
             module.pending_overload = None;
         }
         self.heat.force_notify = true;
+    }
+
+    pub(crate) fn effective_cloak(&self) -> crate::visibility::CloakState {
+        if self.jump_cloaked { crate::visibility::CloakState::Cloaked } else { self.cloak }
+    }
+
+    pub(crate) fn ego_cloak_mode(&self) -> u8 {
+        if self.jump_cloaked { 2 } else { 0 }
     }
 }
 
@@ -1135,6 +1161,10 @@ impl Scene {
         self.pilots.contains_key(&session)
     }
 
+    pub(crate) fn is_bound(&self, session: SessionId) -> bool {
+        self.pilots.get(&session).is_some_and(|pilot| pilot.bound)
+    }
+
     /// The ship of a session, as it is at `now`.
     pub fn ship(&mut self, session: SessionId, now: i64) -> Option<&Ship> {
         self.pilots.contains_key(&session).then_some(())?;
@@ -1159,28 +1189,11 @@ impl Scene {
         Out::Notify { session, name, id_type: "clientID", args }
     }
 
-    /// What is told of a milestone of a warp: to the pilot, and to the ones who watch it.
+    /// What is told of a client-visible milestone of a warp.
     fn tell(&mut self, session: SessionId, milestone: Milestone) -> Vec<Out> {
         let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
         let ship_id = id(pilot.ship.spec.ship_id);
         match milestone {
-            Milestone::Entered { at } => {
-                // the ship is in warp: those who watch it are told now (the pilot was told when it asked for the warp)
-                let Course::Warp { raw_destination: r, stop_distance, factor, .. } = pilot.ship.course else {
-                    return Vec::new();
-                };
-                let stamp = self.next_stamp(at);
-                let watchers = vec![
-                    warping_effect(stamp, &ship_id),
-                    payload::action(stamp, "SetSpeedFraction", [ship_id.clone(), real(1.0)]),
-                    payload::action(
-                        stamp,
-                        "WarpTo",
-                        [ship_id, real(r.x), real(r.y), real(r.z), real(stop_distance), int(factor)],
-                    ),
-                ];
-                self.tell_split(session, Vec::new(), watchers)
-            }
             Milestone::Dropout { at } => {
                 // the ship is set massless again, told twice: at the stamp and two on
                 let stamp = self.next_stamp(at);
@@ -1190,6 +1203,7 @@ impl Scene {
                 out.extend(self.tell_all(session, massless(stamp + 2)));
                 out
             }
+            Milestone::Dropped { .. } => vec![Out::WarpExited { session }],
             Milestone::Rest { at, position, velocity } => {
                 let stamp = self.next_stamp(at);
                 let actions = vec![

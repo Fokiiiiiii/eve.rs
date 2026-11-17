@@ -1,4 +1,5 @@
 using Eve.Inventory;
+using Eve.Marshal;
 using Eve.Ships;
 
 namespace Eve.Services.Ships;
@@ -71,6 +72,12 @@ public interface ISpaceContainers
     Task ScoopAsync(ClientSession session, long itemId, string? password, CancellationToken cancellationToken) =>
         throw new NotSupportedException("This space container provider cannot scoop space artifacts.");
 
+    /// <summary><c>ship.Scoop</c> and its destination variants: take one eligible space item, and its contents, into the named ship hold.</summary>
+    Task ScoopToHoldAsync(ClientSession session, long itemId, int destinationFlag, string? password, CancellationToken cancellationToken) =>
+        destinationFlag == CharacterShips.CargoFlag
+            ? ScoopAsync(session, itemId, password, cancellationToken)
+            : throw new NotSupportedException("This space container provider cannot scoop into that ship hold.");
+
     /// <summary>
     /// <c>ship.Jettison</c>: the stacks of the hold go into a new can ahead of the ship. Answers the ids that went into a can (none when nothing could be jettisoned); throws the
     /// client's error while the pilot waits for the next can.
@@ -86,6 +93,10 @@ public interface ISpaceContainers
     /// <summary><c>ship.LaunchFromContainer(sourceID, itemID)</c>: launches an assembled ship from an accessible in-space ship maintenance bay or POS array.</summary>
     Task LaunchFromContainerAsync(ClientSession session, long sourceId, long itemId, CancellationToken cancellationToken) =>
         throw new NotSupportedException("This space container provider cannot launch ships from maintenance bays.");
+
+    /// <summary><c>ship.BoardStoredShip(sourceID, itemID)</c>: boards an assembled ship from a maintenance bay and stores the previous non-capsule ship there.</summary>
+    Task<PyValue> BoardStoredShipAsync(ClientSession session, long sourceId, long itemId, CancellationToken cancellationToken) =>
+        throw new NotSupportedException("This space container provider cannot board ships from maintenance bays.");
 }
 
 public interface ISpaceDroneBays

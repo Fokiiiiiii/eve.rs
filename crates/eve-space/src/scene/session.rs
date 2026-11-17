@@ -2,6 +2,28 @@ use super::docking::{is_dock_body, surface_distance};
 use super::*;
 
 impl Scene {
+    /// The movement prime of a ship entering space, on the same stamp as its initial AddBalls2.
+    pub(crate) fn movement_prime(&self, session: SessionId, stamp: u32) -> Option<Vec<Value>> {
+        let ship = &self.pilots.get(&session)?.ship;
+        let ship_id = id(ship.spec.ship_id);
+        Some(vec![
+            payload::action(stamp, "SetBallMassive", [ship_id.clone(), int(0)]),
+            payload::action(stamp, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]),
+            payload::action(
+                stamp,
+                "SetBallVelocity",
+                with_id(&ship_id, vector(ship.velocity.x, ship.velocity.y, ship.velocity.z)),
+            ),
+            payload::action(stamp, heading_name(ship), heading_args(ship)),
+        ])
+    }
+
+    /// A station undock's movement prime is also sent to views that already have the ship in their ballpark.
+    pub(crate) fn station_undock_movement_prime(&self, session: SessionId, stamp: u32) -> Option<Vec<Value>> {
+        self.pilots.get(&session)?.leaving_station?;
+        self.movement_prime(session, stamp)
+    }
+
     pub(crate) fn controlled_structure_id(&self, session: SessionId) -> Option<i64> {
         self.controlled_structures.get(&session).map(|observer| observer.structure_id)
     }
@@ -275,120 +297,69 @@ impl Scene {
     /// The client bound the system's ballpark: it is told the time, and given the ships in view (its own among them, in the order they came into
     /// the scene) and then everything around them.
     pub fn bind(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        // Populate static sentries before the initial state of a freshly entered system is built.
+        let mut told = self.populate_empire_sentries(now);
         if !self.pilots.contains_key(&session) {
-            return self.bind_controlled_structure(session, now);
+            told.extend(self.bind_controlled_structure(session, now));
+            return told;
         }
+        let fresh_undock = self.pilots.get(&session).is_some_and(|pilot| !pilot.jumped_in && !pilot.bound);
         self.settle_all(now);
         self.take_in_view(session);
-        let first = self.next_stamp(now);
-        let second = self.next_stamp(now);
-        let (add_stamp, state_stamp) =
-            if self.pilots[&session].jumped_in { (second, second) } else { (first, second) };
+        let state_stamp = self.next_stamp(now);
+        let add_stamp = state_stamp;
         let system = Arc::clone(&self.system);
         let ships = self.ships_in_view(session);
         let traces = self.abyssal_traces_in_view(session);
         let trace_adds: Vec<_> =
             match traces.iter().map(|trace| payload::add_abyssal_trace(add_stamp, trace)).collect() {
                 Ok(adds) => adds,
-                Err(_) => return Vec::new(),
+                Err(_) => return told,
             };
-        let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+        let Some(pilot) = self.pilots.get(&session) else { return told };
         let ship = &pilot.ship;
-        let ship_id = id(ship.spec.ship_id);
-        let heading =
-            |action_stamp: u32| payload::action(action_stamp, heading_name(ship), heading_args(ship));
+        let ego_cloak_mode = pilot.ego_cloak_mode();
 
-        let mut added_actions = Vec::new();
-        if pilot.jumped_in {
-            // SetState contains every system body, in-view ship and wreck. Only runtime traces live outside it.
-            added_actions.extend(trace_adds);
-            added_actions
-                .extend(system.bodies.iter().filter_map(|body| payload::moon_chunk_effect(add_stamp, body)));
-        } else {
-            let Ok(ship_added) = payload::add_ships(add_stamp, &ships, now) else { return Vec::new() };
-            added_actions.push(ship_added);
-            let Ok(abyssal_scene_objects) = payload::add_abyssal_scene_objects(add_stamp, &system) else {
-                return Vec::new();
-            };
-            added_actions.extend(payload::add_structures(add_stamp, &system, now));
-            added_actions.extend(payload::add_moon_chunks(add_stamp, &system));
-            added_actions.extend(abyssal_scene_objects);
-            added_actions.extend(trace_adds);
-        }
+        // SetState contains every system body, in-view ship and wreck. Runtime traces and active moon-drill
+        // effects are the only presentation entries that must follow it as separate Destiny actions.
+        let mut added_actions = trace_adds;
+        added_actions
+            .extend(system.bodies.iter().filter_map(|body| payload::moon_chunk_effect(add_stamp, body)));
         let added = (!added_actions.is_empty()).then_some(added_actions);
         let wrecks = self.wrecks_in_view(session);
-        let Ok(state) = payload::set_state_for_ego(
+        let Ok(state) = payload::set_state_for_ego_with_cloak_mode(
             state_stamp,
             &system,
-            ship.spec.ship_id,
+            payload::EgoShipState { ship_id: ship.spec.ship_id, cloak_mode: ego_cloak_mode },
             &ships,
             &wrecks,
             &self.structure_health,
             now,
         ) else {
-            return Vec::new();
+            return told;
         };
         let update = |actions: Vec<Value>| {
             Self::notify(session, "DoDestinyUpdate", payload::destiny_update(actions, false))
         };
-        let mut told = Vec::new();
-        if pilot.jumped_in || added.is_some() {
-            told.extend([
-                Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
-                Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
-            ]);
-            // The reference makes the bound ballpark's SetState its first Destiny update on login or jump.
-            // An undock instead introduces the ship before its movement prime and later SetState.
-            if !pilot.jumped_in
-                && let Some(added) = added.as_ref()
-            {
-                told.push(Self::notify(
-                    session,
-                    "DoDestinyUpdate",
-                    payload::destiny_update(added.clone(), true),
-                ));
+        told.extend([
+            Self::notify(session, "OnSetTimeDilation", vec![int(1), int(1), int(100_000_000)]),
+            Self::notify(session, "DoSimClockRebase", vec![tuple([filetime(now), filetime(now)])]),
+        ]);
+        // Binding rebuilds the client ballpark from SetState. Updates sent before this action are
+        // discarded while Michelle has no ballpark (DoDestinyUpdate at michelle.py:482-485).
+        // An undock's SetState already carries the ship's initial movement state; EveJS sends no
+        // number primes for that bootstrap. Login and jump arrivals prime dynamic ships after it.
+        let mut initial_state = vec![state];
+        if !fresh_undock {
+            for other in &ships {
+                if other.spec.max_velocity > 0.0 {
+                    initial_state.extend(Self::numbers_of(other, state_stamp));
+                }
             }
         }
-        if !pilot.jumped_in {
-            // Station undocks already receive their movement prime with AddBalls2; structures need their own entry pose.
-            let mut actions = Vec::new();
-            if pilot.leaving_station.is_none() {
-                actions.extend([
-                    payload::uncloak(first, ship.spec.ship_id),
-                    payload::action(
-                        first,
-                        "SetBallPosition",
-                        with_id(&ship_id, vector(ship.position.x, ship.position.y, ship.position.z)),
-                    ),
-                ]);
-            }
-            actions.extend([
-                payload::action(first, "SetBallMassive", [ship_id.clone(), int(0)]),
-                payload::action(first, "SetBallMass", [ship_id.clone(), real(ship.spec.mass)]),
-                payload::action(
-                    first,
-                    "SetBallVelocity",
-                    with_id(&ship_id, vector(ship.velocity.x, ship.velocity.y, ship.velocity.z)),
-                ),
-                heading(first),
-            ]);
-            told.push(update(actions));
-        }
-        told.push(update(vec![state]));
-        if pilot.jumped_in
-            && let Some(added) = added
-        {
+        told.push(Self::notify(session, "DoDestinyUpdate", payload::destiny_update(initial_state, false)));
+        if let Some(added) = added {
             told.push(update(added));
-        }
-        let mut numbers = Vec::new();
-        for other in &ships {
-            // The undocked ego's numbers are in SetState; fixed SDE sentries do not move.
-            if (other.spec.ship_id != ship.spec.ship_id || pilot.jumped_in) && other.spec.max_velocity > 0.0 {
-                numbers.extend(Self::numbers_of(other, second));
-            }
-        }
-        if !numbers.is_empty() {
-            told.push(update(numbers));
         }
         self.with_backlog(told)
     }
@@ -815,6 +786,7 @@ impl Scene {
         told.extend(self.advance_dots(now));
         told.extend(self.advance_deployables(now));
         told.extend(self.advance_drones(now));
+        told.extend(self.expire_stargate_jump_cloaks(now));
         told.extend(self.reconcile(now));
         told.extend(self.reconcile_wrecks(now));
         told.extend(self.reconcile_abyssal_traces(now));

@@ -131,6 +131,19 @@ impl Host {
         Message::decode(&payload).unwrap()
     }
 
+    async fn recv_after_scene_entity_updates(&mut self) -> Message {
+        loop {
+            match self.recv().await {
+                Message::DamageableEntityUpserted { solar_system_id, entity_id, .. }
+                | Message::DamageableEntityRemoved { solar_system_id, entity_id } => {
+                    assert_eq!(solar_system_id, SYSTEM);
+                    assert!(entity_id > 0);
+                }
+                message => return message,
+            }
+        }
+    }
+
     async fn recv_response(&mut self) -> (Message, bool) {
         let mut saw_destiny_update = false;
         loop {
@@ -199,22 +212,26 @@ async fn a_destiny_update_is_sent_without_waiting_for_a_second_boundary() {
 
     host.send(Message::Bind { session_id: SESSION }).await;
     for expected in ["OnSetTimeDilation", "DoSimClockRebase"] {
-        assert!(matches!(
-            host.recv().await,
-            Message::Notify { name, .. } if name == expected
-        ));
+        let received = host.recv_after_scene_entity_updates().await;
+        assert!(
+            matches!(&received, Message::Notify { name, .. } if name == expected),
+            "expected {expected} after binding, received {received:?}"
+        );
     }
 
     let next = tokio::select! {
         biased;
-        message = host.recv() => Some(message),
+        message = host.recv_after_scene_entity_updates() => Some(message),
         _ = tokio::time::sleep(Duration::ZERO) => None,
     };
 
-    assert!(matches!(
-        next,
-        Some(Message::Notify { name, .. }) if name == "DoDestinyUpdate"
-    ));
+    assert!(
+        matches!(
+            &next,
+            Some(Message::Notify { name, .. }) if name == "DoDestinyUpdate"
+        ),
+        "expected an immediate Destiny update after the two bind notifications, received {next:?}"
+    );
     host.wait_for_bind_reply().await;
 
     drop(host.stream);

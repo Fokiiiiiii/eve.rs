@@ -214,7 +214,6 @@ public sealed partial class ExpertSystemMgrService(
         {
             var rows = SkillWire.EntryDictionary(characterId, skillCatalog, changed, metadata: false);
             SkillNotifications.ServerSkillsChanged(session, rows, null, Py.FileTimeFromUnixMs(nowMs));
-            SkillNotifications.SkillsChanged(session, rows);
         }
         if (dogma is not null && (grantsBefore.Count > 0 || grantsAfter.Count > 0))
         {

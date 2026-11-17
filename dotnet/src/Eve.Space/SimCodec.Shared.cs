@@ -31,6 +31,8 @@ public static partial class SimCodec
         public const byte ServiceNotify = 125;
         public const byte GetSceneBody = 126;
         public const byte GetSceneBodyReply = 127;
+        public const byte GetDeploymentBalls = 166;
+        public const byte GetDeploymentBallsReply = 167;
         public const byte EnsureTournamentBeacon = 128;
         public const byte EnsureTournamentBeaconReply = 129;
         public const byte RemoveTournamentBeacon = 130;
@@ -89,6 +91,8 @@ public static partial class SimCodec
         public const byte AdjustCharge = 33;
         public const byte ChargeAdjusted = 34;
         public const byte Arrived = 35;
+        /// <summary>The ship has left warp and can take movement orders during its coast (protocol 100).</summary>
+        public const byte WarpExited = 165;
         public const byte PlaceAsteroid = 45;
         public const byte DroneWorkCycle = 46;
         public const byte DroneWorkResult = 47;
@@ -166,6 +170,8 @@ public const byte UpdateEffect = 61;
         public const byte RemoveAbyssalTraceReply = 109;
         public const byte RemoveAbyssalParticipant = 110;
         public const byte RemoveAbyssalParticipantReply = 111;
+        /// <summary>The simulation reports smartbomb victims to the Host for Crimewatch (protocol 98).</summary>
+        public const byte SmartbombHit = 164;
         public const byte GetAbyssalParticipantPose = 112;
         public const byte GetAbyssalParticipantPoseReply = 113;
         public const byte EnsureAbyssalSceneObject = 114;
@@ -189,6 +195,10 @@ public const byte UpdateEffect = 61;
 
     private static bool IsVector(IReadOnlyList<double> vector) =>
         vector.Count == 3 && vector.All(double.IsFinite);
+
+    private static bool ValidDeploymentBalls(IReadOnlyList<SimDeploymentBall> balls) =>
+        balls is not null && balls.Count <= 8192 && balls.All(ball => ball.ItemId > 0 && ball.TypeId > 0 && IsVector(ball.Position) &&
+            double.IsFinite(ball.Radius) && ball.Radius >= 0 && (!ball.IsWarpInPoint || ball.Radius == 0));
 
     private static bool IsSceneKey(SimSceneKey scene) => scene.IsValid;
 
@@ -331,6 +341,9 @@ public const byte UpdateEffect = 61;
 
     private static bool IsAbyssalPoseReply(SimGetAbyssalParticipantPoseReply reply) =>
         reply.RequestId > 0 && reply.Scene.IsValid && reply.ShipId > 0 &&
+        (reply.Following is null || reply.Error is null && reply.Following.TargetId > 0 &&
+            double.IsFinite(reply.Following.FollowRangeMeters) && reply.Following.FollowRangeMeters >= 0 &&
+            double.IsFinite(reply.Following.MaxVelocityMetersPerSecond) && reply.Following.MaxVelocityMetersPerSecond > 0) &&
         (reply.Error is not null ||
          IsVector(reply.Position) && IsVector(reply.Direction) && reply.Direction.Any(value => value != 0));
 

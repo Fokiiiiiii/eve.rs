@@ -5,6 +5,7 @@ using Eve.Services.Space.Waves;
 using Eve.Marshal;
 using Eve.Wallet;
 using Eve.Services;
+using Eve.Host.Persistence.FactionWarfare;
 using Npgsql;
 using static Eve.Host.HostConfiguration;
 
@@ -15,8 +16,16 @@ internal sealed partial class CharacterServicesComposition
     private FwStore factionWarfareStore = default!;
     private FwService factionWarfare = default!;
     private FwCharacterAffiliationWriter fwCharacterAffiliations = default!;
+    private FactionWarfareControlBunkers? fwControlBunkers;
     /// <summary>The open complex a pilot is inside (the keeper's current dungeon of a complex pilot); set when the complexes start (FactionWarfare).</summary>
     private Func<ClientSession, CancellationToken, Task<long?>>? complexInstanceOfPilot;
+
+    private async ValueTask<long?> ReadControlBunkerIdAsync(long solarSystemId, CancellationToken cancellationToken)
+    {
+        if (solarSystemId is <= 0 or > int.MaxValue || fwControlBunkers is not { } bunkers)
+            return null;
+        return await bunkers.ReadLiveControlBunkerIdAsync((int)solarSystemId, cancellationToken);
+    }
 
     /// <summary>
     /// The factional warfare state (schema <c>factionwarfare</c>): the store, and on the first start the occupied systems of the two warzones, seeded
@@ -213,6 +222,7 @@ internal sealed partial class CharacterServicesComposition
         factionWarfareStore = new FwStore(source, schema);
         fwCharacterAffiliations = new FwCharacterAffiliationWriter(source, characters, foundations.Relations);
         factionWarfare = new FwService(factionWarfareStore, loyaltyPoints, foundations.Relations);
+        new FactionWarfareKillProducer(factionWarfareStore, characters).Subscribe(foundations.Events);
         var lpPoolNotifications = new SolarSystemLpPoolNotifications(characterSessions);
         factionWarfare.SolarSystemLpPoolChanged += lpPoolNotifications.OnPoolChanged;
         var systems = new List<FwSystem>();
@@ -230,6 +240,16 @@ internal sealed partial class CharacterServicesComposition
         await using var transaction = await connection.BeginTransactionAsync();
         await factionWarfareStore.SeedSystemsAsync(connection, transaction, systems);
         await transaction.CommitAsync();
+
+        if (spaceSessions is not null && sim is not null)
+            fwControlBunkers = new FactionWarfareControlBunkers(source, factionWarfareStore, foundations.Scheduler, foundations.Events,
+                sim, spaceSessions, dogma, sde, message => Console.Error.WriteLine($"eve-host: factional warfare: {message}"));
+        foundations.Events.Subscribe("factionwarfare.bunker-capture-notices", [FactionWarfareControlBunkers.CaptureCompletedTopic],
+            (context, _) =>
+            {
+                NotifyControlBunkerCapture(context.Event.Payload<FwControlBunkerTransition>()!);
+                return Task.CompletedTask;
+            });
 
         if (dungeonWavesDirector is null)
         {
@@ -262,8 +282,7 @@ internal sealed partial class CharacterServicesComposition
         foundations.Events.Subscribe("factionwarfare.complex-notices", [FwComplexDirector.ResolvedTopic],
             (context, cancellation) =>
             {
-                NotifyComplexResolved(context.Event.Payload<FwComplexResolution>()!);
-                return Task.CompletedTask;
+                return NotifyComplexResolvedAsync(context.Event.Payload<FwComplexResolution>()!, cancellation);
             });
         foundations.Events.Subscribe("factionwarfare.battlefield-balls", [FwComplexDirector.BattlefieldStateTopic],
             (context, cancellation) =>
@@ -274,8 +293,7 @@ internal sealed partial class CharacterServicesComposition
         foundations.Events.Subscribe("factionwarfare.battlefield-notices", [FwComplexDirector.BattlefieldWonTopic],
             (context, cancellation) =>
             {
-                NotifyBattlefieldWon(context.Event.Payload<FwBattlefieldWon>()!);
-                return Task.CompletedTask;
+                return NotifyBattlefieldWonAsync(context.Event.Payload<FwBattlefieldWon>()!, cancellation);
             });
     }
 
@@ -306,11 +324,14 @@ internal sealed partial class CharacterServicesComposition
     }
 
     /// <summary>A battlefield won: the pilots in its system get OnFwScoreboardWon (the client's hero notice: the winning faction), and the system's victory points.</summary>
-    private void NotifyBattlefieldWon(FwBattlefieldWon win)
+    private async Task NotifyBattlefieldWonAsync(FwBattlefieldWon win, CancellationToken cancellationToken)
     {
+        if (fwControlBunkers is { } bunkers)
+            await bunkers.UpdateVulnerabilityAsync(win.SolarSystemId, win.AttackerPoints, cancellationToken);
         SendAtSystems([win.SolarSystemId], "OnFwScoreboardWon", new PyInt(win.SolarSystemId), new PyInt(win.ScoreboardId), new PyInt(win.WinnerId));
         SendAtSystems([win.SolarSystemId], "OnVictoryPointStateUpdated", new PyInt(win.SolarSystemId),
             Eve.Services.Core.FwVictoryPointMgrService.StatePayload(new Eve.Services.Core.FwVictoryPointState(win.AttackerPoints)));
+        NotifyBunkerVulnerabilityChange(win.SolarSystemId, win.AttackerId, win.PreviousAttackerPoints, win.AttackerPoints);
     }
 
     /// <summary>
@@ -337,11 +358,35 @@ internal sealed partial class CharacterServicesComposition
     /// A complex resolved: the pilots in its system get OnFacWarDungeonCompleted (the client's hero notice: the side that conquered it, or the side that defended it),
     /// and the system's victory point state is updated for them.
     /// </summary>
-    private void NotifyComplexResolved(FwComplexResolution resolution)
+    private async Task NotifyComplexResolvedAsync(FwComplexResolution resolution, CancellationToken cancellationToken)
     {
+        if (fwControlBunkers is { } bunkers)
+            await bunkers.UpdateVulnerabilityAsync(resolution.SolarSystemId, resolution.AttackerPoints, cancellationToken);
         long faction = resolution.AttackersWon ? resolution.AttackerId : resolution.OccupierId;
         SendAtSystems([resolution.SolarSystemId], "OnFacWarDungeonCompleted", resolution.AttackersWon ? PyBool.True : PyBool.False, new PyInt(faction));
         SendAtSystems([resolution.SolarSystemId], "OnVictoryPointStateUpdated", new PyInt(resolution.SolarSystemId),
             Eve.Services.Core.FwVictoryPointMgrService.StatePayload(new Eve.Services.Core.FwVictoryPointState(resolution.AttackerPoints)));
+        NotifyBunkerVulnerabilityChange(resolution.SolarSystemId, resolution.AttackerId, resolution.PreviousAttackerPoints, resolution.AttackerPoints);
+    }
+
+    private void NotifyBunkerVulnerabilityChange(long solarSystemId, long attackerId, long previousPoints, long nextPoints)
+    {
+        var before = FwRules.Contest(previousPoints);
+        var after = FwRules.Contest(nextPoints);
+        if (before != ContestState.Vulnerable && after == ContestState.Vulnerable)
+            SendAtSystems([solarSystemId], "OnFacWarBunkerVulnerable", new PyInt(attackerId));
+        else if (before == ContestState.Vulnerable && after != ContestState.Vulnerable)
+            SendAtSystems([solarSystemId], "OnFacWarBunkerNonVulnerable", new PyInt(attackerId));
+    }
+
+    private void NotifyControlBunkerCapture(FwControlBunkerTransition transition)
+    {
+        if (transition.Captured)
+        {
+            var formerAttacker = FwFactions.OccupationEnemyOf(transition.Previous.OccupierId);
+            SendAtSystems([transition.Current.SolarSystemId], "OnVictoryPointStateUpdated", new PyInt(transition.Current.SolarSystemId),
+                Eve.Services.Core.FwVictoryPointMgrService.StatePayload(new Eve.Services.Core.FwVictoryPointState(transition.Current.AttackerPoints)));
+            SendAtSystems([transition.Current.SolarSystemId], "OnFacWarBunkerNonVulnerable", new PyInt(formerAttacker));
+        }
     }
 }

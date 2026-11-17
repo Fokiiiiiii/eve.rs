@@ -674,10 +674,9 @@ public sealed class HackingMgrServiceTests
 
     private static void Target(Rig rig, ClientSession session, string action, long? targetId = null)
     {
-        var values = targetId is { } id
+        var args = targetId is { } id
             ? Py.Tuple(new PyStr(action), new PyLong(id))
             : Py.Tuple(new PyStr(action));
-        var args = Py.Tuple(new PyInt(0), Py.Tuple(new PyInt(1), values));
         rig.Sim.Say(new SimNotify((ulong)session.SessionId, "OnTarget", "shipid", MarshalCodec.Encode(args)));
     }
 

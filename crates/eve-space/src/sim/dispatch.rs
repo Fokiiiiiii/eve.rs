@@ -816,6 +816,7 @@ impl Sim {
             | Message::RemoveTournamentWreck { .. }
             | Message::RemoveUnpilotedShip { .. }
             | Message::GetSceneBody { .. }
+            | Message::GetDeploymentBalls { .. }
             | Message::GetAbyssalParticipantPose { .. }
             | Message::Enter(..)
             | Message::Leave { .. }
@@ -1129,6 +1130,9 @@ impl Sim {
             }
             Message::GetSceneBody { request_id, scene, item_id } => {
                 return Ok(self.get_scene_body(request_id, scene, item_id));
+            }
+            Message::GetDeploymentBalls { request_id, scene } => {
+                return Ok(self.get_deployment_balls(request_id, scene, now));
             }
             Message::GetAbyssalParticipantPose { request_id, scene, ship_id } => {
                 return Ok(self.get_abyssal_participant_pose(request_id, scene, ship_id, now));

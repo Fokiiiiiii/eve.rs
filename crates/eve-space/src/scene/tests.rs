@@ -3785,6 +3785,50 @@ fn a_hit_on_a_structure_is_cut_to_its_layers_limit_each_second_and_an_emptied_sh
     );
 }
 
+#[test]
+fn faction_warfare_control_bunker_takes_damage_only_while_the_host_marks_it_vulnerable() {
+    let mut scene = scene();
+    let mut placement = structure_placement(&scene, NOON);
+    placement.group_id = 925;
+    placement.type_id = 29_286;
+    placement.vitals = crate::health::Vitals {
+        shield_capacity: 100.0,
+        armor_hp: 100.0,
+        structure_hp: 100.0,
+        ..Default::default()
+    };
+    placement.limits = crate::health::StructureLimits { per_second: [1_000.0; 3], repair_pause: [200.0; 3] };
+    placement.status.state = 118;
+    scene.place_structure(placement, NOON);
+
+    let shield = |scene: &Scene, at: i64| scene.structure_health[&STRUCTURE].state_at(at).shield;
+    assert!(scene.damage_structure(STRUCTURE, [100.0, 0.0, 0.0, 0.0], NOON).is_empty());
+    assert_eq!(shield(&scene, NOON), 1.0);
+
+    scene.set_structure_state(
+        STRUCTURE,
+        crate::world::StructureStatus { state: 110, upkeep_state: 1, ..Default::default() },
+        NOON + SECOND,
+    );
+    assert!(matches!(&scene.system.bodies[scene.structure_index(STRUCTURE).unwrap()].detail,
+        Detail::Structure { status, .. } if status.state == 110));
+    let hit = scene.damage_structure(STRUCTURE, [1_000.0, 0.0, 0.0, 0.0], NOON + SECOND);
+    assert!(shield(&scene, NOON + SECOND) < 1.0, "{hit:?}");
+    assert!(
+        hit.iter().any(|event| matches!(
+            event,
+            Out::StructureDamaged {
+                structure_id: STRUCTURE,
+                depleted: Some(crate::health::Layer::Shield),
+                ..
+            }
+        )),
+        "{hit:?} shield={}",
+        shield(&scene, NOON + SECOND)
+    );
+    assert_eq!(shield(&scene, NOON + SECOND), 0.0);
+}
+
 /// A scene with a structure of `type_id` in the given state, 5 000 km out, and a ship of `group` in its docking range.
 fn near_the_structure(type_id: i32, group: i32, state: i32) -> Scene {
     let mut scene = Scene::new(system());

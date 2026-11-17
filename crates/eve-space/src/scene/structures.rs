@@ -10,6 +10,9 @@ use crate::link::StructurePlacement;
 use crate::payload;
 use crate::world::{Body, BodyKind, Detail, ORBITAL_CATEGORY, STRUCTURE_CATEGORY, StructureStatus};
 
+const FW_INFRASTRUCTURE_HUB_GROUP_ID: i32 = 925;
+const FW_CONTROL_BUNKER_VULNERABLE_STATE: i32 = 110;
+
 impl Scene {
     /// The index of a structure body of this system, if it is in space.
     pub(crate) fn structure_index(&self, structure_id: i64) -> Option<usize> {
@@ -303,7 +306,13 @@ impl Scene {
     /// A hit on a structure of this system: its layers take what the hit does, cut to the per-second limit of the layer it lands in. Told to the host
     /// when a layer is emptied or a layer's repair is paused in this second (`StructureDamaged`). A structure not in space is left alone.
     pub(crate) fn damage_structure(&mut self, structure_id: i64, raw: Damage, now: i64) -> Vec<Out> {
-        if self.structure_index(structure_id).is_none() {
+        let Some(index) = self.structure_index(structure_id) else {
+            return Vec::new();
+        };
+        let body = &self.system.bodies[index];
+        if body.group_id == FW_INFRASTRUCTURE_HUB_GROUP_ID
+            && !matches!(&body.detail, Detail::Structure { status, .. } if status.state == FW_CONTROL_BUNKER_VULNERABLE_STATE)
+        {
             return Vec::new();
         }
         let Some(health) = self.structure_health.get_mut(&structure_id) else { return Vec::new() };

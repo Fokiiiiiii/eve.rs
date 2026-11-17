@@ -4,13 +4,13 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 100,
+   "version": 101,
    "hex": "03000000016400"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 100,
+   "version": 101,
    "pollHz": 4,
    "hex": "0700000002640004000000"
   },

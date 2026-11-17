@@ -24,6 +24,9 @@ pub const MODULE_ACTIVITY_REFRESH: u8 = 162;
 pub const SMARTBOMB_HIT: u8 = 164;
 /// The ship left warp and may receive movement orders while coasting (protocol 100).
 pub const WARP_EXITED: u8 = 165;
+/// The Host asks what the client ballpark currently holds for deployment placement (protocol 101).
+pub const GET_DEPLOYMENT_BALLS: u8 = 166;
+pub const GET_DEPLOYMENT_BALLS_REPLY: u8 = 167;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

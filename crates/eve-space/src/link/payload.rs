@@ -510,6 +510,46 @@ impl Message {
                     }
                 }
             }
+            Self::GetDeploymentBalls { request_id, scene } => {
+                assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+            }
+            Self::GetDeploymentBallsReply { request_id, scene, outcome } => {
+                assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                put_scene_key(&mut out, *scene);
+                match outcome {
+                    Ok(balls) => {
+                        assert!(balls.len() <= 8192);
+                        out.push(0);
+                        out.extend_from_slice(&(balls.len() as u16).to_le_bytes());
+                        for ball in balls {
+                            assert!(
+                                ball.item_id > 0
+                                    && ball.type_id > 0
+                                    && ball.radius.is_finite()
+                                    && ball.radius >= 0.0
+                                    && ball.position.iter().all(|value| value.is_finite())
+                                    && (!ball.warp_in_point || ball.radius == 0.0)
+                            );
+                            out.extend_from_slice(&ball.item_id.to_le_bytes());
+                            out.extend_from_slice(&ball.type_id.to_le_bytes());
+                            for value in ball.position {
+                                out.extend_from_slice(&value.to_le_bytes());
+                            }
+                            out.extend_from_slice(&ball.radius.to_le_bytes());
+                            out.push(u8::from(ball.warp_in_point));
+                        }
+                        put_text(&mut out, "");
+                    }
+                    Err(error) => {
+                        assert!(!error.is_empty());
+                        out.push(1);
+                        put_text(&mut out, error);
+                    }
+                }
+            }
             Self::GetAbyssalParticipantPose { request_id, scene, ship_id } => {
                 assert!(*request_id > 0 && scene.is_valid() && *ship_id > 0, "invalid resident pose request");
                 out.extend_from_slice(&request_id.to_le_bytes());

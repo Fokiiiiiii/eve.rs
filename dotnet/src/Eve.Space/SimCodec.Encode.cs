@@ -1131,6 +1131,27 @@ private static void WriteStructureDamageCorrelation(
                 if (m.Error is null) { w.I32(m.TypeId); w.I32(m.GroupId); w.I32(m.CategoryId); WriteVector(w, m.Position); }
                 w.Text(m.Error ?? string.Empty);
                 break;
+            case SimGetDeploymentBalls m:
+                if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0)
+                    throw new ArgumentException("Invalid deployment balls request.", nameof(message));
+                w.U8(Kind.GetDeploymentBalls); w.U64(m.RequestId); WriteSceneKey(w, m.Scene);
+                break;
+            case SimGetDeploymentBallsReply m:
+                if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || !ValidDeploymentBalls(m.Balls) || m.Error is { Length: 0 } ||
+                    (m.Error is null && m.Balls.Count > ushort.MaxValue))
+                    throw new ArgumentException("Invalid deployment balls reply.", nameof(message));
+                w.U8(Kind.GetDeploymentBallsReply); w.U64(m.RequestId); WriteSceneKey(w, m.Scene);
+                w.U8(m.Error is null ? (byte)0 : (byte)1);
+                if (m.Error is null)
+                {
+                    w.U16((ushort)m.Balls.Count);
+                    foreach (var ball in m.Balls)
+                    {
+                        w.I64(ball.ItemId); w.I32(ball.TypeId); WriteVector(w, ball.Position); w.F64(ball.Radius); w.U8(ball.IsWarpInPoint ? (byte)1 : (byte)0);
+                    }
+                }
+                w.Text(m.Error ?? string.Empty);
+                break;
             case SimGetAbyssalParticipantPose m:
                 if (!IsAbyssalPoseRequest(m)) throw new ArgumentException("Invalid Abyssal participant pose request.", nameof(message));
                 w.U8(Kind.GetAbyssalParticipantPose);

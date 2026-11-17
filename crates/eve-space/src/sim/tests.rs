@@ -1,7 +1,7 @@
 use super::*;
 use crate::health::Condition;
 use crate::scene::tests::{NOON, SESSION, STATION, spec, system};
-use crate::world::SolarSystem;
+use crate::world::{Body, BodyKind, Detail, SolarSystem};
 
 #[path = "abyssal_environment_tests.rs"]
 mod abyssal_environment_tests;
@@ -1178,6 +1178,99 @@ fn public_scene_body_query_uses_loaded_scene_and_reports_absence() {
         sim.handle(Message::GetSceneBody { request_id: 9, scene: private, item_id: body.id }, NOON).unwrap();
     assert!(
         matches!(&denied[..], [Message::GetSceneBodyReply { outcome: Err(error), .. }] if error == "BAD_SCENE_BODY_REQUEST")
+    );
+}
+
+#[test]
+fn deployment_ball_query_returns_live_balls_and_client_warp_in_points() {
+    let mut system = (*system()).clone();
+    let celestial = Body {
+        id: 70_000_001,
+        type_id: 2_000,
+        group_id: 7,
+        category_id: 2,
+        owner_id: 0,
+        name: "Test Planet".to_string(),
+        kind: BodyKind::Planet,
+        position: Vec3::new(50_000_000.0, 10_000.0, -25_000_000.0),
+        radius: 100_000.0,
+        graphic_id: None,
+        detail: Detail::None,
+    };
+    let belt = Body {
+        id: 70_000_002,
+        type_id: 15,
+        group_id: 9,
+        category_id: 2,
+        owner_id: 0,
+        name: "Large Test Belt".to_string(),
+        kind: BodyKind::Belt,
+        position: Vec3::new(-75_000_000.0, 0.0, 30_000_000.0),
+        radius: 106_355.0,
+        graphic_id: None,
+        detail: Detail::None,
+    };
+    let expected_warp_point = crate::warp::warp_in_point(&celestial).unwrap();
+    let expected_belt_warp_point = crate::warp::deployment_warp_in_point(&belt).unwrap();
+    system.bodies.push(celestial.clone());
+    system.bodies.push(belt.clone());
+    let scene = SceneKey::solar_system(SYSTEM);
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([system])));
+    sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+
+    let mut structure =
+        crate::scene::tests::structure_placement(&Scene::new(crate::scene::tests::system()), NOON);
+    structure.structure_id = 1_040_000_000_001;
+    structure.position = [25_000.0, 0.0, 0.0];
+    let structure_id = structure.structure_id;
+    let structure_type_id = structure.type_id;
+    sim.handle(Message::PlaceStructure(Box::new(structure)), NOON).unwrap();
+
+    let request = Message::GetDeploymentBalls { request_id: 104, scene };
+    assert_eq!(Message::decode(&request.payload()).unwrap(), request);
+    let reply = sim.handle(request, NOON).unwrap();
+    let Message::GetDeploymentBallsReply { outcome: Ok(balls), .. } = &reply[0] else {
+        panic!("deployment balls")
+    };
+    assert!(
+        balls.iter().any(|ball| ball.item_id == spec().ship_id
+            && ball.type_id == spec().type_id
+            && !ball.warp_in_point)
+    );
+    assert!(balls.iter().any(|ball| ball.item_id == celestial.id
+        && ball.type_id == celestial.type_id
+        && !ball.warp_in_point
+        && ball.position == [celestial.position.x, celestial.position.y, celestial.position.z]
+        && ball.radius == celestial.radius));
+    assert!(balls.iter().any(|ball| ball.item_id == structure_id
+        && ball.type_id == structure_type_id
+        && !ball.warp_in_point));
+    assert!(balls.iter().any(|ball| ball.item_id == celestial.id
+        && ball.type_id == celestial.type_id
+        && ball.warp_in_point
+        && ball.position == [expected_warp_point.x, expected_warp_point.y, expected_warp_point.z]
+        && ball.radius == 0.0));
+    assert!(
+        balls
+            .iter()
+            .any(|ball| ball.item_id == belt.id && ball.type_id == belt.type_id && !ball.warp_in_point)
+    );
+    assert!(balls.iter().any(|ball| ball.item_id == belt.id
+        && ball.type_id == belt.type_id
+        && ball.warp_in_point
+        && ball.position
+            == [expected_belt_warp_point.x, expected_belt_warp_point.y, expected_belt_warp_point.z]
+        && ball.radius == 0.0));
+    assert_eq!(Message::decode(&reply[0].payload()).unwrap(), reply[0]);
+
+    let missing = sim
+        .handle(
+            Message::GetDeploymentBalls { request_id: 105, scene: SceneKey::solar_system(SYSTEM + 1) },
+            NOON,
+        )
+        .unwrap();
+    assert!(
+        matches!(&missing[..], [Message::GetDeploymentBallsReply { outcome: Err(error), .. }] if error == "SCENE_NOT_LOADED")
     );
 }
 
@@ -5130,5 +5223,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
     // The Host and simulation carry Abyssal FOLLOW pose state in SimLink v100.
-    assert_eq!(crate::link::PROTOCOL_VERSION, 100);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 101);
 }

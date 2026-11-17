@@ -47,7 +47,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 100;
+pub const PROTOCOL_VERSION: u16 = 101;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -707,6 +707,16 @@ pub struct AbyssalTrace {
     pub expires_at_ms: i64,
 }
 
+/// A client-visible ball or its client-calculated warp-in point, used by deployment placement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeploymentBall {
+    pub item_id: i64,
+    pub type_id: i32,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub warp_in_point: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum AbyssalTraceStatus {
@@ -1049,6 +1059,15 @@ pub enum Message {
         scene: SceneKey,
         item_id: i64,
         outcome: Result<(i32, i32, i32, [f64; 3]), String>,
+    },
+    GetDeploymentBalls {
+        request_id: u64,
+        scene: SceneKey,
+    },
+    GetDeploymentBallsReply {
+        request_id: u64,
+        scene: SceneKey,
+        outcome: Result<Vec<DeploymentBall>, String>,
     },
     GetAbyssalParticipantPose {
         request_id: u64,
@@ -1778,6 +1797,8 @@ impl Message {
             Self::RemoveUnpilotedShipReply { .. } => kind::REMOVE_UNPILOTED_SHIP_REPLY,
             Self::GetSceneBody { .. } => kind::GET_SCENE_BODY,
             Self::GetSceneBodyReply { .. } => kind::GET_SCENE_BODY_REPLY,
+            Self::GetDeploymentBalls { .. } => kind::GET_DEPLOYMENT_BALLS,
+            Self::GetDeploymentBallsReply { .. } => kind::GET_DEPLOYMENT_BALLS_REPLY,
             Self::GetAbyssalParticipantPose { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE,
             Self::GetAbyssalParticipantPoseReply { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE_REPLY,
             Self::Enter(_) => kind::ENTER,

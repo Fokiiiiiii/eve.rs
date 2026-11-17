@@ -31,6 +31,8 @@ public static partial class SimCodec
         public const byte ServiceNotify = 125;
         public const byte GetSceneBody = 126;
         public const byte GetSceneBodyReply = 127;
+        public const byte GetDeploymentBalls = 166;
+        public const byte GetDeploymentBallsReply = 167;
         public const byte EnsureTournamentBeacon = 128;
         public const byte EnsureTournamentBeaconReply = 129;
         public const byte RemoveTournamentBeacon = 130;
@@ -193,6 +195,10 @@ public const byte UpdateEffect = 61;
 
     private static bool IsVector(IReadOnlyList<double> vector) =>
         vector.Count == 3 && vector.All(double.IsFinite);
+
+    private static bool ValidDeploymentBalls(IReadOnlyList<SimDeploymentBall> balls) =>
+        balls is not null && balls.Count <= 8192 && balls.All(ball => ball.ItemId > 0 && ball.TypeId > 0 && IsVector(ball.Position) &&
+            double.IsFinite(ball.Radius) && ball.Radius >= 0 && (!ball.IsWarpInPoint || ball.Radius == 0));
 
     private static bool IsSceneKey(SimSceneKey scene) => scene.IsValid;
 

@@ -150,6 +150,13 @@ fn has_warp_in_point(body: &Body) -> bool {
         && if body.category_id > 0 { body.category_id == CATEGORY_CELESTIAL } else { false }
 }
 
+/// Whether V24 `Ballpark.GetWarpinPoints` includes this body for structure deployment validation.
+fn has_deployment_warp_in_point(body: &Body) -> bool {
+    body.radius >= MIN_WARP_IN_RADIUS
+        && body.group_id != GROUP_WRECK
+        && body.category_id == CATEGORY_CELESTIAL
+}
+
 fn sun_point(body: &Body) -> Vec3 {
     let radius = body.radius;
     Vec3::new(
@@ -197,6 +204,19 @@ pub fn warp_in_point(body: &Body) -> Option<Vec3> {
     if !has_warp_in_point(body) {
         return None;
     }
+    point_for_body(body)
+}
+
+/// The point V24 adds in `Ballpark.GetWarpinPoints` for deployment checks. The client includes large asteroid-belt balls here even though normal
+/// warp targeting treats a belt as a range stop.
+pub fn deployment_warp_in_point(body: &Body) -> Option<Vec3> {
+    if !has_deployment_warp_in_point(body) {
+        return None;
+    }
+    point_for_body(body)
+}
+
+fn point_for_body(body: &Body) -> Option<Vec3> {
     match body.group_id {
         GROUP_PLANET => planet_point(body),
         GROUP_SUN => Some(sun_point(body)),
@@ -414,6 +434,10 @@ mod tests {
         assert_eq!(warp_in_point(&moon), None);
         moon.group_id = GROUP_ASTEROID_BELT;
         assert_eq!(warp_in_point(&moon), None);
+        assert!(
+            deployment_warp_in_point(&moon).is_some(),
+            "V24 adds eligible large belts to GetWarpinPoints"
+        );
     }
 
     #[test]

@@ -727,6 +727,22 @@ impl Sim {
         vec![Message::GetSceneBodyReply { request_id, scene: scene_key, item_id, outcome }]
     }
 
+    pub(super) fn get_deployment_balls(
+        &mut self,
+        request_id: u64,
+        scene_key: SceneKey,
+        now: i64,
+    ) -> Vec<Message> {
+        let outcome = if request_id == 0 || !scene_key.is_valid() || scene_key.instance_id != 0 {
+            Err("BAD_DEPLOYMENT_BALLS_REQUEST".to_string())
+        } else if let Some(scene) = self.scenes.get_mut(&scene_key) {
+            Ok(scene.deployment_balls(now))
+        } else {
+            Err("SCENE_NOT_LOADED".to_string())
+        };
+        vec![Message::GetDeploymentBallsReply { request_id, scene: scene_key, outcome }]
+    }
+
     pub(super) fn get_abyssal_participant_pose(
         &mut self,
         request_id: u64,

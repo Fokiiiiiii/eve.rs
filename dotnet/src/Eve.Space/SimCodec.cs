@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 100;
+    public const ushort ProtocolVersion = 101;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -464,6 +464,39 @@ public static partial class SimCodec
                         (status == 1 && error.Length == 0))
                         throw new SimLinkException(SimLinkError.BadValue, "bad scene body reply");
                     message = new SimGetSceneBodyReply(id, scene, item, type, group, category, position, status == 0 ? null : error);
+                    break;
+                }
+            case Kind.GetDeploymentBalls:
+                {
+                    var request = new SimGetDeploymentBalls(r.U64(), ReadSceneKey(ref r));
+                    if (request.RequestId == 0 || !request.Scene.IsValid || request.Scene.InstanceId != 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad deployment balls request");
+                    message = request;
+                    break;
+                }
+            case Kind.GetDeploymentBallsReply:
+                {
+                    var id = r.U64(); var scene = ReadSceneKey(ref r); var status = r.U8();
+                    if (id == 0 || !scene.IsValid || scene.InstanceId != 0 || status > 1)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad deployment balls reply identity");
+                    var balls = new List<SimDeploymentBall>();
+                    if (status == 0)
+                    {
+                        var count = r.U16();
+                        if (count > 8192)
+                            throw new SimLinkException(SimLinkError.BadValue, "too many deployment balls");
+                        for (var index = 0; index < count; index++)
+                        {
+                            var item = r.I64(); var type = r.I32(); var position = ReadVector(ref r); var radius = r.F64(); var warpFlag = r.U8();
+                            if (item <= 0 || type <= 0 || !IsVector(position) || !double.IsFinite(radius) || radius < 0 || warpFlag > 1 || (warpFlag == 1 && radius != 0))
+                                throw new SimLinkException(SimLinkError.BadValue, "bad deployment ball");
+                            balls.Add(new SimDeploymentBall(item, type, position, radius, warpFlag == 1));
+                        }
+                    }
+                    var error = r.Text();
+                    if ((status == 0 && error.Length > 0) || (status == 1 && error.Length == 0))
+                        throw new SimLinkException(SimLinkError.BadValue, "invalid deployment balls result");
+                    message = new SimGetDeploymentBallsReply(id, scene, balls, status == 1 ? error : null);
                     break;
                 }
             case Kind.GetAbyssalParticipantPose:

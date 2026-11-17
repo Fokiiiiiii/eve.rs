@@ -1059,6 +1059,68 @@ impl Message {
                 };
                 Message::GetSceneBodyReply { request_id, scene, item_id, outcome }
             }
+            kind::GET_DEPLOYMENT_BALLS => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                if request_id == 0 || !scene.is_valid() || scene.instance_id != 0 {
+                    return Err(DecodeError::BadValue("deployment balls request"));
+                }
+                Message::GetDeploymentBalls { request_id, scene }
+            }
+            kind::GET_DEPLOYMENT_BALLS_REPLY => {
+                let request_id = r.u64()?;
+                let scene = read_scene_key(&mut r)?;
+                if request_id == 0 || !scene.is_valid() || scene.instance_id != 0 {
+                    return Err(DecodeError::BadValue("deployment balls reply identity"));
+                }
+                let outcome = match r.u8()? {
+                    0 => {
+                        let count = r.u16()? as usize;
+                        if count > 8192 {
+                            return Err(DecodeError::BadValue("too many deployment balls"));
+                        }
+                        let mut balls = Vec::with_capacity(count);
+                        for _ in 0..count {
+                            let item_id = r.i64()?;
+                            let type_id = r.i32()?;
+                            let position = [r.f64()?, r.f64()?, r.f64()?];
+                            let radius = r.f64()?;
+                            let warp_flag = r.u8()?;
+                            if item_id <= 0
+                                || type_id <= 0
+                                || !radius.is_finite()
+                                || radius < 0.0
+                                || position.iter().any(|value| !value.is_finite())
+                                || warp_flag > 1
+                                || (warp_flag == 1 && radius != 0.0)
+                            {
+                                return Err(DecodeError::BadValue("deployment ball"));
+                            }
+                            balls.push(DeploymentBall {
+                                item_id,
+                                type_id,
+                                position,
+                                radius,
+                                warp_in_point: warp_flag == 1,
+                            });
+                        }
+                        let error = r.text()?;
+                        if !error.is_empty() {
+                            return Err(DecodeError::BadValue("deployment balls success error"));
+                        }
+                        Ok(balls)
+                    }
+                    1 => {
+                        let error = r.text()?;
+                        if error.is_empty() {
+                            return Err(DecodeError::BadValue("deployment balls error"));
+                        }
+                        Err(error)
+                    }
+                    _ => return Err(DecodeError::BadValue("deployment balls result")),
+                };
+                Message::GetDeploymentBallsReply { request_id, scene, outcome }
+            }
             kind::GET_ABYSSAL_PARTICIPANT_POSE => {
                 let request_id = r.u64()?;
                 let scene = read_scene_key(&mut r)?;

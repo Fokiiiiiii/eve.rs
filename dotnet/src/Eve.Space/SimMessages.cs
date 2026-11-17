@@ -165,6 +165,11 @@ public sealed record SimGetSceneBody(ulong RequestId, SimSceneKey Scene, long It
 public sealed record SimGetSceneBodyReply(ulong RequestId, SimSceneKey Scene, long ItemId,
     int TypeId, int GroupId, int CategoryId, IReadOnlyList<double> Position, string? Error) : SimMessage;
 
+/// <summary>A ball the client can see in a solar-system ballpark when it checks a structure deployment point.</summary>
+public sealed record SimDeploymentBall(long ItemId, int TypeId, IReadOnlyList<double> Position, double Radius, bool IsWarpInPoint);
+public sealed record SimGetDeploymentBalls(ulong RequestId, SimSceneKey Scene) : SimMessage;
+public sealed record SimGetDeploymentBallsReply(ulong RequestId, SimSceneKey Scene, IReadOnlyList<SimDeploymentBall> Balls, string? Error) : SimMessage;
+
 public sealed record SimGetAbyssalParticipantPose(
     ulong RequestId, SimSceneKey Scene, long ShipId) : SimMessage;
 

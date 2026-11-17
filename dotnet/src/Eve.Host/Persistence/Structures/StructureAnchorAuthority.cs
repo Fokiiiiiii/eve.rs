@@ -9,6 +9,7 @@ using Eve.Services;
 using Eve.Services.Core;
 using Eve.Services.Ships;
 using Eve.Services.Space;
+using Eve.Space;
 using Eve.Ships;
 using Eve.Structures;
 using Npgsql;
@@ -53,7 +54,7 @@ public sealed class StructureAnchorAuthority
         [2] = 1_000_000, [46] = 1_000_000, [40] = 1_000_000, [3] = 1_000_000, [23] = 1_000_000, [65] = 1_000_000,
     };
 
-    private readonly record struct PlacementBall(long ItemId, int TypeId, double X, double Y, double Z, double? Radius);
+    private readonly record struct PlacementBall(long ItemId, int TypeId, double X, double Y, double Z, double? Radius, bool IsWarpInPoint = false);
 
     private readonly NpgsqlDataSource _source;
     private readonly StructureStore _store;
@@ -72,6 +73,7 @@ public sealed class StructureAnchorAuthority
     private readonly Func<long, CancellationToken, ValueTask<IReadOnlyList<StructureProfileRecord>>>? _profiles;
     private readonly Func<CancellationToken, ValueTask<(SovFwReadSnapshot Snapshot, IReadOnlyList<DevelopmentIndexRecord> DevelopmentIndices)>>? _sov;
     private readonly Func<NpgsqlConnection, NpgsqlTransaction, NewStructure, long, CancellationToken, Task<StructureTransition?>>? _anchorWithDuration;
+    private readonly Func<int, CancellationToken, Task<IReadOnlyList<SimDeploymentBall>>>? _readDeploymentBalls;
 
     public StructureAnchorAuthority(
         NpgsqlDataSource source, StructureStore store, StructureTimers timers, StructureRulesSource rules, DurableScheduler scheduler, EventBus events,
@@ -81,7 +83,8 @@ public sealed class StructureAnchorAuthority
         Func<CancellationToken, ValueTask<(SovFwReadSnapshot Snapshot, IReadOnlyList<DevelopmentIndexRecord> DevelopmentIndices)>>? sov = null,
         Func<NpgsqlConnection, NpgsqlTransaction, NewStructure, long, CancellationToken, Task<StructureTransition?>>? anchorWithDuration = null,
         Func<ClientSession, int?>? solarSystemOf = null,
-        Func<ClientSession, long?>? shipIdOf = null)
+        Func<ClientSession, long?>? shipIdOf = null,
+        Func<int, CancellationToken, Task<IReadOnlyList<SimDeploymentBall>>>? readDeploymentBalls = null)
     {
         _source = source;
         _store = store;
@@ -95,6 +98,7 @@ public sealed class StructureAnchorAuthority
         _shipPosition = shipPosition;
         _solarSystemOf = solarSystemOf;
         _shipIdOf = shipIdOf;
+        _readDeploymentBalls = readDeploymentBalls;
         _isWarping = isWarping;
         _placed = placed;
         _profiles = profiles;
@@ -256,6 +260,14 @@ public sealed class StructureAnchorAuthority
             if (structure.SolarSystemId == systemId)
                 balls.Add(new PlacementBall(structure.Snapshot.StructureId, structure.TypeId, structure.X, structure.Y, structure.Z, null));
         }
+        if (_readDeploymentBalls is { } readDeploymentBalls)
+        {
+            var liveBalls = await readDeploymentBalls(systemId, cancellationToken);
+            var liveRealBallIds = liveBalls.Where(ball => !ball.IsWarpInPoint).Select(ball => ball.ItemId).ToHashSet();
+            balls.RemoveAll(ball => !ball.IsWarpInPoint && liveRealBallIds.Contains(ball.ItemId));
+            balls.AddRange(liveBalls.Select(ball => new PlacementBall(
+                ball.ItemId, ball.TypeId, ball.Position[0], ball.Position[1], ball.Position[2], ball.Radius, ball.IsWarpInPoint)));
+        }
 
         await _dogma.EnsureTypesAsync(balls.Select(ball => ball.TypeId).Append(typeId), cancellationToken);
         var deployedType = _dogma.Type(typeId)
@@ -270,7 +282,7 @@ public sealed class StructureAnchorAuthority
                 ?? throw new InvalidOperationException($"placement blocker type {ball.TypeId} has no static dogma data");
             var blockerRadius = ball.Radius ?? Radius(blocker);
             var distance = Distance(x, y, z, ball.X, ball.Y, ball.Z);
-            if (blocker.GroupId == MoonGroupId)
+            if (!ball.IsWarpInPoint && blocker.GroupId == MoonGroupId)
             {
                 var beacon = Eve.Services.Space.MoonMiningPointCatalog.Resolve(ball.ItemId, systemId);
                 var beaconInRange = beacon is { } point && Distance(x, y, z, point.X, point.Y, point.Z) < MaximumMiningBeaconDistanceM;

@@ -303,10 +303,7 @@ impl Scene {
             told.extend(self.bind_controlled_structure(session, now));
             return told;
         }
-        let fresh_undock = self
-            .pilots
-            .get(&session)
-            .is_some_and(|pilot| !pilot.jumped_in && !pilot.bound && pilot.leaving_station.is_some());
+        let fresh_undock = self.pilots.get(&session).is_some_and(|pilot| !pilot.jumped_in && !pilot.bound);
         self.settle_all(now);
         self.take_in_view(session);
         let state_stamp = self.next_stamp(now);

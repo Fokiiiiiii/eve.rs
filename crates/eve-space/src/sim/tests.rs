@@ -1781,8 +1781,8 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
         .collect();
     assert_eq!(
         session_notifications,
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"],
-        "the full bound state precedes its ship numbers and the bind acknowledgement"
+        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"],
+        "the full state and ship numbers share one bound Destiny batch before acknowledgement"
     );
     assert!(matches!(
         rebound.last(),
@@ -1798,11 +1798,19 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
         .filter(|message| matches!(message, Message::Notify { session_id: 77, name, .. } if name == "DoDestinyUpdate"))
         .map(destiny_actions)
         .collect();
-    assert_eq!(destiny_updates.len(), 2);
+    assert_eq!(destiny_updates.len(), 1);
     assert_eq!(
         destiny_updates[0].iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
-        ["SetState"],
-        "SetState is the first Destiny update for the rebound ballpark"
+        [
+            "SetState",
+            "SetBallAgility",
+            "SetBallMass",
+            "SetMaxSpeed",
+            "SetBallAgility",
+            "SetBallMass",
+            "SetMaxSpeed",
+        ],
+        "SetState and each visible dynamic ship's numbers share one Destiny update"
     );
     let set_state = destiny_updates[0][0].1.first().expect("SetState carries its full-state KeyVal");
     let slim_items = match object_field(set_state, "slims") {
@@ -1825,14 +1833,14 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
         );
     }
 
-    let number_actions = &destiny_updates[1];
-    let actual_numbers: BTreeSet<_> = number_actions
+    let number_actions = &destiny_updates[0][1..];
+    let actual_numbers: Vec<_> = number_actions
         .iter()
         .filter_map(|(name, args)| {
             args.first().and_then(wire_integer).map(|item_id| (name.as_str(), item_id))
         })
         .collect();
-    let expected_numbers: BTreeSet<_> = sim.scenes[&second]
+    let expected_numbers: Vec<_> = sim.scenes[&second]
         .ships_in_view(77)
         .into_iter()
         .filter(|ship| ship.spec.max_velocity > 0.0)
@@ -1844,7 +1852,7 @@ fn abyssal_room_transfer_preserves_the_ship_and_rebinds_a_new_session_before_ori
         .collect();
     assert_eq!(
         actual_numbers, expected_numbers,
-        "the bound state is followed by each visible ship's numbers"
+        "the same bound Destiny update carries each visible ship's numbers after SetState"
     );
     let rebound_state = sim.handle(Message::UpdateState { session_id: 77 }, NOON + 2 * SECOND).unwrap();
     assert!(names(&rebound_state).iter().any(|name| name == "DoDestinyUpdate"));
@@ -2849,10 +2857,20 @@ fn an_undock_puts_the_ship_in_space_and_binding_sends_it_the_scene_as_marshalled
     let out = sim.handle(Message::Bind { session_id: SESSION }, NOON).unwrap();
     let (acknowledgement, notifications) =
         out.split_last().expect("ballpark bind returns its acknowledgement after the scene");
-    assert_eq!(
-        names(notifications),
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate", "DoDestinyUpdate"]
-    );
+    assert_eq!(names(notifications), ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"]);
+    let destiny_update = notifications
+        .iter()
+        .find(|message| matches!(message, Message::Notify { name, .. } if name == "DoDestinyUpdate"))
+        .expect("the bound scene has one Destiny update");
+    let actions = destiny_actions(destiny_update);
+    assert_eq!(actions.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["SetState"]);
+    let set_state = actions[0].1.first().expect("SetState carries its full-state KeyVal");
+    assert_eq!(wire_integer(object_field(set_state, "ego").expect("SetState ego")), Some(spec().ship_id));
+    let state_buffer = match object_field(set_state, "state") {
+        Some(Value::Buffer(bytes)) => bytes,
+        other => panic!("SetState must carry its ball buffer: {other:?}"),
+    };
+    assert!(state_buffer.windows(8).any(|window| window == spec().ship_id.to_le_bytes()));
     assert!(matches!(
         acknowledgement,
         Message::Accepted { session_id: SESSION, command: crate::link::COMMAND_BIND_BALLPARK, at: NOON }
@@ -2956,8 +2974,16 @@ fn an_undock_rejects_bad_locations_and_in_space_login_restores_the_saved_pose() 
                 _ => None,
             })
             .collect::<Vec<_>>(),
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"],
-        "the bind carries clock sync, full ego-ball state and ship numbers"
+        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"],
+        "the bind carries clock sync, full ego-ball state and ship numbers in one update"
+    );
+    let destiny_update = bound
+        .iter()
+        .find(|message| matches!(message, Message::Notify { name, .. } if name == "DoDestinyUpdate"))
+        .expect("in-space login has one Destiny update");
+    assert_eq!(
+        destiny_actions(destiny_update).iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]
     );
     assert!(matches!(
         bound.last(),
@@ -3764,9 +3790,14 @@ fn a_jump_takes_the_ship_to_the_scene_of_the_other_system_when_it_is_due() {
     // the client binds the ballpark of the new system and is sent it
     let bound = sim.handle(Message::Bind { session_id: SESSION }, NOON + 5 * SECOND).unwrap();
     let (acknowledgement, notifications) = bound.split_last().expect("the bound scene is acknowledged last");
+    assert_eq!(names(notifications), ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate"]);
+    let destiny_update = notifications
+        .iter()
+        .find(|message| matches!(message, Message::Notify { name, .. } if name == "DoDestinyUpdate"))
+        .expect("jump arrival has one Destiny update");
     assert_eq!(
-        names(notifications),
-        ["OnSetTimeDilation", "DoSimClockRebase", "DoDestinyUpdate", "DoDestinyUpdate"]
+        destiny_actions(destiny_update).iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]
     );
     let Message::Accepted { session_id, command, at } = acknowledgement else {
         panic!("{acknowledgement:?}")
@@ -3827,7 +3858,7 @@ fn a_ship_binding_after_a_gate_jump_sees_empire_sentries_before_the_first_destin
 }
 
 #[test]
-fn a_jump_arrival_set_state_waits_for_the_same_stamp_followup_update() {
+fn a_jump_arrival_is_one_set_state_update_with_ship_numbers_and_no_owner_jump_in_effect() {
     use crate::scene::tests::{ARRIVAL_GATE, NEAR_GATE};
 
     let (here, there) = crate::scene::tests::gated_systems();
@@ -3841,25 +3872,16 @@ fn a_jump_arrival_set_state_waits_for_the_same_stamp_followup_update() {
         .iter()
         .filter(|message| matches!(message, Message::Notify { session_id: SESSION, name, .. } if name == "DoDestinyUpdate"))
         .collect();
-    assert!(updates.len() >= 2, "SetState has a same-stamp follow-up update");
-    let arrival_actions = destiny_actions(updates[0]);
-    assert_eq!(arrival_actions[0].0, "SetState");
-    assert_eq!(arrival_actions[1].0, "OnSpecialFX");
-    assert_eq!(arrival_actions[1].1[0], crate::wire::id(spec().ship_id));
-    assert!(matches!(
-        &arrival_actions[1].1[5],
-        Value::Bytes(name) if name.as_ref() == b"effects.JumpIn"
-    ));
-    assert_eq!(arrival_actions[1].1[9], crate::wire::int(5_000));
-    let wait = |message: &Message| {
-        let Message::Notify { args, .. } = message else { panic!("expected DoDestinyUpdate: {message:?}") };
-        let Value::Tuple(arguments) = eve_marshal::decode_exact(args).unwrap() else {
-            panic!("DoDestinyUpdate arguments must be a tuple")
-        };
-        matches!(arguments.get(1), Some(Value::Bool(true)))
+    assert_eq!(updates.len(), 1, "the SetState and its ship numbers share one batch");
+    assert_eq!(
+        destiny_actions(updates[0]).iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(),
+        ["SetState", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]
+    );
+    let Message::Notify { args, .. } = updates[0] else { panic!("expected DoDestinyUpdate") };
+    let Value::Tuple(arguments) = eve_marshal::decode_exact(args).unwrap() else {
+        panic!("DoDestinyUpdate arguments must be a tuple")
     };
-    assert!(wait(updates[0]), "the client holds SetState until its same-stamp follow-up arrives");
-    assert!(!wait(updates[1]), "the follow-up update releases the held SetState");
+    assert_eq!(arguments.get(1), Some(&Value::Bool(false)));
 }
 
 #[test]

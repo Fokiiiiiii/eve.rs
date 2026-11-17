@@ -189,7 +189,7 @@ impl Scene {
         out
     }
 
-    /// `AddBalls2` of a ship followed by its numbers, as a watcher is sent a ship that has come into view.
+    /// A packaged `AddBalls2` of a ship followed by its numbers, as a watcher is sent a ship that has come into view.
     pub(crate) fn introduction(&mut self, subject: SessionId, now: i64) -> Option<Vec<Value>> {
         let stamp = self.next_stamp(now);
         self.introduction_at(subject, stamp, now)
@@ -223,17 +223,17 @@ impl Scene {
             return Vec::new();
         }
         let stamp = self.next_stamp(now);
-        let Some(actions) = self.introduction_at(subject, stamp, now) else { return Vec::new() };
-        let movement_prime = self.station_undock_movement_prime(subject, stamp);
-        let wait_for_add = self.pilots.get(&subject).is_some_and(|pilot| pilot.leaving_station.is_some());
+        let Some(mut actions) = self.introduction_at(subject, stamp, now) else { return Vec::new() };
+        if let Some(movement_prime) = self.station_undock_movement_prime(subject, stamp) {
+            // EveJS routes the packaged AddBalls2 and every ship prime through the same
+            // Grid bubble batch. The client expands PackagedAction before applying the
+            // ordered actions, so keep the movement prime in that batch after the add.
+            actions.extend(movement_prime);
+        }
         let mut out = Vec::new();
         for watcher in watchers {
             self.set_sees_ship(watcher, subject, true);
-            // The client binds the undocked ball before applying the separate movement prime.
-            out.push(Self::update_wait(watcher, actions.clone(), wait_for_add));
-            if let Some(prime) = movement_prime.as_ref() {
-                out.push(Self::update(watcher, prime.clone()));
-            }
+            out.push(Self::update(watcher, actions.clone()));
         }
         out
     }

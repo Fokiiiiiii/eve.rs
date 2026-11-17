@@ -225,23 +225,29 @@ fn state_ship_ids(out: &Out) -> Vec<i64> {
 }
 
 #[test]
-fn a_ship_that_undocks_is_shown_to_the_bound_pilot_with_its_numbers_and_movement_prime() {
+fn a_ship_that_undocks_is_shown_to_the_bound_pilot_with_its_numbers_and_movement_prime_in_one_bubble_update()
+{
     let mut scene = watcher();
     let told = scene.undock(B, other_spec(), STATION, NOON + SECOND).unwrap();
-    assert_eq!(told.len(), 2);
+    assert_eq!(told.len(), 1);
     assert_eq!(recipient(&told[0]), A);
-    assert_eq!(names(&told[0]), ["PackagedAction", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
+    assert_eq!(
+        names(&told[0]),
+        [
+            "PackagedAction",
+            "SetBallAgility",
+            "SetBallMass",
+            "SetMaxSpeed",
+            "SetBallMassive",
+            "SetBallMass",
+            "SetBallVelocity",
+            "GotoDirection",
+        ]
+    );
     assert_eq!(added_ships(&told[0]), [other_spec().ship_id]);
-    assert!(matches!(&told[0], Out::Notify { args, .. } if args[1] == Value::Bool(true)));
-    assert_eq!(recipient(&told[1]), A);
-    assert_eq!(names(&told[1]), ["SetBallMassive", "SetBallMass", "SetBallVelocity", "GotoDirection"]);
-    assert!(matches!(&told[1], Out::Notify { args, .. } if args[1] == Value::Bool(false)));
+    assert!(matches!(&told[0], Out::Notify { args, .. } if args[1] == Value::Bool(false)));
     let first_stamp = stamps(&told[0])[0];
     assert!(stamps(&told[0]).iter().all(|stamp| *stamp == first_stamp));
-    assert!(
-        stamps(&told[1]).iter().all(|stamp| *stamp == first_stamp),
-        "prime shares the introduction stamp"
-    );
 }
 
 #[test]

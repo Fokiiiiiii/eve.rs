@@ -57,6 +57,60 @@ fn action_names(out: &Out) -> Vec<String> {
         .collect()
 }
 
+fn packaged_action_names(out: &Out) -> Vec<String> {
+    let Out::Notify { args, .. } = out else { panic!("{out:?}") };
+    let Value::List(actions) = &args[0] else { panic!("{args:?}") };
+    let Value::Tuple(pair) = &actions[0] else { panic!("{:?}", actions[0]) };
+    let Value::Tuple(call) = &pair[1] else { panic!("{:?}", pair[1]) };
+    assert!(matches!(&call[0], Value::Str(name) if name == "PackagedAction"));
+    let Value::Buffer(buffer) = &call[1] else { panic!("{:?}", call[1]) };
+    let Value::Tuple(inner) = eve_marshal::decode_exact(buffer).expect("PackagedAction payload decodes")
+    else {
+        panic!("PackagedAction payload is a tuple")
+    };
+    inner
+        .iter()
+        .map(|action| {
+            let Value::Tuple(pair) = action else { panic!("{action:?}") };
+            let Value::Tuple(call) = &pair[1] else { panic!("{:?}", pair[1]) };
+            match &call[0] {
+                Value::Str(name) => name.to_string(),
+                Value::Bytes(name) => std::str::from_utf8(name).expect("action name is UTF-8").to_string(),
+                other => panic!("{other:?}"),
+            }
+        })
+        .collect()
+}
+
+fn object_field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
+    let Value::Object { args, .. } = value else { return None };
+    let Value::Dict(fields) = &**args else { return None };
+    fields.iter().find_map(|(field, value)| matches!(field, Value::Str(name) if name == key).then_some(value))
+}
+
+fn wire_integer(value: &Value) -> Option<i64> {
+    match value {
+        Value::Int(id) | Value::Long(id) => Some(*id),
+        _ => None,
+    }
+}
+
+fn state_ship_ids(out: &Out) -> Vec<i64> {
+    let Out::Notify { args, .. } = out else { panic!("{out:?}") };
+    let Value::List(actions) = &args[0] else { panic!("{args:?}") };
+    let Value::Tuple(pair) = &actions[0] else { panic!("{:?}", actions[0]) };
+    let Value::Tuple(call) = &pair[1] else { panic!("{:?}", pair[1]) };
+    assert!(matches!(&call[0], Value::Str(name) if name == "SetState"));
+    let Value::Tuple(arguments) = &call[1] else { panic!("{:?}", call[1]) };
+    let slims = object_field(&arguments[0], "slims").expect("SetState carries slim items");
+    let Value::List(slims) = slims else { panic!("{slims:?}") };
+    slims
+        .iter()
+        .filter(|slim| matches!(object_field(slim, "categoryID").and_then(wire_integer), Some(6 | 11)))
+        .filter_map(|slim| object_field(slim, "itemID").and_then(wire_integer))
+        .collect()
+}
+
 /// The ball the reference sent for item 980050000055 (an orbit around 50016630 at no distance, 525 m/s at full speed), byte for byte.
 const RECORDED_BALL: &str = "b738882fe400000004000018426923f0c27d814a4212329eb98bbf01c2adea4ea429ad7b420100000000804f324100ffffffffffffffffbd420f000000000000400344d2e6301b6ddb76c0caebec76338876c05214e49ade133d40666646400000803fff7631fb020000000000000000";
 
@@ -145,7 +199,9 @@ fn a_player_who_has_bound_the_ballpark_is_sent_an_npc_that_comes_into_view() {
     assert!(is_npc_session(session));
     assert_eq!(told.len(), 1);
     assert_eq!(told[0].session(), PLAYER);
-    assert_eq!(action_names(&told[0]), ["AddBalls2", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
+    assert_eq!(action_names(&told[0]), ["PackagedAction", "SetBallAgility", "SetBallMass", "SetMaxSpeed"]);
+    assert_eq!(packaged_action_names(&told[0]), ["AddBalls2"]);
+    assert!(matches!(&told[0], Out::Notify { args, .. } if args[1] == Value::Bool(false)));
     assert!(scene.contains(session));
     assert_eq!(scene.npc_sessions(), [session]);
     assert_eq!(scene.player_sessions(), [PLAYER]);
@@ -158,9 +214,15 @@ fn an_npc_is_in_the_state_a_player_binds_later() {
     let place = near_the_player(&mut scene);
     let (_, told) = scene.spawn_npc(frigate(), NpcIdentity::default(), place, NOON);
     assert!(told.is_empty(), "a player that has not bound is told nothing");
+    assert!(!scene.pilots[&PLAYER].bound);
+    assert_eq!(
+        scene.pilots[&PLAYER].leaving_station, None,
+        "the collision grace can end before the first ballpark bind"
+    );
     let bound = scene.bind(PLAYER, NOON);
     let first = &bound[2];
-    assert!(action_names(first).contains(&"AddBalls2".to_string()));
+    assert_eq!(action_names(first), ["SetState"]);
+    assert_eq!(state_ship_ids(first), [spec().ship_id, 980_050_000_055]);
     let ships = scene.ships_in_view(PLAYER);
     assert_eq!(ships.len(), 2);
     assert_eq!(ships[1].spec.ship_id, 980_050_000_055);

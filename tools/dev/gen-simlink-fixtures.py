@@ -31,7 +31,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
-         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164, "WarpExited": 165}
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164, "WarpExited": 165, "GetDeploymentBalls": 166, "GetDeploymentBallsReply": 167}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -507,6 +507,17 @@ def build(m):
         else:
             body += b"\x01" + s(m["error"])
         return frame(k, body)
+    if k == "GetDeploymentBalls":
+        return frame(k, u64(m["requestId"]) + scene_key(m))
+    if k == "GetDeploymentBallsReply":
+        error = m.get("error")
+        body = u64(m["requestId"]) + scene_key(m) + bytes([1 if error is not None else 0])
+        if error is None:
+            body += struct.pack("<H", len(m["balls"]))
+            for ball in m["balls"]:
+                body += i64(ball["itemId"]) + struct.pack("<i4dB", ball["typeId"], *ball["position"], ball["radius"],
+                                                            1 if ball["warpInPoint"] else 0)
+        return frame(k, body + s(error or ""))
     if k == "GetAbyssalParticipantPose":
         return frame(k, u64(m["requestId"]) + scene_key({"scene": m["scene"]}) + i64(m["shipId"]))
     if k == "GetAbyssalParticipantPoseReply":
@@ -857,8 +868,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 100},
-    {"name": "hello ack", "kind": "HelloAck", "version": 100, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 101},
+    {"name": "hello ack", "kind": "HelloAck", "version": 101, "pollHz": 4},
     {"name": "active Crimewatch flag", "kind": "CrimewatchFlagActive", "sessionId": "1001",
      "isCriminal": True, "expiresAtUnixMs": "1800000000000"},
     {"name": "Empire sentry offense", "kind": "EmpireSentryOffense", "sessionId": "1001"},
@@ -953,6 +964,14 @@ valid = [
      "typeId": 10645, "groupId": 310, "categoryId": 2, "position": [1.0, 2.0, 3.0], "error": None},
     {"name": "public scene body absent", "kind": "GetSceneBodyReply", "requestId": "53",
      "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000002", "error": "SCENE_BODY_NOT_FOUND"},
+    {"name": "read public deployment balls", "kind": "GetDeploymentBalls", "requestId": "60",
+     "solarSystemId": 30000142},
+    {"name": "public deployment balls include real and warp-in blockers", "kind": "GetDeploymentBallsReply", "requestId": "60",
+     "solarSystemId": 30000142, "balls": [
+        {"itemId": "400000001", "typeId": 14, "position": [1.0, 2.0, 3.0], "radius": 600000.0, "warpInPoint": False},
+        {"itemId": "30000077", "typeId": 15, "position": [4.0, 5.0, 6.0], "radius": 0.0, "warpInPoint": True}], "error": None},
+    {"name": "deployment balls query refuses an unloaded scene", "kind": "GetDeploymentBallsReply", "requestId": "61",
+     "solarSystemId": 30000143, "balls": [], "error": "SCENE_NOT_LOADED"},
     {"name": "read a public-system source ship pose", "kind": "GetAbyssalParticipantPose", "requestId": "50",
      "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940"},
     {"name": "public-system source ship pose receipt", "kind": "GetAbyssalParticipantPoseReply", "requestId": "50",

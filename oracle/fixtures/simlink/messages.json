@@ -5,14 +5,14 @@
    "name": "hello",
    "kind": "Hello",
    "version": 101,
-   "hex": "03000000016400"
+   "hex": "03000000016500"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
    "version": 101,
    "pollHz": 4,
-   "hex": "0700000002640004000000"
+   "hex": "0700000002650004000000"
   },
   {
    "name": "active Crimewatch flag",
@@ -680,6 +680,54 @@
    "itemId": "400000002",
    "error": "SCENE_BODY_NOT_FOUND",
    "hex": "380000007f35000000000000000ec4c9010000000000000000000000000284d717000000000114005343454e455f424f44595f4e4f545f464f554e44"
+  },
+  {
+   "name": "read public deployment balls",
+   "kind": "GetDeploymentBalls",
+   "requestId": "60",
+   "solarSystemId": 30000142,
+   "hex": "19000000a63c000000000000000ec4c901000000000000000000000000"
+  },
+  {
+   "name": "public deployment balls include real and warp-in blockers",
+   "kind": "GetDeploymentBallsReply",
+   "requestId": "60",
+   "solarSystemId": 30000142,
+   "balls": [
+    {
+     "itemId": "400000001",
+     "typeId": 14,
+     "position": [
+      1.0,
+      2.0,
+      3.0
+     ],
+     "radius": 600000.0,
+     "warpInPoint": false
+    },
+    {
+     "itemId": "30000077",
+     "typeId": 15,
+     "position": [
+      4.0,
+      5.0,
+      6.0
+     ],
+     "radius": 0.0,
+     "warpInPoint": true
+    }
+   ],
+   "error": null,
+   "hex": "78000000a73c000000000000000ec4c9010000000000000000000000000002000184d717000000000e000000000000000000f03f0000000000000040000000000000084000000000804f224100cdc3c901000000000f0000000000000000001040000000000000144000000000000018400000000000000000010000"
+  },
+  {
+   "name": "deployment balls query refuses an unloaded scene",
+   "kind": "GetDeploymentBallsReply",
+   "requestId": "61",
+   "solarSystemId": 30000143,
+   "balls": [],
+   "error": "SCENE_NOT_LOADED",
+   "hex": "2c000000a73d000000000000000fc4c9010000000000000000000000000110005343454e455f4e4f545f4c4f41444544"
   },
   {
    "name": "read a public-system source ship pose",

@@ -477,15 +477,39 @@ fn a_warp_is_shown_to_the_watcher_and_the_ship_is_taken_from_view_when_it_has_go
     assert_eq!(warp_order.len(), 1);
     assert_eq!(action_names_of(&out_args(warp_order[0])), recorded_names(&seen[0]));
 
+    let actor_events = destiny_events(recorded, "events");
+    let reference_dropout = actor_events
+        .iter()
+        .find(|event| recorded_names(event).iter().any(|name| name == "SetBallMassive"))
+        .unwrap()["at"]
+        .as_f64()
+        .unwrap();
     let mut removed = None;
+    let mut dropout = None;
+    let mut exited = None;
+    let mut actor_updates = Vec::new();
     let mut t = at;
-    while t < at + 60 * SECOND && removed.is_none() {
+    while t < at + 120 * SECOND && (removed.is_none() || dropout.is_none() || exited.is_none()) {
         t += SECOND / 4;
         for out in scene.poll(t) {
-            let Out::Notify { session: WATCHER, .. } = out else { continue };
-            match names(&out).first().map(String::as_str) {
-                Some("PackagedAction") => removed = Some((out_args(&out), (t - at) as f64 / SECOND as f64)),
-                _ => {}
+            let elapsed = (t - at) as f64 / SECOND as f64;
+            if matches!(out, Out::WarpExited { session: ACTOR }) {
+                exited = Some(elapsed);
+                continue;
+            }
+            let Out::Notify { session, .. } = &out else { continue };
+            let args = out_args(&out);
+            let actions = action_names_of(&args);
+            if *session == ACTOR {
+                if actions.contains(&"SetBallMassive".to_string()) && dropout.is_none() {
+                    dropout = Some(elapsed);
+                }
+                actor_updates.push(args.clone());
+            }
+            if *session == WATCHER
+                && let Some("PackagedAction") = actions.first().map(String::as_str)
+            {
+                removed = Some((args, elapsed));
             }
         }
     }
@@ -514,4 +538,21 @@ fn a_warp_is_shown_to_the_watcher_and_the_ship_is_taken_from_view_when_it_has_go
         (removed_after - recorded_removal).abs() < 2.5,
         "removed after {removed_after} s, recorded {recorded_removal} s"
     );
+
+    let dropout = dropout.expect("the pilot gets the massless warp-exit warning");
+    let exited = exited.expect("the pilot exits warp");
+    // Rust sends SetBallMassive two seconds before warp exit; EveJS records it at the drop.
+    assert!((exited - dropout - 2.0).abs() <= 0.3, "warning {dropout} s, exit {exited} s");
+    // The live walk uses this three-second tolerance for Destiny timing comparisons.
+    assert!(
+        (exited - reference_dropout).abs() <= 3.0,
+        "exited after {exited} s, EveJS recorded {reference_dropout} s"
+    );
+    let massless: Vec<&Value> = actor_updates
+        .iter()
+        .filter(|args| action_names_of(args).contains(&"SetBallMassive".to_string()))
+        .collect();
+    assert_eq!(massless.len(), 2, "the two massless warnings bracket warp exit");
+    let stamp = |args: &Value| args["$tuple"][0][0]["$tuple"][0].as_i64().unwrap();
+    assert_eq!(stamp(massless[1]) - stamp(massless[0]), 2, "warning stamp separation");
 }

@@ -131,6 +131,14 @@ public partial class HostServerTests
         Assert.Same(PyNone.Instance, await CallOverHostAfterQueuedNotifications(front, open, 9,
             "allianceRegistry", "SetRelationship", Py.Tuple(new PyReal(4.5), new PyLong(toId))));
         var relationshipNotice = ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+        // The alliance-affiliation event is delivered asynchronously and may publish this status update
+        // after the SetRelationship reply. The client accepts it only for its own corporation.
+        while (relationshipNotice.Name == "OnAllowWarUpdated")
+        {
+            Assert.Equal("clientID", relationshipNotice.IdType);
+            Assert.Equal(new PyValue[] { new PyLong(corporation.Id), PyBool.False }, relationshipNotice.Args);
+            relationshipNotice = ReadCorporationNotification(Assert.IsType<Send>(await front.ReceiveAsync()));
+        }
         Assert.Equal(("OnAllianceRelationshipChanged", "ownerid"),
             (relationshipNotice.Name, relationshipNotice.IdType));
         var relationshipPayload = Assert.IsType<PyTuple>(Assert.Single(relationshipNotice.Args)).Items;

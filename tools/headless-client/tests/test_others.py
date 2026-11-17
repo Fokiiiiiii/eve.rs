@@ -30,6 +30,7 @@ from tests.test_undock import (
     compare_actions,
     compare_events,
     compare_events_by_source,
+    client_updates_after_ballpark_bind,
     ids,
     number,
     outcome,
@@ -127,6 +128,9 @@ def removed_by(event: dict, mapping: dict) -> list:
 
 def compare_bootstrap(recorded: list, actual: list, where: str, mapping: dict) -> list[str]:
     """Compare the client's ordered bootstrap groups while allowing different elapsed ticks between groups."""
+    recorded = client_updates_after_ballpark_bind(recorded)
+    actual = client_updates_after_ballpark_bind(actual)
+
     def groups(events: list) -> list[tuple[list, bool]]:
         by_stamp: dict[int, dict] = {}
         for event in events:
@@ -179,8 +183,8 @@ def test_two_ships_see_each_other_as_they_did_in_the_reference():
     steps = {step["label"]: step for step in race["steps"]}
     planet = race["planetID"]
     with base.connect(f"walk-others-a-{run}") as a, base.connect(f"walk-others-b-{run}") as b:
-        _, a_ship, _, a_mapping = arrive(a, plain_race(race, "watcher"), run)
-        _, b_ship, _, b_mapping = arrive(b, plain_race(race, "actor"), run)
+        _, a_ship, _, a_mapping = arrive(a, plain_race(race, "watcher"), run, skip_tutorial=base.REFERENCE)
+        _, b_ship, _, b_mapping = arrive(b, plain_race(race, "actor"), run, skip_tutorial=base.REFERENCE)
         mapping = {**a_mapping, **b_mapping}
         ships = {a_ship, b_ship}
         both = {"events": b, "seen": a}

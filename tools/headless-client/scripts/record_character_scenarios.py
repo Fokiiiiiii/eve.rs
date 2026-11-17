@@ -31,7 +31,7 @@ from evecli import marshal as m  # noqa: E402
 from evecli import packet as p  # noqa: E402
 from evecli.client import Client  # noqa: E402
 from evecli.describe import describe  # noqa: E402
-from evecli.observe import ego_state, events_of, hangar_and_ship, notifications_of, ship_of, timed_events, training_view, wait_for_events, wait_quietly  # noqa: E402
+from evecli.observe import _notification_call_args, ego_state, events_of, hangar_and_ship, notifications_of, ship_of, timed_events, training_view, wait_for_events, wait_quietly  # noqa: E402
 
 # The school the reference offers each playable race (its minimal map), as the client would send one.
 SCHOOL_OF_RACE = {1: 35, 2: 33, 4: 31, 8: 37}
@@ -1119,6 +1119,30 @@ def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
     both = {"events": b, "seen": a}
     steps: list = []
 
+    def sequence(value):
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict) and isinstance(value.get("$tuple"), list):
+            return value["$tuple"]
+        return None
+
+    def dogma_rows(events):
+        for event in events:
+            if event["name"] != "OnMultiEvent":
+                if event["name"] in ("OnGodmaShipEffect", "OnTarget"):
+                    try:
+                        yield event["name"], event["args"]["$tuple"][1]["$tuple"][1]["$tuple"]
+                    except (KeyError, TypeError):
+                        continue
+                continue
+            args = _notification_call_args(event["args"])
+            pairs = sequence(args[0]) if args else None
+            for pair in pairs or []:
+                timed = sequence(pair)
+                call = sequence(timed[0]) if timed else None
+                if call and call[0] in ("OnGodmaShipEffect", "OnTarget"):
+                    yield call[0], call[1:]
+
     def step(label, call, seconds=2.0, until=None):
         entry = {"label": label}
         try:
@@ -1154,14 +1178,18 @@ def record_module(rec: Recorder, out: str, meta: dict, ancestry: dict, run: str)
 
     fly = lambda name, *args: (lambda: b.call_bound(b_ballpark[0], name, *args))  # noqa: E731
     activate = lambda module, effect, target=None: (lambda: b.call_bound(b_dogma[0], "Activate", module, effect, target, 1000))  # noqa: E731
-    stopped = lambda seen: any(e["name"] == "OnGodmaShipEffect" and len(args_of_effect(e)) > 3 and args_of_effect(e)[3] == 0 for e in seen["events"])  # noqa: E731
+    stopped = lambda seen: any(  # noqa: E731
+        name == "OnGodmaShipEffect" and len(args) > 3 and args[3] == 0
+        for name, args in dogma_rows(seen["events"])
+    )
+    got_lock = lambda events: any(name == "OnTarget" for name, _ in dogma_rows(events))  # noqa: E731
     step("the actor flies at full speed", fly("CmdGotoDirection", 1.0, 0.0, 0.0), 3.0)
     step("the actor starts the afterburner", activate(afterburner, "moduleBonusAfterburner"), 13.0)
     step("the actor starts the afterburner again", activate(afterburner, "moduleBonusAfterburner"), 1.0)
     step("the actor stops the afterburner", lambda: b.call_bound(b_dogma[0], "Deactivate", afterburner, "moduleBonusAfterburner"), 12.0, until=stopped)
     step("the actor stops the afterburner again", lambda: b.call_bound(b_dogma[0], "Deactivate", afterburner, "moduleBonusAfterburner"), 2.0)
     step("the actor fires the gun with no target", activate(gun, "targetAttack"), 2.0)
-    step("the actor locks the watcher", lambda: b.call_bound(b_dogma[0], "AddTarget", a_ship), 8.0, until=lambda seen: any(e["name"] == "OnTarget" for e in seen["events"]))
+    step("the actor locks the watcher", lambda: b.call_bound(b_dogma[0], "AddTarget", a_ship), 8.0, until=lambda seen: got_lock(seen["events"]))
     step("the actor fires the gun at the watcher without a charge", activate(gun, "targetAttack", a_ship), 3.0)
     step("the actor works the miner on the watcher", activate(miner, "miningLaser", a_ship), 3.0)
     step("the actor works the miner with no target", activate(miner, "miningLaser"), 2.0)

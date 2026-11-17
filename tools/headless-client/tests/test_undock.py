@@ -294,6 +294,8 @@ def compare_destiny_updates(
             actions, wait = actions_of(event)
             update_stamps: dict[int, list] = {}
             for action in actions:
+                if action[1] in ignored_actions:
+                    continue
                 update_stamps.setdefault(action[0], []).append(action)
             for stamp in sorted(update_stamps):
                 if stamp in by_stamp:
@@ -311,6 +313,16 @@ def compare_destiny_updates(
     expected_actions = [action for actions, _ in expected for action in actions if action[1] not in ignored_actions]
     actual_actions = [action for actions, _ in actual for action in actions if action[1] not in ignored_actions]
     return out + compare_actions(expected_actions, actual_actions, where, mapping, state_comparator)
+
+def client_updates_after_ballpark_bind(events: list[dict]) -> list[dict]:
+    """Drop owner updates sent before its first SetState: V24 Michelle drops them while __bp is None."""
+    for index, event in enumerate(events):
+        if event.get("name") != "DoDestinyUpdate":
+            continue
+        actions, _ = actions_of(event)
+        if any(name == "SetState" for _, name, _ in actions):
+            return events[index:]
+    return events
 
 def compare_add_balls(recorded: dict, ours: dict, where: str, mapping: dict) -> list[str]:
     """Compare ball IDs and SDE identity; EveJS sends visual sentries while eve.rs sends active sentry NPCs."""

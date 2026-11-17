@@ -30,6 +30,7 @@ from tests.test_undock import (
     compare_destiny_updates,
     compare_events,
     compare_events_by_source,
+    client_updates_after_ballpark_bind,
     ids,
     outcome,
 )
@@ -131,8 +132,8 @@ def test_a_ship_locks_others_as_it_did_in_the_reference():
     steps = {step["label"]: step for step in race["steps"]}
     planet = race["planetID"]
     with base.connect(f"walk-target-a-{run}") as a, base.connect(f"walk-target-b-{run}") as b:
-        _, a_ship, _, a_mapping = arrive(a, plain_race(race, "watcher"), run)
-        _, b_ship, _, b_mapping = arrive(b, plain_race(race, "actor"), run)
+        _, a_ship, _, a_mapping = arrive(a, plain_race(race, "watcher"), run, skip_tutorial=base.REFERENCE)
+        _, b_ship, _, b_mapping = arrive(b, plain_race(race, "actor"), run, skip_tutorial=base.REFERENCE)
         mapping = {**a_mapping, **b_mapping}
         both = {"events": b, "seen": a}
         bootstrap_labels = {
@@ -195,7 +196,10 @@ def test_a_ship_locks_others_as_it_did_in_the_reference():
         for key, who in (("events", "the actor"), ("seen", "the watcher")):
             startup = bootstrap_destiny[key]
             problems.extend(compare_destiny_updates(
-                startup["recorded"], startup["actual"], f"ballpark bootstrap ({who})", mapping
+                client_updates_after_ballpark_bind(startup["recorded"]),
+                client_updates_after_ballpark_bind(startup["actual"]),
+                f"ballpark bootstrap ({who})",
+                mapping,
             ))
         a_dogma = a.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)
         b_dogma = b.call("dogmaIM", "MachoBindObject", (SYSTEM, 5), None)

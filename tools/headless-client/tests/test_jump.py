@@ -39,6 +39,7 @@ from tests.test_undock import (
     compare_add_balls,
     compare_state,
     arrive,
+    client_updates_after_ballpark_bind,
     add_ball_slim,
     ids,
     keyval,
@@ -127,8 +128,6 @@ def compare_bound_events(recorded: list[dict], ours: list[dict], ship_id: int, m
             out.append(f"{where}: {side} SetState packet count {len(state_packets)}")
             return
         wait = state_packets[0][1]
-        if side == "eve.rs" and not wait:
-            out.append(f"{where}: eve.rs SetState must wait for its separate same-stamp follow-up")
         if not wait:
             return
         state_stamps = {
@@ -152,6 +151,12 @@ def compare_bound_events(recorded: list[dict], ours: list[dict], ship_id: int, m
 
     wait_contract(recorded, expected_state_packets, "EVEJS")
     wait_contract(ours, actual_state_packets, "eve.rs")
+    if len(expected_state_packets) == len(actual_state_packets) == 1:
+        if expected_state_packets[0][1] != actual_state_packets[0][1]:
+            out.append(
+                f"{where}: eve.rs SetState wait flag {actual_state_packets[0][1]} "
+                f"in place of EVEJS {expected_state_packets[0][1]}"
+            )
     expected_states = [action for update in expected_updates for action in update if action[1] == "SetState"]
     actual_states = [action for update in actual_updates for action in update if action[1] == "SetState"]
     if len(expected_states) != 1 or len(actual_states) != 1:
@@ -261,8 +266,14 @@ def test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did():
             mapping,
         )
         problems += compare_destiny_updates(
-            [event for step in (steps["undock"], steps["bind the ballpark"]) for event in step["events"] if event["name"] == "DoDestinyUpdate"],
-            [event for event in (*undock_events, *bind_events) if event["name"] == "DoDestinyUpdate"],
+            client_updates_after_ballpark_bind([
+                event for step in (steps["undock"], steps["bind the ballpark"])
+                for event in step["events"] if event["name"] == "DoDestinyUpdate"
+            ]),
+            client_updates_after_ballpark_bind([
+                event for event in (*undock_events, *bind_events)
+                if event["name"] == "DoDestinyUpdate"
+            ]),
             "undock and bind the ballpark",
             mapping,
         )
@@ -371,7 +382,11 @@ def test_a_ship_warps_to_a_gate_and_jumps_as_the_reference_did():
                 problems.append(f"{where}: answered {base.brief(answer)} in place of {base.brief(recorded['ok'])}")
         landed = raw
         bound = wait_quietly(who, 4.0)
-        problems += compare_heat_reset(bound, character, ship_id)
+        # eve.rs publishes the heat reset to the already-loaded client dogma item. EveJS does not
+        # send this jump-specific OnModuleAttributeChanges batch, so this is an eve.rs regression
+        # contract and is checked only on that server.
+        if not REFERENCE:
+            problems += compare_heat_reset(bound, character, ship_id)
         problems += compare_bound_events(recorded["events"], bound, ship_id, mapping, where)
 
         raw, error = outcome(lambda: who.call_bound(landed[0], "UpdateStateRequest"))

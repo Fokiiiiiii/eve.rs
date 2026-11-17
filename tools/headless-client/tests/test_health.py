@@ -196,7 +196,7 @@ def test_a_ship_is_damaged_flown_hurt_and_mended_as_it_was_in_the_reference():
     problems: list[str] = []
     steps = {step["label"]: step for step in race["steps"]}
     with base.connect(f"walk-health-{run}") as who:
-        character, ship, modules, mapping = arrive(who, race, run)
+        character, ship, modules, mapping = arrive(who, race, run, skip_tutorial=base.REFERENCE)
         only = {"events": who}
         station_dogma = who.call("dogmaIM", "MachoBindObject", (STATION, 15), None)
         watch(only, 0.5)

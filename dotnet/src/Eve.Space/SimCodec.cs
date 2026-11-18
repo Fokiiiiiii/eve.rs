@@ -1358,6 +1358,26 @@ public static partial class SimCodec
             case Kind.ForceFieldRemoved:
                 message = new SimForceFieldRemoved(r.I64(), r.Text());
                 break;
+            case Kind.SetForceFieldAccess:
+                {
+                    var tower = r.I64();
+                    var solarSystem = r.I32();
+                    var corporation = r.I32();
+                    var alliance = r.I32();
+                    var allowCorporation = ReadFlag(ref r, "allow corporation");
+                    var allowAlliance = ReadFlag(ref r, "allow alliance");
+                    message = new SimSetForceFieldAccess(tower, solarSystem, corporation, alliance, allowCorporation, allowAlliance);
+                    break;
+                }
+            case Kind.ShipForceFieldPassword:
+                {
+                    var session = r.U64();
+                    var tower = r.I64();
+                    var solarSystem = r.I32();
+                    var matched = ReadFlag(ref r, "matched");
+                    message = new SimShipForceFieldPassword(session, tower, solarSystem, matched);
+                    break;
+                }
             case Kind.PlaceBattery:
                 {
                     var battery = r.I64();

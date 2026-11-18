@@ -1150,6 +1150,22 @@ pub enum Message {
         tower_id: i64,
         reason: String,
     },
+    /// The host sets who a tower's force field admits by corporation and alliance (protocol 103). The field of the tower now or placed later takes it.
+    SetForceFieldAccess {
+        tower_id: i64,
+        solar_system_id: i32,
+        corporation_id: i32,
+        alliance_id: i32,
+        allow_corporation: bool,
+        allow_alliance: bool,
+    },
+    /// The host says whether a pilot's ship password matches a tower's (protocol 103): a matching ship is admitted by the tower's field.
+    ShipForceFieldPassword {
+        session_id: u64,
+        tower_id: i64,
+        solar_system_id: i32,
+        matched: bool,
+    },
     GetAbyssalParticipantPose {
         request_id: u64,
         scene: SceneKey,
@@ -1888,6 +1904,8 @@ impl Message {
             Self::ForceFieldPlaced { .. } => kind::FORCE_FIELD_PLACED,
             Self::RemoveForceField { .. } => kind::REMOVE_FORCE_FIELD,
             Self::ForceFieldRemoved { .. } => kind::FORCE_FIELD_REMOVED,
+            Self::SetForceFieldAccess { .. } => kind::SET_FORCE_FIELD_ACCESS,
+            Self::ShipForceFieldPassword { .. } => kind::SHIP_FORCE_FIELD_PASSWORD,
             Self::GetAbyssalParticipantPose { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE,
             Self::GetAbyssalParticipantPoseReply { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE_REPLY,
             Self::Enter(_) => kind::ENTER,

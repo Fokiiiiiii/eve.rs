@@ -2776,6 +2776,41 @@ impl Message {
                 Message::RemoveForceField { tower_id: r.i64()?, solar_system_id: r.i32()? }
             }
             kind::FORCE_FIELD_REMOVED => Message::ForceFieldRemoved { tower_id: r.i64()?, reason: r.text()? },
+            kind::SET_FORCE_FIELD_ACCESS => {
+                let tower_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let corporation_id = r.i32()?;
+                let alliance_id = r.i32()?;
+                let allow_corporation = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("allow corporation")),
+                };
+                let allow_alliance = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("allow alliance")),
+                };
+                Message::SetForceFieldAccess {
+                    tower_id,
+                    solar_system_id,
+                    corporation_id,
+                    alliance_id,
+                    allow_corporation,
+                    allow_alliance,
+                }
+            }
+            kind::SHIP_FORCE_FIELD_PASSWORD => {
+                let session_id = r.u64()?;
+                let tower_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let matched = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("matched")),
+                };
+                Message::ShipForceFieldPassword { session_id, tower_id, solar_system_id, matched }
+            }
             kind::PLACE_BATTERY => {
                 let battery_id = r.i64()?;
                 let solar_system_id = r.i32()?;

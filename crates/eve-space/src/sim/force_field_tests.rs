@@ -102,6 +102,31 @@ fn an_id_held_by_another_towers_field_is_refused() {
     assert!(fields_of(&sim, OTHER_TOWER).is_empty());
 }
 
+/// The access of a tower and the password of a pilot are kept in the scene, and neither is answered.
+#[test]
+fn force_field_access_and_a_password_are_kept_in_the_scene_without_an_answer() {
+    let mut sim = new_sim();
+    let access = Message::SetForceFieldAccess {
+        tower_id: TOWER,
+        solar_system_id: SYSTEM,
+        corporation_id: 98_000_001,
+        alliance_id: 0,
+        allow_corporation: true,
+        allow_alliance: false,
+    };
+    assert!(sim.handle(access, NOON).unwrap().is_empty());
+    let password = Message::ShipForceFieldPassword {
+        session_id: SESSION,
+        tower_id: TOWER,
+        solar_system_id: SYSTEM,
+        matched: true,
+    };
+    assert!(sim.handle(password, NOON).unwrap().is_empty());
+    let scene = &sim.scenes[&SceneKey::solar_system(SYSTEM)];
+    assert_eq!(scene.force_field_access.get(&TOWER).map(|access| access.corporation_id), Some(98_000_001));
+    assert!(scene.force_field_passwords.contains(&(SESSION, TOWER)));
+}
+
 /// A tower with no field in the scene cannot have one removed, and a system the universe does not know refuses a placement.
 #[test]
 fn removing_a_missing_field_and_placing_in_an_unknown_system_are_refused() {

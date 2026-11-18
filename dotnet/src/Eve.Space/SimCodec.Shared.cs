@@ -45,6 +45,10 @@ public static partial class SimCodec
         public const byte RemoveForceField = 182;
         /// <summary>The answer to <see cref="RemoveForceField"/>: an empty reason means the field was taken out.</summary>
         public const byte ForceFieldRemoved = 183;
+        /// <summary>Protocol 103: the host sets who a tower's force field admits by corporation and alliance. No answer.</summary>
+        public const byte SetForceFieldAccess = 184;
+        /// <summary>Protocol 103: the host says whether a pilot's ship password matches a tower's. No answer.</summary>
+        public const byte ShipForceFieldPassword = 185;
         public const byte EnsureTournamentBeacon = 128;
         public const byte EnsureTournamentBeaconReply = 129;
         public const byte RemoveTournamentBeacon = 130;

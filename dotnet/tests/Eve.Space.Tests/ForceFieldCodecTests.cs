@@ -38,6 +38,18 @@ public sealed class ForceFieldCodecTests
     }
 
     [Fact]
+    public void Force_field_access_and_ship_password_roundtrip_over_the_sim_link()
+    {
+        var access = new SimSetForceFieldAccess(1_050_000_099, 30_000_001, 98_000_001, 97_000_001, true, false);
+        Assert.Equal(access, SimCodec.Decode(SimCodec.Encode(access).AsMemory(4)));
+        Assert.Equal((byte)184, SimCodec.Encode(access)[4]);
+
+        var password = new SimShipForceFieldPassword(1_790_646_377_000_015, 1_050_000_099, 30_000_001, true);
+        Assert.Equal(password, SimCodec.Decode(SimCodec.Encode(password).AsMemory(4)));
+        Assert.Equal((byte)185, SimCodec.Encode(password)[4]);
+    }
+
+    [Fact]
     public void Force_field_encoder_refuses_numbers_the_simulation_cannot_read()
     {
         Assert.Throws<ArgumentException>(() => SimCodec.Encode(new SimPlaceForceField(1, 2, 3, 4, 5, "F", [double.NaN, 0.0, 0.0], 1.0)));

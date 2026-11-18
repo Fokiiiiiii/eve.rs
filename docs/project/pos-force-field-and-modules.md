@@ -98,7 +98,33 @@ Not done in slice 1 (the gaps stay open):
 - The golden fixtures are not regenerated: `tools/dev/gen-simlink-fixtures.py` is refused by the command policy in this session, so `oracle/fixtures/simlink/messages.json` and the shared Rust/C# fixture tests do not cover kinds 180 to 183 or version 103. The generator source is updated and must be run to regenerate the file.
 - The Host does not send `PlaceForceField` / `RemoveForceField`. The tower-online and tower-offline transitions (`SpaceContainers.ControlTowers.cs`) need a durable item id for the field (EveJS creates a real inventory item); the Host has no allocator for it, and inventing an id would be a fake success. No `ISimulation` / `SimClient` method for the two kinds exists yet.
 - The field's category is the default charge category (`category_of`), not the SDE category of the force field type; the radius and the type come from the message.
-- No admission, boundary, password, harmonic publication or client notification exists yet (slices 2 and 3, below).
+- Admission and the boundary are slice 2 (below); the harmonic publication and the client notifications are slice 3.
+
+### POS force field admission and boundary, slice 2 (2026-11-18)
+
+Scope: who a force field admits and what happens to a ship it does not admit, in the simulation. Sources: EveJS `starbaseAccessRuntime.js` (`getForceFieldAccess`, `canShipEnterForceField`, `matchesPassword`), `starbaseForceFieldBoundary.js` (`enforceForceFieldMovement`, `resolveDeniedEntry`, `synchronizeShipHarmonic`, `BOUNDARY_CLEARANCE_METERS` 1 m, repulsion 500 to 2 500 m/s), and `forceFieldContainment.js` (group 411 containment, the `centerDistance + shipRadius < fieldRadius` test, which the boundary does not use). The client compares a ship's harmonic with the field's (`playerOwned.py:91-115`).
+
+Implemented in `crates/eve-space/src/scene/force_field.rs`:
+
+- Admission (`Access::admits_group` plus the password set): a ship is admitted by its corporation when the tower allows the corporation and the ids are non-zero; by its alliance when the tower allows the alliance and the id is non-zero; or by a matching ship password. Other ships are not admitted.
+- Boundary (`enforce_force_fields`, called from the pilot settle path in `scene/movement.rs`): for each field, the boundary is the field radius plus the ship radius plus 1 m. A move that crosses the boundary is stopped on its surface where it enters. A ship that starts inside is not pulled back, and is pushed out at 500 to 2 500 m/s. A crossing move is always in EveJS's boundary-contact band, so its outward speed is 10% of the inward speed, capped at 100 m/s. An order that pulls the ship back in is cancelled (`Course::Stop`). A ship in warp is not checked; a warp that completes is checked at its end.
+- Harmonic (state only): a ship admitted inside a field gets the tower's id as its harmonic, a ship with no admitted field has none. It is held in `Scene::force_field_harmonics` and is not yet published to the client (slice 3).
+- Protocol 103, kinds 184 `SetForceFieldAccess` and 185 `ShipForceFieldPassword` (no answer). `Access` is held per tower, so an access set before the field is placed applies to it. A pilot that is no longer in the scene loses its password and harmonic at the next settle.
+
+Verified:
+
+- `cargo test -p eve-space --lib`: 1082 passed, 0 failed, 0 skipped, after a clean rebuild of the package. Slice 2 adds 18 of them: 15 scene tests (`scene::force_field_tests`: the EveJS geometry, admission by corporation, alliance and password, a denied alliance, a field without access, the boundary push and its 100 m/s contact value, the 500 m/s push for a ship inside, the order cancel, the warp exemption, the scene settle path, and the leave cleanup), two link frame tests for kinds 184 and 185 (roundtrip, kinds, bad flags), and one sim test (access and password kept without an answer).
+- `cargo clippy -p eve-space --all-targets -- -D warnings`: clean. `cargo fmt --all` applied.
+- `dotnet test dotnet/tests/Eve.Space.Tests`: 575 passed, 0 failed, 0 skipped. One is new: `Force_field_access_and_ship_password_roundtrip_over_the_sim_link`.
+- Release builds with warnings as errors: `Eve.Space` and `Eve.Space.Tests`, 0 warnings, 0 errors.
+
+Gaps and approximations (not verified against a client):
+
+- Standings admission is not implemented: the pinned EveJS tree does not back it (the rule the task named), so it is recorded here as a gap rather than invented.
+- The Host does not send `SetForceFieldAccess` or `ShipForceFieldPassword`, and it cannot place a field yet (the slice 1 gap: no field item id). The Host already has `SetShipPasswordAsync` (`dotnet/src/Eve.Services.Space/SpaceSessions.cs:181-217`), which matches the password with `StarbasePasswordHash` and sets a `harmonic` slim field from the tower's deployable id without any field. That is a separate path from the simulation's harmonic and must be reconciled when the Host is wired.
+- A ship that is not in a field's range is never checked, so a field that is not placed does not stop anything. Nothing reaches the client yet: the boundary correction moves the ship in the simulation, and the correction is published only through the existing position updates.
+- Approximations: a warp is treated as completed when the flight is gone after a settle (EveJS marks the completion explicitly); the order cancel for `Goto` uses the heading, and for `Follow` and `Orbit` always cancels (EveJS's `targetPoint` is null for an entity target, which is what it does); NPC pilots are checked like player pilots, which EveJS does not confirm for NPC ships.
+- The `Role::ForceField` ball still has the default charge category (slice 1).
 
 ## Open items
 

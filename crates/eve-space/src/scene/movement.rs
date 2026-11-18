@@ -48,7 +48,13 @@ impl Scene {
         }
         let Some(pilot) = self.pilots.get_mut(&session) else { return };
         let from = pilot.settled_at;
+        let was_warping = pilot.flight.is_some();
+        let before = pilot.ship.position;
         let milestones = settle(pilot, &system, ship_target, now);
+        let warp_completed =
+            was_warping && self.pilots.get(&session).is_some_and(|pilot| pilot.flight.is_none());
+        // the force field of a tower stops a ship it does not admit at its boundary (protocol 103)
+        self.enforce_force_fields(session, before, warp_completed);
         // a wreck this ship's beam pulls moves over the same time as the ship
         self.advance_pulled_by(session, from, now);
         for milestone in milestones {
@@ -58,6 +64,7 @@ impl Scene {
     }
 
     pub(crate) fn settle_all(&mut self, now: i64) {
+        self.prune_force_field_sessions();
         let starts = self.settle_all_motion(now);
         self.resolve_collisions(now, None, Some(&starts));
         self.release_orphaned_pulls(now);

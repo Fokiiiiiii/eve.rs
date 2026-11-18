@@ -1041,6 +1041,27 @@ impl Message {
                 out.extend_from_slice(&field_id.to_le_bytes());
                 put_text(&mut out, reason);
             }
+            Self::SetForceFieldAccess {
+                tower_id,
+                solar_system_id,
+                corporation_id,
+                alliance_id,
+                allow_corporation,
+                allow_alliance,
+            } => {
+                out.extend_from_slice(&tower_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&corporation_id.to_le_bytes());
+                out.extend_from_slice(&alliance_id.to_le_bytes());
+                out.push(u8::from(*allow_corporation));
+                out.push(u8::from(*allow_alliance));
+            }
+            Self::ShipForceFieldPassword { session_id, tower_id, solar_system_id, matched } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&tower_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.push(u8::from(*matched));
+            }
             Self::RemoveForceField { tower_id, solar_system_id } => {
                 out.extend_from_slice(&tower_id.to_le_bytes());
                 out.extend_from_slice(&solar_system_id.to_le_bytes());

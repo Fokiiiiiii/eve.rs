@@ -33,7 +33,8 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
          "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164, "WarpExited": 165, "GetDeploymentBalls": 166, "GetDeploymentBallsReply": 167,
          "PlaceBattery": 168, "BatteryPlaced": 169, "BatteryTarget": 170, "BatteryTargets": 171,
-         "PlaceForceField": 180, "ForceFieldPlaced": 181, "RemoveForceField": 182, "ForceFieldRemoved": 183}
+         "PlaceForceField": 180, "ForceFieldPlaced": 181, "RemoveForceField": 182, "ForceFieldRemoved": 183,
+         "SetForceFieldAccess": 184, "ShipForceFieldPassword": 185}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -530,6 +531,11 @@ def build(m):
     if k == "BatteryTarget":
         return frame(k, u64(m["requestId"]) + i64(m["batteryId"]) + struct.pack("<i", m["solarSystemId"])
                      + bytes([m["order"]]) + i64(m["target"]))
+    if k == "SetForceFieldAccess":
+        return frame(k, i64(m["towerId"]) + struct.pack("<iii", m["solarSystemId"], m["corporationId"], m["allianceId"])
+                     + bytes([1 if m["allowCorporation"] else 0, 1 if m["allowAlliance"] else 0]))
+    if k == "ShipForceFieldPassword":
+        return frame(k, u64(m["sessionId"]) + i64(m["towerId"]) + struct.pack("<i", m["solarSystemId"]) + bytes([1 if m["matched"] else 0]))
     if k == "PlaceForceField":
         body = i64(m["fieldId"]) + i64(m["towerId"]) + struct.pack("<iii", m["solarSystemId"], m["typeId"], m["groupId"]) + s(m["name"])
         return frame(k, body + struct.pack("<3dd", *m["position"], m["radius"]))
@@ -1018,6 +1024,10 @@ valid = [
     {"name": "remove the force field of a tower", "kind": "RemoveForceField", "towerId": "1050000099", "solarSystemId": 30000142},
     {"name": "force field taken out", "kind": "ForceFieldRemoved", "towerId": "1050000099", "reason": ""},
     {"name": "force field removal refused for a tower with no field", "kind": "ForceFieldRemoved", "towerId": "1050000099", "reason": "FORCE_FIELD_NOT_IN_SPACE"},
+    {"name": "set who a tower's force field admits by corporation and alliance (protocol 103)", "kind": "SetForceFieldAccess", "towerId": "1050000099",
+     "solarSystemId": 30000142, "corporationId": 98000001, "allianceId": 97000001, "allowCorporation": True, "allowAlliance": False},
+    {"name": "a pilot's ship password matches a tower (protocol 103)", "kind": "ShipForceFieldPassword", "sessionId": "1790646377000015",
+     "towerId": "1050000099", "solarSystemId": 30000142, "matched": True},
     {"name": "read a public-system source ship pose", "kind": "GetAbyssalParticipantPose", "requestId": "50",
      "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940"},
     {"name": "public-system source ship pose receipt", "kind": "GetAbyssalParticipantPoseReply", "requestId": "50",

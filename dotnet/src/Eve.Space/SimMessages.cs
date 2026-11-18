@@ -1277,6 +1277,11 @@ public sealed record SimForceFieldPlaced(long FieldId, string Reason) : SimMessa
 public sealed record SimRemoveForceField(long TowerId, int SolarSystemId) : SimMessage;
 /// <summary>The answer to <see cref="SimRemoveForceField"/>: an empty reason means the field was taken out.</summary>
 public sealed record SimForceFieldRemoved(long TowerId, string Reason) : SimMessage;
+/// <summary>The host sets who a tower's force field admits by corporation and alliance (protocol 103). The field of the tower now or placed later takes it.
+/// No answer.</summary>
+public sealed record SimSetForceFieldAccess(long TowerId, int SolarSystemId, int CorporationId, int AllianceId, bool AllowCorporation, bool AllowAlliance) : SimMessage;
+/// <summary>The host says whether a pilot's ship password matches a tower's (protocol 103): a matching ship is admitted by the tower's field. No answer.</summary>
+public sealed record SimShipForceFieldPassword(ulong SessionId, long TowerId, int SolarSystemId, bool Matched) : SimMessage;
 
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;

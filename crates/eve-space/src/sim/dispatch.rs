@@ -873,6 +873,8 @@ impl Sim {
             | Message::BatteryTarget { .. }
             | Message::PlaceForceField(..)
             | Message::RemoveForceField { .. }
+            | Message::SetForceFieldAccess { .. }
+            | Message::ShipForceFieldPassword { .. }
             | Message::RemoveMoonChunk { .. }
             | Message::PlaceProbe(..)
             | Message::RemoveProbe { .. }
@@ -2031,6 +2033,37 @@ impl Sim {
                         .collect(),
                     Err(reason) => vec![Out::ForceFieldRemoved { tower_id, reason: reason.to_owned() }],
                 }
+            }
+            Message::SetForceFieldAccess {
+                tower_id,
+                solar_system_id,
+                corporation_id,
+                alliance_id,
+                allow_corporation,
+                allow_alliance,
+            } => {
+                let scene_key = SceneKey::solar_system(solar_system_id);
+                if !self.scenes.contains_key(&scene_key)
+                    && let Ok(system) = self.universe.system(solar_system_id)
+                {
+                    self.scenes.insert(scene_key, self.universe.scene_of(system));
+                }
+                if let Some(scene) = self.scenes.get_mut(&scene_key) {
+                    let access = crate::scene::force_field::Access {
+                        corporation_id,
+                        alliance_id,
+                        allow_corporation,
+                        allow_alliance,
+                    };
+                    scene.set_force_field_access(tower_id, access);
+                }
+                Vec::new()
+            }
+            Message::ShipForceFieldPassword { session_id, tower_id, solar_system_id, matched } => {
+                if let Some(scene) = self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
+                    scene.set_force_field_password(session_id, tower_id, matched);
+                }
+                Vec::new()
             }
             Message::PlaceControlTower(tower) => {
                 let tower = *tower;

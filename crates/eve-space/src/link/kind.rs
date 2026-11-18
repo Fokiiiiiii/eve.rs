@@ -43,6 +43,10 @@ pub const FORCE_FIELD_PLACED: u8 = 181;
 pub const REMOVE_FORCE_FIELD: u8 = 182;
 /// The answer to `REMOVE_FORCE_FIELD`: an empty reason means the field was taken out.
 pub const FORCE_FIELD_REMOVED: u8 = 183;
+/// The host sets who a tower's force field admits by corporation and alliance (protocol 103). No answer.
+pub const SET_FORCE_FIELD_ACCESS: u8 = 184;
+/// The host says whether a pilot's ship password matches a tower's (protocol 103). No answer.
+pub const SHIP_FORCE_FIELD_PASSWORD: u8 = 185;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

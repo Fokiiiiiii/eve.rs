@@ -58,11 +58,7 @@ public sealed partial class SpaceContainers
         {
             return TargetingResult.Refusal("NOT_A_BATTERY");
         }
-        var attributes = _statics.Type(battery.TypeId)?.Attributes;
-        if (attributes is null
-            || !attributes.TryGetValue(BatteryMaxTargetRangeAttribute, out var maxTargetRange)
-            || !attributes.TryGetValue(BatteryMaxLockedTargetsAttribute, out var maxLockedTargets)
-            || !attributes.TryGetValue(BatteryScanResolutionAttribute, out var scanResolution))
+        if (BatteryNumbersOf(battery.TypeId) is not { } numbers)
         {
             return TargetingResult.Refusal("BATTERY_NUMBERS_MISSING");
         }
@@ -82,7 +78,7 @@ public sealed partial class SpaceContainers
         {
             var placed = await _sim.PlaceBatteryAsync(
                 new SimPlaceBattery(batteryId, battery.SolarSystemId, battery.TypeId, battery.GroupId, battery.Name, (ulong)session.SessionId,
-                    battery.Position, battery.Radius, scanResolution, maxTargetRange, (int)maxLockedTargets, online),
+                    battery.Position, battery.Radius, numbers.ScanResolution, numbers.MaxTargetRange, numbers.MaxLockedTargets, online),
                 cancellationToken).ConfigureAwait(false);
             if (placed.Reason.Length > 0)
             {
@@ -112,6 +108,63 @@ public sealed partial class SpaceContainers
         finally
         {
             gate.Release();
+        }
+    }
+
+    /// <summary>A battery's numbers as its type's dogma gives them: its locks' range, its locked-target limit and its scan resolution.</summary>
+    private readonly record struct BatteryNumbers(double MaxTargetRange, int MaxLockedTargets, double ScanResolution);
+
+    /// <summary>A battery's numbers from its type's SDE attributes, or null when the type does not carry them.</summary>
+    private BatteryNumbers? BatteryNumbersOf(int typeId)
+    {
+        var attributes = _statics.Type(typeId)?.Attributes;
+        if (attributes is null
+            || !attributes.TryGetValue(BatteryMaxTargetRangeAttribute, out var maxTargetRange)
+            || !attributes.TryGetValue(BatteryMaxLockedTargetsAttribute, out var maxLockedTargets)
+            || !attributes.TryGetValue(BatteryScanResolutionAttribute, out var scanResolution))
+        {
+            return null;
+        }
+        return new BatteryNumbers(maxTargetRange, (int)maxLockedTargets, scanResolution);
+    }
+
+    /// <summary>
+    /// Puts the tower's batteries that are not online offline in the simulation, outside an order (the tower's fuel ran out, it went offline, or it was
+    /// unanchored): the simulation lets go of their locks and tells the former holder <c>clear</c>. No holder is sent, so the grant stays with the host. Runs
+    /// after the tower's state has committed. A simulation that is unavailable is logged; its locks then wait for its next placement of the battery.
+    /// </summary>
+    public async Task OfflineBatteriesAsync(long towerId, CancellationToken cancellationToken = default)
+    {
+        if (_deployed is null)
+            return;
+        foreach (var module in await _deployed.ByControlTowerAsync(towerId, cancellationToken).ConfigureAwait(false))
+        {
+            if (module is not { Kind: StarbaseModuleKind })
+                continue;
+            await _statics.EnsureTypesAsync([module.TypeId], cancellationToken).ConfigureAwait(false);
+            if (!IsPlayerControlledBattery(module.TypeId))
+                continue;
+            var state = await _deployed.TowerStateAsync(module.DeployableId, cancellationToken).ConfigureAwait(false);
+            if (state is TowerOnline or TowerOnlining || BatteryNumbersOf(module.TypeId) is not { } numbers)
+                continue;
+
+            var gate = _batteryGates.GetOrAdd(module.DeployableId, _ => new SemaphoreSlim(1, 1));
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await _sim.PlaceBatteryAsync(
+                    new SimPlaceBattery(module.DeployableId, module.SolarSystemId, module.TypeId, module.GroupId, module.Name, 0,
+                        module.Position, module.Radius, numbers.ScanResolution, numbers.MaxTargetRange, numbers.MaxLockedTargets, false),
+                    cancellationToken).ConfigureAwait(false);
+            }
+            catch (SimUnavailableException error)
+            {
+                _log?.Invoke($"battery {module.DeployableId} offline: {error.Message}");
+            }
+            finally
+            {
+                gate.Release();
+            }
         }
     }
 }

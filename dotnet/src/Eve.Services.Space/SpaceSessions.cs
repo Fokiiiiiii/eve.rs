@@ -585,6 +585,8 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
 
     /// <summary>The posMgr calls whose state owner is the deployed control-tower module.</summary>
     public Func<ServiceCall, ValueTask<PyValue>>? PosMgrControlTowerOperation { get; set; }
+    /// <summary>Releases the POS battery control grants a pilot holds when that pilot leaves (set by the space composition).</summary>
+    public Func<long, CancellationToken, Task>? ReleaseBatteryControl { get; set; }
 
     /// <summary>The probe scan of the probes in space (set by the composition root): the scanMgr requests answer through it.</summary>
     public SpaceProbeScans? ProbeScans { get; set; }
@@ -763,6 +765,8 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         ClientSession session, long characterId, CancellationToken cancellationToken)
     {
         await OnSessionClosedAsync(session);
+        if (ReleaseBatteryControl is { } release)
+            await release(characterId, cancellationToken);
     }
 
     /// <summary>What a pilot that enters space does once it is in the scene (the squadrons its character has out there are taken up again).</summary>

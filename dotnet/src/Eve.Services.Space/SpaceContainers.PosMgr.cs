@@ -23,6 +23,8 @@ public sealed partial class SpaceContainers
     private const int ReactorGroupId = 438;
     private const int MoonHarvesterGroupId = 416;
     private const int StarbaseCategoryId = 23;
+    /// <summary>The dogma attribute a POS battery carries when a pilot may take its control (V24.01 dogma/const.py attributePosPlayerControlStructure).</summary>
+    private const int PlayerControlStructureAttributeId = 1167;
     /// <summary>The durable one-shot runner for configured POS production graphs.</summary>
     public const string ControlTowerProductionCycleJob = "space.control_tower.production_cycle";
     private static readonly string[] DeployFlagNames = ["anchor", "unanchor", "online", "offline"];
@@ -88,6 +90,8 @@ public sealed partial class SpaceContainers
             "LinkResourceForTower" => await LinkResourcesAsync(call).ConfigureAwait(false),
             "RunMoonProcessCycleforTower" => await RunMoonCycleAsync(call).ConfigureAwait(false),
             "GetMoonProcessInfoForTower" => throw await ProcessInfoAsync(call).ConfigureAwait(false),
+            "AssumeStructureControl" => await AssumeStructureControlAsync(call).ConfigureAwait(false),
+            "RelinquishStructureControl" => await RelinquishStructureControlAsync(call).ConfigureAwait(false),
             _ => throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That POS operation is not available on this server."))),
         };
     }
@@ -292,6 +296,61 @@ public sealed partial class SpaceContainers
         NotifyMoonProcessChange(call.Session, tower, new PyList([]));
         return PyNone.Instance;
     }
+
+    /// <summary>Grants a pilot the control of an online POS battery (V24.01 playerOwned.AssumeStructureControl). The grant is one row written under the battery's lock.</summary>
+    private async Task<PyValue> AssumeStructureControlAsync(ServiceCall call)
+    {
+        var moduleId = ReadPositiveId(call.Arg(0));
+        var characterId = call.Session.CharacterId ?? 0;
+        if (_deployed is null || _source is null || moduleId <= 0 || characterId <= 0) throw TowerNotFound();
+        await using var connection = await _source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
+        await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
+        var battery = await _deployed.LockAndGetAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
+        if (battery is not { Kind: StarbaseModuleKind }) throw TowerNotFound();
+        await _statics.EnsureTypesAsync([battery.TypeId], call.Cancellation).ConfigureAwait(false);
+        if (!IsPlayerControlledBattery(battery.TypeId)) throw BatteryNotControllable();
+        await RequireControlTowerAccessAsync(call.Session, battery, false, call.Cancellation,
+            requireConfigurationRole: false).ConfigureAwait(false);
+        var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
+        if (state is not (TowerOnline or TowerOnlining)) throw BatteryNotOnline();
+        var holder = await _deployed.BatteryControllerAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
+        if (holder is { } other && other != characterId) throw BatteryControlledByAnotherPilot();
+        if (holder is null)
+            await _deployed.GrantBatteryControlAsync(connection, transaction, moduleId, characterId, _nowUnixMs(), call.Cancellation).ConfigureAwait(false);
+        await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
+        return PyNone.Instance;
+    }
+
+    /// <summary>Releases the control grant the calling pilot holds on a POS battery (V24.01 playerOwned.RelinquishStructureControl). Releasing a grant
+    /// the pilot does not hold changes nothing, so a relinquish after the battery left the pilot's hands is harmless.</summary>
+    private async Task<PyValue> RelinquishStructureControlAsync(ServiceCall call)
+    {
+        var moduleId = ReadPositiveId(call.Arg(0));
+        var characterId = call.Session.CharacterId ?? 0;
+        if (_deployed is null || _source is null || moduleId <= 0 || characterId <= 0) throw TowerNotFound();
+        await using var connection = await _source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
+        await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
+        await _deployed.ReleaseBatteryControlAsync(connection, transaction, moduleId, characterId, call.Cancellation).ConfigureAwait(false);
+        await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
+        return PyNone.Instance;
+    }
+
+    /// <summary>Releases every POS battery control grant a pilot holds when the pilot leaves the cluster, so no battery stays locked to an absent pilot.</summary>
+    public async Task ReleaseBatteryControlAsync(long characterId, CancellationToken cancellationToken)
+    {
+        if (_deployed is null || characterId <= 0) return;
+        await _deployed.ReleaseBatteryControlsOfCharacterAsync(characterId, cancellationToken).ConfigureAwait(false);
+    }
+
+    private bool IsPlayerControlledBattery(int typeId) =>
+        _statics.Type(typeId) is { } type && type.Attributes.GetValueOrDefault(PlayerControlStructureAttributeId) > 0;
+
+    private static MachoWrappedException BatteryNotControllable() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("Only a POS battery can be placed under a pilot's control.")));
+    private static MachoWrappedException BatteryNotOnline() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("A POS battery can only be controlled while it is online.")));
+    private static MachoWrappedException BatteryControlledByAnotherPilot() => MachoErrors.ThrowUserError("CustomNotify",
+        ("notify", new PyStr("Another pilot already controls this POS battery.")));
 
     private async Task<PyValue> LinkResourcesAsync(ServiceCall call)
     {

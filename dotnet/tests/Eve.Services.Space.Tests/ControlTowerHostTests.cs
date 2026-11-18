@@ -195,6 +195,113 @@ public class ControlTowerHostTests
         }
     }
 
+    [PgFact]
+    public async Task PosMgr_battery_control_is_held_by_one_pilot_over_host_wire_and_is_released_by_relinquish_or_logoff()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.Containers.CharacterSessions = rig.CharacterSessions;
+        var batteryTypeId = await PlayerControlledBatteryTypeAsync(rig);
+        int siloTypeId;
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var siloCommand = new NpgsqlCommand(
+            "SELECT key FROM sde.\"types\" WHERE (doc->>'groupID')::int = 404 AND doc->>'published' = 'true' ORDER BY key LIMIT 1", connection))
+        {
+            siloTypeId = int.Parse((string)(await siloCommand.ExecuteScalarAsync())!, System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower, batteryTypeId, siloTypeId], LowSecSystem);
+        var (tower, battery, silo) = (items[0], items[1], items[2]);
+        Assert.Equal(tower, await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None));
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        var towerRecord = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(tower));
+        var (other, _) = await PilotWithItemsAsync(rig, [], LowSecSystem, account: 2, name: "Second Tester", sessionId: 2);
+
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var host = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+        await using var otherHost = await PosMgrHostWire.StartAsync(posMgr, other, () => rig.Now);
+
+        // Anchor a battery and a silo through the real starbase anchoring call; each one sits beside the tower.
+        async Task AnchorModuleAsync(long moduleId, double offset)
+        {
+            Assert.Equal(moduleId, await rig.Containers.LaunchFromShipAsync(session, moduleId, CancellationToken.None));
+            var position = new[] { towerRecord.Position[0] + offset, towerRecord.Position[1], towerRecord.Position[2] };
+            rig.Sim.PositionAnswers[moduleId] = position;
+            rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = position;
+            await host.CallAsync("AnchorStructure", new PyLong(moduleId), new PyTuple(position.Select(value => (PyValue)new PyReal(value)).ToArray()));
+            rig.Now += AnchoringMs;
+            await rig.Scheduler.RunDueAsync();
+        }
+        await AnchorModuleAsync(battery, 10_000);
+        await AnchorModuleAsync(silo, 20_000);
+        var batteryPosition = new[] { towerRecord.Position[0] + 10_000, towerRecord.Position[1], towerRecord.Position[2] };
+        rig.Sim.PositionAnswers[other.GetInt("shipid")!.Value] = batteryPosition;
+
+        // A battery is refused until it is online; a silo is never a battery, whatever its state.
+        var offline = await Assert.ThrowsAsync<MachoWrappedException>(() => host.CallAsync("AssumeStructureControl", new PyLong(battery)));
+        Assert.Equal("CustomNotify", offline.Error.UserErrorMessage);
+        Assert.Null(await HeldByAsync(rig, battery));
+        await rig.Deployed.SetTowerStateAsync(battery, "online");
+        await rig.Deployed.SetTowerStateAsync(silo, "online");
+        var notBattery = await Assert.ThrowsAsync<MachoWrappedException>(() => host.CallAsync("AssumeStructureControl", new PyLong(silo)));
+        Assert.Equal("CustomNotify", notBattery.Error.UserErrorMessage);
+        Assert.Null(await HeldByAsync(rig, battery));
+
+        // The first pilot takes the online battery; the grant is persisted under the battery's row.
+        Assert.IsType<PyNone>(await host.CallAsync("AssumeStructureControl", new PyLong(battery)));
+        Assert.Equal(session.CharacterId, await HeldByAsync(rig, battery));
+        // Taking a grant the pilot already holds is idempotent.
+        Assert.IsType<PyNone>(await host.CallAsync("AssumeStructureControl", new PyLong(battery)));
+        Assert.Equal(session.CharacterId, await HeldByAsync(rig, battery));
+
+        // A second pilot cannot take a battery another pilot holds, and relinquishing a grant it does not hold changes nothing.
+        var taken = await Assert.ThrowsAsync<MachoWrappedException>(() => otherHost.CallAsync("AssumeStructureControl", new PyLong(battery)));
+        Assert.Equal("CustomNotify", taken.Error.UserErrorMessage);
+        Assert.Equal(session.CharacterId, await HeldByAsync(rig, battery));
+        Assert.IsType<PyNone>(await otherHost.CallAsync("RelinquishStructureControl", new PyLong(battery)));
+        Assert.Equal(session.CharacterId, await HeldByAsync(rig, battery));
+
+        // The holder relinquishes; the battery is free and the other pilot takes it.
+        Assert.IsType<PyNone>(await host.CallAsync("RelinquishStructureControl", new PyLong(battery)));
+        Assert.Null(await HeldByAsync(rig, battery));
+        Assert.IsType<PyNone>(await otherHost.CallAsync("AssumeStructureControl", new PyLong(battery)));
+        Assert.Equal(other.CharacterId, await HeldByAsync(rig, battery));
+
+        // A pilot that leaves the cluster releases its grants, so the battery is not locked to an absent pilot.
+        await rig.Containers.ReleaseBatteryControlAsync(other.CharacterId!.Value, CancellationToken.None);
+        Assert.Null(await HeldByAsync(rig, battery));
+        Assert.IsType<PyNone>(await host.CallAsync("AssumeStructureControl", new PyLong(battery)));
+        Assert.Equal(session.CharacterId, await HeldByAsync(rig, battery));
+    }
+
+    /// <summary>The pilot holding a POS battery's control grant, read from PostgreSQL.</summary>
+    private static async Task<long?> HeldByAsync(Rig rig, long battery)
+    {
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        return await rig.Deployed.BatteryControllerAsync(connection, null, battery);
+    }
+
+    /// <summary>A published starbase-category type that carries the player-control attribute (a POS battery), read from the pinned SDE.</summary>
+    private static async Task<int> PlayerControlledBatteryTypeAsync(Rig rig)
+    {
+        var candidates = new List<int>();
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var command = new NpgsqlCommand(
+            "SELECT key FROM sde.\"types\" WHERE (doc->>'categoryID')::int = 23 AND doc->>'published' = 'true' ORDER BY key", connection))
+        await using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+                candidates.Add(int.Parse(reader.GetString(0), System.Globalization.CultureInfo.InvariantCulture));
+        }
+        await rig.Statics.EnsureTypesAsync(candidates.ToArray());
+        var battery = candidates.FirstOrDefault(id => rig.Statics.Type(id) is { } type && type.Attributes.GetValueOrDefault(1167) > 0);
+        Assert.True(battery > 0, "the pinned SDE has no starbase type carrying posPlayerControlStructure (attribute 1167)");
+        return battery;
+    }
+
     /// <summary>The fuel blocks of the Amarr tower's race (Helium) and of the Caldari (Nitrogen), SDE 4247 and 4051.</summary>
     private const int HeliumFuelBlock = 4247, NitrogenFuelBlock = 4051;
 

@@ -26,10 +26,29 @@ Only the profiles in the checked-in data file are supported. No graphical V24 in
 
 Capital profiles receive the V24 type-dogma security check before the Host reports them online. Profiles whose dogma requires a sovereignty level or infrastructure-hub upgrade remain listed offline: Host does not yet calculate authoritative hub-upgrade power/fuel state (the same unresolved budget recorded in `TODO.md` ST-17 c). `Capital_POS_assembly_array_obeys_its_V24_system_security_limit` covers the registered Host response for type 24656 in Jita. This is intentionally fail-closed; it is not evidence that the capital arrays can complete jobs in a qualifying system.
 
+### POS battery control grant (2026-11-18)
+
+V24.01 `playerOwned.AssumeStructureControl` (`playerOwned.py:428-453`) calls `posMgr.AssumeStructureControl(itemID)` for a battery, and `RelinquishStructureControl` (`playerOwned.py:455-475`) releases it. Both take one item ID and return nothing the client reads.
+
+Implemented in the Host:
+
+- `AssumeStructureControl`: the battery must be a starbase module whose type carries dogma attribute 1167, must be online or onlining, and the calling pilot must belong to its corporation, be in its system and in space, and be within interaction distance (`RequireControlTowerAccessAsync`). The grant is one row of `starbase_battery_control` written under the battery's deployed-row lock. A grant held by another pilot is refused. Asking again for a grant the pilot holds is idempotent.
+- `RelinquishStructureControl`: releases the calling pilot's grant only. It is idempotent, and it does not need the interaction-distance check, so a grant cannot be stranded.
+- Leaving: when the holder leaves the cluster, its grants are released through `SpaceSessions.OnCharacterLeavingAsync`.
+- No server notification is sent. The client's own `OnAssumeStructureControl` / `OnRelinquishStructureControl` are local scatters.
+
+Verification status:
+
+- `PosMgr_missing_client_methods_are_dispatched_through_the_registered_host_service` passed (1 passed, 0 skipped). It sends both methods through the registered Host and checks the argument shapes.
+- `ControlTowerHostTests.PosMgr_battery_control_is_held_by_one_pilot_over_host_wire_and_is_released_by_relinquish_or_logoff` covers exclusivity, idempotence, relinquish, the holder's leaving, and the offline and non-battery refusals. It was NOT run: the local `eve_p4` server refused connections on 127.0.0.1:5432, so the test failed to connect. It is not counted as passed.
+- The battery type is looked up at test time from the SDE (`categoryID` 23 with attribute 1167). That the pinned SDE has such a type was not checked, because the database was unreachable.
+
+Still open: `AddTargetOBO` and `RemoveTargetOBO`, the `OnTargetOBO` notification, and graphical acceptance.
+
 ## Open items
 
 - **POS force field and password admission:** the Host still does not create a force-field item/ball when a tower comes online, remove it on fuel failure/offline, publish `forceFieldID`, update its Destiny harmonic, or check corp/alliance/ship-password admission at a movement boundary. `SetTowerPassword` persistence alone is not the feature. The existing command-burst check uses the SDE shield radius and tower online state for that module's eligibility; it does not supply the force-field ball or crossing behavior.
-- **Starbase OBO target calls:** `AddTargetOBO` and `RemoveTargetOBO` remain unimplemented. V24 invokes them after taking control of a battery; EveJS validates the session-local battery grant and delegates target locks to the battery's scene actor. eve.rs has neither that POS battery control grant/actor nor Rust scene targeting state for a battery. Registering these two RPC names without those owners would not implement the client flow.
+- **Starbase OBO target calls:** `AddTargetOBO` and `RemoveTargetOBO` remain unimplemented. The battery control grant (`AssumeStructureControl` / `RelinquishStructureControl`) now exists (see POS battery control grant below), but the DogmaLM bound object and the battery's target lock state in the Rust scene do not. Registering the two RPC names without them would not implement the client flow.
 - **Sentry targeting:** sentry settings persist and round-trip, but no associated battery targeting/defense controller consumes the policy.
 - **Other POS inventory/use consumers:** silo `viewput`/`viewputtake` is enforced. Ship-maintenance, reprocessing/compression arrays and jump-bridge `use` behavior remain incomplete.
 - **Moon/reaction production:** module onlining/resource accounting and silo-to-silo transfer are implemented, but historical moon output is not configured in the pinned EveJS legacy authority, and the SDE contains no historical moon abundance. The server does not fabricate output.

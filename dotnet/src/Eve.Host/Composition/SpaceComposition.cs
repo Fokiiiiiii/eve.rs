@@ -586,6 +586,7 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.ControlTowerAnchor = spaceContainers.AnchorControlTowerAsync;
             spaceSessions.ControlTowerModuleOperation = spaceContainers.ControlTowerModuleOperationAsync;
             spaceSessions.PosMgrControlTowerOperation = spaceContainers.PosMgrControlTowerOperationAsync;
+            spaceSessions.ReleaseBatteryControl = spaceContainers.ReleaseBatteryControlAsync;
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.AnchorJob, async (context, token) =>
             {
                 var id = context.Payload<Eve.Services.Space.SpaceContainers.DisruptorAnchorDue>()!.DeployableId;

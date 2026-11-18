@@ -124,6 +124,50 @@ public sealed class PgDeployedStore
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
+    /// <summary>The pilot holding a POS battery's control grant, or null when no pilot holds it.</summary>
+    public async Task<long?> BatteryControllerAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, long deployableId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT character_id FROM {_schema}.starbase_battery_control WHERE deployable_id = $1", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        return await command.ExecuteScalarAsync(cancellationToken) is long characterId ? characterId : null;
+    }
+
+    /// <summary>Grants a POS battery's control to a pilot in the caller's transaction. Returns false when a grant already exists.</summary>
+    public async Task<bool> GrantBatteryControlAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId,
+        long characterId, long grantedAtMs, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"INSERT INTO {_schema}.starbase_battery_control (deployable_id, character_id, granted_at_ms) VALUES ($1, $2, $3) ON CONFLICT (deployable_id) DO NOTHING",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        command.Parameters.Add(new NpgsqlParameter { Value = grantedAtMs });
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
+    /// <summary>Releases a POS battery's control grant when that pilot holds it. Returns whether a grant was released.</summary>
+    public async Task<bool> ReleaseBatteryControlAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId,
+        long characterId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"DELETE FROM {_schema}.starbase_battery_control WHERE deployable_id = $1 AND character_id = $2", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
+    }
+
+    /// <summary>Releases every POS battery control grant a pilot holds, when the pilot leaves the cluster.</summary>
+    public async Task ReleaseBatteryControlsOfCharacterAsync(long characterId, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"DELETE FROM {_schema}.starbase_battery_control WHERE character_id = $1", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = characterId });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>The start time of an in-progress control-tower state transition, or null when the state has no timer.</summary>
     public async Task<long?> TowerStateStartedAtMsAsync(long deployableId, CancellationToken cancellationToken = default)
     {

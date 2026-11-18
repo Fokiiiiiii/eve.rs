@@ -100,6 +100,12 @@ public sealed partial class PosMgrService(
     [Method("AnchorOrbital")]
     public ValueTask<PyValue> AnchorOrbital(ServiceCall call) => Invoke(call);
 
+    [Method("AssumeStructureControl")]
+    public ValueTask<PyValue> AssumeStructureControl(ServiceCall call) => Invoke(call);
+
+    [Method("RelinquishStructureControl")]
+    public ValueTask<PyValue> RelinquishStructureControl(ServiceCall call) => Invoke(call);
+
     [Method("ChangeStructureProvisionType")]
     public ValueTask<PyValue> ChangeStructureProvisionType(ServiceCall call) => Invoke(call);
 

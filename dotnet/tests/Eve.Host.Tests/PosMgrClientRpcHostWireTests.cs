@@ -25,6 +25,7 @@ public partial class HostServerTests
         (string Method, PyValue[] Args)[] calls =
         [
             ("AnchorOrbital", [new PyLong(9_871_005_101)]),
+            ("AssumeStructureControl", [new PyLong(9_871_005_101)]),
             ("ChangeStructureProvisionType", [new PyLong(9_871_005_101), new PyLong(9_871_005_102), PyNone.Instance]),
             ("GetConsumptionFactor", [new PyLong(9_871_005_101)]),
             ("GetMoonForTower", [new PyLong(9_871_005_101)]),
@@ -35,6 +36,7 @@ public partial class HostServerTests
             ("GetTowerSentrySettings", [new PyLong(9_871_005_101)]),
             ("LinkResourceForTower", [new PyLong(9_871_005_101), new PyList([])]),
             ("OnlineOrbital", [new PyLong(9_871_005_101)]),
+            ("RelinquishStructureControl", [new PyLong(9_871_005_101)]),
             ("RunMoonProcessCycleforTower", [new PyLong(9_871_005_101)]),
             ("SetStarbasePermissions", [new PyLong(9_871_005_101), new PyDict([]), new PyList([])]),
             ("SetTowerNotifications", [new PyLong(9_871_005_101), PyBool.True, PyBool.False]),

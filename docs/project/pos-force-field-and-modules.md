@@ -40,10 +40,26 @@ Implemented in the Host:
 Verification status:
 
 - `PosMgr_missing_client_methods_are_dispatched_through_the_registered_host_service` passed (1 passed, 0 skipped). It sends both methods through the registered Host and checks the argument shapes.
-- `ControlTowerHostTests.PosMgr_battery_control_is_held_by_one_pilot_over_host_wire_and_is_released_by_relinquish_or_logoff` covers exclusivity, idempotence, relinquish, the holder's leaving, and the offline and non-battery refusals. It was NOT run: the local `eve_p4` server refused connections on 127.0.0.1:5432, so the test failed to connect. It is not counted as passed.
-- The battery type is looked up at test time from the SDE (`categoryID` 23 with attribute 1167). That the pinned SDE has such a type was not checked, because the database was unreachable.
+- `ControlTowerHostTests.PosMgr_battery_control_is_held_by_one_pilot_over_host_wire_and_is_released_by_relinquish_or_logoff` covers exclusivity, idempotence, relinquish, the holder's leaving, and the offline and non-battery refusals. Run on PostgreSQL `eve_p4` on 2026-11-18 after the SDE group join fix: 1 passed, 0 failed, 0 skipped. The class `ControlTowerHostTests` ran 11 passed, 0 failed, 0 skipped; PosMgr filters ran 6 passed (Space.Tests) and 5 passed (Host.Tests), all 0 skipped.
+- The battery type is looked up at test time from the SDE: `sde.types` joined to `sde.groups` on the group key, filtered to `categoryID` 23 and published, then attribute 1167 from `sde.typeDogma`. The pinned SDE has 211 published category-23 types; 16631 and 16688 carry attribute 1167.
 
-Still open: `AddTargetOBO` and `RemoveTargetOBO`, the `OnTargetOBO` notification, and graphical acceptance.
+Still open: `AddTargetOBO` and `RemoveTargetOBO`, the `OnTargetOBO` notification, and graphical acceptance. See the OBO blocker below.
+
+### POS OBO targeting: blocked (2026-11-18)
+
+`AddTargetOBO` and `RemoveTargetOBO` were not implemented in this run, and no RPC name was registered, because a registered handler would be a fake success.
+
+- Client source: `eve/client/script/parklife/playerOwnedTargetMgr.py:84-102` (the OBO calls at lines 87 and 102) could not be read. The Read tool was refused by the permission settings. The argument shapes and the `OnTargetOBO` consumer in `playerOwned.py` are therefore unverified.
+- EveJS source: `server/src/services/starbase/starbaseControlRuntime.js:210-225` could not be read for the same reason, so the delegation and the battery lock state are carried over from the earlier audit and not re-checked.
+- eve.rs state: the DogmaIM targeting partial (`dotnet/src/Eve.Services.Dogma/DogmaIMService.Targeting.cs`) has only the ship `AddTarget` / `RemoveTarget` / `CancelAddTarget` / `ClearTargets` / `GetTargets` / `GetTargeters` surface. `OrderAsync` acts on the session's own ship. The Rust `crates/eve-space/src/targeting/mod.rs` holds locks only for a session ship or a controlled Upwell structure, and has no POS battery actor.
+- Consequence: a handler that accepted `AddTargetOBO(battery, target)` through the existing ship path would change the pilot's ship lock, not the battery's. That is the failure `audit-fixes-dogma.md` already warned about.
+
+Needed before this can be implemented honestly:
+
+1. Read access to the two reference files above, to fix the RPC argument shapes and the `OnTargetOBO` payload.
+2. A simulation-owned battery actor in `crates/eve-space`, with its own target lock state, range and online checks, and the cap and warp rules that apply to the lock.
+3. The DogmaLM bound object in the Dogma service, validating the caller's battery grant from `starbase_battery_control`, the battery's online state and the target, then forwarding the order to that actor.
+4. Host tests through the real registration: grant held and not held, battery offline, invalid target, lock and remove, and the `OnTargetOBO` notification.
 
 ## Open items
 

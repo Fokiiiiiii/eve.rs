@@ -4593,7 +4593,7 @@ Sources: SDE build 3396210 (`typeDogma` of the Amarr Control Tower 12235: attrib
 - **Relinquish is idempotent.** Relinquishing a grant the pilot does not hold changes nothing and returns None. The client prompts only on a `UserError`, so a stale relinquish stays silent.
 - **No server notification.** The client's `OnAssumeStructureControl` / `OnRelinquishStructureControl` are local `ScatterEvent`s. eve.rs sends no notification for the grant. Whether EveJS sends one was not re-checked in this run.
 - **Still open: `AddTargetOBO` / `RemoveTargetOBO`.** No DogmaLM bound object exists in eve.rs (no `GetDogmaLM` / DogmaLM path in the codebase), and the Rust scene has no battery target lock state. The OBO handlers need that lock origin, and a handler that returned success without it is refused. The `OnTargetOBO` notification is also open.
-- **Verification.** The registered wire test passed (1 passed, 0 skipped, no database). The PostgreSQL regression `PosMgr_battery_control_is_held_by_one_pilot_over_host_wire_and_is_released_by_relinquish_or_logoff` builds and is not skipped, but it was not run: the local `eve_p4` server refused connections. It is not counted as passed.
+- **Verification.** The registered wire test passed (1 passed, 0 skipped, no database). The PostgreSQL regression `PosMgr_battery_control_is_held_by_one_pilot_over_host_wire_and_is_released_by_relinquish_or_logoff` passed on PostgreSQL `eve_p4` on 2026-11-18 (1 passed, 0 skipped) after the SDE group join fix.
 
 Sources: V24.01 `eve/client/script/parklife/playerOwned.py:428-475`, `eve/client/script/parklife/playerOwnedTargetMgr.py:84-103`, `dogma/const.py:803`; the grant design follows the same PostgreSQL pattern as the POS module configuration (`SpaceContainers.PosMgr.cs`).
 

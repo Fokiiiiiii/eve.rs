@@ -105,6 +105,18 @@ Gaps in slice 1 (not verified):
 - `oracle/fixtures/simlink/messages.json` is NOT regenerated. `tools/dev/gen-simlink-fixtures.py` now has kinds 190 and 191, their frame writers, valid and invalid cases, and version 104. Running the script was refused by the command policy hook (both the relative and the absolute path), so the shared golden frames do not cover the fire kinds, and the file still says 102. The Rust and C# fixture tests pass against the old file.
 - Every `Activate` on a ship module now makes one extra PostgreSQL read (`BatteryFireAsync` → `_deployed.GetAsync`) before the module path. This is not measured.
 
+### Control Bunker live item authority: slice 2 blocked (2026-11-18)
+
+No code or migration was added for this slice. The premise does not hold in this checkout, verified as follows:
+
+- Client: `AddInfrastructureHubToScroll` (`eve/client/script/ui/shared/agencyNew/ui/contentPageInfoConts/factionWarfareSystemInfoContainer.py:49-61`, codebase-memory) takes the ID from `facWarMgr.GetControlBunkerIDInSystem()`. It shows the bunker only when `ballpark.GetInvItem(id)` and `GetBall(id)` both exist, and takes the type from the slim item. The client has no online or owner field of its own for the bunker.
+- Host: `FactionWarfareControlBunkers.ReadLiveControlBunkerIdAsync` (`dotnet/src/Eve.Host/Persistence/FactionWarfare/FactionWarfareControlBunkers.cs:130-144`) returns the persisted identity only when the simulator reports a live body with group 925 and a finite 3-vector position. `RestoreAsync` (lines 147-192) places a bunker only from that body or from an injected `readVerifiedPosition` provider.
+- Production composition passes no position provider: `dotnet/src/Eve.Host/Composition/FactionWarfareComposition.cs:244-245` omits it. So no bunker is placed in production and `GetControlBunkerIDInSystem` returns `None` to the client. The only test that places one (`Control_bunker_lifecycle_uses_sde_state_and_skips_unverified_production_placement`) injects a test anchor.
+- Storage: the only bunker column is `fw_systems.control_bunker_id` (migration `0009_fw_control_bunkers.sql`, identity from a sequence in the 80000000 range). A check of `information_schema` on `eve_p5` found no table holding live bunker item rows (the only matches are `factionwarfare.fw_*`, `sde.dynamicItemAttributes`, `trade.staged_items` and `contracts.*item*`).
+- Online and owner cannot come from the simulator either: `SimGetSceneBodyReply` carries only item id, type, group, category, position and error. `RestoreAsync` writes `UpkeepState.FullPower` as a constant (lines 179, 186, 203) and the owner from the occupier's militia corporation.
+
+What is needed before a live item row can be authoritative: a verified source for the bunker's position and ball in a system (EveJS or a client fact), and a verified source for its online and owner state. Adding a table or column now would store values that no verified source sets, so it is not done. The DB regression for the existing lifecycle has not been rerun in this session.
+
 ## Open items
 
 - **POS force field and password admission:** the Host still does not create a force-field item/ball when a tower comes online, remove it on fuel failure/offline, publish `forceFieldID`, update its Destiny harmonic, or check corp/alliance/ship-password admission at a movement boundary. `SetTowerPassword` persistence alone is not the feature. The existing command-burst check uses the SDE shield radius and tower online state for that module's eligibility; it does not supply the force-field ball or crossing behavior.

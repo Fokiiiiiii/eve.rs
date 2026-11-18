@@ -290,7 +290,7 @@ public class ControlTowerHostTests
         var candidates = new List<int>();
         await using (var connection = await rig.Source.OpenConnectionAsync())
         await using (var command = new NpgsqlCommand(
-            "SELECT key FROM sde.\"types\" WHERE (doc->>'categoryID')::int = 23 AND doc->>'published' = 'true' ORDER BY key", connection))
+            "SELECT t.key FROM sde.\"types\" t JOIN sde.groups g ON g.key = t.doc->>'groupID' WHERE (g.doc->>'categoryID')::int = 23 AND t.doc->>'published' = 'true' ORDER BY t.key", connection))
         await using (var reader = await command.ExecuteReaderAsync())
         {
             while (await reader.ReadAsync())

@@ -1027,6 +1027,41 @@ impl Message {
                 out.extend_from_slice(&to_system.to_le_bytes());
                 out.extend_from_slice(&to_gate.to_le_bytes());
             }
+            Self::PlaceBattery(battery) => {
+                out.extend_from_slice(&battery.battery_id.to_le_bytes());
+                out.extend_from_slice(&battery.solar_system_id.to_le_bytes());
+                out.extend_from_slice(&battery.type_id.to_le_bytes());
+                out.extend_from_slice(&battery.group_id.to_le_bytes());
+                put_text(&mut out, &battery.name);
+                out.extend_from_slice(&battery.holder_session.to_le_bytes());
+                put_vector(&mut out, &battery.position);
+                out.extend_from_slice(&battery.radius.to_le_bytes());
+                out.extend_from_slice(&battery.scan_resolution.to_le_bytes());
+                out.extend_from_slice(&battery.max_target_range.to_le_bytes());
+                out.extend_from_slice(&battery.max_locked_targets.to_le_bytes());
+                out.push(u8::from(battery.online));
+            }
+            Self::BatteryPlaced { battery_id, reason } => {
+                out.extend_from_slice(&battery_id.to_le_bytes());
+                put_text(&mut out, reason);
+            }
+            Self::BatteryTarget { request_id, battery_id, solar_system_id, order, target } => {
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&battery_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.push(*order);
+                out.extend_from_slice(&target.to_le_bytes());
+            }
+            Self::BatteryTargets { request_id, battery_id, reason, pending, targets } => {
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&battery_id.to_le_bytes());
+                put_text(&mut out, reason);
+                out.push(u8::from(*pending));
+                out.extend_from_slice(&(targets.len() as u32).to_le_bytes());
+                for target in targets {
+                    out.extend_from_slice(&target.to_le_bytes());
+                }
+            }
             Self::Targets { session_id, command, pending, targets } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.push(*command);

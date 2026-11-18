@@ -27,6 +27,14 @@ pub const WARP_EXITED: u8 = 165;
 /// The Host asks what the client ballpark currently holds for deployment placement (protocol 101).
 pub const GET_DEPLOYMENT_BALLS: u8 = 166;
 pub const GET_DEPLOYMENT_BALLS_REPLY: u8 = 167;
+/// The Host places a POS battery in its system's scene, or updates its numbers, holder and online state (protocol 102).
+pub const PLACE_BATTERY: u8 = 168;
+/// The answer to `PLACE_BATTERY`: an empty reason means the battery is in the scene.
+pub const BATTERY_PLACED: u8 = 169;
+/// A lock, remove, clear or cancel order for a battery's own targets (protocol 102).
+pub const BATTERY_TARGET: u8 = 170;
+/// The answer to `BATTERY_TARGET`: pending flag and the targets the battery holds.
+pub const BATTERY_TARGETS: u8 = 171;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

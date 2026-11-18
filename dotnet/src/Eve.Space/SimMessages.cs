@@ -1256,6 +1256,17 @@ public sealed record SimPlaceContainer(ulong SessionId, long ContainerId, SimWre
 public sealed record SimArrived(ulong SessionId, long BeltId, IReadOnlyList<double> Position) : SimMessage;
 /// <summary>The ship has left warp and can take new movement orders while its velocity coasts down.</summary>
 public sealed record SimWarpExited(ulong SessionId) : SimMessage;
+/// <summary>The host places a POS battery in its system's scene, or updates it (protocol 102). Its holder is the pilot whose control grant the host
+/// checked (0 for none); its locks are told to that pilot only. Answered by <see cref="SimBatteryPlaced"/>.</summary>
+public sealed record SimPlaceBattery(long BatteryId, int SolarSystemId, int TypeId, int GroupId, string Name, ulong HolderSession,
+    IReadOnlyList<double> Position, double Radius, double ScanResolution, double MaxTargetRange, int MaxLockedTargets, bool Online) : SimMessage;
+/// <summary>The answer to <see cref="SimPlaceBattery"/>: an empty reason means the battery is in the scene.</summary>
+public sealed record SimBatteryPlaced(long BatteryId, string Reason) : SimMessage;
+/// <summary>A lock, remove, clear or cancel order for a battery's targets (order 1 lock, 2 remove, 3 clear, 4 cancel; the target is unused by a clear).
+/// Answered by <see cref="SimBatteryTargets"/> under the request id (protocol 102).</summary>
+public sealed record SimBatteryTarget(ulong RequestId, long BatteryId, int SolarSystemId, byte Order, long Target) : SimMessage;
+/// <summary>The answer to <see cref="SimBatteryTarget"/>: an empty reason means the order was accepted; <paramref name="Pending"/> says a lock is still going.</summary>
+public sealed record SimBatteryTargets(ulong RequestId, long BatteryId, string Reason, bool Pending, IReadOnlyList<long> Targets) : SimMessage;
 
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;

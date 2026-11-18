@@ -324,6 +324,10 @@ pub enum Out {
     Arrived { session: SessionId, belt_id: i64, position: Vec3 },
     /// A ship left warp and can receive new movement orders while its existing velocity coasts down.
     WarpExited { session: SessionId },
+    /// The answer to a battery placement (protocol 102): the reason, empty when the battery is in the scene.
+    BatteryPlaced { battery_id: i64, reason: String },
+    /// The answer to a battery's target order (protocol 102): the reason (empty when accepted), whether a lock is pending, what the battery holds.
+    BatteryTargets { request_id: u64, battery_id: i64, reason: String, pending: bool, targets: Vec<i64> },
     /// The answer to a question about the ship's condition.
     Condition { session: SessionId, command: u8, condition: Condition },
     /// A cynosural field was lit by the ship of `session`: the host keeps its record (`Message::Deployed`).
@@ -521,7 +525,9 @@ impl Out {
             Out::StructureDamaged { .. }
             | Out::SimDamageableEntityUpserted { .. }
             | Out::SimDamageableEntityRemoved { .. }
-            | Out::AbyssalFieldMembership { .. } => 0,
+            | Out::AbyssalFieldMembership { .. }
+            | Out::BatteryPlaced { .. }
+            | Out::BatteryTargets { .. } => 0,
         }
     }
 }
@@ -906,6 +912,8 @@ pub struct Scene {
     pub(crate) structure_health: BTreeMap<i64, crate::health::StructureHealth>,
     /// Module capacitor and targeting state keyed by physical structure id.
     pub(crate) structure_modules: BTreeMap<i64, ControlledStructureModules>,
+    /// The POS batteries of the scene (protocol 102): each has its own lock state, independent of any pilot ship.
+    pub(crate) batteries: BTreeMap<i64, crate::targeting::Battery>,
     /// Host-authoritative mechanics for a private Abyssal room scene.
     pub(crate) abyssal: Option<AbyssalSceneSpec>,
     /// NPCs materialized by stable content/run/ship identity, retained as tombstones after destruction.
@@ -981,6 +989,7 @@ impl Scene {
             sim_damageable_entities: BTreeSet::new(),
             structure_health: BTreeMap::new(),
             structure_modules: BTreeMap::new(),
+            batteries: BTreeMap::new(),
             abyssal: None,
             abyssal_npc_spawn_receipts: HashMap::new(),
             abyssal_participant_deaths: HashMap::new(),

@@ -33,6 +33,10 @@ public static partial class SimCodec
         public const byte GetSceneBodyReply = 127;
         public const byte GetDeploymentBalls = 166;
         public const byte GetDeploymentBallsReply = 167;
+        public const byte PlaceBattery = 168;
+        public const byte BatteryPlaced = 169;
+        public const byte BatteryTarget = 170;
+        public const byte BatteryTargets = 171;
         public const byte EnsureTournamentBeacon = 128;
         public const byte EnsureTournamentBeaconReply = 129;
         public const byte RemoveTournamentBeacon = 130;
@@ -195,6 +199,11 @@ public const byte UpdateEffect = 61;
 
     private static bool IsVector(IReadOnlyList<double> vector) =>
         vector.Count == 3 && vector.All(double.IsFinite);
+
+    /// <summary>What a battery placement carries that the link can read: finite numbers only (protocol 102; the simulation refuses what it cannot use).</summary>
+    private static bool ValidBatteryPlacement(IReadOnlyList<double> position, double radius, double scanResolution, double maxTargetRange) =>
+        position.Count == 3 && position.All(double.IsFinite) && double.IsFinite(radius) && double.IsFinite(scanResolution) &&
+        double.IsFinite(maxTargetRange);
 
     private static bool ValidDeploymentBalls(IReadOnlyList<SimDeploymentBall> balls) =>
         balls is not null && balls.Count <= 8192 && balls.All(ball => ball.ItemId > 0 && ball.TypeId > 0 && IsVector(ball.Position) &&

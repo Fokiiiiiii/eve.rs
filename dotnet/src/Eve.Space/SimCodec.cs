@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 101;
+    public const ushort ProtocolVersion = 102;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -1334,6 +1334,53 @@ public static partial class SimCodec
             case Kind.WarpExited:
                 message = new SimWarpExited(r.U64());
                 break;
+            case Kind.PlaceBattery:
+                {
+                    var battery = r.I64();
+                    var solarSystem = r.I32();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var name = r.Text();
+                    var holder = r.U64();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    var scanResolution = r.F64();
+                    var maxTargetRange = r.F64();
+                    var maxLockedTargets = r.I32();
+                    var online = ReadFlag(ref r, "online");
+                    if (!ValidBatteryPlacement(position, radius, scanResolution, maxTargetRange))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad battery placement");
+                    message = new SimPlaceBattery(battery, solarSystem, type, group, name, holder, position, radius, scanResolution,
+                        maxTargetRange, maxLockedTargets, online);
+                    break;
+                }
+            case Kind.BatteryPlaced:
+                message = new SimBatteryPlaced(r.I64(), r.Text());
+                break;
+            case Kind.BatteryTarget:
+                {
+                    var request = r.U64();
+                    var battery = r.I64();
+                    var solarSystem = r.I32();
+                    var order = r.U8();
+                    if (order is < 1 or > 4) throw new SimLinkException(SimLinkError.BadValue, "battery order");
+                    message = new SimBatteryTarget(request, battery, solarSystem, order, r.I64());
+                    break;
+                }
+            case Kind.BatteryTargets:
+                {
+                    var request = r.U64();
+                    var battery = r.I64();
+                    var reason = r.Text();
+                    var pending = ReadFlag(ref r, "pending");
+                    var count = r.U32();
+                    // a target takes 8 bytes: a count the frame cannot hold is refused before anything is allocated for it
+                    if (count > r.Remaining / 8) throw new SimLinkException(SimLinkError.Truncated, "battery targets");
+                    var targets = new long[count];
+                    for (var index = 0; index < count; index++) targets[index] = r.I64();
+                    message = new SimBatteryTargets(request, battery, reason, pending, targets);
+                    break;
+                }
             case Kind.ContainerPlaced:
                 message = new SimContainerPlaced(r.U64(), r.I64(), ReadVector(ref r), ReadVector(ref r));
                 break;

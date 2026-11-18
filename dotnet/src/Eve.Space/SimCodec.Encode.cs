@@ -1523,6 +1523,25 @@ private static void WriteStructureDamageCorrelation(
                 w.U8(Kind.WarpExited);
                 w.U64(m.SessionId);
                 break;
+            case SimPlaceBattery m:
+                if (!ValidBatteryPlacement(m.Position, m.Radius, m.ScanResolution, m.MaxTargetRange))
+                    throw new ArgumentException("Invalid battery placement.", nameof(message));
+                w.U8(Kind.PlaceBattery); w.I64(m.BatteryId); w.I32(m.SolarSystemId); w.I32(m.TypeId); w.I32(m.GroupId); w.Text(m.Name);
+                w.U64(m.HolderSession); WriteVector(w, m.Position); w.F64(m.Radius); w.F64(m.ScanResolution); w.F64(m.MaxTargetRange);
+                w.I32(m.MaxLockedTargets); w.U8((byte)(m.Online ? 1 : 0));
+                break;
+            case SimBatteryPlaced m:
+                w.U8(Kind.BatteryPlaced); w.I64(m.BatteryId); w.Text(m.Reason);
+                break;
+            case SimBatteryTarget m:
+                if (m.Order is < 1 or > 4) throw new ArgumentException("Invalid battery order.", nameof(message));
+                w.U8(Kind.BatteryTarget); w.U64(m.RequestId); w.I64(m.BatteryId); w.I32(m.SolarSystemId); w.U8(m.Order); w.I64(m.Target);
+                break;
+            case SimBatteryTargets m:
+                w.U8(Kind.BatteryTargets); w.U64(m.RequestId); w.I64(m.BatteryId); w.Text(m.Reason); w.U8((byte)(m.Pending ? 1 : 0));
+                w.U32((uint)m.Targets.Count);
+                foreach (var target in m.Targets) w.I64(target);
+                break;
             case SimContainerPlaced m:
                 w.U8(Kind.ContainerPlaced);
                 w.U64(m.SessionId);

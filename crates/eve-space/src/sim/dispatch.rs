@@ -199,6 +199,10 @@ impl Sim {
                 position: [position.x, position.y, position.z],
             },
             Out::WarpExited { session } => Message::WarpExited { session_id: session },
+            Out::BatteryPlaced { battery_id, reason } => Message::BatteryPlaced { battery_id, reason },
+            Out::BatteryTargets { request_id, battery_id, reason, pending, targets } => {
+                Message::BatteryTargets { request_id, battery_id, reason, pending, targets }
+            }
             Out::Condition { session, command, condition } => {
                 Message::Condition { session_id: session, command, condition }
             }
@@ -863,6 +867,8 @@ impl Sim {
             | Message::SetStructureState { .. }
             | Message::SetStructureMoonMiningState { .. }
             | Message::UpsertMoonChunk(..)
+            | Message::PlaceBattery(..)
+            | Message::BatteryTarget { .. }
             | Message::RemoveMoonChunk { .. }
             | Message::PlaceProbe(..)
             | Message::RemoveProbe { .. }
@@ -1862,6 +1868,55 @@ impl Sim {
                 }
                 None => Vec::new(),
             },
+            Message::PlaceBattery(battery) => {
+                let battery = *battery;
+                let battery_id = battery.battery_id;
+                let scene_key = SceneKey::solar_system(battery.solar_system_id);
+                if !self.scenes.contains_key(&scene_key)
+                    && let Ok(system) = self.universe.system(battery.solar_system_id)
+                {
+                    self.scenes.insert(scene_key, self.universe.scene_of(system));
+                }
+                let placed = match self.scenes.get_mut(&scene_key) {
+                    Some(scene) => scene.place_battery(battery),
+                    None => Err("SYSTEM_UNKNOWN"),
+                };
+                match placed {
+                    Ok(told) => std::iter::once(Out::BatteryPlaced { battery_id, reason: String::new() })
+                        .chain(told)
+                        .collect(),
+                    Err(reason) => vec![Out::BatteryPlaced { battery_id, reason: reason.to_owned() }],
+                }
+            }
+            Message::BatteryTarget { request_id, battery_id, solar_system_id, order, target } => {
+                let order = match order {
+                    1 => crate::targeting::BatteryOrder::Lock(target),
+                    2 => crate::targeting::BatteryOrder::Remove(target),
+                    3 => crate::targeting::BatteryOrder::Clear,
+                    4 => crate::targeting::BatteryOrder::Cancel(target),
+                    _ => return Ok(Vec::new()),
+                };
+                let (answer, told) = match self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
+                    Some(scene) => scene.battery_order(battery_id, order, now),
+                    None => (
+                        crate::targeting::BatteryAnswer {
+                            reason: Some("BATTERY_NOT_IN_SPACE"),
+                            pending: false,
+                            targets: Vec::new(),
+                        },
+                        Vec::new(),
+                    ),
+                };
+                std::iter::once(Out::BatteryTargets {
+                    request_id,
+                    battery_id,
+                    reason: answer.reason.unwrap_or("").to_owned(),
+                    pending: answer.pending,
+                    targets: answer.targets,
+                })
+                .chain(told)
+                .collect()
+            }
             Message::UpsertMoonChunk(chunk) => {
                 let chunk = *chunk;
                 let system_id = chunk.solar_system_id;

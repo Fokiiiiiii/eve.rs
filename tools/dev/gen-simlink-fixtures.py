@@ -31,7 +31,8 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "RemoveAbyssalParticipant": 110, "RemoveAbyssalParticipantReply": 111, "GetAbyssalParticipantPose": 112, "GetAbyssalParticipantPoseReply": 113,
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
-         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164, "WarpExited": 165, "GetDeploymentBalls": 166, "GetDeploymentBallsReply": 167}
+         "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164, "WarpExited": 165, "GetDeploymentBalls": 166, "GetDeploymentBallsReply": 167,
+         "PlaceBattery": 168, "BatteryPlaced": 169, "BatteryTarget": 170, "BatteryTargets": 171}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -518,6 +519,20 @@ def build(m):
                 body += i64(ball["itemId"]) + struct.pack("<i4dB", ball["typeId"], *ball["position"], ball["radius"],
                                                             1 if ball["warpInPoint"] else 0)
         return frame(k, body + s(error or ""))
+    if k == "PlaceBattery":
+        body = i64(m["batteryId"]) + struct.pack("<iii", m["solarSystemId"], m["typeId"], m["groupId"]) + s(m["name"])
+        body += u64(m["holderSession"]) + struct.pack("<3d", *m["position"])
+        body += struct.pack("<dddi", m["radius"], m["scanResolution"], m["maxTargetRange"], m["maxLockedTargets"])
+        return frame(k, body + bytes([1 if m["online"] else 0]))
+    if k == "BatteryPlaced":
+        return frame(k, i64(m["batteryId"]) + s(m["reason"]))
+    if k == "BatteryTarget":
+        return frame(k, u64(m["requestId"]) + i64(m["batteryId"]) + struct.pack("<i", m["solarSystemId"])
+                     + bytes([m["order"]]) + i64(m["target"]))
+    if k == "BatteryTargets":
+        targets = m["targets"]
+        body = u64(m["requestId"]) + i64(m["batteryId"]) + s(m["reason"]) + bytes([1 if m["pending"] else 0])
+        return frame(k, body + struct.pack("<I", len(targets)) + b"".join(i64(target) for target in targets))
     if k == "GetAbyssalParticipantPose":
         return frame(k, u64(m["requestId"]) + scene_key({"scene": m["scene"]}) + i64(m["shipId"]))
     if k == "GetAbyssalParticipantPoseReply":
@@ -868,8 +883,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 101},
-    {"name": "hello ack", "kind": "HelloAck", "version": 101, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 102},
+    {"name": "hello ack", "kind": "HelloAck", "version": 102, "pollHz": 4},
     {"name": "active Crimewatch flag", "kind": "CrimewatchFlagActive", "sessionId": "1001",
      "isCriminal": True, "expiresAtUnixMs": "1800000000000"},
     {"name": "Empire sentry offense", "kind": "EmpireSentryOffense", "sessionId": "1001"},
@@ -972,6 +987,20 @@ valid = [
         {"itemId": "30000077", "typeId": 15, "position": [4.0, 5.0, 6.0], "radius": 0.0, "warpInPoint": True}], "error": None},
     {"name": "deployment balls query refuses an unloaded scene", "kind": "GetDeploymentBallsReply", "requestId": "61",
      "solarSystemId": 30000143, "balls": [], "error": "SCENE_NOT_LOADED"},
+    {"name": "place a battery online with its holder", "kind": "PlaceBattery", "batteryId": "1050000001", "solarSystemId": 30000142,
+     "typeId": 16631, "groupId": 1000, "name": "Battery", "holderSession": "1790646377000015", "position": [1.0, 2.0, 3.0],
+     "radius": 60.0, "scanResolution": 400.0, "maxTargetRange": 50000.0, "maxLockedTargets": 2, "online": True},
+    {"name": "place a battery offline without a holder", "kind": "PlaceBattery", "batteryId": "1050000001", "solarSystemId": 30000142,
+     "typeId": 16631, "groupId": 1000, "name": "", "holderSession": "0", "position": [0.0, 0.0, 0.0],
+     "radius": 60.0, "scanResolution": 0.0, "maxTargetRange": 0.0, "maxLockedTargets": 0, "online": False},
+    {"name": "battery placed", "kind": "BatteryPlaced", "batteryId": "1050000001", "reason": ""},
+    {"name": "battery placement refused for an unknown system", "kind": "BatteryPlaced", "batteryId": "1050000001", "reason": "SYSTEM_UNKNOWN"},
+    {"name": "lock a target with a battery", "kind": "BatteryTarget", "requestId": "70", "batteryId": "1050000001", "solarSystemId": 30000142,
+     "order": 1, "target": "1790646377000016"},
+    {"name": "battery target answer with a pending lock", "kind": "BatteryTargets", "requestId": "70", "batteryId": "1050000001",
+     "reason": "", "pending": True, "targets": ["1790646377000015"]},
+    {"name": "battery target refused out of range", "kind": "BatteryTargets", "requestId": "71", "batteryId": "1050000001",
+     "reason": "TARGET_OUT_OF_RANGE", "pending": False, "targets": []},
     {"name": "read a public-system source ship pose", "kind": "GetAbyssalParticipantPose", "requestId": "50",
      "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940"},
     {"name": "public-system source ship pose receipt", "kind": "GetAbyssalParticipantPoseReply", "requestId": "50",
@@ -2180,6 +2209,13 @@ invalid.append({"name": "crystal damage without a positive charge type", "reason
                 "hex": build(dict(crystal_spent, chargeTypeId=0)).hex()})
 invalid.append({"name": "negative crystal damage", "reason": "bad-value",
                 "hex": build(dict(crystal_spent, crystalDamage=-0.1)).hex()})
+
+for label, changes in [("order zero", {"order": 0}), ("order five", {"order": 5})]:
+    invalid.append({"name": "battery target " + label, "reason": "bad-value", "hex": build(dict(named("lock a target with a battery"), **changes)).hex()})
+invalid.append({"name": "battery radius not finite", "reason": "bad-value",
+                "hex": build(dict(named("place a battery online with its holder"), radius=float("nan"))).hex()})
+invalid.append({"name": "battery position not finite", "reason": "bad-value",
+                "hex": build(dict(named("place a battery online with its holder"), position=[float("nan"), 2.0, 3.0])).hex()})
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, "w", encoding="utf-8") as f:

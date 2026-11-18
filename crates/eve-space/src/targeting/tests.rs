@@ -1325,3 +1325,186 @@ fn a_passive_lock_is_held_to_the_range_and_the_capacity_like_any_other() {
     let full = refusal(&lock_as(&mut scene, B, ship_id(C), LockOrigin::Player, t));
     assert_eq!((full.reason, full.desired_range), ("TARGET_LOCK_LIMIT_REACHED", 1.0));
 }
+
+// POS batteries (protocol 102): a battery's own lock state, told to its holder only.
+
+const BATTERY: i64 = 1_050_000_001;
+const BATTERY_SYSTEM: i32 = 30_000_001;
+
+fn battery_placement(position: Vec3, holder: SessionId, online: bool) -> crate::link::BatteryPlacement {
+    crate::link::BatteryPlacement {
+        battery_id: BATTERY,
+        solar_system_id: BATTERY_SYSTEM,
+        type_id: 16631,
+        group_id: 1_000,
+        name: "Test battery".to_string(),
+        holder_session: holder,
+        position: [position.x, position.y, position.z],
+        radius: 60.0,
+        scan_resolution: 400.0,
+        max_target_range: 50_000.0,
+        max_locked_targets: 2,
+        online,
+    }
+}
+
+/// A point `offset` metres along z from where pilot A sits.
+fn beside_a(scene: &Scene, offset: f64) -> Vec3 {
+    let a = scene.pilots[&A].ship.position;
+    Vec3::new(a.x, a.y, a.z + offset)
+}
+
+/// The `OnTargetOBO` notifications of a list of outputs: who each is for and its arguments.
+fn obo_of(out: &[Out]) -> Vec<(SessionId, Vec<Value>)> {
+    out.iter()
+        .filter_map(|out| match out {
+            Out::Notify { session, name: "OnTargetOBO", args, .. } => Some((*session, args.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn battery_lock_settles_into_an_add_told_to_its_holder_only() {
+    let (mut scene, now) = crowd(2);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, A, true)).expect("the battery is placed");
+    let target = ship_id(B);
+    let (answer, told) = scene.battery_order(BATTERY, BatteryOrder::Lock(target), now);
+    assert_eq!(answer, BatteryAnswer { reason: None, pending: true, targets: Vec::new() }, "{answer:?}");
+    assert!(obo_of(&told).is_empty(), "{told:?}");
+    let later = now + 200 * SECOND;
+    let done = scene.settle_batteries(later);
+    assert_eq!(obo_of(&done), vec![(A, vec![word("add"), id(BATTERY), id(target), Value::None])], "{done:?}");
+    let (held, told) = scene.battery_order(BATTERY, BatteryOrder::Lock(target), later);
+    assert_eq!(held, BatteryAnswer { reason: None, pending: false, targets: vec![target] }, "{held:?}");
+    assert!(obo_of(&told).is_empty(), "{told:?}");
+}
+
+#[test]
+fn battery_refuses_a_target_beyond_its_range_or_that_cannot_be_targeted() {
+    let (mut scene, now) = crowd(2);
+    let far = beside_a(&scene, 500_000.0);
+    scene.place_battery(battery_placement(far, A, true)).expect("the battery is placed");
+    let (answer, told) = scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(B)), now);
+    assert_eq!(answer.reason, Some("TARGET_OUT_OF_RANGE"), "{answer:?}");
+    assert!(!answer.pending && obo_of(&told).is_empty(), "{answer:?} {told:?}");
+    let near = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(near, A, true)).expect("the battery is placed");
+    let (planet, _) = scene.battery_order(BATTERY, BatteryOrder::Lock(PLANET), now);
+    assert_eq!(planet.reason, Some("TARGET_NOT_TARGETABLE"), "{planet:?}");
+    let (itself, _) = scene.battery_order(BATTERY, BatteryOrder::Lock(BATTERY), now);
+    assert_eq!(itself.reason, Some("TARGET_NOT_FOUND"), "{itself:?}");
+    let (missing, _) = scene.battery_order(BATTERY, BatteryOrder::Lock(999_999_999), now);
+    assert_eq!(missing.reason, Some("TARGET_NOT_FOUND"), "{missing:?}");
+}
+
+#[test]
+fn battery_offline_unheld_or_absent_refuses_every_order() {
+    let (mut scene, now) = crowd(2);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, A, false)).expect("the battery is placed");
+    let (offline, told) = scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(B)), now);
+    assert_eq!(offline.reason, Some("BATTERY_OFFLINE"), "{offline:?}");
+    assert!(obo_of(&told).is_empty(), "{told:?}");
+    scene.place_battery(battery_placement(at, 0, true)).expect("the battery is placed");
+    let (unheld, _) = scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(B)), now);
+    assert_eq!(unheld.reason, Some("NO_CONTROL_GRANT"), "{unheld:?}");
+    let (absent, _) = scene.battery_order(BATTERY + 1, BatteryOrder::Lock(ship_id(B)), now);
+    assert_eq!(absent.reason, Some("BATTERY_NOT_IN_SPACE"), "{absent:?}");
+}
+
+#[test]
+fn battery_cancel_remove_and_clear_tell_the_holder_what_let_go() {
+    let (mut scene, now) = crowd(3);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, A, true)).expect("the battery is placed");
+    let (b, c) = (ship_id(B), ship_id(C));
+    scene.battery_order(BATTERY, BatteryOrder::Lock(b), now);
+    let (cancel, told) = scene.battery_order(BATTERY, BatteryOrder::Cancel(b), now);
+    assert_eq!(
+        (cancel.reason, cancel.pending, cancel.targets.clone()),
+        (None, false, Vec::new()),
+        "{cancel:?}"
+    );
+    assert_eq!(obo_of(&told), vec![(A, vec![word("lost"), id(BATTERY), id(b), Value::None])], "{told:?}");
+    let t2 = now + 200 * SECOND;
+    scene.battery_order(BATTERY, BatteryOrder::Lock(b), now);
+    scene.settle_batteries(t2);
+    let (pending, _) = scene.battery_order(BATTERY, BatteryOrder::Lock(c), t2);
+    assert!(pending.pending, "{pending:?}");
+    let (remove, told) = scene.battery_order(BATTERY, BatteryOrder::Remove(b), t2);
+    assert_eq!(remove.targets, Vec::<i64>::new(), "{remove:?}");
+    assert_eq!(obo_of(&told), vec![(A, vec![word("lost"), id(BATTERY), id(b), Value::None])], "{told:?}");
+    let (_, told) = scene.battery_order(BATTERY, BatteryOrder::Clear, t2);
+    assert_eq!(
+        obo_of(&told),
+        vec![(A, vec![word("clear"), id(BATTERY), Value::None, Value::None])],
+        "{told:?}"
+    );
+}
+
+#[test]
+fn battery_drops_a_lock_whose_target_leaves_its_range() {
+    let (mut scene, now) = crowd(2);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, A, true)).expect("the battery is placed");
+    let target = ship_id(B);
+    scene.battery_order(BATTERY, BatteryOrder::Lock(target), now);
+    let t2 = now + 200 * SECOND;
+    assert_eq!(obo_of(&scene.settle_batteries(t2)).len(), 1);
+    scene.pilots.get_mut(&B).unwrap().ship.position = Vec3::new(1.0e9, 0.0, 0.0);
+    let told = scene.settle_batteries(t2 + SECOND);
+    assert_eq!(
+        obo_of(&told),
+        vec![(A, vec![word("lost"), id(BATTERY), id(target), word("targetLost")])],
+        "{told:?}"
+    );
+}
+
+#[test]
+fn battery_holder_change_releases_the_locks_to_the_old_holder() {
+    let (mut scene, now) = crowd(2);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, A, true)).expect("the battery is placed");
+    let target = ship_id(B);
+    scene.battery_order(BATTERY, BatteryOrder::Lock(target), now);
+    let t2 = now + 200 * SECOND;
+    scene.settle_batteries(t2);
+    let told = scene.place_battery(battery_placement(at, B, true)).expect("the battery is placed");
+    assert_eq!(
+        obo_of(&told),
+        vec![(A, vec![word("lost"), id(BATTERY), id(target), word("controlChanged")])],
+        "{told:?}"
+    );
+    let (fresh, _) = scene.battery_order(BATTERY, BatteryOrder::Lock(target), t2);
+    assert_eq!(fresh.reason, None, "{fresh:?}");
+}
+
+#[test]
+fn battery_lock_limit_refuses_a_further_target() {
+    let (mut scene, now) = crowd(3);
+    let at = beside_a(&scene, 1_000.0);
+    let mut placement = battery_placement(at, A, true);
+    placement.max_locked_targets = 1;
+    scene.place_battery(placement).expect("the battery is placed");
+    scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(B)), now);
+    let (full, _) = scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(C)), now);
+    assert_eq!(full.reason, Some("TARGET_LOCK_LIMIT_REACHED"), "{full:?}");
+}
+
+#[test]
+fn battery_placement_refuses_numbers_it_cannot_use() {
+    let (mut scene, _) = crowd(1);
+    let at = beside_a(&scene, 1_000.0);
+    let mut no_id = battery_placement(at, A, true);
+    no_id.battery_id = 0;
+    assert_eq!(scene.place_battery(no_id), Err("BAD_BATTERY"));
+    let mut no_radius = battery_placement(at, A, true);
+    no_radius.radius = 0.0;
+    assert_eq!(scene.place_battery(no_radius), Err("BAD_BATTERY"));
+    let mut not_finite = battery_placement(at, A, true);
+    not_finite.position[0] = f64::NAN;
+    assert_eq!(scene.place_battery(not_finite), Err("BAD_BATTERY"));
+    assert!(scene.batteries.is_empty());
+}

@@ -2,6 +2,9 @@
 //! `u32 length + bytes`, like the front's link (ADR 0002). [`Message::encode`] writes a whole frame and
 //! [`Message::decode`] reads a frame's payload (the kind and the body), so the same functions serve any framing layer.
 //! `oracle/fixtures/simlink/messages.json` pins the layout for both sides.
+#[cfg(test)]
+#[cfg(test)]
+mod battery_tests;
 mod decode;
 mod decode_action;
 mod decode_message;
@@ -47,7 +50,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 101;
+pub const PROTOCOL_VERSION: u16 = 102;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -235,6 +238,25 @@ pub struct DisruptorPlacement {
     pub corporation_id: i32,
     pub alliance_id: i32,
     pub ship_id: i64,
+}
+
+/// A POS battery as the Host places it (protocol 102). `holder_session` is the pilot whose control grant the Host checked (0 for none); the
+/// battery's locks are told to that pilot only. `position` and `radius` are the battery's ball in the scene, `scan_resolution`,
+/// `max_target_range` and `max_locked_targets` are the numbers its lock depends on (the target's own signature is what the scan time depends on).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BatteryPlacement {
+    pub battery_id: i64,
+    pub solar_system_id: i32,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub name: String,
+    pub holder_session: u64,
+    pub position: [f64; 3],
+    pub radius: f64,
+    pub scan_resolution: f64,
+    pub max_target_range: f64,
+    pub max_locked_targets: i32,
+    pub online: bool,
 }
 
 /// A CONCORD Rogue Analysis Beacon the host keeps a record of (protocol 61): its id, type and group, its name and ball, where it lies, whose it is, and its state.
@@ -1069,6 +1091,31 @@ pub enum Message {
         scene: SceneKey,
         outcome: Result<Vec<DeploymentBall>, String>,
     },
+    /// The host places a POS battery, or updates it (protocol 102). Going offline drops its locks and tells the holder; a holder that changes
+    /// releases them to the old holder. Answered by `BatteryPlaced`.
+    PlaceBattery(Box<BatteryPlacement>),
+    /// The answer to `PlaceBattery`: `reason` is empty when the battery is in the scene, else why it is not.
+    BatteryPlaced {
+        battery_id: i64,
+        reason: String,
+    },
+    /// A lock, remove, clear or cancel order for a battery's targets (protocol 102): `order` 1 lock, 2 remove, 3 clear, 4 cancel (the target is
+    /// unused by a clear). Answered by `BatteryTargets` under `request_id`; the holder is told `OnTargetOBO` for what changed.
+    BatteryTarget {
+        request_id: u64,
+        battery_id: i64,
+        solar_system_id: i32,
+        order: u8,
+        target: i64,
+    },
+    /// The answer to `BatteryTarget`: `reason` is empty when the order was accepted, `pending` says a lock is still going, `targets` is what is held.
+    BatteryTargets {
+        request_id: u64,
+        battery_id: i64,
+        reason: String,
+        pending: bool,
+        targets: Vec<i64>,
+    },
     GetAbyssalParticipantPose {
         request_id: u64,
         scene: SceneKey,
@@ -1799,6 +1846,10 @@ impl Message {
             Self::GetSceneBodyReply { .. } => kind::GET_SCENE_BODY_REPLY,
             Self::GetDeploymentBalls { .. } => kind::GET_DEPLOYMENT_BALLS,
             Self::GetDeploymentBallsReply { .. } => kind::GET_DEPLOYMENT_BALLS_REPLY,
+            Self::PlaceBattery(_) => kind::PLACE_BATTERY,
+            Self::BatteryPlaced { .. } => kind::BATTERY_PLACED,
+            Self::BatteryTarget { .. } => kind::BATTERY_TARGET,
+            Self::BatteryTargets { .. } => kind::BATTERY_TARGETS,
             Self::GetAbyssalParticipantPose { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE,
             Self::GetAbyssalParticipantPoseReply { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE_REPLY,
             Self::Enter(_) => kind::ENTER,

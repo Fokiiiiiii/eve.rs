@@ -2748,6 +2748,75 @@ impl Message {
                 Message::TetherChanged { session_id, previous_structure_id, structure_id, repairing }
             }
             kind::DESTROY => Message::Destroy { ship_id: r.i64()?, credit: read_credit(&mut r)? },
+            kind::PLACE_BATTERY => {
+                let battery_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let name = r.text()?;
+                let holder_session = r.u64()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                let scan_resolution = r.f64()?;
+                let max_target_range = r.f64()?;
+                let max_locked_targets = r.i32()?;
+                let online = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("online")),
+                };
+                let finite = |value: f64| value.is_finite();
+                if !(finite(radius) && finite(scan_resolution) && finite(max_target_range))
+                    || position.iter().any(|value| !value.is_finite())
+                {
+                    return Err(DecodeError::BadValue("battery"));
+                }
+                Message::PlaceBattery(Box::new(BatteryPlacement {
+                    battery_id,
+                    solar_system_id,
+                    type_id,
+                    group_id,
+                    name,
+                    holder_session,
+                    position,
+                    radius,
+                    scan_resolution,
+                    max_target_range,
+                    max_locked_targets,
+                    online,
+                }))
+            }
+            kind::BATTERY_PLACED => Message::BatteryPlaced { battery_id: r.i64()?, reason: r.text()? },
+            kind::BATTERY_TARGET => {
+                let request_id = r.u64()?;
+                let battery_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let order = r.u8()?;
+                if !(1..=4).contains(&order) {
+                    return Err(DecodeError::BadValue("battery order"));
+                }
+                Message::BatteryTarget { request_id, battery_id, solar_system_id, order, target: r.i64()? }
+            }
+            kind::BATTERY_TARGETS => {
+                let request_id = r.u64()?;
+                let battery_id = r.i64()?;
+                let reason = r.text()?;
+                let pending = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("pending")),
+                };
+                let count = r.u32()? as usize;
+                // a target takes 8 bytes: a count the frame cannot hold is refused before anything is allocated for it
+                if count > r.data.len() / 8 {
+                    return Err(DecodeError::Truncated);
+                }
+                let mut targets = Vec::with_capacity(count);
+                for _ in 0..count {
+                    targets.push(r.i64()?);
+                }
+                Message::BatteryTargets { request_id, battery_id, reason, pending, targets }
+            }
             kind::TARGET_REFUSED => Message::TargetRefused {
                 session_id: r.u64()?,
                 command: r.u8()?,

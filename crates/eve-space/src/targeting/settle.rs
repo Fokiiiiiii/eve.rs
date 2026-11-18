@@ -86,7 +86,10 @@ impl Scene {
     }
 
     pub(crate) fn settle_targets(&mut self, now: i64) -> Vec<Out> {
-        self.with_controlled_structure_modules(now, |scene| scene.settle_targets_for_pilots(now))
+        let mut out =
+            self.with_controlled_structure_modules(now, |scene| scene.settle_targets_for_pilots(now));
+        out.extend(self.settle_batteries(now));
+        out
     }
 
     /// What is due at `now` among the locks: a lock that has come to its end is had; one that can no longer be had (either ship warps, the range

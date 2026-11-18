@@ -4,9 +4,12 @@
 //! warps or goes, and is refused for the reasons `oracle/fixtures/scenarios/target.json` records. Only ships and stations can be locked; a
 //! planet, a moon, a belt, a gate or the star cannot. The client is told with `OnTarget` (`add`, `lost`, `clear` to the one that locks;
 //! `otheradd`, `otherlost` to the one that is locked) and with the damage state of what has been locked, to everyone who can see it.
+mod battery;
 mod lock;
 mod settle;
 mod unlock;
+
+pub(crate) use battery::{Battery, BatteryAnswer, BatteryOrder};
 
 use eve_destiny::Vec3;
 

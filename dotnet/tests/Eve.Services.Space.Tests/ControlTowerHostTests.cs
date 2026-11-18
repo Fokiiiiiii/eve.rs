@@ -1610,4 +1610,151 @@ public class ControlTowerHostTests
         await rig.Scheduler.RunDueAsync();
         Assert.Equal(41, await BayAsync(rig, tower, HeliumFuelBlock));
     }
+    /// <summary>A battery and the two pilots around it, over the real registered PosMgr and dogma services: the holder's bound dogma location is <see cref="Oid"/>.</summary>
+    private sealed record BatteryObo(PosMgrHostWire Holder, PosMgrHostWire Other, ClientSession Session, ClientSession OtherSession, long Battery, long Target, string Oid) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            await Holder.DisposeAsync();
+            await Other.DisposeAsync();
+        }
+    }
+
+    /// <summary>
+    /// An online battery beside its tower and a pilot that holds its grant (when asked): the pilot binds the dogma location of its system, the place a
+    /// battery's lock is asked of. The second pilot's ship is the target.
+    /// </summary>
+    private async Task<BatteryObo> OnlineBatteryAsync(Rig rig, bool grant = true)
+    {
+        rig.Containers.CharacterSessions = rig.CharacterSessions;
+        var batteryTypeId = await PlayerControlledBatteryTypeAsync(rig);
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower, batteryTypeId], LowSecSystem);
+        var (tower, battery) = (items[0], items[1]);
+        session.Set("solarsystemid", new PyInt(LowSecSystem));
+        Assert.Equal(tower, await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None));
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        var towerRecord = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(tower));
+        var (other, _) = await PilotWithItemsAsync(rig, [], LowSecSystem, account: 2, name: "Second Tester", sessionId: 2);
+
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        var dogma = new DogmaIMService(rig.Statics, rig.Ships, () => rig.Now,
+            (_, _, _, _, _, _) => ValueTask.FromResult<bool?>(null), space: rig.Space, modules: rig.Space);
+        var holder = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now, dogma);
+        var otherHost = await PosMgrHostWire.StartAsync(posMgr, other, () => rig.Now);
+
+        Assert.Equal(battery, await rig.Containers.LaunchFromShipAsync(session, battery, CancellationToken.None));
+        var position = new[] { towerRecord.Position[0] + 10_000, towerRecord.Position[1], towerRecord.Position[2] };
+        rig.Sim.PositionAnswers[battery] = position;
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = position;
+        await holder.CallAsync("AnchorStructure", new PyLong(battery), new PyTuple(position.Select(value => (PyValue)new PyReal(value)).ToArray()));
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        await rig.Deployed.SetTowerStateAsync(battery, "online");
+        if (grant)
+        {
+            Assert.IsType<PyNone>(await holder.CallAsync("AssumeStructureControl", new PyLong(battery)));
+        }
+        var bound = Assert.IsType<PyTuple>(await holder.CallServiceAsync("dogmaIM", "MachoBindObject",
+            new PyTuple([new PyLong(LowSecSystem), new PyInt(5)]), PyNone.Instance));
+        return new BatteryObo(holder, otherHost, session, other, battery, other.GetInt("shipid")!.Value, BoundOid(bound.Items[0]));
+    }
+
+    [PgFact]
+    public async Task Battery_obo_is_refused_without_the_grant_and_its_lock_is_placed_with_the_batterys_numbers_once_granted()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        var denied = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        Assert.Equal("DeniedShipChanged", denied.Error.UserErrorMessage);
+        Assert.Empty(rig.Sim.Heard.OfType<SimBatteryTarget>());
+
+        Assert.IsType<PyNone>(await fixture.Holder.CallAsync("AssumeStructureControl", new PyLong(fixture.Battery)));
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "", true, []));
+        var going = Assert.IsType<PyTuple>(await fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        Assert.Equal(new PyInt(1), going.Items[0]);
+        Assert.Equal(new PyList([]), going.Items[1]);
+
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last();
+        Assert.Equal((fixture.Battery, true, (ulong)fixture.Session.SessionId), (placed.BatteryId, placed.Online, placed.HolderSession));
+        Assert.Equal((LowSecSystem, 500_000.0, 1, 250.0), (placed.SolarSystemId, placed.MaxTargetRange, placed.MaxLockedTargets, placed.ScanResolution));
+        var order = Assert.Single(rig.Sim.Heard.OfType<SimBatteryTarget>());
+        Assert.Equal((fixture.Battery, (byte)1, fixture.Target), (order.BatteryId, order.Order, order.Target));
+    }
+
+    [PgFact]
+    public async Task Battery_obo_refuses_an_offline_battery_and_places_it_offline_so_the_scene_drops_its_locks()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        await rig.Deployed.SetTowerStateAsync(fixture.Battery, "offline");
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        Assert.False(rig.Sim.Heard.OfType<SimPlaceBattery>().Last().Online);
+        Assert.Empty(rig.Sim.Heard.OfType<SimBatteryTarget>());
+    }
+
+    [PgFact]
+    public async Task Battery_obo_refuses_an_invalid_target_and_passes_the_scenes_refusal_of_a_missing_one()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var none = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyInt(0)));
+        Assert.Equal("TargetingAttemptCancelled", none.Error.UserErrorMessage);
+        Assert.Empty(rig.Sim.Heard.OfType<SimBatteryTarget>());
+
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "TARGET_NOT_FOUND", false, []));
+        var missing = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(999_999_999)));
+        Assert.Equal("TargetingAttemptCancelled", missing.Error.UserErrorMessage);
+        Assert.Single(rig.Sim.Heard.OfType<SimBatteryTarget>());
+    }
+
+    [PgFact]
+    public async Task Battery_obo_lock_and_remove_follow_the_scenes_answers()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "", false, [fixture.Target]));
+        var locked = Assert.IsType<PyTuple>(await fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        Assert.Equal(new PyInt(0), locked.Items[0]);
+        Assert.Equal(new[] { fixture.Target }, Assert.IsType<PyList>(locked.Items[1]).Items.Select(item => item switch
+        {
+            PyInt number => (long)number.Value,
+            PyLong number => number.Value,
+            _ => -1,
+        }));
+
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "", false, []));
+        Assert.IsType<PyNone>(await fixture.Holder.BoundCallAsync(fixture.Oid, "RemoveTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        Assert.Equal(new byte[] { 1, 2 }, rig.Sim.Heard.OfType<SimBatteryTarget>().Select(order => order.Order).ToArray());
+    }
+
+    [PgFact]
+    public async Task Battery_obo_notifications_reach_only_the_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var add = MarshalCodec.Encode(Py.Tuple(new PyStr("add"), new PyLong(fixture.Battery), new PyLong(fixture.Target), PyNone.Instance));
+        rig.Sim.Say(new SimNotify((ulong)fixture.Session.SessionId, "OnTargetOBO", "charid", add));
+
+        // the notification reaches the holder's session and nobody else's (the rig's sessions keep what they are sent: Events.Of)
+        await Task.Delay(TimeSpan.FromMilliseconds(200));
+        var told = Events.Of(fixture.Session).Where(item => item.Name == "OnTargetOBO").ToArray();
+        var added = Assert.Single(told);
+        Assert.Equal("add", Texts(added.Args[0]));
+        Assert.Equal(new PyLong(fixture.Battery), added.Args[1]);
+        Assert.Equal(new PyLong(fixture.Target), added.Args[2]);
+        Assert.DoesNotContain(Events.Of(fixture.OtherSession), item => item.Name == "OnTargetOBO");
+    }
 }
+

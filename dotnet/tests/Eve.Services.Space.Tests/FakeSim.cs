@@ -260,6 +260,27 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceWreck(SimPlaceWreck wreck) => Heard.Enqueue(wreck);
 
+    /// <summary>What the scene answers a battery placement with: an empty reason when the battery is in the scene, else why not.</summary>
+    public string BatteryPlacementReason { get; set; } = "";
+
+    /// <summary>The scene's scripted answers to battery orders, taken in order; with none left an order is accepted with nothing held.</summary>
+    public Queue<SimBatteryTargets> BatteryTargetAnswers { get; } = new();
+
+    public Task<SimBatteryPlaced> PlaceBatteryAsync(SimPlaceBattery request, CancellationToken cancellationToken = default)
+    {
+        Heard.Enqueue(request);
+        return Task.FromResult(new SimBatteryPlaced(request.BatteryId, BatteryPlacementReason));
+    }
+
+    public Task<SimBatteryTargets> BatteryTargetAsync(SimBatteryTarget request, CancellationToken cancellationToken = default)
+    {
+        Heard.Enqueue(request);
+        var answer = BatteryTargetAnswers.Count > 0
+            ? BatteryTargetAnswers.Dequeue()
+            : new SimBatteryTargets(request.RequestId, request.BatteryId, "", false, []);
+        return Task.FromResult(answer with { RequestId = request.RequestId, BatteryId = request.BatteryId });
+    }
+
     public void PlaceAsteroid(SimPlaceAsteroid asteroid) => Heard.Enqueue(asteroid);
 
     public void DroneWorkResult(SimDroneWorkResult result) => Heard.Enqueue(result);

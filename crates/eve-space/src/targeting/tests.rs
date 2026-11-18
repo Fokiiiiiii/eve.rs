@@ -1337,7 +1337,7 @@ fn battery_placement(position: Vec3, holder: SessionId, online: bool) -> crate::
         solar_system_id: BATTERY_SYSTEM,
         type_id: 16631,
         group_id: 1_000,
-        name: "Test battery".to_string(),
+        display_name: "Test battery".to_string(),
         holder_session: holder,
         position: [position.x, position.y, position.z],
         radius: 60.0,

@@ -6,7 +6,7 @@ fn placement() -> BatteryPlacement {
         solar_system_id: 30_000_001,
         type_id: 16_631,
         group_id: 1_000,
-        name: "Battery".to_string(),
+        display_name: "Battery".to_string(),
         holder_session: 1_790_646_377_000_015,
         position: [1.0, 2.0, 3.0],
         radius: 60.0,

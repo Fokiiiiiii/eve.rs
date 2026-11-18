@@ -520,7 +520,7 @@ def build(m):
                                                             1 if ball["warpInPoint"] else 0)
         return frame(k, body + s(error or ""))
     if k == "PlaceBattery":
-        body = i64(m["batteryId"]) + struct.pack("<iii", m["solarSystemId"], m["typeId"], m["groupId"]) + s(m["name"])
+        body = i64(m["batteryId"]) + struct.pack("<iii", m["solarSystemId"], m["typeId"], m["groupId"]) + s(m["displayName"])
         body += u64(m["holderSession"]) + struct.pack("<3d", *m["position"])
         body += struct.pack("<dddi", m["radius"], m["scanResolution"], m["maxTargetRange"], m["maxLockedTargets"])
         return frame(k, body + bytes([1 if m["online"] else 0]))
@@ -988,10 +988,10 @@ valid = [
     {"name": "deployment balls query refuses an unloaded scene", "kind": "GetDeploymentBallsReply", "requestId": "61",
      "solarSystemId": 30000143, "balls": [], "error": "SCENE_NOT_LOADED"},
     {"name": "place a battery online with its holder", "kind": "PlaceBattery", "batteryId": "1050000001", "solarSystemId": 30000142,
-     "typeId": 16631, "groupId": 1000, "name": "Battery", "holderSession": "1790646377000015", "position": [1.0, 2.0, 3.0],
+     "typeId": 16631, "groupId": 1000, "displayName": "Battery", "holderSession": "1790646377000015", "position": [1.0, 2.0, 3.0],
      "radius": 60.0, "scanResolution": 400.0, "maxTargetRange": 50000.0, "maxLockedTargets": 2, "online": True},
     {"name": "place a battery offline without a holder", "kind": "PlaceBattery", "batteryId": "1050000001", "solarSystemId": 30000142,
-     "typeId": 16631, "groupId": 1000, "name": "", "holderSession": "0", "position": [0.0, 0.0, 0.0],
+     "typeId": 16631, "groupId": 1000, "displayName": "", "holderSession": "0", "position": [0.0, 0.0, 0.0],
      "radius": 60.0, "scanResolution": 0.0, "maxTargetRange": 0.0, "maxLockedTargets": 0, "online": False},
     {"name": "battery placed", "kind": "BatteryPlaced", "batteryId": "1050000001", "reason": ""},
     {"name": "battery placement refused for an unknown system", "kind": "BatteryPlaced", "batteryId": "1050000001", "reason": "SYSTEM_UNKNOWN"},

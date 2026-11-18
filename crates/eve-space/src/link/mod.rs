@@ -249,7 +249,7 @@ pub struct BatteryPlacement {
     pub solar_system_id: i32,
     pub type_id: i32,
     pub group_id: i32,
-    pub name: String,
+    pub display_name: String,
     pub holder_session: u64,
     pub position: [f64; 3],
     pub radius: f64,

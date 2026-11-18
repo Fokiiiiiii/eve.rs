@@ -53,8 +53,11 @@ impl Scene {
         let milestones = settle(pilot, &system, ship_target, now);
         let warp_completed =
             was_warping && self.pilots.get(&session).is_some_and(|pilot| pilot.flight.is_none());
-        // the force field of a tower stops a ship it does not admit at its boundary (protocol 103)
-        self.enforce_force_fields(session, before, warp_completed);
+        // the force field of a tower stops a ship it does not admit at its boundary, and the clients that see the ship are told what it did (protocol 103)
+        let harmonic_before =
+            self.force_field_harmonics.get(&session).copied().unwrap_or(super::force_field::NO_HARMONIC);
+        let correction = self.enforce_force_fields(session, before, warp_completed);
+        self.publish_force_field(session, now, harmonic_before, correction);
         // a wreck this ship's beam pulls moves over the same time as the ship
         self.advance_pulled_by(session, from, now);
         for milestone in milestones {

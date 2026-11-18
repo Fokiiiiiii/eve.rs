@@ -1,16 +1,19 @@
-//! POS force field admission and boundary (protocol 103, slice 2).
+//! POS force field admission, boundary and presentation (protocol 103, slices 2 and 3).
 //!
 //! A field admits the ships of its tower's corporation and alliance (where the tower allows each) and the ships whose pilot has set the tower's password
 //! (EVE.js `canShipEnterForceField`, `starbaseAccessRuntime.js`). Any other ship is stopped at the field's boundary (EVE.js `enforceForceFieldMovement`,
 //! `starbaseForceFieldBoundary.js`): its position is put where its move entered the field, it is pushed outward and an order that pulls it back in is
-//! cancelled. An admitted ship inside a field takes the tower's harmonic, which the client compares with its own (`playerOwned.py:91-115`).
+//! cancelled. An admitted ship inside a field takes the tower's harmonic, which the client compares with its own (`playerOwned.py:91-115`). The
+//! clients that see the ship are told the correction and the harmonic as EVE.js tells them (`starbaseForceField.js`, `stream/actions.js`).
 //! Standings admission is not modelled: the pinned EveJS tree does not back it, so it is a documented gap.
 
 use eve_destiny::Vec3;
 
 use crate::deployable::Role;
+use crate::payload;
 use crate::scene::{Scene, SessionId};
 use crate::ship::Course;
+use crate::wire::{id, int, real, vector};
 
 /// The distance, in metres, a ship keeps from the field's surface on top of its own radius (EVE.js `BOUNDARY_CLEARANCE_METERS`).
 pub(crate) const BOUNDARY_CLEARANCE_METERS: f64 = 1.0;
@@ -36,6 +39,16 @@ impl Access {
         (self.allow_corporation && self.corporation_id != 0 && corporation_id == self.corporation_id)
             || (self.allow_alliance && self.alliance_id != 0 && alliance_id == self.alliance_id)
     }
+}
+
+/// What the boundary did to a ship's move: where the ship is now, its velocity, whether an order was cancelled and whether it was moved (EVE.js
+/// `buildForceFieldBoundaryCorrectionUpdates`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Correction {
+    pub position: Vec3,
+    pub velocity: Vec3,
+    pub cancelled: bool,
+    pub moved: bool,
 }
 
 fn origin() -> Vec3 {
@@ -149,16 +162,16 @@ impl Scene {
     }
 
     /// Applies the force field boundary to a pilot's move from `from` to its position (EVE.js `enforceForceFieldMovement`). A ship in warp is not stopped
-    /// by a field: `warp_completed` is the warp that ended on this move, which is checked at its end. Returns whether the move was stopped.
+    /// by a field: `warp_completed` is the warp that ended on this move, which is checked at its end. Returns what the boundary did, when it stopped the move.
     pub(crate) fn enforce_force_fields(
         &mut self,
         session: SessionId,
         from: Vec3,
         warp_completed: bool,
-    ) -> bool {
-        let Some(pilot) = self.pilots.get(&session) else { return false };
+    ) -> Option<Correction> {
+        let pilot = self.pilots.get(&session)?;
         if pilot.flight.is_some() {
-            return false;
+            return None;
         }
         let ship = &pilot.ship;
         let end = ship.position;
@@ -205,8 +218,8 @@ impl Scene {
         } else {
             self.force_field_harmonics.insert(session, harmonic);
         }
-        let Some(denial) = nearest else { return false };
-        let Some(pilot) = self.pilots.get_mut(&session) else { return false };
+        let denial = nearest?;
+        let pilot = self.pilots.get_mut(&session)?;
         let ship = &mut pilot.ship;
         ship.position = denial.point;
         let normal = outside_point(
@@ -242,6 +255,63 @@ impl Scene {
             ship.course = Course::Stop;
             ship.speed_fraction = 0.0;
         }
-        true
+        Some(Correction {
+            position: ship.position,
+            velocity: ship.velocity,
+            cancelled: pulls_back,
+            moved: norm(minus(denial.point, end)) > 0.0,
+        })
+    }
+
+    /// Tells the clients that see a pilot's ship what the field did to its move (`correction`), and its harmonic when it changed from `harmonic_before`:
+    /// the correction is the cancel, the position and the velocity, in that order (EVE.js `buildForceFieldBoundaryCorrectionUpdates`), and the harmonic is
+    /// `SetBallHarmonic` with the ship's corporation and alliance (`buildStarbaseHarmonicUpdates`).
+    pub(crate) fn publish_force_field(
+        &mut self,
+        session: SessionId,
+        now: i64,
+        harmonic_before: i64,
+        correction: Option<Correction>,
+    ) {
+        let Some(pilot) = self.pilots.get(&session) else { return };
+        let ship_id = pilot.ship.spec.ship_id;
+        let (corporation_id, alliance_id) = (pilot.ship.spec.corporation_id, pilot.ship.spec.alliance_id);
+        let bound = pilot.bound;
+        let harmonic = self.force_field_harmonics.get(&session).copied().unwrap_or(NO_HARMONIC);
+        if correction.is_none() && harmonic == harmonic_before {
+            return;
+        }
+        let stamp = self.next_stamp(now);
+        let mut actions = Vec::new();
+        if let Some(correction) = correction {
+            if correction.cancelled {
+                actions.push(payload::action(stamp, "SetSpeedFraction", [id(ship_id), real(0.0)]));
+                actions.push(payload::action(stamp, "Stop", [id(ship_id)]));
+            }
+            if correction.moved {
+                let [x, y, z] = vector(correction.position.x, correction.position.y, correction.position.z);
+                actions.push(payload::action(stamp, "SetBallPosition", [id(ship_id), x, y, z]));
+            }
+            let [x, y, z] = vector(correction.velocity.x, correction.velocity.y, correction.velocity.z);
+            actions.push(payload::action(stamp, "SetBallVelocity", [id(ship_id), x, y, z]));
+        }
+        if harmonic != harmonic_before {
+            actions.push(payload::action(
+                stamp,
+                "SetBallHarmonic",
+                [
+                    id(ship_id),
+                    int(harmonic),
+                    int(i64::from(corporation_id)),
+                    int(i64::from(alliance_id)),
+                    int(0),
+                ],
+            ));
+        }
+        if actions.is_empty() {
+            return;
+        }
+        let own = if bound { actions.clone() } else { Vec::new() };
+        self.backlog.extend(self.tell_split(session, own, actions));
     }
 }

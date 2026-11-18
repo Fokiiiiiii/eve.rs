@@ -199,11 +199,21 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         corporation_id: IdRef::Valid(i64::from(deployable.corporation_id)),
         alliance_id: IdRef::Valid(i64::from(deployable.alliance_id)),
         mode_owner: IdRef::Valid(deployable.ship_id),
+        harmonic: ball_harmonic(&deployable.role),
         ..BallEntity::default()
     };
     let buffer = payload::add_balls_buffer(stamp, &[ball])?;
     let slim = slim_dict(deployable, category);
     Ok(vec![payload::action(stamp, "AddBalls2", [tuple([buffer, list([slim])])])])
+}
+
+/// The harmonic a deployable's ball shows: a force field's is its tower, which EVE.js gives the field as its harmonic (`getForceFieldAccess`), and any other
+/// ball has none.
+pub(crate) fn ball_harmonic(role: &Role) -> IdRef {
+    match role {
+        Role::ForceField { tower_id } => IdRef::Valid(*tower_id),
+        _ => IdRef::Absent,
+    }
 }
 
 /// The slim item of a deployable as the client reads it: the entries of its category, then the dynamic fields the host set.
@@ -1069,7 +1079,8 @@ impl Scene {
             module_id: 0,
             module_type: 0,
             watchers: BTreeSet::new(),
-            slim_fields: BTreeMap::new(),
+            // the client animates a field from this time (V24 `forceField.py`: `forcefieldStartTime`), so a field placed again starts again
+            slim_fields: BTreeMap::from([("forcefieldStartTime".to_string(), SlimValue::Int(now))]),
         };
         out.extend(self.insert_deployable(deployable, now));
         Ok(out)

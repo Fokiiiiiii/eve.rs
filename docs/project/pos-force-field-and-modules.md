@@ -98,7 +98,7 @@ Not done in slice 1 (the gaps stay open):
 - The golden fixtures are not regenerated: `tools/dev/gen-simlink-fixtures.py` is refused by the command policy in this session, so `oracle/fixtures/simlink/messages.json` and the shared Rust/C# fixture tests do not cover kinds 180 to 183 or version 103. The generator source is updated and must be run to regenerate the file.
 - The Host does not send `PlaceForceField` / `RemoveForceField`. The tower-online and tower-offline transitions (`SpaceContainers.ControlTowers.cs`) need a durable item id for the field (EveJS creates a real inventory item); the Host has no allocator for it, and inventing an id would be a fake success. No `ISimulation` / `SimClient` method for the two kinds exists yet.
 - The field's category is the default charge category (`category_of`), not the SDE category of the force field type; the radius and the type come from the message.
-- Admission and the boundary are slice 2 (below); the harmonic publication and the client notifications are slice 3.
+- Admission and the boundary are slice 2 (below); the harmonic publication and the field's start time are slice 3 (below).
 
 ### POS force field admission and boundary, slice 2 (2026-11-18)
 
@@ -108,7 +108,7 @@ Implemented in `crates/eve-space/src/scene/force_field.rs`:
 
 - Admission (`Access::admits_group` plus the password set): a ship is admitted by its corporation when the tower allows the corporation and the ids are non-zero; by its alliance when the tower allows the alliance and the id is non-zero; or by a matching ship password. Other ships are not admitted.
 - Boundary (`enforce_force_fields`, called from the pilot settle path in `scene/movement.rs`): for each field, the boundary is the field radius plus the ship radius plus 1 m. A move that crosses the boundary is stopped on its surface where it enters. A ship that starts inside is not pulled back, and is pushed out at 500 to 2 500 m/s. A crossing move is always in EveJS's boundary-contact band, so its outward speed is 10% of the inward speed, capped at 100 m/s. An order that pulls the ship back in is cancelled (`Course::Stop`). A ship in warp is not checked; a warp that completes is checked at its end.
-- Harmonic (state only): a ship admitted inside a field gets the tower's id as its harmonic, a ship with no admitted field has none. It is held in `Scene::force_field_harmonics` and is not yet published to the client (slice 3).
+- Harmonic (state only): a ship admitted inside a field gets the tower's id as its harmonic, a ship with no admitted field has none. It is held in `Scene::force_field_harmonics` and is told to the client in slice 3 (below).
 - Protocol 103, kinds 184 `SetForceFieldAccess` and 185 `ShipForceFieldPassword` (no answer). `Access` is held per tower, so an access set before the field is placed applies to it. A pilot that is no longer in the scene loses its password and harmonic at the next settle.
 
 Verified:
@@ -125,6 +125,31 @@ Gaps and approximations (not verified against a client):
 - A ship that is not in a field's range is never checked, so a field that is not placed does not stop anything. Nothing reaches the client yet: the boundary correction moves the ship in the simulation, and the correction is published only through the existing position updates.
 - Approximations: a warp is treated as completed when the flight is gone after a settle (EveJS marks the completion explicitly); the order cancel for `Goto` uses the heading, and for `Follow` and `Orbit` always cancels (EveJS's `targetPoint` is null for an entity target, which is what it does); NPC pilots are checked like player pilots, which EveJS does not confirm for NPC ships.
 - The `Role::ForceField` ball still has the default charge category (slice 1).
+
+### POS force field presentation, slice 3 (2026-11-18)
+
+Scope: what the clients that see a force field and its ships are told. Client facts used (V24.01, read with codebase-memory `get_code_snippet` and not run): `PlayerOwned.CompareShipStructureHarmonic` (`playerOwned.py:91-115`) returns true when the field ball's harmonic is not -1 and equals the ship's; `ForceField.Assemble` (`environment/spaceObject/forceField.py:11-23`) reads the slim item's `forcefieldStartTime` to play the field's start animation after 10 s. EveJS shapes: `buildForceFieldBoundaryCorrectionUpdates` and `buildStarbaseHarmonicUpdates` (`destiny/commands/starbaseForceField.js`), and `buildSetBallHarmonicPayload` (`destiny/stream/actions.js:209-226`, `SetBallHarmonic` with entity, harmonic, corporation, alliance, forcefield flag).
+
+Implemented:
+
+- The field's ball carries its tower as its harmonic (`deployable.rs` `ball_harmonic`, in the AddBalls the watchers receive).
+- The field's slim item carries `forcefieldStartTime` set to the tick it was placed at (a field placed again starts again).
+- A boundary stop is told to the bound pilot and to its observers (`scene/force_field.rs` `publish_force_field`, through the same `tell_split` path as the collision correction): `SetSpeedFraction 0` and `Stop` if the order was cancelled, then `SetBallPosition` if the ship was moved, then `SetBallVelocity`, in EveJS's order.
+- A change of a pilot's harmonic is told as `SetBallHarmonic [ship, harmonic, corporation, alliance, 0]`, with -1 for none.
+- A field going down and coming back is the existing deployable path: the ball is removed from, or added to, the views of the pilots who see it.
+
+Verified (headless, Rust unit tests on the scene's own output):
+
+- `cargo test -p eve-space --lib`: 1087 passed, 0 failed, 0 skipped after a clean rebuild of the package. Slice 3 adds five: the ball's harmonic, the start time (placed, and placed again), the stop told as position and velocity with no harmonic, the cancelled order told in EveJS's order, and an admitted ship told the tower's harmonic.
+- `cargo clippy -p eve-space --all-targets -- -D warnings`: clean.
+
+Not verified and not done:
+
+- No graphical client run, so nothing here is shown to a pilot yet.
+- The notification a pilot sees when a field goes down or comes back is not implemented. The client events for a tower's state come from the Host through `posState` and `OnStructureFullyOnline` (`playerOwned.py:73-89`); no client event named for a force field going down was found (codebase-memory: `forceField.py`, `moonmining.py`, `menusvc.py` `EnterForceFieldPassword` only). The Host does not place fields yet, so there is nothing to notify.
+- A ship's harmonic is told only when the boundary runs on a move and the harmonic changes. A pilot who is already inside an admitted field when another pilot first sees it is not given the harmonic in its first ball (its ball is sent with no harmonic), and the `SetBallHarmonic` argument shape is EveJS's, not a client-verified one.
+- A pilot's harmonic is kept per session; a ship that is not moved is not re-told, which matches EveJS only as far as its move-driven sync goes.
+- The field's category is still the default charge category (slice 1).
 
 ## Open items
 

@@ -12,6 +12,9 @@ mod abyssal_cleanup_tests;
 #[path = "battery_tests.rs"]
 mod battery_tests;
 
+#[path = "force_field_tests.rs"]
+mod force_field_tests;
+
 const SYSTEM: i32 = 30_000_001;
 const SECOND: i64 = 10_000_000;
 
@@ -5226,5 +5229,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
     // The Host and simulation carry Abyssal FOLLOW pose state in SimLink v100.
-    assert_eq!(crate::link::PROTOCOL_VERSION, 102);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 103);
 }

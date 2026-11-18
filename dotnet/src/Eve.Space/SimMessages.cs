@@ -1267,6 +1267,16 @@ public sealed record SimBatteryPlaced(long BatteryId, string Reason) : SimMessag
 public sealed record SimBatteryTarget(ulong RequestId, long BatteryId, int SolarSystemId, byte Order, long Target) : SimMessage;
 /// <summary>The answer to <see cref="SimBatteryTarget"/>: an empty reason means the order was accepted; <paramref name="Pending"/> says a lock is still going.</summary>
 public sealed record SimBatteryTargets(ulong RequestId, long BatteryId, string Reason, bool Pending, IReadOnlyList<long> Targets) : SimMessage;
+/// <summary>The host puts an online POS control tower's force field in its system's scene (protocol 103): a ball of <paramref name="Radius"/> metres around
+/// <paramref name="Position"/>, whose harmonic is the tower. Answered by <see cref="SimForceFieldPlaced"/>.</summary>
+public sealed record SimPlaceForceField(long FieldId, long TowerId, int SolarSystemId, int TypeId, int GroupId, string Name,
+    IReadOnlyList<double> Position, double Radius) : SimMessage;
+/// <summary>The answer to <see cref="SimPlaceForceField"/>: an empty reason means the field is in the scene.</summary>
+public sealed record SimForceFieldPlaced(long FieldId, string Reason) : SimMessage;
+/// <summary>The host takes a tower's force field out of its system's scene (protocol 103). Answered by <see cref="SimForceFieldRemoved"/>.</summary>
+public sealed record SimRemoveForceField(long TowerId, int SolarSystemId) : SimMessage;
+/// <summary>The answer to <see cref="SimRemoveForceField"/>: an empty reason means the field was taken out.</summary>
+public sealed record SimForceFieldRemoved(long TowerId, string Reason) : SimMessage;
 
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;

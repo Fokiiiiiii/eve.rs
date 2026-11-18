@@ -326,6 +326,10 @@ pub enum Out {
     WarpExited { session: SessionId },
     /// The answer to a battery placement (protocol 102): the reason, empty when the battery is in the scene.
     BatteryPlaced { battery_id: i64, reason: String },
+    /// The answer to a force field placement (protocol 103): the reason, empty when the field is in the scene.
+    ForceFieldPlaced { field_id: i64, reason: String },
+    /// The answer to a force field removal (protocol 103): the reason, empty when the field was taken out.
+    ForceFieldRemoved { tower_id: i64, reason: String },
     /// The answer to a battery's target order (protocol 102): the reason (empty when accepted), whether a lock is pending, what the battery holds.
     BatteryTargets { request_id: u64, battery_id: i64, reason: String, pending: bool, targets: Vec<i64> },
     /// The answer to a question about the ship's condition.
@@ -527,6 +531,8 @@ impl Out {
             | Out::SimDamageableEntityRemoved { .. }
             | Out::AbyssalFieldMembership { .. }
             | Out::BatteryPlaced { .. }
+            | Out::ForceFieldPlaced { .. }
+            | Out::ForceFieldRemoved { .. }
             | Out::BatteryTargets { .. } => 0,
         }
     }

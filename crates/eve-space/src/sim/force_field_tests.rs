@@ -1,0 +1,123 @@
+use super::*;
+use crate::deployable::Role;
+use crate::link::ForceFieldPlacement;
+use crate::scene::tests::{NOON, SESSION, STATION, system};
+
+const FIELD: i64 = 1_050_000_100;
+const OTHER_FIELD: i64 = 1_050_000_101;
+const TOWER: i64 = 1_050_000_099;
+const OTHER_TOWER: i64 = 1_050_000_098;
+
+fn placement(field_id: i64, tower_id: i64, radius: f64) -> ForceFieldPlacement {
+    ForceFieldPlacement {
+        field_id,
+        tower_id,
+        solar_system_id: SYSTEM,
+        type_id: 16_000,
+        group_id: 411,
+        name: "Force Field".to_string(),
+        position: [1.0, 2.0, 3.0],
+        radius,
+    }
+}
+
+fn fields_of(sim: &Sim, tower_id: i64) -> Vec<(i64, f64)> {
+    sim.scenes[&SceneKey::solar_system(SYSTEM)]
+        .deployables
+        .values()
+        .filter(|held| matches!(held.role, Role::ForceField { tower_id: t } if t == tower_id))
+        .map(|held| (held.id, held.spec.radius))
+        .collect()
+}
+
+fn new_sim() -> Sim {
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([(*system()).clone()])));
+    sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+    sim
+}
+
+/// The field of an online tower is put in its system's scene, and taken out with the tower; each answer says what happened.
+#[test]
+fn a_force_field_is_placed_for_its_tower_and_taken_out_with_it() {
+    let mut sim = new_sim();
+    let placed =
+        sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    assert_eq!(placed.first(), Some(&Message::ForceFieldPlaced { field_id: FIELD, reason: String::new() }));
+    assert_eq!(fields_of(&sim, TOWER), [(FIELD, 1_000.0)]);
+
+    let removed =
+        sim.handle(Message::RemoveForceField { tower_id: TOWER, solar_system_id: SYSTEM }, NOON).unwrap();
+    assert_eq!(removed.first(), Some(&Message::ForceFieldRemoved { tower_id: TOWER, reason: String::new() }));
+    assert!(fields_of(&sim, TOWER).is_empty());
+}
+
+/// The same field, place and radius again changes nothing; a new id replaces the tower's field.
+#[test]
+fn a_field_placed_again_changes_nothing_and_a_new_id_replaces_it() {
+    let mut sim = new_sim();
+    sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    let again =
+        sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    assert_eq!(again, vec![Message::ForceFieldPlaced { field_id: FIELD, reason: String::new() }]);
+
+    let replaced =
+        sim.handle(Message::PlaceForceField(Box::new(placement(OTHER_FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    assert_eq!(
+        replaced.first(),
+        Some(&Message::ForceFieldPlaced { field_id: OTHER_FIELD, reason: String::new() })
+    );
+    assert_eq!(fields_of(&sim, TOWER), [(OTHER_FIELD, 1_000.0)]);
+}
+
+/// A field needs a positive radius; a refused placement leaves no field and frees its id.
+#[test]
+fn a_field_without_a_positive_radius_is_refused_and_takes_no_place() {
+    let mut sim = new_sim();
+    for radius in [0.0, -5.0, f64::NAN] {
+        let answer =
+            sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, radius))), NOON).unwrap();
+        assert_eq!(
+            answer,
+            vec![Message::ForceFieldPlaced {
+                field_id: FIELD,
+                reason: "FORCE_FIELD_RADIUS_INVALID".to_string()
+            }]
+        );
+    }
+    assert!(fields_of(&sim, TOWER).is_empty());
+}
+
+/// An id held by another tower's field is refused, and that tower keeps its field.
+#[test]
+fn an_id_held_by_another_towers_field_is_refused() {
+    let mut sim = new_sim();
+    sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    let answer =
+        sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, OTHER_TOWER, 500.0))), NOON).unwrap();
+    assert_eq!(
+        answer,
+        vec![Message::ForceFieldPlaced { field_id: FIELD, reason: "FORCE_FIELD_ID_TAKEN".to_string() }]
+    );
+    assert_eq!(fields_of(&sim, TOWER), [(FIELD, 1_000.0)]);
+    assert!(fields_of(&sim, OTHER_TOWER).is_empty());
+}
+
+/// A tower with no field in the scene cannot have one removed, and a system the universe does not know refuses a placement.
+#[test]
+fn removing_a_missing_field_and_placing_in_an_unknown_system_are_refused() {
+    let mut sim = new_sim();
+    let removed =
+        sim.handle(Message::RemoveForceField { tower_id: TOWER, solar_system_id: SYSTEM }, NOON).unwrap();
+    assert_eq!(
+        removed,
+        vec![Message::ForceFieldRemoved { tower_id: TOWER, reason: "FORCE_FIELD_NOT_IN_SPACE".to_string() }]
+    );
+
+    let mut unknown = placement(FIELD, TOWER, 1_000.0);
+    unknown.solar_system_id = 999_999;
+    let answer = sim.handle(Message::PlaceForceField(Box::new(unknown)), NOON).unwrap();
+    assert_eq!(
+        answer,
+        vec![Message::ForceFieldPlaced { field_id: FIELD, reason: "SYSTEM_UNKNOWN".to_string() }]
+    );
+}

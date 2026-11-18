@@ -200,6 +200,8 @@ impl Sim {
             },
             Out::WarpExited { session } => Message::WarpExited { session_id: session },
             Out::BatteryPlaced { battery_id, reason } => Message::BatteryPlaced { battery_id, reason },
+            Out::ForceFieldPlaced { field_id, reason } => Message::ForceFieldPlaced { field_id, reason },
+            Out::ForceFieldRemoved { tower_id, reason } => Message::ForceFieldRemoved { tower_id, reason },
             Out::BatteryTargets { request_id, battery_id, reason, pending, targets } => {
                 Message::BatteryTargets { request_id, battery_id, reason, pending, targets }
             }
@@ -869,6 +871,8 @@ impl Sim {
             | Message::UpsertMoonChunk(..)
             | Message::PlaceBattery(..)
             | Message::BatteryTarget { .. }
+            | Message::PlaceForceField(..)
+            | Message::RemoveForceField { .. }
             | Message::RemoveMoonChunk { .. }
             | Message::PlaceProbe(..)
             | Message::RemoveProbe { .. }
@@ -1994,6 +1998,38 @@ impl Sim {
                 match self.scenes.get_mut(&SceneKey::solar_system(observatory.solar_system_id)) {
                     Some(scene) => scene.place_observatory(observatory, now),
                     None => Vec::new(),
+                }
+            }
+            Message::PlaceForceField(field) => {
+                let field = *field;
+                let field_id = field.field_id;
+                let scene_key = SceneKey::solar_system(field.solar_system_id);
+                if !self.scenes.contains_key(&scene_key)
+                    && let Ok(system) = self.universe.system(field.solar_system_id)
+                {
+                    self.scenes.insert(scene_key, self.universe.scene_of(system));
+                }
+                let placed = match self.scenes.get_mut(&scene_key) {
+                    Some(scene) => scene.place_force_field(field, now),
+                    None => Err("SYSTEM_UNKNOWN"),
+                };
+                match placed {
+                    Ok(told) => std::iter::once(Out::ForceFieldPlaced { field_id, reason: String::new() })
+                        .chain(told)
+                        .collect(),
+                    Err(reason) => vec![Out::ForceFieldPlaced { field_id, reason: reason.to_owned() }],
+                }
+            }
+            Message::RemoveForceField { tower_id, solar_system_id } => {
+                let removed = match self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
+                    Some(scene) => scene.remove_force_field(tower_id, now),
+                    None => Err("FORCE_FIELD_NOT_IN_SPACE"),
+                };
+                match removed {
+                    Ok(told) => std::iter::once(Out::ForceFieldRemoved { tower_id, reason: String::new() })
+                        .chain(told)
+                        .collect(),
+                    Err(reason) => vec![Out::ForceFieldRemoved { tower_id, reason: reason.to_owned() }],
                 }
             }
             Message::PlaceControlTower(tower) => {

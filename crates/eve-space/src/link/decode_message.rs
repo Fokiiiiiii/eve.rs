@@ -2748,6 +2748,34 @@ impl Message {
                 Message::TetherChanged { session_id, previous_structure_id, structure_id, repairing }
             }
             kind::DESTROY => Message::Destroy { ship_id: r.i64()?, credit: read_credit(&mut r)? },
+            kind::PLACE_FORCE_FIELD => {
+                let field_id = r.i64()?;
+                let tower_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let name = r.text()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                if !radius.is_finite() || position.iter().any(|value| !value.is_finite()) {
+                    return Err(DecodeError::BadValue("force field"));
+                }
+                Message::PlaceForceField(Box::new(ForceFieldPlacement {
+                    field_id,
+                    tower_id,
+                    solar_system_id,
+                    type_id,
+                    group_id,
+                    name,
+                    position,
+                    radius,
+                }))
+            }
+            kind::FORCE_FIELD_PLACED => Message::ForceFieldPlaced { field_id: r.i64()?, reason: r.text()? },
+            kind::REMOVE_FORCE_FIELD => {
+                Message::RemoveForceField { tower_id: r.i64()?, solar_system_id: r.i32()? }
+            }
+            kind::FORCE_FIELD_REMOVED => Message::ForceFieldRemoved { tower_id: r.i64()?, reason: r.text()? },
             kind::PLACE_BATTERY => {
                 let battery_id = r.i64()?;
                 let solar_system_id = r.i32()?;

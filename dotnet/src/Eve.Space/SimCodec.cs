@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 102;
+    public const ushort ProtocolVersion = 103;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -1333,6 +1333,30 @@ public static partial class SimCodec
                 break;
             case Kind.WarpExited:
                 message = new SimWarpExited(r.U64());
+                break;
+            case Kind.PlaceForceField:
+                {
+                    var field = r.I64();
+                    var tower = r.I64();
+                    var solarSystem = r.I32();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var name = r.Text();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    if (!ValidForceFieldPlacement(position, radius))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad force field placement");
+                    message = new SimPlaceForceField(field, tower, solarSystem, type, group, name, position, radius);
+                    break;
+                }
+            case Kind.ForceFieldPlaced:
+                message = new SimForceFieldPlaced(r.I64(), r.Text());
+                break;
+            case Kind.RemoveForceField:
+                message = new SimRemoveForceField(r.I64(), r.I32());
+                break;
+            case Kind.ForceFieldRemoved:
+                message = new SimForceFieldRemoved(r.I64(), r.Text());
                 break;
             case Kind.PlaceBattery:
                 {

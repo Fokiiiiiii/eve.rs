@@ -35,6 +35,14 @@ pub const BATTERY_PLACED: u8 = 169;
 pub const BATTERY_TARGET: u8 = 170;
 /// The answer to `BATTERY_TARGET`: pending flag and the targets the battery holds.
 pub const BATTERY_TARGETS: u8 = 171;
+/// The host puts an online POS control tower's force field in its system's scene (protocol 103). Answered by `FORCE_FIELD_PLACED`.
+pub const PLACE_FORCE_FIELD: u8 = 180;
+/// The answer to `PLACE_FORCE_FIELD`: an empty reason means the field is in the scene.
+pub const FORCE_FIELD_PLACED: u8 = 181;
+/// The host takes a tower's force field out of its system's scene (the tower went offline or ran out of fuel). Answered by `FORCE_FIELD_REMOVED`.
+pub const REMOVE_FORCE_FIELD: u8 = 182;
+/// The answer to `REMOVE_FORCE_FIELD`: an empty reason means the field was taken out.
+pub const FORCE_FIELD_REMOVED: u8 = 183;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

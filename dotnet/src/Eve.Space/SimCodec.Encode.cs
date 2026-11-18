@@ -1523,6 +1523,21 @@ private static void WriteStructureDamageCorrelation(
                 w.U8(Kind.WarpExited);
                 w.U64(m.SessionId);
                 break;
+            case SimPlaceForceField m:
+                if (!ValidForceFieldPlacement(m.Position, m.Radius))
+                    throw new ArgumentException("Invalid force field placement.", nameof(message));
+                w.U8(Kind.PlaceForceField); w.I64(m.FieldId); w.I64(m.TowerId); w.I32(m.SolarSystemId); w.I32(m.TypeId); w.I32(m.GroupId);
+                w.Text(m.Name); WriteVector(w, m.Position); w.F64(m.Radius);
+                break;
+            case SimForceFieldPlaced m:
+                w.U8(Kind.ForceFieldPlaced); w.I64(m.FieldId); w.Text(m.Reason);
+                break;
+            case SimRemoveForceField m:
+                w.U8(Kind.RemoveForceField); w.I64(m.TowerId); w.I32(m.SolarSystemId);
+                break;
+            case SimForceFieldRemoved m:
+                w.U8(Kind.ForceFieldRemoved); w.I64(m.TowerId); w.Text(m.Reason);
+                break;
             case SimPlaceBattery m:
                 if (!ValidBatteryPlacement(m.Position, m.Radius, m.ScanResolution, m.MaxTargetRange))
                     throw new ArgumentException("Invalid battery placement.", nameof(message));

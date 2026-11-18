@@ -37,6 +37,14 @@ public static partial class SimCodec
         public const byte BatteryPlaced = 169;
         public const byte BatteryTarget = 170;
         public const byte BatteryTargets = 171;
+        /// <summary>Protocol 103: the host puts an online POS control tower's force field in its system's scene.</summary>
+        public const byte PlaceForceField = 180;
+        /// <summary>The answer to <see cref="PlaceForceField"/>: an empty reason means the field is in the scene.</summary>
+        public const byte ForceFieldPlaced = 181;
+        /// <summary>The host takes a tower's force field out of its system's scene.</summary>
+        public const byte RemoveForceField = 182;
+        /// <summary>The answer to <see cref="RemoveForceField"/>: an empty reason means the field was taken out.</summary>
+        public const byte ForceFieldRemoved = 183;
         public const byte EnsureTournamentBeacon = 128;
         public const byte EnsureTournamentBeaconReply = 129;
         public const byte RemoveTournamentBeacon = 130;
@@ -204,6 +212,10 @@ public const byte UpdateEffect = 61;
     private static bool ValidBatteryPlacement(IReadOnlyList<double> position, double radius, double scanResolution, double maxTargetRange) =>
         position.Count == 3 && position.All(double.IsFinite) && double.IsFinite(radius) && double.IsFinite(scanResolution) &&
         double.IsFinite(maxTargetRange);
+
+    /// <summary>What a force field placement carries that the link can read: finite numbers only (protocol 103; the simulation refuses a radius it cannot use).</summary>
+    private static bool ValidForceFieldPlacement(IReadOnlyList<double> position, double radius) =>
+        position.Count == 3 && position.All(double.IsFinite) && double.IsFinite(radius);
 
     private static bool ValidDeploymentBalls(IReadOnlyList<SimDeploymentBall> balls) =>
         balls is not null && balls.Count <= 8192 && balls.All(ball => ball.ItemId > 0 && ball.TypeId > 0 && IsVector(ball.Position) &&

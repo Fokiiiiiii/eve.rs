@@ -76,9 +76,33 @@ Not done in slice 1: `oracle/fixtures/simlink/messages.json` is not regenerated.
 
 Slices 2 and 3 status (2026-11-18, Host): `AddTargetOBO` and `RemoveTargetOBO` are on the dogma location (`DogmaIMService.Targeting.cs`), through `ISpaceTargeting.BatteryOrderAsync`, `SpaceContainers.Batteries.cs` (grant, online state, SDE numbers, placement, order) and the sim client's battery replies. Verified: `ControlTowerHostTests` battery tests 5 passed, 0 failed, 0 skipped on `eve_p4` (no grant, offline, invalid target, lock and remove, holder-only `OnTargetOBO`); the whole class 16 passed alone. Release builds with warnings as errors: `Eve.Host`, `Eve.Services.Space.Tests`, `Eve.Space`. Open: the full `Eve.Services.Space.Tests` run is not green in one pass (intermittent unrelated failures under parallel runs; the baseline comparison was not completed), the fixture regeneration, a battery going offline outside an order, and graphical acceptance.
 
+### POS force field ball, slice 1 (2026-11-18)
+
+Scope: the force field ball of an online control tower, in the simulation, created and removed by SimLink kinds 180 to 183 (protocol 103). The V24 client reads a tower's field through `playerOwned.py:91-115` (`forceFieldID` and the ball's harmonic, compared with the ship's); EveJS creates the field as an inventory item with `createSpaceItemForOwner` (`controlTowerRuntime.js:935-1032`).
+
+Implemented:
+
+- `crates/eve-space`: `PlaceForceField` / `ForceFieldPlaced` / `RemoveForceField` / `ForceFieldRemoved` in `link` (kind 180 to 183), a `Role::ForceField { tower_id }` deployable in `deployable.rs` (`place_force_field`, `remove_force_field`), and dispatch in `sim/dispatch.rs`. A field is a ball with the scene's usual visibility, removal and watcher handling.
+- `dotnet/src/Eve.Space`: the same four records in `SimMessages.cs`, their decode and encode arms, kind constants and a placement validator in `SimCodec.Shared.cs`; `SimCodec.ProtocolVersion` is 103.
+- `tools/dev/gen-simlink-fixtures.py`: kinds, encoders, valid and invalid cases for the four messages, and Hello/HelloAck at 103.
+
+Verified:
+
+- `cargo test -p eve-space --lib`: 1064 passed, 0 failed, 0 skipped. Nine of them are new: four link frame tests (`link::force_field_tests`) and five simulation tests (`sim::tests::force_field_tests`): placement and removal, an unchanged re-placement, a replacement id, a refused radius (0, -5, NaN), an id held by another tower, a missing field, and an unknown system.
+- `cargo clippy -p eve-space --all-targets -- -D warnings`: clean. `cargo fmt --all` applied.
+- `dotnet test dotnet/tests/Eve.Space.Tests`: 574 passed, 0 failed, 0 skipped (3 are new in `ForceFieldCodecTests`).
+- Release builds with warnings as errors: `Eve.Space` and `Eve.Space.Tests`, 0 warnings, 0 errors.
+
+Not done in slice 1 (the gaps stay open):
+
+- The golden fixtures are not regenerated: `tools/dev/gen-simlink-fixtures.py` is refused by the command policy in this session, so `oracle/fixtures/simlink/messages.json` and the shared Rust/C# fixture tests do not cover kinds 180 to 183 or version 103. The generator source is updated and must be run to regenerate the file.
+- The Host does not send `PlaceForceField` / `RemoveForceField`. The tower-online and tower-offline transitions (`SpaceContainers.ControlTowers.cs`) need a durable item id for the field (EveJS creates a real inventory item); the Host has no allocator for it, and inventing an id would be a fake success. No `ISimulation` / `SimClient` method for the two kinds exists yet.
+- The field's category is the default charge category (`category_of`), not the SDE category of the force field type; the radius and the type come from the message.
+- No admission, boundary, password, harmonic publication or client notification exists yet (slices 2 and 3, below).
+
 ## Open items
 
-- **POS force field and password admission:** the Host still does not create a force-field item/ball when a tower comes online, remove it on fuel failure/offline, publish `forceFieldID`, update its Destiny harmonic, or check corp/alliance/ship-password admission at a movement boundary. `SetTowerPassword` persistence alone is not the feature. The existing command-burst check uses the SDE shield radius and tower online state for that module's eligibility; it does not supply the force-field ball or crossing behavior.
+- **POS force field and password admission:** the simulation now has the force-field ball (slice 1, protocol 103), but the Host does not yet send it when a tower comes online or goes offline (no field item id), does not publish `forceFieldID`, update its Destiny harmonic, or check corp/alliance/ship-password admission at a movement boundary. `SetTowerPassword` persistence alone is not the feature. The existing command-burst check uses the SDE shield radius and tower online state for that module's eligibility; it does not supply the force-field ball or crossing behavior.
 - **Starbase OBO target calls:** `AddTargetOBO` and `RemoveTargetOBO` remain unimplemented. The battery control grant (`AssumeStructureControl` / `RelinquishStructureControl`) now exists (see POS battery control grant below), but the DogmaLM bound object and the battery's target lock state in the Rust scene do not. Registering the two RPC names without them would not implement the client flow.
 - **Sentry targeting:** sentry settings persist and round-trip, but no associated battery targeting/defense controller consumes the policy.
 - **Other POS inventory/use consumers:** silo `viewput`/`viewputtake` is enforced. Ship-maintenance, reprocessing/compression arrays and jump-bridge `use` behavior remain incomplete.

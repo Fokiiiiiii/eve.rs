@@ -1644,7 +1644,7 @@ public class ControlTowerHostTests
         var dogma = new DogmaIMService(rig.Statics, rig.Ships, () => rig.Now,
             (_, _, _, _, _, _) => ValueTask.FromResult<bool?>(null), space: rig.Space, modules: rig.Space);
         var holder = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now, dogma);
-        var otherHost = await PosMgrHostWire.StartAsync(posMgr, other, () => rig.Now);
+        var otherHost = await PosMgrHostWire.StartAsync(posMgr, other, () => rig.Now, dogma);
 
         Assert.Equal(battery, await rig.Containers.LaunchFromShipAsync(session, battery, CancellationToken.None));
         var position = new[] { towerRecord.Position[0] + 10_000, towerRecord.Position[1], towerRecord.Position[2] };
@@ -1755,6 +1755,66 @@ public class ControlTowerHostTests
         Assert.Equal(new PyLong(fixture.Battery), added.Args[1]);
         Assert.Equal(new PyLong(fixture.Target), added.Args[2]);
         Assert.DoesNotContain(Events.Of(fixture.OtherSession), item => item.Name == "OnTargetOBO");
+    }
+
+    /// <summary>
+    /// A battery's fire (protocol 104) through the registered dogma location: the holder of the grant starts and stops it, a refused effect is refused, and a
+    /// pilot without the grant is refused, with nothing sent to the simulation.
+    /// </summary>
+    [PgFact]
+    public async Task Battery_fire_is_held_by_the_grant_holder_and_refused_for_other_pilots()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var typeId = await PlayerControlledBatteryTypeAsync(rig);
+        var effect = await rig.Statics.OffensiveEffectNameAsync(typeId);
+        Assert.False(string.IsNullOrEmpty(effect));
+        var bound = Assert.IsType<PyTuple>(await fixture.Other.CallServiceAsync("dogmaIM", "MachoBindObject",
+            new PyTuple([new PyLong(LowSecSystem), new PyInt(5)]), PyNone.Instance));
+        var otherOid = BoundOid(bound.Items[0]);
+
+        var denied = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Other.BoundCallAsync(otherOid, "Activate",
+            new PyLong(fixture.Battery), new PyStr(effect!), new PyLong(fixture.Target), new PyInt(1)));
+        Assert.Equal("CustomNotify", denied.Error.UserErrorMessage);
+        Assert.Empty(rig.Sim.Heard.OfType<SimBatteryFire>());
+
+        Assert.Equal(new PyInt(1), await fixture.Holder.BoundCallAsync(fixture.Oid, "Activate",
+            new PyLong(fixture.Battery), new PyStr(effect!), new PyLong(fixture.Target), new PyInt(1)));
+        var started = Assert.Single(rig.Sim.Heard.OfType<SimBatteryFire>());
+        Assert.Equal((fixture.Battery, true, fixture.Target), (started.BatteryId, started.On, started.Target));
+
+        var wrongEffect = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "Activate",
+            new PyLong(fixture.Battery), new PyStr("notAnEffect"), new PyLong(fixture.Target), new PyInt(1)));
+        Assert.Equal("CustomNotify", wrongEffect.Error.UserErrorMessage);
+        Assert.Single(rig.Sim.Heard.OfType<SimBatteryFire>());
+
+        Assert.Equal(new PyInt(1), await fixture.Holder.BoundCallAsync(fixture.Oid, "Deactivate",
+            new PyLong(fixture.Battery), new PyStr(effect!)));
+        var stopped = rig.Sim.Heard.OfType<SimBatteryFire>().ToArray();
+        Assert.Equal(2, stopped.Length);
+        Assert.Equal((fixture.Battery, false, 0L), (stopped[1].BatteryId, stopped[1].On, stopped[1].Target));
+    }
+
+    /// <summary>A battery fire the simulation refuses reaches the holder as the client's error; an offline battery is refused before the simulation fires.</summary>
+    [PgFact]
+    public async Task Battery_fire_refusals_from_the_simulation_and_offline_batteries_reach_the_holder_as_errors()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var typeId = await PlayerControlledBatteryTypeAsync(rig);
+        var effect = (await rig.Statics.OffensiveEffectNameAsync(typeId))!;
+
+        rig.Sim.BatteryFireAnswers.Enqueue(new SimBatteryFired(0, fixture.Battery, "TARGET_NOT_LOCKED", false, 0));
+        var notLocked = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "Activate",
+            new PyLong(fixture.Battery), new PyStr(effect), new PyLong(fixture.Target), new PyInt(1)));
+        Assert.Equal("CustomNotify", notLocked.Error.UserErrorMessage);
+
+        await rig.Deployed.SetTowerStateAsync(fixture.Battery, "offline");
+        var offline = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "Activate",
+            new PyLong(fixture.Battery), new PyStr(effect), new PyLong(fixture.Target), new PyInt(1)));
+        Assert.Equal("CustomNotify", offline.Error.UserErrorMessage);
+        Assert.Single(rig.Sim.Heard.OfType<SimBatteryFire>());
+        Assert.Contains(rig.Sim.Heard.OfType<SimPlaceBattery>(), placed => !placed.Online);
     }
 }
 

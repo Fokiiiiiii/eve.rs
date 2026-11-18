@@ -9,7 +9,7 @@ mod lock;
 mod settle;
 mod unlock;
 
-pub(crate) use battery::{Battery, BatteryAnswer, BatteryOrder};
+pub(crate) use battery::{Battery, BatteryAnswer, BatteryFire, BatteryFireAnswer, BatteryOrder};
 
 use eve_destiny::Vec3;
 

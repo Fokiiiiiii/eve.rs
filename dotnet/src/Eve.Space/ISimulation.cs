@@ -135,6 +135,10 @@ public interface ISimulation
     Task<SimBatteryTargets> BatteryTargetAsync(SimBatteryTarget request, CancellationToken cancellationToken = default) =>
         Task.FromException<SimBatteryTargets>(new NotSupportedException("POS battery targeting is unavailable."));
 
+    /// <summary>Starts or stops a POS battery's fire at a target it holds (protocol 104).</summary>
+    Task<SimBatteryFired> BatteryFireAsync(SimBatteryFire request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimBatteryFired>(new NotSupportedException("POS battery fire is unavailable."));
+
     /// <summary>Reads the authoritative pose of a resident ship from its expected private scene.</summary>
     Task<SimGetAbyssalParticipantPoseReply> GetAbyssalParticipantPoseAsync(
         SimGetAbyssalParticipantPose request, CancellationToken cancellationToken = default);

@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 102;
+    public const ushort ProtocolVersion = 104;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -1365,6 +1365,24 @@ public static partial class SimCodec
                     var order = r.U8();
                     if (order is < 1 or > 4) throw new SimLinkException(SimLinkError.BadValue, "battery order");
                     message = new SimBatteryTarget(request, battery, solarSystem, order, r.I64());
+                    break;
+                }
+            case Kind.BatteryFire:
+                {
+                    var request = r.U64();
+                    var battery = r.I64();
+                    var solarSystem = r.I32();
+                    var on = ReadFlag(ref r, "on");
+                    message = new SimBatteryFire(request, battery, solarSystem, on, r.I64());
+                    break;
+                }
+            case Kind.BatteryFired:
+                {
+                    var request = r.U64();
+                    var battery = r.I64();
+                    var reason = r.Text();
+                    var active = ReadFlag(ref r, "active");
+                    message = new SimBatteryFired(request, battery, reason, active, r.I64());
                     break;
                 }
             case Kind.BatteryTargets:

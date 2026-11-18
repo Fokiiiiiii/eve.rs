@@ -44,6 +44,13 @@ public interface ISpaceTargeting
     /// </summary>
     Task<TargetingResult?> BatteryOrderAsync(ClientSession session, long batteryId, TargetingOrder order, long target, CancellationToken cancellationToken) =>
         Task.FromResult<TargetingResult?>(null);
+
+    /// <summary>
+    /// A POS battery's fire (protocol 104): the dogma location of the pilot holding its control grant starts (<paramref name="on"/>) or stops its fire, through
+    /// Activate and Deactivate on the battery. Null when the item is not a player-controlled battery, so the dogma service handles it as a ship module.
+    /// </summary>
+    Task<TargetingResult?> BatteryFireAsync(ClientSession session, long batteryId, bool on, string effectName, long target, CancellationToken cancellationToken) =>
+        Task.FromResult<TargetingResult?>(null);
 }
 
 /// <summary>Answers whether two characters belong to opposite sides of an active war, including accepted war allies.</summary>

@@ -92,6 +92,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         _space.MayPullAsync = MayPullAsync;
         _space.CommandBurstSourceInForceFieldAsync = IsCommandBurstSourceInForceFieldAsync;
         _space.BatteryTargetingHandler = BatteryTargetingAsync;
+        _space.BatteryFireHandler = BatteryFireAsync;
     }
 
     public void Dispose()

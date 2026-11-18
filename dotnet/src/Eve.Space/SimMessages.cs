@@ -1267,6 +1267,10 @@ public sealed record SimBatteryPlaced(long BatteryId, string Reason) : SimMessag
 public sealed record SimBatteryTarget(ulong RequestId, long BatteryId, int SolarSystemId, byte Order, long Target) : SimMessage;
 /// <summary>The answer to <see cref="SimBatteryTarget"/>: an empty reason means the order was accepted; <paramref name="Pending"/> says a lock is still going.</summary>
 public sealed record SimBatteryTargets(ulong RequestId, long BatteryId, string Reason, bool Pending, IReadOnlyList<long> Targets) : SimMessage;
+/// <summary>Starts (<paramref name="On"/>) or stops a POS battery's fire at a target it holds (protocol 104). Answered by <see cref="SimBatteryFired"/> under the request id.</summary>
+public sealed record SimBatteryFire(ulong RequestId, long BatteryId, int SolarSystemId, bool On, long Target) : SimMessage;
+/// <summary>The answer to <see cref="SimBatteryFire"/>: an empty reason means the order was accepted; <paramref name="Active"/> says the battery fires at <paramref name="Target"/> (0 for none).</summary>
+public sealed record SimBatteryFired(ulong RequestId, long BatteryId, string Reason, bool Active, long Target) : SimMessage;
 
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;

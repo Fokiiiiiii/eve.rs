@@ -1537,6 +1537,12 @@ private static void WriteStructureDamageCorrelation(
                 if (m.Order is < 1 or > 4) throw new ArgumentException("Invalid battery order.", nameof(message));
                 w.U8(Kind.BatteryTarget); w.U64(m.RequestId); w.I64(m.BatteryId); w.I32(m.SolarSystemId); w.U8(m.Order); w.I64(m.Target);
                 break;
+            case SimBatteryFire m:
+                w.U8(Kind.BatteryFire); w.U64(m.RequestId); w.I64(m.BatteryId); w.I32(m.SolarSystemId); w.U8((byte)(m.On ? 1 : 0)); w.I64(m.Target);
+                break;
+            case SimBatteryFired m:
+                w.U8(Kind.BatteryFired); w.U64(m.RequestId); w.I64(m.BatteryId); w.Text(m.Reason); w.U8((byte)(m.Active ? 1 : 0)); w.I64(m.Target);
+                break;
             case SimBatteryTargets m:
                 w.U8(Kind.BatteryTargets); w.U64(m.RequestId); w.I64(m.BatteryId); w.Text(m.Reason); w.U8((byte)(m.Pending ? 1 : 0));
                 w.U32((uint)m.Targets.Count);

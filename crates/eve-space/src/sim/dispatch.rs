@@ -203,6 +203,9 @@ impl Sim {
             Out::BatteryTargets { request_id, battery_id, reason, pending, targets } => {
                 Message::BatteryTargets { request_id, battery_id, reason, pending, targets }
             }
+            Out::BatteryFired { request_id, battery_id, reason, active, target } => {
+                Message::BatteryFired { request_id, battery_id, reason, active, target }
+            }
             Out::Condition { session, command, condition } => {
                 Message::Condition { session_id: session, command, condition }
             }
@@ -869,6 +872,7 @@ impl Sim {
             | Message::UpsertMoonChunk(..)
             | Message::PlaceBattery(..)
             | Message::BatteryTarget { .. }
+            | Message::BatteryFire { .. }
             | Message::RemoveMoonChunk { .. }
             | Message::PlaceProbe(..)
             | Message::RemoveProbe { .. }
@@ -1887,6 +1891,33 @@ impl Sim {
                         .collect(),
                     Err(reason) => vec![Out::BatteryPlaced { battery_id, reason: reason.to_owned() }],
                 }
+            }
+            Message::BatteryFire { request_id, battery_id, solar_system_id, on, target } => {
+                let order = if on {
+                    crate::targeting::BatteryFire::Start(target)
+                } else {
+                    crate::targeting::BatteryFire::Stop
+                };
+                let (answer, told) = match self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
+                    Some(scene) => scene.battery_fire(battery_id, order, now),
+                    None => (
+                        crate::targeting::BatteryFireAnswer {
+                            reason: Some("BATTERY_NOT_IN_SPACE"),
+                            active: false,
+                            target: 0,
+                        },
+                        Vec::new(),
+                    ),
+                };
+                std::iter::once(Out::BatteryFired {
+                    request_id,
+                    battery_id,
+                    reason: answer.reason.unwrap_or("").to_owned(),
+                    active: answer.active,
+                    target: answer.target,
+                })
+                .chain(told)
+                .collect()
             }
             Message::BatteryTarget { request_id, battery_id, solar_system_id, order, target } => {
                 let order = match order {

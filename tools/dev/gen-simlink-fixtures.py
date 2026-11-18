@@ -32,7 +32,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
          "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164, "WarpExited": 165, "GetDeploymentBalls": 166, "GetDeploymentBallsReply": 167,
-         "PlaceBattery": 168, "BatteryPlaced": 169, "BatteryTarget": 170, "BatteryTargets": 171}
+         "PlaceBattery": 168, "BatteryPlaced": 169, "BatteryTarget": 170, "BatteryTargets": 171, "BatteryFire": 190, "BatteryFired": 191}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -526,6 +526,12 @@ def build(m):
         return frame(k, body + bytes([1 if m["online"] else 0]))
     if k == "BatteryPlaced":
         return frame(k, i64(m["batteryId"]) + s(m["reason"]))
+    if k == "BatteryFire":
+        return frame(k, u64(m["requestId"]) + i64(m["batteryId"]) + struct.pack("<i", m["solarSystemId"])
+                     + bytes([int(m["on"])]) + i64(m["target"]))
+    if k == "BatteryFired":
+        return frame(k, u64(m["requestId"]) + i64(m["batteryId"]) + s(m["reason"])
+                     + bytes([int(m["active"])]) + i64(m["target"]))
     if k == "BatteryTarget":
         return frame(k, u64(m["requestId"]) + i64(m["batteryId"]) + struct.pack("<i", m["solarSystemId"])
                      + bytes([m["order"]]) + i64(m["target"]))
@@ -883,8 +889,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 102},
-    {"name": "hello ack", "kind": "HelloAck", "version": 102, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 104},
+    {"name": "hello ack", "kind": "HelloAck", "version": 104, "pollHz": 4},
     {"name": "active Crimewatch flag", "kind": "CrimewatchFlagActive", "sessionId": "1001",
      "isCriminal": True, "expiresAtUnixMs": "1800000000000"},
     {"name": "Empire sentry offense", "kind": "EmpireSentryOffense", "sessionId": "1001"},
@@ -1001,6 +1007,14 @@ valid = [
      "reason": "", "pending": True, "targets": ["1790646377000015"]},
     {"name": "battery target refused out of range", "kind": "BatteryTargets", "requestId": "71", "batteryId": "1050000001",
      "reason": "TARGET_OUT_OF_RANGE", "pending": False, "targets": []},
+    {"name": "start a battery's fire at a held target", "kind": "BatteryFire", "requestId": "72", "batteryId": "1050000001",
+     "solarSystemId": 30000142, "on": True, "target": "1790646377000016"},
+    {"name": "stop a battery's fire", "kind": "BatteryFire", "requestId": "73", "batteryId": "1050000001",
+     "solarSystemId": 30000142, "on": False, "target": "0"},
+    {"name": "battery fire accepted", "kind": "BatteryFired", "requestId": "72", "batteryId": "1050000001",
+     "reason": "", "active": True, "target": "1790646377000016"},
+    {"name": "battery fire refused for a target not locked", "kind": "BatteryFired", "requestId": "74", "batteryId": "1050000001",
+     "reason": "TARGET_NOT_LOCKED", "active": False, "target": "0"},
     {"name": "read a public-system source ship pose", "kind": "GetAbyssalParticipantPose", "requestId": "50",
      "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940"},
     {"name": "public-system source ship pose receipt", "kind": "GetAbyssalParticipantPoseReply", "requestId": "50",
@@ -2212,6 +2226,8 @@ invalid.append({"name": "negative crystal damage", "reason": "bad-value",
 
 for label, changes in [("order zero", {"order": 0}), ("order five", {"order": 5})]:
     invalid.append({"name": "battery target " + label, "reason": "bad-value", "hex": build(dict(named("lock a target with a battery"), **changes)).hex()})
+invalid.append({"name": "battery fire flag not a boolean", "reason": "bad-value",
+                "hex": build(dict(named("start a battery's fire at a held target"), on=2)).hex()})
 invalid.append({"name": "battery radius not finite", "reason": "bad-value",
                 "hex": build(dict(named("place a battery online with its holder"), radius=float("nan"))).hex()})
 invalid.append({"name": "battery position not finite", "reason": "bad-value",

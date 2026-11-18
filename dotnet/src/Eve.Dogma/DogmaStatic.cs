@@ -459,6 +459,33 @@ public sealed class DogmaStatic
     private static bool IsPublished(JsonElement type) =>
         !type.TryGetProperty("published", out var published) || published.ValueKind != JsonValueKind.False;
 
+    /// <summary>
+    /// The name of the offensive effect a type carries (<c>isOffensive</c> in its SDE dogma), which a POS battery fires; null when it has none. EveJS reads a
+    /// battery's effect the same way (starbaseDefenseRuntime.getBatteryProfile).
+    /// </summary>
+    public async Task<string?> OffensiveEffectNameAsync(int typeId, CancellationToken cancellationToken = default)
+    {
+        if (_sde is null)
+        {
+            return null;
+        }
+        var typeRows = await _sde.ReadAsync("typeDogma", [(long)typeId], cancellationToken).ConfigureAwait(false);
+        if (typeRows.Count == 0 || !typeRows[0].Doc.TryGetProperty("dogmaEffects", out var effects) || effects.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+        foreach (var effect in effects.EnumerateArray())
+        {
+            var effectId = effect.GetProperty("effectID").GetInt32();
+            var effectRows = await _sde.ReadAsync("dogmaEffects", [(long)effectId], cancellationToken).ConfigureAwait(false);
+            if (effectRows.Count > 0 && effectRows[0].Doc.TryGetProperty("isOffensive", out var offensive) && offensive.ValueKind == JsonValueKind.True)
+            {
+                return Effect(effectId)?.Name;
+            }
+        }
+        return null;
+    }
+
     /// <summary>The name of the effect a type fires by default (<c>isDefault</c> in its dogma), or null when it has none.</summary>
     private static string? DefaultEffectName(JsonElement doc, IReadOnlyDictionary<int, string> effectNames)
     {

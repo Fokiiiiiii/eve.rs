@@ -1052,6 +1052,20 @@ impl Message {
                 out.push(*order);
                 out.extend_from_slice(&target.to_le_bytes());
             }
+            Self::BatteryFire { request_id, battery_id, solar_system_id, on, target } => {
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&battery_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.push(u8::from(*on));
+                out.extend_from_slice(&target.to_le_bytes());
+            }
+            Self::BatteryFired { request_id, battery_id, reason, active, target } => {
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&battery_id.to_le_bytes());
+                put_text(&mut out, reason);
+                out.push(u8::from(*active));
+                out.extend_from_slice(&target.to_le_bytes());
+            }
             Self::BatteryTargets { request_id, battery_id, reason, pending, targets } => {
                 out.extend_from_slice(&request_id.to_le_bytes());
                 out.extend_from_slice(&battery_id.to_le_bytes());

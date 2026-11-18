@@ -35,6 +35,10 @@ pub const BATTERY_PLACED: u8 = 169;
 pub const BATTERY_TARGET: u8 = 170;
 /// The answer to `BATTERY_TARGET`: pending flag and the targets the battery holds.
 pub const BATTERY_TARGETS: u8 = 171;
+/// Starts (`on`) or stops a battery's fire at a target it holds (protocol 104). Answered by `BATTERY_FIRED` under the request id.
+pub const BATTERY_FIRE: u8 = 190;
+/// The answer to `BATTERY_FIRE`: `reason` is empty when accepted, `active` says the battery fires, `target` is what it fires at (0 for none).
+pub const BATTERY_FIRED: u8 = 191;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

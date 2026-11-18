@@ -36,6 +36,27 @@ fn battery_frames_roundtrip_byte_for_byte() {
             pending: true,
             targets: vec![1_790_646_377_000_015],
         },
+        Message::BatteryFire {
+            request_id: 71,
+            battery_id: 1_050_000_001,
+            solar_system_id: 30_000_001,
+            on: true,
+            target: 1_790_646_377_000_016,
+        },
+        Message::BatteryFire {
+            request_id: 72,
+            battery_id: 1_050_000_001,
+            solar_system_id: 30_000_001,
+            on: false,
+            target: 0,
+        },
+        Message::BatteryFired {
+            request_id: 71,
+            battery_id: 1_050_000_001,
+            reason: String::new(),
+            active: true,
+            target: 1_790_646_377_000_016,
+        },
     ];
     for message in messages {
         let frame = message.encode();
@@ -62,4 +83,15 @@ fn battery_frames_refuse_an_order_outside_one_to_four_and_non_finite_numbers() {
     let mut position = placement();
     position.position[1] = f64::INFINITY;
     assert!(Message::decode(&Message::PlaceBattery(Box::new(position)).encode()[4..]).is_err());
+}
+
+#[test]
+fn battery_fire_refuses_a_flag_that_is_not_a_boolean() {
+    // the on flag sits where the order byte of BatteryTarget does: frame offset 4 + kind (1) + request (8) + battery (8) + system (4)
+    let mut frame =
+        Message::BatteryFire { request_id: 71, battery_id: 1, solar_system_id: 2, on: true, target: 3 }
+            .encode();
+    assert!(Message::decode(&frame[4..]).is_ok());
+    frame[25] = 2;
+    assert!(Message::decode(&frame[4..]).is_err());
 }

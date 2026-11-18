@@ -2797,6 +2797,28 @@ impl Message {
                 }
                 Message::BatteryTarget { request_id, battery_id, solar_system_id, order, target: r.i64()? }
             }
+            kind::BATTERY_FIRE => {
+                let request_id = r.u64()?;
+                let battery_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let on = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("battery fire")),
+                };
+                Message::BatteryFire { request_id, battery_id, solar_system_id, on, target: r.i64()? }
+            }
+            kind::BATTERY_FIRED => {
+                let request_id = r.u64()?;
+                let battery_id = r.i64()?;
+                let reason = r.text()?;
+                let active = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("battery active")),
+                };
+                Message::BatteryFired { request_id, battery_id, reason, active, target: r.i64()? }
+            }
             kind::BATTERY_TARGETS => {
                 let request_id = r.u64()?;
                 let battery_id = r.i64()?;

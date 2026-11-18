@@ -50,7 +50,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 102;
+pub const PROTOCOL_VERSION: u16 = 104;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -1116,6 +1116,23 @@ pub enum Message {
         pending: bool,
         targets: Vec<i64>,
     },
+    /// Starts (`on`) or stops a POS battery's fire (protocol 104). A start needs a target the battery holds; a stop needs no target. Answered by
+    /// `BatteryFired` under `request_id`. Only the holder can order it; the Host checks the grant before it is sent.
+    BatteryFire {
+        request_id: u64,
+        battery_id: i64,
+        solar_system_id: i32,
+        on: bool,
+        target: i64,
+    },
+    /// The answer to `BatteryFire` (protocol 104).
+    BatteryFired {
+        request_id: u64,
+        battery_id: i64,
+        reason: String,
+        active: bool,
+        target: i64,
+    },
     GetAbyssalParticipantPose {
         request_id: u64,
         scene: SceneKey,
@@ -1850,6 +1867,8 @@ impl Message {
             Self::BatteryPlaced { .. } => kind::BATTERY_PLACED,
             Self::BatteryTarget { .. } => kind::BATTERY_TARGET,
             Self::BatteryTargets { .. } => kind::BATTERY_TARGETS,
+            Self::BatteryFire { .. } => kind::BATTERY_FIRE,
+            Self::BatteryFired { .. } => kind::BATTERY_FIRED,
             Self::GetAbyssalParticipantPose { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE,
             Self::GetAbyssalParticipantPoseReply { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE_REPLY,
             Self::Enter(_) => kind::ENTER,

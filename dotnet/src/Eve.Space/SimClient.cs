@@ -43,6 +43,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimGetDeploymentBallsReply>> _deploymentBalls = new();
     private readonly ConcurrentDictionary<long, TaskCompletionSource<SimBatteryPlaced>> _batteryPlacements = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimBatteryTargets>> _batteryTargets = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimBatteryFired>> _batteryFires = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReleaseTournamentCutoffReply>> _cutoffReleases = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRegisterTournamentCutoffReply>> _cutoffRegistrations = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReadTournamentCutoffReply>> _cutoffReads = new();
@@ -372,6 +373,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 order.TrySetResult(targets);
                 break;
             case SimBatteryTargets:
+                break;
+            case SimBatteryFired fired when _batteryFires.TryRemove(fired.RequestId, out var fire):
+                fire.TrySetResult(fired);
+                break;
+            case SimBatteryFired:
                 break;
             case SimGetAbyssalParticipantPoseReply reply when _abyssalParticipantPoses.TryRemove(reply.RequestId, out var poseRequest):
                 poseRequest.TrySetResult(reply);
@@ -1051,6 +1057,15 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         var reply = await AwaitAsync(_batteryTargets, request.RequestId, request, cancellationToken).ConfigureAwait(false);
         if (reply.RequestId != request.RequestId || reply.BatteryId != request.BatteryId)
             throw new SimLinkException(SimLinkError.BadValue, "battery targets reply does not match its request");
+        return reply;
+    }
+
+    /// <summary>Starts or stops a POS battery's fire (protocol 104). The answer is matched by the request id.</summary>
+    public async Task<SimBatteryFired> BatteryFireAsync(SimBatteryFire request, CancellationToken cancellationToken = default)
+    {
+        var reply = await AwaitAsync(_batteryFires, request.RequestId, request, cancellationToken).ConfigureAwait(false);
+        if (reply.RequestId != request.RequestId || reply.BatteryId != request.BatteryId)
+            throw new SimLinkException(SimLinkError.BadValue, "battery fire reply does not match its request");
         return reply;
     }
 

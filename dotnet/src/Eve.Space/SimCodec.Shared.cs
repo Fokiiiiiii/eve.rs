@@ -37,6 +37,10 @@ public static partial class SimCodec
         public const byte BatteryPlaced = 169;
         public const byte BatteryTarget = 170;
         public const byte BatteryTargets = 171;
+        /// <summary>Starts or stops a battery's fire at a target it holds (protocol 104).</summary>
+        public const byte BatteryFire = 190;
+        /// <summary>The answer to <see cref="BatteryFire"/> (protocol 104).</summary>
+        public const byte BatteryFired = 191;
         public const byte EnsureTournamentBeacon = 128;
         public const byte EnsureTournamentBeaconReply = 129;
         public const byte RemoveTournamentBeacon = 130;

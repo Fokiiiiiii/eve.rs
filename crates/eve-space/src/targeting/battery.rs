@@ -24,6 +24,8 @@ pub(crate) struct Battery {
     online: bool,
     holder: Option<SessionId>,
     targeting: Targeting,
+    /// The target the battery fires at (protocol 104); always one of its locked targets.
+    firing: Option<i64>,
 }
 
 /// What the holder asks of a battery's targets.
@@ -80,6 +82,7 @@ impl Battery {
             online: false,
             holder: None,
             targeting: Targeting::default(),
+            firing: None,
         }
     }
 
@@ -87,6 +90,7 @@ impl Battery {
     fn release_all(&mut self, reason: &'static str) -> Vec<Out> {
         let Some(holder) = self.holder else {
             self.targeting = Targeting::default();
+            self.firing = None;
             return Vec::new();
         };
         let out: Vec<Out> = self
@@ -97,6 +101,7 @@ impl Battery {
             .map(|target| obo(holder, "lost", self.id, Some(target), Some(reason)))
             .collect();
         self.targeting = Targeting::default();
+        self.firing = None;
         out
     }
 }
@@ -110,6 +115,27 @@ impl Refusal {
 impl BatteryAnswer {
     fn refused(reason: &'static str, targets: Vec<i64>) -> Self {
         Self { reason: Some(reason), pending: false, targets }
+    }
+}
+
+/// What a holder asks of a battery's fire (protocol 104): start firing at a target the battery holds, or stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BatteryFire {
+    Start(i64),
+    Stop,
+}
+
+/// The answer to a fire order: `reason` is `None` when accepted, `active` says the battery fires, and `target` is what it fires at (0 for none).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BatteryFireAnswer {
+    pub(crate) reason: Option<&'static str>,
+    pub(crate) active: bool,
+    pub(crate) target: i64,
+}
+
+impl BatteryFireAnswer {
+    fn refused(reason: &'static str) -> Self {
+        Self { reason: Some(reason), active: false, target: 0 }
     }
 }
 
@@ -192,6 +218,56 @@ impl Scene {
             _ => false,
         };
         (BatteryAnswer { reason: refusal, pending, targets: battery.targeting.targets() }, out)
+    }
+
+    /// A fire order for a battery (protocol 104). Starting needs the battery online, held, and a target it holds (the lock is the only way a target
+    /// gets there); a stop is always accepted. Firing ends with its lock, when the holder changes, and when the battery goes offline. No damage,
+    /// cycle, capacitor or charge is run here: the answer says only whether the battery is set to fire, at what.
+    pub(crate) fn battery_fire(
+        &mut self,
+        battery_id: i64,
+        order: BatteryFire,
+        now: i64,
+    ) -> (BatteryFireAnswer, Vec<Out>) {
+        let Some(battery) = self.batteries.get(&battery_id) else {
+            return (BatteryFireAnswer::refused("BATTERY_NOT_IN_SPACE"), Vec::new());
+        };
+        if !battery.online {
+            return (BatteryFireAnswer::refused("BATTERY_OFFLINE"), Vec::new());
+        }
+        if battery.holder.is_none() {
+            return (BatteryFireAnswer::refused("NO_CONTROL_GRANT"), Vec::new());
+        }
+        let out = self.settle_battery(battery_id, now);
+        let Some(battery) = self.batteries.get_mut(&battery_id) else {
+            return (BatteryFireAnswer::refused("BATTERY_NOT_IN_SPACE"), out);
+        };
+        let refusal = match order {
+            BatteryFire::Start(target) => {
+                if battery.firing == Some(target) {
+                    None
+                } else if battery.firing.is_some() {
+                    Some("MODULE_ALREADY_ACTIVE")
+                } else if !battery.targeting.locked.iter().any(|l| l.target == target) {
+                    Some("TARGET_NOT_LOCKED")
+                } else {
+                    battery.firing = Some(target);
+                    None
+                }
+            }
+            BatteryFire::Stop => {
+                battery.firing = None;
+                None
+            }
+        };
+        (
+            BatteryFireAnswer {
+                reason: refusal,
+                active: battery.firing.is_some(),
+                target: battery.firing.unwrap_or(0),
+            },
+            out,
+        )
     }
 
     /// The checks a battery's lock (or a lock it still holds) must pass; the same for both, so a lock that stops being valid is dropped by
@@ -301,6 +377,9 @@ impl Scene {
         if include_locked {
             let locked = battery.targeting.locked.len();
             battery.targeting.locked.retain(|l| l.target != target);
+            if battery.firing == Some(target) {
+                battery.firing = None;
+            }
             if battery.targeting.locked.len() != locked {
                 out.push(obo(holder, "lost", battery_id, Some(target), reason));
             }
@@ -314,6 +393,7 @@ impl Scene {
             return Vec::new();
         }
         battery.targeting = Targeting::default();
+        battery.firing = None;
         vec![obo(holder, "clear", battery_id, None, None)]
     }
 

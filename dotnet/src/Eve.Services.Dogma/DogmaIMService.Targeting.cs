@@ -98,4 +98,58 @@ public sealed partial class DogmaIMService
     /// <summary><c>GetTargeters()</c>: who has the ship locked.</summary>
     [Method("GetTargeters")]
     public async ValueTask<PyValue> GetTargeters(ServiceCall call) => Ids((await OrderAsync(call, TargetingOrder.Targeters, [])).Targets);
+
+    /// <summary>
+    /// <c>AddTargetOBO(batteryID, targetID)</c>: the holder of a POS battery's control grant starts a lock for the battery (the reference's DogmaLM). The
+    /// answer is whether the lock is going and what the battery holds; the lock itself is told later, by <c>OnTargetOBO</c>, to the holder alone.
+    /// </summary>
+    [Method("AddTargetOBO")]
+    public async ValueTask<PyValue> AddTargetOBO(ServiceCall call)
+    {
+        var result = await BatteryOrderAsync(call, TargetingOrder.Lock, IdOf(call.Arg(0)) ?? 0, IdOf(call.Arg(1)) ?? 0);
+        return Py.Tuple(new PyInt(result.Pending ? 1 : 0), Ids(result.Targets));
+    }
+
+    /// <summary><c>RemoveTargetOBO(batteryID, targetID)</c>: lets go of a target the battery holds, or gives up its lock while it is going.</summary>
+    [Method("RemoveTargetOBO")]
+    public async ValueTask<PyValue> RemoveTargetOBO(ServiceCall call)
+    {
+        await BatteryOrderAsync(call, TargetingOrder.Remove, IdOf(call.Arg(0)) ?? 0, IdOf(call.Arg(1)) ?? 0);
+        return None;
+    }
+
+    /// <summary>
+    /// A battery's order, for the session that bound the dogma location. The space checks the grant, the battery's state and the target; a refusal is
+    /// the client's error (a missing grant is refused quietly, as the reference does).
+    /// </summary>
+    private async ValueTask<TargetingResult> BatteryOrderAsync(ServiceCall call, TargetingOrder order, long batteryId, long target)
+    {
+        if (BoundContextOf(call) is null || space is null)
+        {
+            throw MachoErrors.ThrowUserError("DeniedShipChanged");
+        }
+        if (batteryId <= 0 || target <= 0)
+        {
+            throw MachoErrors.ThrowUserError("TargetingAttemptCancelled");
+        }
+        var result = await space.BatteryOrderAsync(call.Session, batteryId, order, target, call.Cancellation);
+        if (result is null)
+        {
+            throw MachoErrors.ThrowUserError("DeniedShipChanged");
+        }
+        return result.Ok ? result : throw BatteryTargetingError(result);
+    }
+
+    /// <summary>The user error for a battery order the space refused.</summary>
+    private static MachoWrappedException BatteryTargetingError(TargetingResult refusal) => refusal.Reason switch
+    {
+        "NO_CONTROL_GRANT" or "BATTERY_NOT_IN_SPACE" => MachoErrors.ThrowUserError("DeniedShipChanged"),
+        "BATTERY_OFFLINE" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("A POS battery can only be controlled while it is online."))),
+        "NOT_A_BATTERY" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Only a POS battery can be placed under a pilot's control."))),
+        "TARGET_NOT_FOUND" => MachoErrors.ThrowUserError("TargetingAttemptCancelled"),
+        "TARGET_OUT_OF_RANGE" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That target is out of the POS battery's range."))),
+        "TARGET_LOCK_LIMIT_REACHED" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The POS battery already holds as many targets as it can."))),
+        "TARGET_INVULNERABLE" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot lock that target while it is still invulnerable after undocking."))),
+        _ => MachoErrors.ThrowUserError("DeniedTargetingAttemptFailed", ("target", new PyInt(0))),
+    };
 }

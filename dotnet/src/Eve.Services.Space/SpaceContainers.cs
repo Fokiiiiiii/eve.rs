@@ -91,6 +91,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
         _space.TypeOfSpaceItemAsync = async (id, _) => (await _items.GetAsync(id))?.TypeId;
         _space.MayPullAsync = MayPullAsync;
         _space.CommandBurstSourceInForceFieldAsync = IsCommandBurstSourceInForceFieldAsync;
+        _space.BatteryTargetingHandler = BatteryTargetingAsync;
     }
 
     public void Dispose()

@@ -37,6 +37,13 @@ public interface ISpaceTargeting
 {
     /// <summary>Carries out an order for the session's ship; null when the session has no ship in space.</summary>
     Task<TargetingResult?> OrderAsync(ClientSession session, TargetingOrder order, IReadOnlyList<long> targets, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// An order about a POS battery's own targets (protocol 102): the dogma location of the pilot that holds the battery's control grant asks for them
+    /// (<c>AddTargetOBO</c>, <c>RemoveTargetOBO</c>). Null when there is no battery targeting, which the dogma service refuses.
+    /// </summary>
+    Task<TargetingResult?> BatteryOrderAsync(ClientSession session, long batteryId, TargetingOrder order, long target, CancellationToken cancellationToken) =>
+        Task.FromResult<TargetingResult?>(null);
 }
 
 /// <summary>Answers whether two characters belong to opposite sides of an active war, including accepted war allies.</summary>

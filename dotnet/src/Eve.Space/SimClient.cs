@@ -41,6 +41,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimGetAbyssalParticipantPoseReply>> _abyssalParticipantPoses = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimGetSceneBodyReply>> _sceneBodies = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimGetDeploymentBallsReply>> _deploymentBalls = new();
+    private readonly ConcurrentDictionary<long, TaskCompletionSource<SimBatteryPlaced>> _batteryPlacements = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimBatteryTargets>> _batteryTargets = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReleaseTournamentCutoffReply>> _cutoffReleases = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRegisterTournamentCutoffReply>> _cutoffRegistrations = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReadTournamentCutoffReply>> _cutoffReads = new();
@@ -360,6 +362,16 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 deploymentRequest.TrySetResult(reply);
                 break;
             case SimGetDeploymentBallsReply:
+                break;
+            case SimBatteryPlaced placed when _batteryPlacements.TryRemove(placed.BatteryId, out var placement):
+                placement.TrySetResult(placed);
+                break;
+            case SimBatteryPlaced:
+                break;
+            case SimBatteryTargets targets when _batteryTargets.TryRemove(targets.RequestId, out var order):
+                order.TrySetResult(targets);
+                break;
+            case SimBatteryTargets:
                 break;
             case SimGetAbyssalParticipantPoseReply reply when _abyssalParticipantPoses.TryRemove(reply.RequestId, out var poseRequest):
                 poseRequest.TrySetResult(reply);
@@ -1026,6 +1038,19 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         var reply = await AwaitAsync(_deploymentBalls, request.RequestId, request, cancellationToken).ConfigureAwait(false);
         if (reply.RequestId != request.RequestId || reply.Scene != request.Scene)
             throw new SimLinkException(SimLinkError.BadValue, "deployment balls reply does not match its request");
+        return reply;
+    }
+
+    /// <summary>Places a POS battery in its system's scene, or updates it (protocol 102). The answer is matched by the battery's id.</summary>
+    public Task<SimBatteryPlaced> PlaceBatteryAsync(SimPlaceBattery request, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_batteryPlacements, request.BatteryId, request, cancellationToken);
+
+    /// <summary>Asks the scene for a battery's lock, removal, clear or cancel (protocol 102). The answer is matched by the request id.</summary>
+    public async Task<SimBatteryTargets> BatteryTargetAsync(SimBatteryTarget request, CancellationToken cancellationToken = default)
+    {
+        var reply = await AwaitAsync(_batteryTargets, request.RequestId, request, cancellationToken).ConfigureAwait(false);
+        if (reply.RequestId != request.RequestId || reply.BatteryId != request.BatteryId)
+            throw new SimLinkException(SimLinkError.BadValue, "battery targets reply does not match its request");
         return reply;
     }
 

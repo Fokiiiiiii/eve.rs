@@ -127,6 +127,14 @@ public interface ISimulation
     Task<SimGetDeploymentBallsReply> GetDeploymentBallsAsync(SimGetDeploymentBalls request, CancellationToken cancellationToken = default) =>
         Task.FromException<SimGetDeploymentBallsReply>(new NotSupportedException("Deployment ball queries are unavailable."));
 
+    /// <summary>Places a POS battery in its system's scene, or updates it (protocol 102).</summary>
+    Task<SimBatteryPlaced> PlaceBatteryAsync(SimPlaceBattery request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimBatteryPlaced>(new NotSupportedException("POS battery placement is unavailable."));
+
+    /// <summary>Asks the scene for a POS battery's lock, removal, clear or cancel (protocol 102).</summary>
+    Task<SimBatteryTargets> BatteryTargetAsync(SimBatteryTarget request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimBatteryTargets>(new NotSupportedException("POS battery targeting is unavailable."));
+
     /// <summary>Reads the authoritative pose of a resident ship from its expected private scene.</summary>
     Task<SimGetAbyssalParticipantPoseReply> GetAbyssalParticipantPoseAsync(
         SimGetAbyssalParticipantPose request, CancellationToken cancellationToken = default);

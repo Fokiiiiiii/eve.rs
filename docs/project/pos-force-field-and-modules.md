@@ -45,21 +45,31 @@ Verification status:
 
 Still open: `AddTargetOBO` and `RemoveTargetOBO`, the `OnTargetOBO` notification, and graphical acceptance. See the OBO blocker below.
 
-### POS OBO targeting: blocked (2026-11-18)
+### POS OBO targeting: blocked, client shapes verified (2026-11-18)
 
-`AddTargetOBO` and `RemoveTargetOBO` were not implemented in this run, and no RPC name was registered, because a registered handler would be a fake success.
+`AddTargetOBO` and `RemoveTargetOBO` are not implemented in this run, and no RPC name is registered, because a registered handler would be a fake success.
 
-- Client source: `eve/client/script/parklife/playerOwnedTargetMgr.py:84-102` (the OBO calls at lines 87 and 102) could not be read. The Read tool was refused by the permission settings. The argument shapes and the `OnTargetOBO` consumer in `playerOwned.py` are therefore unverified.
-- EveJS source: `server/src/services/starbase/starbaseControlRuntime.js:210-225` could not be read for the same reason, so the delegation and the battery lock state are carried over from the earlier audit and not re-checked.
-- eve.rs state: the DogmaIM targeting partial (`dotnet/src/Eve.Services.Dogma/DogmaIMService.Targeting.cs`) has only the ship `AddTarget` / `RemoveTarget` / `CancelAddTarget` / `ClearTargets` / `GetTargets` / `GetTargeters` surface. `OrderAsync` acts on the session's own ship. The Rust `crates/eve-space/src/targeting/mod.rs` holds locks only for a session ship or a controlled Upwell structure, and has no POS battery actor.
+Verified client contract (V24.01, read through codebase-memory `get_code_snippet` after the Read tool was refused for `/home/user/eve-logic`):
+
+- `PlayerOwnedTargetMgr.LockTargetOBO(sid, tid, who)` (`eve/client/script/parklife/playerOwnedTargetMgr.py:84-99`) calls `godma.GetDogmaLM().AddTargetOBO(sid, tid)` and reads `(flag, targetList)`; a false flag runs `OnTargetAdded`. A `UserError` named `DeniedShipChanged` is swallowed; other messages are shown.
+- `PlayerOwnedTargetMgr.UnLockTargetOBO(sid, tid)` (lines 101-103) calls `GetDogmaLM().RemoveTargetOBO(sid, tid)` and ignores the result.
+- `OnTargetOBO(what, sid, tid, reason)` consumers: `playerOwned.py:501-507` (`add` stores `currenttargets[sid] = tid`, `lost` deletes it) and `ui/inflight/moondefencebutton.py:764-781` (`add`, `clear`, `lost`, matched on `sid` = the battery).
+- EveJS (`/home/user/evejs-261108.1/server/src/services/starbase/starbaseControlRuntime.js`): `addTargetOBO(session, batteryID, targetID)` (line 210) goes through `getControlledContext`, which requires the grant held by this session, refreshes the grant, and calls `scene.addTarget` for the battery's session. `removeTargetOBO` (line 217) cancels a pending lock and removes the target with `notifySelf` and `notifyTarget`. `notifyStarbaseTargetEvent` (line 66) sends `OnTargetOBO` to the grant holder only, with the id type `charid` and args `[what, batteryID, targetID, reason]`. Other pilots never receive OBO target IDs.
+
+eve.rs state:
+
+- The DogmaIM targeting partial (`dotnet/src/Eve.Services.Dogma/DogmaIMService.Targeting.cs`) has only the ship `AddTarget` / `RemoveTarget` / `CancelAddTarget` / `ClearTargets` / `GetTargets` / `GetTargeters` surface. `OrderAsync` acts on the session's own ship. The DogmaLM bound object does not exist in `dotnet/src` (no `DogmaLM` symbol).
+- The Rust `crates/eve-space/src/targeting/mod.rs` holds locks for a session ship or a controlled Upwell structure. `check_lock` (`targeting/lock.rs`) reads `self.pilots[session]`, so a battery lock can reuse it only through a temporary pilot, as `with_controlled_structure_modules` (`scene/session.rs:50`) does for a controlled structure.
+- Control towers are deployable balls (`Role::ControlTower`, `deployable.rs`) placed by `Message::PlaceControlTower`. A battery is a module, not a ball, and no link message places it or sets it online.
 - Consequence: a handler that accepted `AddTargetOBO(battery, target)` through the existing ship path would change the pilot's ship lock, not the battery's. That is the failure `audit-fixes-dogma.md` already warned about.
 
-Needed before this can be implemented honestly:
+Decision (2026-11-18): the battery actor is not committed as dead, unwired code. It needs three slices, in order:
 
-1. Read access to the two reference files above, to fix the RPC argument shapes and the `OnTargetOBO` payload.
-2. A simulation-owned battery actor in `crates/eve-space`, with its own target lock state, range and online checks, and the cap and warp rules that apply to the lock.
-3. The DogmaLM bound object in the Dogma service, validating the caller's battery grant from `starbase_battery_control`, the battery's online state and the target, then forwarding the order to that actor.
-4. Host tests through the real registration: grant held and not held, battery offline, invalid target, lock and remove, and the `OnTargetOBO` notification.
+1. Rust: a link message that places a battery and sets its online state (ADR 0007 kind codes on both codecs, `crates/eve-space/src/link/kind.rs` and the C# `SimMessages`), a battery entry in `Scene` with its own `Targeting`, lock through the temporary-pilot path, and translation of the `OnTarget` outputs to `OnTargetOBO` addressed to the grant holder, plus a settle hook for pending locks. Rust unit tests cover lock, pending completion, cancel, remove, the range and cap refusals, and the offline refusal.
+2. .NET: a DogmaLM bound object in `Eve.Services.Dogma` with `AddTargetOBO` and `RemoveTargetOBO`. Each validates the `starbase_battery_control` grant held by the caller, that the battery is online, and that the target is valid, then forwards the order to the Rust battery actor. The return shape is `(flag, targetList)`.
+3. Host tests through the real registration: grant held and not held, battery offline, invalid target, lock and remove, and the `OnTargetOBO` notification with `[what, batteryID, targetID, reason]` to the holder only.
+
+Graphical V24 acceptance is still required after slice 3; none of these slices has been run against the client.
 
 ## Open items
 

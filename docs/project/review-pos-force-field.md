@@ -4,6 +4,15 @@ Date: 2026-11-19. Branch: haiku5. Scope: commits 20da67759, beface500, 92b8cf73c
 
 Method: read-only. The code was read with Serena and codebase-memory, and the EVE.js reference was read with the Read tool at `/home/user/evejs-261108.1` (`server/src/services/starbase/starbaseAccessRuntime.js` and `starbaseForceFieldBoundary.js`). Nothing was built and no test was run (disk is tight). Every claim below is from reading the code. "Confirmed" means the path was traced from a real caller to the wrong outcome. It does not mean a test was observed failing. Line numbers are as of branch `haiku5` at this review.
 
+## Fix batch on branch haiku5 (F1, F2, F3, F4, F5, F6, F8)
+
+Each fix has its own commit, with the failing test first. Status by finding:
+
+- **Fixed:** F1 (restart re-sends the saved access and the pilot password matches), F2 (a gun reload keeps the credential), F3 (a tower's reconcile is serialized from its commit to its send; the no-item removal retry is not done), F4 (a pilot's match and the system rematch are ordered), F5 (the Host path already existed; the simulation's respec now refreshes the harmonic), F6 (a refused placement takes its item back; the restore goes on past a refusal; the pinned test is corrected), F8 (unanchor completion takes the field out of the simulation; the item half was not reproducible).
+- **Not in this batch:** F7 (alliance membership is not re-read live), F9 (the Rust cancel rule), F10 (the settle-path test gap and the restore test gap, partly closed by the F1 and F6 tests), F11 (non-positive ids in the codecs).
+- **Protocol:** unchanged. No SimLink kind was added. The `SetPilotAffiliation` message the review proposed for F5 was not added.
+- **Final checks:** full `Eve.Services.Space.Tests` (Debug): 1278 passed, 0 failed, 0 skipped. `cargo test -p eve-space --lib`: 1094 passed, 0 failed. Release build with `-warnaserror`: `Eve.Services.Space` and `Eve.Services.Space.Tests` both 0 warnings, 0 errors. A Release `-D warnings` build of `eve-space` was not run (about 2 GB free disk).
+
 ## Ranked summary
 
 | # | Severity | Verdict | Finding |

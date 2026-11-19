@@ -277,6 +277,32 @@ public class ControlTowerHostTests
         Assert.Equal(session.CharacterId, await HeldByAsync(rig, battery));
     }
 
+    [PgFact]
+    public async Task A_host_restart_leaves_no_battery_grant_and_places_the_online_battery_with_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        rig.Sim.Heard.Clear();
+
+        // the host restarts: a new composition over the same database, and no pilot is logged in
+        using var restarted = new SpaceContainers(rig.Sim, rig.Ships, rig.Items, rig.SpaceItems,
+            new PgWorkCycleLedger(rig.Source, rig.SpaceSchema), new EventBusFacts(rig.Events), rig.Statics, rig.Space,
+            () => rig.Now, deployed: rig.Deployed, source: rig.Source);
+        await restarted.RestoreDeployedAsync((int)LowSecSystem);
+
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (placed.HolderSession, placed.Online));
+
+        // a second restore changes nothing: the battery is still holderless and still has no grant
+        rig.Sim.Heard.Clear();
+        await restarted.RestoreDeployedAsync((int)LowSecSystem);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var again = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (again.HolderSession, again.Online));
+    }
+
     /// <summary>The pilot holding a POS battery's control grant, read from PostgreSQL.</summary>
     private static async Task<long?> HeldByAsync(Rig rig, long battery)
     {

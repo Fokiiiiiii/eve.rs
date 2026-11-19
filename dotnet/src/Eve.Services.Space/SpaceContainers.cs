@@ -61,6 +61,8 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     private readonly DogmaStatic _statics;
     private readonly SpaceSessions _space;
     private readonly Func<long> _nowUnixMs;
+    /// <summary>When this composition started: a POS battery grant written before it belongs to a host that has gone (see SweepBatteryControlsOnceAsync).</summary>
+    private readonly long _startedAtMs;
     private readonly Action<string>? _log;
     private readonly ConcurrentDictionary<long, byte> _placed = new();
     /// <summary>The belts whose rocks are being seeded now (a second arrival does not seed the same belt twice). Whether a belt has rocks is read from the store.</summary>
@@ -80,6 +82,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     {
         (_sim, _ships, _items, _spaceItems, _cycles, _events, _statics, _space, _nowUnixMs, _log) = (sim, ships, items, spaceItems, cycles, events, statics, space, nowUnixMs, log);
         (_deployed, _scheduler, _source) = (deployed, scheduler, source);
+        _startedAtMs = _nowUnixMs();
         _shipConfigurations = source is null ? null : new PgShipConfigurationStore(source, spaceItems.Schema);
         _deployedExpiry = new() { [CynoFieldKind] = ExpireCynoFieldAsync, [DisruptorKind] = ExpireDisruptorAsync, [InhibitorKind] = ExpireDisruptorAsync, [BeaconKind] = ExpireBeaconAsync, [ObservatoryKind] = ExpireDisruptorAsync };
         // what the simulation held is gone with it; a scene that is made gets what lies in its system, and a wreck the host puts in space is kept

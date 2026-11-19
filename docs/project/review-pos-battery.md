@@ -35,7 +35,7 @@ Method: each suspected defect was traced from a real caller (a PosMgr or dogma c
 - R5. A pilot docking keeps the grant. Not counted; a question for the reference. Docking does not release the grant (the space session closes through `OnSessionClosedAsync`, which does not touch batteries), so the scene's holder session is stale until the pilot orders again or relinquishes. Whether control should end on docking is not settled in the project docs, so this needs a decision, not a code change here.
 - R6. A ship change affects control. Rejected. The order path does not read `shipid`. The bound context is keyed by session id and bound object, and the grant is per character, so a ship change neither grants nor removes control.
 - R7. Notifications reaching the wrong session of the same character. Not counted. The holder is the session of the pilot's last order. No reproduction is possible in the test rig without a second live session of the same character.
-- R8. Host restart. Not fixed; residual risk. Grants are in the database and survive a restart. Simulation holder session ids go stale after a restart and are replaced at the next order. If the host crashes between a tower's commit and the post-commit offline placement, the simulation keeps the battery online until its next placement, and a lock already in flight could still complete. The durable fix is a startup sweep over towers that are offline, which is a design decision and was not made here.
+- R8. Host restart. Fixed in FU-R8 (see the follow-up section at the end). The original residual-risk text follows. Grants are in the database and survive a restart. Simulation holder session ids go stale after a restart and are replaced at the next order. If the host crashes between a tower's commit and the post-commit offline placement, the simulation keeps the battery online until its next placement, and a lock already in flight could still complete. The durable fix is a startup sweep over towers that are offline, which is a design decision and was not made here.
 - R9. Integer and id parsing. Rejected. `IdOf` and `ReadPositiveId` refuse values of zero or less. A zero target is refused as `TargetingAttemptCancelled` (`Battery_obo_refuses_an_invalid_target...`). Numbers for a battery are checked as finite in both codecs.
 - R10. Rust `battery.rs`. No defect confirmed. `go_offline` and `release_all` read the previous holder before replacing it, so the holder told is the right one. Holder change, offline, lock limit, range and settle each have a Rust test in `targeting/tests.rs`.
 - R11. Repeated offline placement. Rejected as a defect, noted for efficiency. Each synchronize call places every offline battery of the tower offline again. The simulation does nothing for a battery that is already offline and holds no lock.
@@ -59,3 +59,13 @@ Method: each suspected defect was traced from a real caller (a PosMgr or dogma c
 
 - The Rust crate was not built or tested in this review, because no Rust file was changed. Rust tests were not run for this report.
 - No fixture generator was run, and no SimLink kind was added.
+
+## Follow-up: the open items, decided and implemented
+
+Each item below has its own commit. A failing test was written and seen to fail for the stated reason before its fix.
+
+### FU-R8. A host restart left grants and the simulation's holder stale (R8, fixed)
+- Decision: a startup sweep in the restore path. `SpaceContainers.RestoreDeployedAsync` first runs `SweepBatteryControlsOnceAsync`, which runs once per composition and deletes the `starbase_battery_control` rows granted before the composition started. A row granted after that belongs to a pilot of this host and is kept. The sweep is not "every row": `RestoreDeployedAsync` also runs on every system entry (`SystemEntered`), so deleting every row could remove the grant of a pilot that was just given it.
+- Then each restored online battery that has no grant is placed in the simulation with no holder (`RestoreBatteryHolderlessAsync`, through `ClearBatteryHolderAsync`). A battery with a grant is left alone, because its holder's order placed it with that holder.
+- Test: `A_host_restart_leaves_no_battery_grant_and_places_the_online_battery_with_no_holder`. Before the fix: `Assert.Null` failed with the grant still held (`140000001`). After the fix it passes, and a second restore leaves the battery holderless and grant-free.
+- Test run: `ControlTowerHostTests` 22 of 22 passed.

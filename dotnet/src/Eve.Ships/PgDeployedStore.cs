@@ -168,6 +168,23 @@ public sealed class PgDeployedStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Releases the POS battery control grants written before a time. A host restart leaves no pilot logged in, so the grants of the host that has gone are
+    /// stale. Returns the batteries whose grants were released.
+    /// </summary>
+    public async Task<IReadOnlyList<long>> ReleaseBatteryControlsGrantedBeforeAsync(long grantedBeforeMs, CancellationToken cancellationToken = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var command = new NpgsqlCommand(
+            $"DELETE FROM {_schema}.starbase_battery_control WHERE granted_at_ms <= $1 RETURNING deployable_id", connection);
+        command.Parameters.Add(new NpgsqlParameter { Value = grantedBeforeMs });
+        var released = new List<long>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            released.Add(reader.GetInt64(0));
+        return released;
+    }
+
     /// <summary>Releases every POS battery control grant a pilot holds, when the pilot leaves the cluster.</summary>
     public async Task<IReadOnlyList<long>> ReleaseBatteryControlsOfCharacterAsync(long characterId, CancellationToken cancellationToken = default)
     {

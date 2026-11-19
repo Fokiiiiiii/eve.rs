@@ -90,6 +90,7 @@ public sealed partial class SpaceContainers
         }
         try
         {
+            await SweepBatteryControlsOnceAsync(CancellationToken.None);
             var now = _nowUnixMs();
             foreach (var record in await _deployed.InSystemAsync(system))
             {
@@ -123,6 +124,8 @@ public sealed partial class SpaceContainers
                         record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.ActivateAtMs <= now,
                         record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
                     await RestoreControlTowerSlimStateAsync(record, CancellationToken.None);
+                    if (record.Kind == StarbaseModuleKind)
+                        await RestoreBatteryHolderlessAsync(record.DeployableId, CancellationToken.None);
                     continue;
                 }
                 if (record.Kind == InhibitorKind)
@@ -169,6 +172,48 @@ public sealed partial class SpaceContainers
         {
             _log?.Invoke($"what deployed lies in system {system} was not put back: {error.Message}");
         }
+    }
+
+    /// <summary>The POS battery control grants are swept once per composition, before the first restore reads them.</summary>
+    private readonly SemaphoreSlim _batteryControlSweepGate = new(1, 1);
+    private bool _batteryControlsSwept;
+
+    /// <summary>
+    /// The startup sweep of the POS battery control grants. A host restart leaves no pilot logged in, so a grant written before this composition started
+    /// belongs to a host that has gone, and is deleted. A grant written after it belongs to a pilot of this host and is kept. Runs once per composition,
+    /// before the first restore reads the records; a sweep that fails is tried again by the next restore.
+    /// </summary>
+    private async Task SweepBatteryControlsOnceAsync(CancellationToken cancellationToken)
+    {
+        if (_batteryControlsSwept || _deployed is null)
+            return;
+        await _batteryControlSweepGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (_batteryControlsSwept)
+                return;
+            var released = await _deployed.ReleaseBatteryControlsGrantedBeforeAsync(_startedAtMs, cancellationToken).ConfigureAwait(false);
+            _batteryControlsSwept = true;
+            if (released.Count > 0)
+                _log?.Invoke($"{released.Count} POS battery control grant(s) written before this start were released");
+        }
+        finally
+        {
+            _batteryControlSweepGate.Release();
+        }
+    }
+
+    /// <summary>
+    /// Places a restored POS battery that is online in the scene with no holder, when no pilot holds its grant. A battery with a grant is left alone: its
+    /// holder's order placed it with that holder. Nothing is sent for a battery that is not online.
+    /// </summary>
+    private async Task RestoreBatteryHolderlessAsync(long batteryId, CancellationToken cancellationToken)
+    {
+        if (_deployed is null)
+            return;
+        var state = await _deployed.TowerStateAsync(batteryId, cancellationToken).ConfigureAwait(false);
+        if (state is TowerOnline or TowerOnlining)
+            await ClearBatteryHolderAsync(batteryId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>The sweep's part for the records: each one whose time is up goes by its kind's entry, and the record is forgotten.</summary>

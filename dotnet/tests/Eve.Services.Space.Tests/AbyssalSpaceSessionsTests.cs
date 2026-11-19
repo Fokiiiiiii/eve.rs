@@ -861,6 +861,70 @@ public sealed class AbyssalSpaceSessionsTests
         Assert.DoesNotContain(rig.Sim.Heard.OfType<SimRespawn>(), respawn => respawn.SessionId == (ulong)session.SessionId);
     }
 
+    /// <summary>Records the characters whose battery grants a pilot's leaving the cluster releases.</summary>
+    private static List<long> RecordBatteryReleases(Rig rig)
+    {
+        var released = new List<long>();
+        rig.Space.ReleaseBatteryControl = (characterId, _) =>
+        {
+            released.Add(characterId);
+            return Task.CompletedTask;
+        };
+        return released;
+    }
+
+    /// <summary>Waits, for a bounded time, for a release that is made in the background.</summary>
+    private static async Task UntilBatteryReleasedAsync(List<long> released)
+    {
+        for (var attempt = 0; attempt < 500 && released.Count == 0; attempt++)
+            await Task.Delay(10);
+    }
+
+    [PgFact]
+    public async Task A_pilot_that_enters_an_abyssal_pocket_gives_up_its_battery_grant()
+    {
+        var (rig, character, session) = await InSpaceAsync();
+        await using var _ = rig;
+        var released = RecordBatteryReleases(rig);
+        var contentId = Guid.NewGuid().ToString();
+        var origin = SimSceneKey.SolarSystem(checked((int)session.GetInt("solarsystemid2")!.Value));
+        var room = new SimSceneKey(origin.LocationId, 89, 1);
+        Assert.Null(await rig.Space.EnsureAbyssalSceneAsync(SceneSpec(room)));
+
+        // the move from the cluster into the pocket is the pilot's entering it: its grant goes, as it does at a dock
+        Assert.Null(await rig.Space.MoveAbyssalParticipantAsync(contentId, new SimMoveAbyssalParticipant(
+            903, character.ShipId, origin, room, [100.0, 200.0, 300.0], [0.0, 0.0, 1.0])));
+        await UntilBatteryReleasedAsync(released);
+
+        Assert.Equal([character.CharacterId], released);
+    }
+
+    [PgFact]
+    public async Task A_pilot_that_dies_in_an_abyssal_pocket_gives_up_its_battery_grant()
+    {
+        var (rig, character, session) = await InSpaceAsync();
+        await using var _ = rig;
+        var contentId = Guid.NewGuid().ToString();
+        var origin = SimSceneKey.SolarSystem(checked((int)session.GetInt("solarsystemid2")!.Value));
+        var room = new SimSceneKey(origin.LocationId, 89, 1);
+        Assert.Null(await rig.Space.EnsureAbyssalSceneAsync(SceneSpec(room)));
+        Assert.Null(await rig.Space.MoveAbyssalParticipantAsync(contentId, new SimMoveAbyssalParticipant(
+            903, character.ShipId, origin, room, [100.0, 200.0, 300.0], [0.0, 0.0, 1.0])));
+        var released = RecordBatteryReleases(rig);
+
+        var destroyed = new TaskCompletionSource<AbyssalParticipantDestroyedNotice>(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Space.AbyssalParticipantDestroyedAsync = (notice, _) =>
+        {
+            destroyed.TrySetResult(notice);
+            return ValueTask.CompletedTask;
+        };
+        rig.Sim.Say(new SimDestroyed((ulong)session.SessionId, character.ShipId, 0, [100.0, 200.0, 300.0], [0.0, 0.0, 1.0], 47.0, 0));
+        await destroyed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await UntilBatteryReleasedAsync(released);
+
+        Assert.Equal([character.CharacterId], released);
+    }
+
     [PgFact]
     public async Task Domain_owned_loot_is_removed_from_its_private_scene_before_the_scene_is_removed()
     {

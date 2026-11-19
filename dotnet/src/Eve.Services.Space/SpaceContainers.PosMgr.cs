@@ -342,8 +342,11 @@ public sealed partial class SpaceContainers
         if (_deployed is null || _source is null || moduleId <= 0 || characterId <= 0) throw TowerNotFound();
         await using var connection = await _source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
-        await _deployed.ReleaseBatteryControlAsync(connection, transaction, moduleId, characterId, call.Cancellation).ConfigureAwait(false);
+        var released = await _deployed.ReleaseBatteryControlAsync(connection, transaction, moduleId, characterId, call.Cancellation).ConfigureAwait(false);
         await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
+        // the simulation must learn the battery has no holder, or its holder's locks and fire run on and its tower's sentry cannot take it
+        if (released && await _deployed.GetAsync(moduleId, call.Cancellation).ConfigureAwait(false) is { ControlTowerId: > 0 } battery)
+            await ReconcileSentryAsync(battery.ControlTowerId, call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
     }
 
@@ -351,7 +354,9 @@ public sealed partial class SpaceContainers
     public async Task ReleaseBatteryControlAsync(long characterId, CancellationToken cancellationToken)
     {
         if (_deployed is null || characterId <= 0) return;
-        await _deployed.ReleaseBatteryControlsOfCharacterAsync(characterId, cancellationToken).ConfigureAwait(false);
+        // the simulation must learn each released battery has no holder, as RelinquishStructureControlAsync tells it
+        foreach (var tower in await _deployed.ReleaseBatteryControlsOfCharacterAsync(characterId, cancellationToken).ConfigureAwait(false))
+            await ReconcileSentryAsync(tower, cancellationToken).ConfigureAwait(false);
     }
 
     private bool IsPlayerControlledBattery(int typeId) =>

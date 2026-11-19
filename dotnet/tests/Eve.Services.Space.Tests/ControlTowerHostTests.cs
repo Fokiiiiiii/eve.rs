@@ -367,6 +367,28 @@ public class ControlTowerHostTests
     }
 
     [PgFact]
+    public async Task A_holder_that_ejects_from_its_ship_gives_up_its_battery_grant_so_the_scene_tells_the_battery_it_has_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var released = RecordBatteryReleases(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        rig.Sim.Heard.Clear();
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        var shipBefore = fixture.Session.GetInt("shipid");
+
+        // the pilot ejects from its ship into a capsule: its ship changes in space, and the grant goes as it does at a dock
+        Assert.IsType<PyTuple>(await rig.Space.EjectAsync(fixture.Session, CancellationToken.None));
+        await UntilBatteryReleasedAsync(released);
+
+        Assert.Equal(new[] { fixture.Session.CharacterId!.Value }, released);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (placed.HolderSession, placed.Online));
+        Assert.NotEqual(shipBefore, fixture.Session.GetInt("shipid"));
+    }
+
+    [PgFact]
     public async Task A_relinquish_made_while_the_holders_lock_order_is_in_the_scene_takes_the_lock_back_and_refuses_the_order()
     {
         await using var rig = await Rig.CreateAsync();

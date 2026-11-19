@@ -38,3 +38,4 @@ jobs:
             git commit -m "Regenerate link fixtures and the project map"
             git push origin "HEAD:refs/heads/$TARGET"
           fi
+# second run

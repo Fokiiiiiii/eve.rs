@@ -72,3 +72,21 @@ python3 tools/mitm/mitm.py diff-core /tmp/core-evejs-coreflows-v8.jsonl /tmp/cor
 - `git diff --check` 成功。
 - headless/proxyの検証はV24 wire protocolを再生したもの。**実際のgraphical V24 clientは起動していない**。camera、warp model、station view、character-selection UIの描画は未確認。
 - 同時二重ログインを含む一般のlifecycle fuzz、PostgreSQL再起動をまたぐcharacter selectionの再起動試験、すべてのRPC serviceの起動順は、この調査では確認していない。
+
+
+## Option C: run-twice value comparison (`diff-runs`)
+
+`tools/mitm/mitm.py diff-runs` compares one flow recorded twice on each server:
+
+```sh
+python3 tools/mitm/mitm.py diff-runs ref-run1.jsonl ref-run2.jsonl cand-run1.jsonl cand-run2.jsonl --json
+```
+
+- Records are matched by a run-independent identity: connection order of first appearance, record type, service, method and occurrence. A reply is matched through its request's connection and call id, so fresh call ids do not break the match. Order between different notices is not compared here; `diff-core` keeps that check.
+- Every scalar leaf of a record is compared as `(marshal type, value)`. Dictionary key order is not part of the path.
+- A leaf whose value differs between the two runs of the **same** server is a wildcard (ids, timestamps, random names and numbers). It is listed in `wildcards`, and for both servers it is compared by marshal type only. The comparison of the two servers never creates a wildcard.
+- Every other leaf must match exactly. Differences are reported as `value`, `missing`, `extra`, `wildcard_type`, `wildcard_presence`, `missing_record` or `extra_record`.
+- A record present in only one of the two runs of a server is `unstable_records`, not a difference, and makes the report non-identical.
+- Limit: a field that really differs in the candidate but also varies between runs of one server is masked for that path. Review `wildcards` before accepting a result.
+
+Status: unit tests in `tools/headless-client/tests/test_mitm.py` (`test_diff_runs_*`, `test_values_that_change_between_runs_of_one_server_are_wildcards`, `test_a_value_that_is_stable_within_each_server_is_compared_exactly`, `test_a_wildcard_still_has_to_keep_its_marshal_type`, `test_a_record_seen_in_only_one_run_of_a_server_is_unstable_not_a_difference`, `test_a_record_missing_from_the_candidate_in_both_runs_is_a_difference`, `test_diff_runs_command_exit_codes_and_json`) pass with `test_core_flow_helpers.py`. Not yet done: a live double recording of this flow on EveJS and eve.rs. The v8 captures above are single runs, so they cannot produce wildcards and were not used for option C.

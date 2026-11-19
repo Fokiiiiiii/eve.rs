@@ -934,6 +934,139 @@ def diff_core(reference, candidate, *, strict_volatile=False):
     }
 
 
+# Option C of the differential gate: the same flow is recorded twice on each server. A leaf whose value changes
+# between the two runs of one server is nondeterministic (ids, timestamps, random numbers); it becomes a wildcard
+# for both servers and is compared by marshal type only. Every other leaf must match exactly.
+RUN_SKIPPED_FIELDS = frozenset({"seq", "dir", "conn", "stage", "encoding", "call_id"})
+
+
+def _run_index(records):
+    """Map each MachoNet record to a run-independent identity.
+
+    The identity is the connection's order of first appearance, the record type, service, method and occurrence.
+    A reply takes the identity of the request it answers (connection and call id), so call ids that are drawn
+    afresh in every run still line up. Records without a request are kept as orphans.
+    """
+    ordinals, requests, counts, index = {}, {}, Counter(), {}
+    for rec in sorted((r for r in records if r.get("stage") == "macho"), key=lambda r: r.get("seq", 0)):
+        conn = rec.get("conn")
+        ordinal = ordinals.setdefault(conn, len(ordinals) + 1)
+        kind = rec.get("type")
+        if kind in ("CallRsp", "ErrorResponse"):
+            base = requests.get((conn, rec.get("call_id")))
+            head = ("reply", base) if base is not None else ("orphan", ordinal, kind, rec.get("call_id"))
+        else:
+            head = (ordinal, kind, rec.get("service"), rec.get("method"))
+        counts[head] += 1
+        key = (*head, counts[head])
+        if kind == "CallReq":
+            requests[(conn, rec.get("call_id"))] = key
+        index[key] = rec
+    return index
+
+
+def _run_label(key):
+    if key[0] == "reply":
+        return f"reply[{_run_label(key[1])}]#{key[2]}"
+    if key[0] == "orphan":
+        return f"orphan[conn{key[1]} {key[2]} call{key[3]}]#{key[4]}"
+    ordinal, kind, service, method, occurrence = key
+    return f"conn{ordinal} {kind} {service}.{method}#{occurrence}"
+
+
+def _run_leaves(value, path=""):
+    """Yield (path, (marshal type, value)) for every scalar. Dictionary order is not part of the path."""
+    if isinstance(value, dict):
+        for name in value:
+            yield from _run_leaves(value[name], f"{path}/{name}")
+    elif isinstance(value, list):
+        for position, item in enumerate(value):
+            yield from _run_leaves(item, f"{path}/{position}")
+    else:
+        yield path, (type(value).__name__, value)
+
+
+def _run_snapshot(records):
+    index = _run_index(records)
+    return {
+        key: dict(_run_leaves({name: rec[name] for name in rec if name not in RUN_SKIPPED_FIELDS}))
+        for key, rec in index.items()
+    }
+
+
+def _run_show(leaf):
+    return None if leaf is None else [leaf[0], leaf[1]]
+
+
+def _run_compare(reference_first, reference_second, candidate_first, candidate_second):
+    snapshots = (reference_first, reference_second, candidate_first, candidate_second)
+    differences, unstable, wildcards = [], [], []
+    summary = {"reference_records": len(reference_first), "candidate_records": len(candidate_first),
+               "compared_records": 0, "compared_values": 0}
+    for key in sorted(set().union(*snapshots), key=_run_label):
+        label = _run_label(key)
+        present = [key in snap for snap in snapshots]
+        if present[0] != present[1]:
+            unstable.append({"side": "reference", "record": label})
+        if present[2] != present[3]:
+            unstable.append({"side": "candidate", "record": label})
+        if present[0] != present[1] or present[2] != present[3]:
+            continue
+        if present[0] and not present[2]:
+            differences.append({"record": label, "kind": "missing_record"})
+            continue
+        if present[2] and not present[0]:
+            differences.append({"record": label, "kind": "extra_record"})
+            continue
+        if not present[0]:
+            continue
+        summary["compared_records"] += 1
+        leaves = [snap[key] for snap in snapshots]
+        paths = set().union(*leaves)
+        # A wildcard varies between the two runs of one server. Comparing the servers with each other never makes one.
+        varying = {
+            path for path in paths
+            if len({leaves[0].get(path), leaves[1].get(path)}) > 1
+            or len({leaves[2].get(path), leaves[3].get(path)}) > 1
+        }
+        for path in sorted(varying):
+            wildcards.append({"record": label, "path": path})
+        for path in sorted(paths):
+            left, right = leaves[0].get(path), leaves[2].get(path)
+            if path in varying:
+                if left is not None and right is not None:
+                    if left[0] == right[0]:
+                        continue
+                    kind = "wildcard_type"
+                elif (left is None) != (right is None):
+                    kind = "wildcard_presence"
+                else:
+                    continue
+            else:
+                summary["compared_values"] += 1
+                if left == right:
+                    continue
+                kind = "value" if left is not None and right is not None else ("missing" if right is None else "extra")
+            differences.append({"record": label, "path": path, "kind": kind,
+                                "reference": _run_show(left), "candidate": _run_show(right)})
+    summary.update({"differences": len(differences), "unstable_records": len(unstable), "wildcards": len(wildcards)})
+    return {
+        "identical": not differences and not unstable,
+        "summary": summary,
+        "differences": differences,
+        "unstable_records": unstable,
+        "wildcards": wildcards,
+    }
+
+
+def diff_runs(reference_first, reference_second, candidate_first, candidate_second):
+    """Compare one flow recorded twice on each server, treating values that vary within a server as wildcards."""
+    return _run_compare(
+        _run_snapshot(reference_first), _run_snapshot(reference_second),
+        _run_snapshot(candidate_first), _run_snapshot(candidate_second),
+    )
+
+
 def _open_capture(path):
     return gzip.open(path, "rt", encoding="utf-8") if str(path).endswith(".gz") else open(path, encoding="utf-8")
 
@@ -1429,6 +1562,31 @@ def cmd_diff_core(args):
     return 0 if report["identical"] else 1
 
 
+def cmd_diff_runs(args):
+    report = diff_runs(
+        load(args.reference_first), load(args.reference_second),
+        load(args.candidate_first), load(args.candidate_second),
+    )
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["identical"] else 1
+
+    summary = report["summary"]
+    print(
+        "run-pair comparison: "
+        f"records {summary['reference_records']}/{summary['candidate_records']}, "
+        f"compared records {summary['compared_records']}, compared values {summary['compared_values']}, "
+        f"wildcards {summary['wildcards']}, differences {summary['differences']}, "
+        f"unstable records {summary['unstable_records']}"
+    )
+    if report["identical"]:
+        print("identical under run-to-run wildcard rules")
+    for category in ("unstable_records", "differences"):
+        for item in report[category]:
+            print(f"{category}: {json.dumps(item, ensure_ascii=False, separators=(',', ':'))}")
+    return 0 if report["identical"] else 1
+
+
 def cmd_replay(args):
     host = args.host or os.environ.get("EVE_LIVE_HOST")
     if not host:
@@ -1494,6 +1652,17 @@ def main(argv=None):
     diff_core.add_argument("--json", action="store_true", help="print the complete machine-readable report")
     diff_core.add_argument("--all-calls", action="store_true", help="also print call rows that matched")
     diff_core.set_defaults(run=cmd_diff_core)
+
+    diff_runs_parser = sub.add_parser(
+        "diff-runs",
+        help="compare two runs per server; values that vary within one server are wildcards",
+    )
+    diff_runs_parser.add_argument("reference_first", help="first run of the flow on the reference server (EVE.js)")
+    diff_runs_parser.add_argument("reference_second", help="second run of the same flow on the reference server")
+    diff_runs_parser.add_argument("candidate_first", help="first run of the flow on the candidate server (eve.rs)")
+    diff_runs_parser.add_argument("candidate_second", help="second run of the same flow on the candidate server")
+    diff_runs_parser.add_argument("--json", action="store_true", help="print the complete machine-readable report")
+    diff_runs_parser.set_defaults(run=cmd_diff_runs)
 
     replay = sub.add_parser("replay", help="replay client CallReq and Notification requests against a live eve.rs server")
     replay.add_argument("capture", help="mitm JSONL capture, plain or gzip-compressed")

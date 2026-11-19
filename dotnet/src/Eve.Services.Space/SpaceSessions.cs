@@ -255,7 +255,6 @@ private readonly TransitionRuntime _transitions;
     public async Task<T> AdjustAsync<T>(ClientSession session, long moduleId, int chargeType, RoundsChange change, Func<GunRounds, Task<T>> afterwards, CancellationToken cancellationToken)
     {
         var id = (ulong)session.SessionId;
-        _shipStarbaseCredentials.TryRemove(id, out _);
         if (!_pilots.ContainsKey(id))
         {
             await _charges.FlushAsync(id).ConfigureAwait(false);

@@ -1993,6 +1993,31 @@ public class ControlTowerHostTests
         await rig.Containers.RestoreDeployedAsync(systemId);
         Assert.Contains(new SimShipForceFieldPassword(sessionId, tower, systemId, true), rig.Sim.Heard.OfType<SimShipForceFieldPassword>());
     }
+
+    [PgFact]
+    public async Task A_gun_reload_keeps_the_pilot_ship_password_so_a_later_tower_password_change_refuses_it()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.Space.DeployedRecords = rig.Deployed;
+        var (session, tower) = await OnlineTowerAsync(rig);
+        var systemId = (int)LowSecSystem;
+        var sessionId = (ulong)session.SessionId;
+        const long gun = 9_000_000_001;
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var holder = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+        Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("field-secret"), PyBool.True, PyBool.False));
+        await rig.Space.SetShipPasswordAsync(session, new PyStr("field-secret"), CancellationToken.None);
+        Assert.Equal(new SimShipForceFieldPassword(sessionId, tower, systemId, true), rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Last());
+
+        // the pilot's gun is reloaded: a reload is no change of the password the pilot entered
+        await rig.Space.AdjustAsync(session, gun, 0, new Eve.Services.Ships.RoundsChange.Add(0, 0), _ => Task.FromResult(0), CancellationToken.None);
+
+        // the owner changes the tower's password: the pilot, who knows only the old one, is matched again and refused
+        Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("tower-secret-two"), PyBool.True, PyBool.False));
+        Assert.Equal(new SimShipForceFieldPassword(sessionId, tower, systemId, false), rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Last());
+    }
 }
 
 

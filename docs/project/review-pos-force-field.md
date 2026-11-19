@@ -49,6 +49,8 @@ Rejected candidates are listed at the end, with reasons.
 
 ## F2 (High, confirmed): a gun reload clears a pilot's password credential, and the simulation keeps the admission
 
+**Outcome (fixed):** `ControlTowerHostTests.A_gun_reload_keeps_the_pilot_ship_password_so_a_later_tower_password_change_refuses_it` failed first (expected `Matched = False` after the tower password change, got `True`). The reload no longer removes the credential: the `TryRemove` line is deleted from `SpaceSessions.AdjustAsync`. Verified: `ControlTowerHostTests` 24 of 24, `AmmoHostTests` 16 of 16, `SetShipPasswordHostTests` 1 of 1 passed. The review's test location (`SetShipPasswordHostTests`) was replaced by `ControlTowerHostTests`, which already has the tower and pilot helpers.
+
 **Files**
 - Clear: `dotnet/src/Eve.Services.Space/SpaceSessions.cs:254-257` (`AdjustAsync`: `_shipStarbaseCredentials.TryRemove(id, out _)`).
 - Reload callers: `dotnet/src/Eve.Services.Dogma/DogmaIMService.Reloads.cs:181` (`AnswerEmptyAsync`, `rounds.AdjustAsync(... new RoundsChange.Add(0, 0) ...)`), `:107`, `:206`, `:253`. `OnGunRanDry` (the `GunRanDry` event) reaches `ReloadEmptiedGunAsync`, which reaches these.

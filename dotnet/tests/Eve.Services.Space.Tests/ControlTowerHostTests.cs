@@ -2189,6 +2189,30 @@ public class ControlTowerHostTests
         Assert.Equal(new SimSetForceFieldAccess(tower, (int)LowSecSystem, (int)record.CorporationId, 0, true, true),
             Assert.Single(rig.Sim.Heard.OfType<SimSetForceFieldAccess>()));
     }
+
+    [PgFact]
+    public async Task A_restore_puts_back_the_field_of_an_online_tower_whose_item_is_gone_and_writes_its_item_again()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (_, tower) = await OnlineTowerAsync(rig);
+        var placed = Assert.Single(rig.Sim.Heard.OfType<SimPlaceForceField>());
+        var item = Assert.Single(await ForceFieldItemsAsync(rig));
+
+        // the item is lost from the database while the tower stays online: a restart of the system must reconcile the two
+        Assert.True(await rig.SpaceItems.RemoveAsync(item.ItemId));
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+        rig.Sim.Heard.Clear();
+
+        await rig.Containers.RestoreDeployedAsync((int)LowSecSystem);
+
+        // the restore places the tower's field in the restored system again and writes its item again; the item was gone, so the field gets a new id
+        var replaced = Assert.Single(rig.Sim.Heard.OfType<SimPlaceForceField>());
+        Assert.Equal(tower, replaced.TowerId);
+        Assert.Equal((int)LowSecSystem, replaced.SolarSystemId);
+        var restored = Assert.Single(await ForceFieldItemsAsync(rig));
+        Assert.Equal(replaced.FieldId, restored.ItemId);
+        Assert.Equal(tower, restored.LauncherId);
+    }
 }
 
 

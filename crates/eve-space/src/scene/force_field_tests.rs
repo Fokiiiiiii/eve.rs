@@ -282,6 +282,30 @@ fn an_orbit_that_pulls_the_ship_back_into_the_field_is_cancelled() {
 }
 
 #[test]
+fn a_move_the_scene_settles_is_stopped_at_the_field_and_its_order_is_cancelled() {
+    // the production settle path: the tick's move, the boundary on it, then the clients are told. Not the boundary called alone.
+    let mut scene = field_scene();
+    {
+        let pilot = scene.pilots.get_mut(&SESSION).unwrap();
+        pilot.settled_at = NOON;
+        pilot.ship.course = Course::Goto;
+        pilot.ship.speed_fraction = 1.0;
+        pilot.ship.direction = Vec3::new(1.0, 0.0, 0.0);
+        pilot.ship.velocity = Vec3::new(1_000.0, 0.0, 0.0);
+    }
+    scene.backlog.clear();
+    scene.settle_pilot(SESSION, NOON + 10 * TICKS_PER_SECOND);
+    let ship = &scene.pilots[&SESSION].ship;
+    // held on the ring of the field's radius plus the ship's radius and the clearance (100 m + 47 m + 1 m), not inside it
+    assert!((ship.position.x + 148.0).abs() < 1e-6, "{:?}", ship.position);
+    assert_eq!(ship.course, Course::Stop, "a Goto pulling the ship back in is cancelled");
+    assert_eq!(harmonic(&scene, SESSION), NO_HARMONIC);
+    let told: Vec<String> = scene.backlog.iter().flat_map(action_names).collect();
+    assert!(told.iter().any(|name| name == "Stop"), "the cancel is told to the clients: {told:?}");
+    assert!(told.iter().any(|name| name == "SetBallPosition"), "the correction is told to the clients: {told:?}");
+}
+
+#[test]
 fn a_ship_stranded_inside_is_pushed_out_at_the_repulsion_speed() {
     let mut scene = field_scene();
     {

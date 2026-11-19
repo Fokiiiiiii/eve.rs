@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 102,
-   "hex": "03000000016600"
+   "version": 103,
+   "hex": "03000000016700"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 102,
+   "version": 103,
    "pollHz": 4,
-   "hex": "0700000002660004000000"
+   "hex": "0700000002670004000000"
   },
   {
    "name": "active Crimewatch flag",
@@ -816,6 +816,78 @@
    "pending": false,
    "targets": [],
    "hex": "2b000000ab470000000000000081ba953e0000000013005441524745545f4f55545f4f465f52414e47450000000000"
+  },
+  {
+   "name": "place a force field for an online tower (protocol 103)",
+   "kind": "PlaceForceField",
+   "fieldId": "1050000100",
+   "towerId": "1050000099",
+   "solarSystemId": 30000142,
+   "typeId": 16000,
+   "groupId": 411,
+   "displayName": "Force Field",
+   "position": [
+    1.0,
+    2.0,
+    3.0
+   ],
+   "radius": 1000.0,
+   "hex": "4a000000b4e4ba953e00000000e3ba953e000000000ec4c901803e00009b0100000b00466f726365204669656c64000000000000f03f000000000000004000000000000008400000000000408f40"
+  },
+  {
+   "name": "force field placed",
+   "kind": "ForceFieldPlaced",
+   "fieldId": "1050000100",
+   "reason": "",
+   "hex": "0b000000b5e4ba953e000000000000"
+  },
+  {
+   "name": "force field placement refused for a radius of zero",
+   "kind": "ForceFieldPlaced",
+   "fieldId": "1050000100",
+   "reason": "FORCE_FIELD_RADIUS_INVALID",
+   "hex": "25000000b5e4ba953e000000001a00464f5243455f4649454c445f5241444955535f494e56414c4944"
+  },
+  {
+   "name": "remove the force field of a tower",
+   "kind": "RemoveForceField",
+   "towerId": "1050000099",
+   "solarSystemId": 30000142,
+   "hex": "0d000000b6e3ba953e000000000ec4c901"
+  },
+  {
+   "name": "force field taken out",
+   "kind": "ForceFieldRemoved",
+   "towerId": "1050000099",
+   "reason": "",
+   "hex": "0b000000b7e3ba953e000000000000"
+  },
+  {
+   "name": "force field removal refused for a tower with no field",
+   "kind": "ForceFieldRemoved",
+   "towerId": "1050000099",
+   "reason": "FORCE_FIELD_NOT_IN_SPACE",
+   "hex": "23000000b7e3ba953e000000001800464f5243455f4649454c445f4e4f545f494e5f5350414345"
+  },
+  {
+   "name": "set who a tower's force field admits by corporation and alliance (protocol 103)",
+   "kind": "SetForceFieldAccess",
+   "towerId": "1050000099",
+   "solarSystemId": 30000142,
+   "corporationId": 98000001,
+   "allianceId": 97000001,
+   "allowCorporation": true,
+   "allowAlliance": false,
+   "hex": "17000000b8e3ba953e000000000ec4c901815cd705411ac8050100"
+  },
+  {
+   "name": "a pilot's ship password matches a tower (protocol 103)",
+   "kind": "ShipForceFieldPassword",
+   "sessionId": "1790646377000015",
+   "towerId": "1050000099",
+   "solarSystemId": 30000142,
+   "matched": true,
+   "hex": "16000000b94f2c3859955c0600e3ba953e000000000ec4c90101"
   },
   {
    "name": "read a public-system source ship pose",
@@ -8478,6 +8550,16 @@
    "name": "battery position not finite",
    "reason": "bad-value",
    "hex": "5b000000a881ba953e000000000ec4c901f7400000e80300000700426174746572794f2c3859955c0600000000000000f87f000000000000004000000000000008400000000000004e40000000000000794000000000006ae8400200000001"
+  },
+  {
+   "name": "force field radius not finite",
+   "reason": "bad-value",
+   "hex": "4a000000b4e4ba953e00000000e3ba953e000000000ec4c901803e00009b0100000b00466f726365204669656c64000000000000f03f00000000000000400000000000000840000000000000f87f"
+  },
+  {
+   "name": "force field position not finite",
+   "reason": "bad-value",
+   "hex": "4a000000b4e4ba953e00000000e3ba953e000000000ec4c901803e00009b0100000b00466f726365204669656c64000000000000f07f000000000000004000000000000008400000000000408f40"
   }
  ]
 }

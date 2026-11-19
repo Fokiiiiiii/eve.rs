@@ -172,7 +172,7 @@ Verified (PostgreSQL `eve_p6`, `EVE_SDE_DIR` of the pinned SDE, Release, warning
 
 Not verified and not done:
 
-- The full `Eve.Services.Space.Tests` run was started after these changes and had not finished when this section was written; its result is recorded in the verification section below once it ends.
+- The full `Eve.Services.Space.Tests` project on `eve_p6` (Release, warnings as errors): 1270 passed, 0 failed, 0 skipped (8 m 13 s).
 - `Eve.Host` and `Eve.Host.Tests` were not built or run for this slice.
 - `oracle/fixtures/simlink/messages.json` is not regenerated (the generator is not run, per the session's policy).
 - A tower's password change does not re-match pilots that already hold a credential: `SpaceSessions` keeps only the SHA-256 digest of each pilot's password, so it cannot match against the new tower hash. Those pilots are matched again only when they set their password.

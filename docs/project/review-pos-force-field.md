@@ -71,6 +71,8 @@ Rejected candidates are listed at the end, with reasons.
 
 ## F3 (Medium, confirmed): the reconcile's send happens after the commit, outside the lock
 
+**Outcome (fixed, partly):** `ControlTowerHostTests.A_placement_in_flight_is_not_overtaken_by_an_offline_sync_that_takes_the_field_out` failed first (the simulation's last command was the stale `SimPlaceForceField`). `ReconcileForceFieldAsync` now takes a per-tower gate (`_forceFieldGates`) around the whole reconcile, so the item commit and the send to the simulation happen in one order. Verified: `ControlTowerHostTests` 25 of 25 passed. Not done: the review's second assertion (a removal sent for an offline tower that has no item). That case needs a failed send to be compensated, which is not part of this fix; the unanchor completion (F8) covers the field left behind. `FakeSim` gained a test-only placement hold (`ForceFieldPlacementRelease`, `ForceFieldPlacementEntered`); no protocol change.
+
 **Files**
 - `dotnet/src/Eve.Services.Space/SpaceContainers.ControlTowers.cs:519-553` (`ReconcileForceFieldAsync`). The transaction holds `LockAndGetAsync` (`PgDeployedStore.cs:48`, `FOR UPDATE`) and commits at about line 540. The sends are at 544 (`PlaceForceFieldAsync`) and 550 (`RemoveForceFieldAsync`), after the lock is released.
 - Removal is sent only when a DB item exists: line 535, `else if (await RemoveForceFieldInTransactionAsync(...) is { } removed)`. A tower with no item therefore sends nothing when offline.

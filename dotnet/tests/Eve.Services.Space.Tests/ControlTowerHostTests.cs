@@ -2018,6 +2018,31 @@ public class ControlTowerHostTests
         Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("tower-secret-two"), PyBool.True, PyBool.False));
         Assert.Equal(new SimShipForceFieldPassword(sessionId, tower, systemId, false), rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Last());
     }
+
+    [PgFact]
+    public async Task A_placement_in_flight_is_not_overtaken_by_an_offline_sync_that_takes_the_field_out()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, tower) = await OnlineTowerAsync(rig);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Sim.ForceFieldPlacementRelease = release;
+
+        // an online sync has its field committed and is held while the simulation is told it
+        var online = rig.Containers.SynchronizeControlTowerSlimStateAsync(tower);
+        await rig.Sim.ForceFieldPlacementEntered.Task;
+
+        // an offline request runs meanwhile: it takes the field out of the database and tells the simulation, or it waits for the placement in flight
+        var offline = rig.Space.DeactivateAsync(session, tower, "onlineForStructures", CancellationToken.None);
+        await Task.WhenAny(offline, Task.Delay(TimeSpan.FromSeconds(2)));
+        release.SetResult();
+        await online;
+        Assert.Equal(ModuleResult.Done, await offline);
+
+        // the simulation is told the removal last, and the database holds no field of the tower
+        Assert.IsType<SimRemoveForceField>(rig.Sim.Heard.Last());
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(tower));
+    }
 }
 
 

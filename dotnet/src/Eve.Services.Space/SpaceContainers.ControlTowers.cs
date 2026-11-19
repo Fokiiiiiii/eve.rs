@@ -517,7 +517,25 @@ public sealed partial class SpaceContainers
     /// neither. The item is written in one transaction and the simulation is told after its commit. A repeat sync keeps the item and sends the same placement,
     /// which the simulation takes as unchanged. A refused placement, or a removal the simulation refuses for another reason, is an error.
     /// </summary>
+    /// <summary>The per-tower gates of the force field reconcile: a tower's item commit and the simulation's send to it happen under one gate, so two syncs cannot send in the other's order.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, SemaphoreSlim> _forceFieldGates = new();
+
     private async Task ReconcileForceFieldAsync(long towerId, CancellationToken cancellationToken)
+    {
+        var gate = _forceFieldGates.GetOrAdd(towerId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await ReconcileForceFieldUnderGateAsync(towerId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <summary>The reconcile itself, run under its tower's gate.</summary>
+    private async Task ReconcileForceFieldUnderGateAsync(long towerId, CancellationToken cancellationToken)
     {
         if (_deployed is null || _source is null)
             return;

@@ -169,13 +169,17 @@ public sealed class PgDeployedStore
     }
 
     /// <summary>Releases every POS battery control grant a pilot holds, when the pilot leaves the cluster.</summary>
-    public async Task ReleaseBatteryControlsOfCharacterAsync(long characterId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<long>> ReleaseBatteryControlsOfCharacterAsync(long characterId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand(
-            $"DELETE FROM {_schema}.starbase_battery_control WHERE character_id = $1", connection);
+            $"DELETE FROM {_schema}.starbase_battery_control WHERE character_id = $1 RETURNING deployable_id", connection);
         command.Parameters.Add(new NpgsqlParameter { Value = characterId });
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        var released = new List<long>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            released.Add(reader.GetInt64(0));
+        return released;
     }
 
     /// <summary>The start time of an in-progress control-tower state transition, or null when the state has no timer.</summary>

@@ -167,4 +167,44 @@ public sealed partial class SpaceContainers
             }
         }
     }
+
+    /// <summary>
+    /// Tells the simulation that a POS battery has no holder any more, after its control grant was released (its pilot relinquished it, or the pilot left
+    /// the cluster). The scene lets go of the former holder's locks and tells that pilot <c>clear</c>; the battery keeps its online state. Nothing is sent
+    /// when a grant exists again by the time the gate is taken, since the new holder's own order places the battery with that holder.
+    /// </summary>
+    private async Task ClearBatteryHolderAsync(long batteryId, CancellationToken cancellationToken)
+    {
+        if (_deployed is null || _source is null)
+            return;
+        var battery = await _deployed.GetAsync(batteryId, cancellationToken).ConfigureAwait(false);
+        if (battery is not { Kind: StarbaseModuleKind })
+            return;
+        await _statics.EnsureTypesAsync([battery.TypeId], cancellationToken).ConfigureAwait(false);
+        if (!IsPlayerControlledBattery(battery.TypeId) || BatteryNumbersOf(battery.TypeId) is not { } numbers)
+            return;
+
+        var gate = _batteryGates.GetOrAdd(batteryId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            if (await _deployed.BatteryControllerAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false) is not null)
+                return;
+            var state = await _deployed.TowerStateAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
+            var online = state is TowerOnline or TowerOnlining;
+            await _sim.PlaceBatteryAsync(
+                new SimPlaceBattery(batteryId, battery.SolarSystemId, battery.TypeId, battery.GroupId, battery.Name, 0,
+                    battery.Position, battery.Radius, numbers.ScanResolution, numbers.MaxTargetRange, numbers.MaxLockedTargets, online),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"battery {batteryId} released: {error.Message}");
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
 }

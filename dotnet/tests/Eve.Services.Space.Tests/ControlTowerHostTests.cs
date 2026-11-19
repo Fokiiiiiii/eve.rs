@@ -1802,5 +1802,27 @@ public class ControlTowerHostTests
         Assert.Equal("DeniedShipChanged", refused.Error.UserErrorMessage);
         Assert.Empty(rig.Sim.Heard.OfType<SimBatteryTarget>());
     }
+
+    [PgFact]
+    public async Task Battery_control_relinquished_or_left_by_its_pilot_tells_the_scene_it_has_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "", true, []));
+        await fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO", new PyLong(fixture.Battery), new PyLong(fixture.Target));
+
+        // the pilot relinquishes: the scene must stop naming it as the holder, or its pending lock keeps being told to a pilot that gave control up
+        Assert.IsType<PyNone>(await fixture.Holder.CallAsync("RelinquishStructureControl", new PyLong(fixture.Battery)));
+        var relinquished = rig.Sim.Heard.OfType<SimPlaceBattery>().Last();
+        Assert.Equal((fixture.Battery, 0UL, true), (relinquished.BatteryId, relinquished.HolderSession, relinquished.Online));
+
+        // the pilot assumes it again and then leaves the cluster: the scene is told no holder once more
+        Assert.IsType<PyNone>(await fixture.Holder.CallAsync("AssumeStructureControl", new PyLong(fixture.Battery)));
+        var before = rig.Sim.Heard.OfType<SimPlaceBattery>().Count();
+        await rig.Containers.ReleaseBatteryControlAsync(fixture.Session.CharacterId!.Value, CancellationToken.None);
+        var left = rig.Sim.Heard.OfType<SimPlaceBattery>().ToArray();
+        Assert.True(left.Length > before, "the scene was not told that the pilot left the battery");
+        Assert.Equal((fixture.Battery, 0UL, true), (left[^1].BatteryId, left[^1].HolderSession, left[^1].Online));
+    }
 }
 

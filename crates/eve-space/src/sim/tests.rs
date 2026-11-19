@@ -12,6 +12,9 @@ mod abyssal_cleanup_tests;
 #[path = "battery_tests.rs"]
 mod battery_tests;
 
+#[path = "force_field_tests.rs"]
+mod force_field_tests;
+
 const SYSTEM: i32 = 30_000_001;
 const SECOND: i64 = 10_000_000;
 

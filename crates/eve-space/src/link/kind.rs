@@ -39,6 +39,18 @@ pub const BATTERY_TARGETS: u8 = 171;
 pub const BATTERY_FIRE: u8 = 190;
 /// The answer to `BATTERY_FIRE`: `reason` is empty when accepted, `active` says the battery fires, `target` is what it fires at (0 for none).
 pub const BATTERY_FIRED: u8 = 191;
+/// The host puts an online POS control tower's force field in its system's scene (protocol 104). Answered by `FORCE_FIELD_PLACED`.
+pub const PLACE_FORCE_FIELD: u8 = 180;
+/// The answer to `PLACE_FORCE_FIELD`: an empty reason means the field is in the scene.
+pub const FORCE_FIELD_PLACED: u8 = 181;
+/// The host takes a tower's force field out of its system's scene (the tower went offline or ran out of fuel). Answered by `FORCE_FIELD_REMOVED`.
+pub const REMOVE_FORCE_FIELD: u8 = 182;
+/// The answer to `REMOVE_FORCE_FIELD`: an empty reason means the field was taken out.
+pub const FORCE_FIELD_REMOVED: u8 = 183;
+/// The host sets who a tower's force field admits by corporation and alliance (protocol 104). No answer.
+pub const SET_FORCE_FIELD_ACCESS: u8 = 184;
+/// The host says whether a pilot's ship password matches a tower's (protocol 104). No answer.
+pub const SHIP_FORCE_FIELD_PASSWORD: u8 = 185;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

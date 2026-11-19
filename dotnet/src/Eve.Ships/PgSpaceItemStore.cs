@@ -11,6 +11,7 @@ public enum SpaceItemKind
     MoonChunk = 3,
     MaintenanceBayLaunchedShip = 4,
     CombatLogoffShip = 5,
+    ForceField = 6,
 }
 
 /// <summary>A durable space item: its pose and ownership live here, while its inventory item and contents stay in the inventory store.</summary>
@@ -172,6 +173,18 @@ public sealed class PgSpaceItemStore
             connection, transaction);
         command.Parameters.Add(new NpgsqlParameter { Value = extractionId });
         command.Parameters.Add(new NpgsqlParameter { Value = (int)SpaceItemKind.MoonChunk });
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
+    }
+
+    /// <summary>The force field a POS control tower has in space, if it is persisted: the tower is the field's launcher.</summary>
+    public async Task<SpaceItem?> ForceFieldAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long towerId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"SELECT {Columns} FROM {_schema}.space_items WHERE launcher_id = $1 AND kind = $2 ORDER BY item_id LIMIT 1",
+            connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = towerId });
+        command.Parameters.Add(new NpgsqlParameter { Value = (int)SpaceItemKind.ForceField });
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         return await reader.ReadAsync(cancellationToken) ? Read(reader) : null;
     }

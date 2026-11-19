@@ -1334,6 +1334,50 @@ public static partial class SimCodec
             case Kind.WarpExited:
                 message = new SimWarpExited(r.U64());
                 break;
+            case Kind.PlaceForceField:
+                {
+                    var field = r.I64();
+                    var tower = r.I64();
+                    var solarSystem = r.I32();
+                    var type = r.I32();
+                    var group = r.I32();
+                    var displayName = r.Text();
+                    var position = ReadVector(ref r);
+                    var radius = r.F64();
+                    if (!ValidForceFieldPlacement(position, radius))
+                        throw new SimLinkException(SimLinkError.BadValue, "bad force field placement");
+                    message = new SimPlaceForceField(field, tower, solarSystem, type, group, displayName, position, radius);
+                    break;
+                }
+            case Kind.ForceFieldPlaced:
+                message = new SimForceFieldPlaced(r.I64(), r.Text());
+                break;
+            case Kind.RemoveForceField:
+                message = new SimRemoveForceField(r.I64(), r.I32());
+                break;
+            case Kind.ForceFieldRemoved:
+                message = new SimForceFieldRemoved(r.I64(), r.Text());
+                break;
+            case Kind.SetForceFieldAccess:
+                {
+                    var tower = r.I64();
+                    var solarSystem = r.I32();
+                    var corporation = r.I32();
+                    var alliance = r.I32();
+                    var allowCorporation = ReadFlag(ref r, "allow corporation");
+                    var allowAlliance = ReadFlag(ref r, "allow alliance");
+                    message = new SimSetForceFieldAccess(tower, solarSystem, corporation, alliance, allowCorporation, allowAlliance);
+                    break;
+                }
+            case Kind.ShipForceFieldPassword:
+                {
+                    var session = r.U64();
+                    var tower = r.I64();
+                    var solarSystem = r.I32();
+                    var matched = ReadFlag(ref r, "matched");
+                    message = new SimShipForceFieldPassword(session, tower, solarSystem, matched);
+                    break;
+                }
             case Kind.PlaceBattery:
                 {
                     var battery = r.I64();

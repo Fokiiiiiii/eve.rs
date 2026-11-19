@@ -68,6 +68,9 @@ pub enum Role {
     /// A player control tower the host keeps a record of (protocol 73): a ball in space, anchored (`active`) when its anchoring time is over. It has no warp or cyno
     /// effect: the fuel and the modules are not modelled yet.
     ControlTower { active: bool },
+    /// The force field of an online POS control tower (protocol 104): a ball of its radius around the tower, whose harmonic is the tower. The host places
+    /// and takes it out with the tower's state; the boundary and admission rules are not applied by the field itself.
+    ForceField { tower_id: i64 },
     /// A deadspace pocket of a dungeon the host keeps a record of (protocol 74): a region of the scene around its origin, in no client ball. It has no effect in the
     DeadspacePocket,
     /// An acceleration gate of a dungeon room the host keeps a record of (protocol 75): a stargate-kind ball the pilots of its system see, interactive
@@ -175,6 +178,7 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         | Role::CynoBeacon { .. }
         | Role::MobileObservatory { .. }
         | Role::ControlTower { .. }
+        | Role::ForceField { .. }
         | Role::DeadspacePocket => (Kind::Other, LegacyMode::Stop),
         Role::AccelerationGate => (Kind::Stargate, LegacyMode::Stop),
         Role::CapturePoint | Role::BattlefieldScoreboard => (Kind::Other, LegacyMode::Stop),
@@ -195,11 +199,21 @@ fn release_actions(stamp: u32, deployable: &Deployable) -> Result<Vec<Value>, ev
         corporation_id: IdRef::Valid(i64::from(deployable.corporation_id)),
         alliance_id: IdRef::Valid(i64::from(deployable.alliance_id)),
         mode_owner: IdRef::Valid(deployable.ship_id),
+        harmonic: ball_harmonic(&deployable.role),
         ..BallEntity::default()
     };
     let buffer = payload::add_balls_buffer(stamp, &[ball])?;
     let slim = slim_dict(deployable, category);
     Ok(vec![payload::action(stamp, "AddBalls2", [tuple([buffer, list([slim])])])])
+}
+
+/// The harmonic a deployable's ball shows: a force field's is its tower, which EVE.js gives the field as its harmonic (`getForceFieldAccess`), and any other
+/// ball has none.
+pub(crate) fn ball_harmonic(role: &Role) -> IdRef {
+    match role {
+        Role::ForceField { tower_id } => IdRef::Valid(*tower_id),
+        _ => IdRef::Absent,
+    }
 }
 
 /// The slim item of a deployable as the client reads it: the entries of its category, then the dynamic fields the host set.
@@ -1009,6 +1023,96 @@ impl Scene {
             .collect()
     }
 
+    /// The host puts an online POS control tower's force field in its system (protocol 104): a ball of `radius` metres around `position`, whose harmonic is
+    /// the tower. The same field again changes nothing; another id replaces the tower's field. Refused when the radius is not positive, or when the id is
+    /// held by a deployable that is not this tower's field.
+    pub(crate) fn place_force_field(
+        &mut self,
+        placement: crate::link::ForceFieldPlacement,
+        now: i64,
+    ) -> Result<Vec<Out>, &'static str> {
+        if !(placement.radius.is_finite() && placement.radius > 0.0) {
+            return Err("FORCE_FIELD_RADIUS_INVALID");
+        }
+        let tower_id = placement.tower_id;
+        let holds_it =
+            |held: &Deployable| matches!(held.role, Role::ForceField { tower_id: t } if t == tower_id);
+        if self.deployables.get(&placement.field_id).is_some_and(|held| !holds_it(held)) {
+            return Err("FORCE_FIELD_ID_TAKEN");
+        }
+        let [x, y, z] = placement.position;
+        let position = Vec3::new(x, y, z);
+        if self
+            .deployables
+            .get(&placement.field_id)
+            .is_some_and(|held| held.position == position && held.spec.radius == placement.radius)
+        {
+            return Ok(Vec::new());
+        }
+        let stale: Vec<i64> = self
+            .deployables
+            .values()
+            .filter(|held| held.id != placement.field_id && holds_it(held))
+            .map(|held| held.id)
+            .collect();
+        let replaced = self.deployables.contains_key(&placement.field_id).then_some(placement.field_id);
+        let mut out = Vec::new();
+        for id in stale.into_iter().chain(replaced) {
+            out.extend(self.take_out_force_field(id, now));
+        }
+        let deployable = Deployable {
+            id: placement.field_id,
+            spec: Spec {
+                charge_type_id: placement.type_id,
+                group_id: placement.group_id,
+                name: placement.display_name,
+                radius: placement.radius,
+            },
+            role: Role::ForceField { tower_id },
+            position,
+            ends_at: i64::MAX,
+            launcher: 0,
+            ship_id: 0,
+            owner_id: 0,
+            corporation_id: 0,
+            alliance_id: 0,
+            module_id: 0,
+            module_type: 0,
+            watchers: BTreeSet::new(),
+            // the client animates a field from this time (V24 `forceField.py`: `forcefieldStartTime`), so a field placed again starts again
+            slim_fields: BTreeMap::from([("forcefieldStartTime".to_string(), SlimValue::Int(now))]),
+        };
+        out.extend(self.insert_deployable(deployable, now));
+        Ok(out)
+    }
+
+    /// The host takes a tower's force field out of its system (protocol 104): the ball is removed and those who see it are told it is gone. Refused when
+    /// the tower has no field in the scene.
+    pub(crate) fn remove_force_field(&mut self, tower_id: i64, at: i64) -> Result<Vec<Out>, &'static str> {
+        let Some(field_id) = self
+            .deployables
+            .values()
+            .find(|held| matches!(held.role, Role::ForceField { tower_id: t } if t == tower_id))
+            .map(|held| held.id)
+        else {
+            return Err("FORCE_FIELD_NOT_IN_SPACE");
+        };
+        Ok(self.take_out_force_field(field_id, at))
+    }
+
+    /// Takes a force field out of space and tells those who see it it is gone (the removal the field's record and the tower's shares).
+    fn take_out_force_field(&mut self, deployable_id: i64, at: i64) -> Vec<Out> {
+        let Some(deployable) = self.deployables.remove(&deployable_id) else { return Vec::new() };
+        let stamp = self.next_stamp(at);
+        let actions = vec![payload::remove_ships(stamp, [deployable.id])];
+        deployable
+            .watchers
+            .iter()
+            .filter(|watcher| self.pilots.get(watcher).is_some_and(|pilot| pilot.bound))
+            .map(|watcher| Self::update(*watcher, actions.clone()))
+            .collect()
+    }
+
     /// Remove the named cynosural beacon from this system. The dedicated message carries a beacon ID, so other deployables sharing a broad removal path are not touched.
     pub(crate) fn remove_cyno_beacon(
         &mut self,
@@ -1371,6 +1475,7 @@ impl Scene {
                 | Role::CynoInhibitor { .. }
                 | Role::MobileObservatory { .. }
                 | Role::ControlTower { .. }
+                | Role::ForceField { .. }
                 | Role::DeadspacePocket
                 | Role::AccelerationGate
                 | Role::CapturePoint

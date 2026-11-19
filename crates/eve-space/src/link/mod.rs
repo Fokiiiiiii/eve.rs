@@ -12,6 +12,8 @@ mod encode;
 #[cfg(test)]
 mod field_partition_tests;
 #[cfg(test)]
+mod force_field_tests;
+#[cfg(test)]
 mod moon_mining_tests;
 mod payload;
 mod reader;
@@ -257,6 +259,20 @@ pub struct BatteryPlacement {
     pub max_target_range: f64,
     pub max_locked_targets: i32,
     pub online: bool,
+}
+
+/// A POS control tower's force field as the Host places it (protocol 104): the ball of an online tower. `field_id` is the field's id in the scene and
+/// `tower_id` the tower it belongs to (its harmonic, EVE.js `getForceFieldAccess`). `position` and `radius` are the ball's; the radius is the SDE shield radius.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForceFieldPlacement {
+    pub field_id: i64,
+    pub tower_id: i64,
+    pub solar_system_id: i32,
+    pub type_id: i32,
+    pub group_id: i32,
+    pub display_name: String,
+    pub position: [f64; 3],
+    pub radius: f64,
 }
 
 /// A CONCORD Rogue Analysis Beacon the host keeps a record of (protocol 61): its id, type and group, its name and ball, where it lies, whose it is, and its state.
@@ -1133,6 +1149,40 @@ pub enum Message {
         active: bool,
         target: i64,
     },
+    /// The host puts an online POS control tower's force field in space (protocol 104). A field already there for the same tower and id, with the same
+    /// place and radius, changes nothing; another id replaces the tower's field. Answered by `ForceFieldPlaced`.
+    PlaceForceField(Box<ForceFieldPlacement>),
+    /// The answer to `PlaceForceField`: `reason` is empty when the field is in the scene, else why it is not.
+    ForceFieldPlaced {
+        field_id: i64,
+        reason: String,
+    },
+    /// The host takes a tower's force field out of space (protocol 104). Answered by `ForceFieldRemoved`.
+    RemoveForceField {
+        tower_id: i64,
+        solar_system_id: i32,
+    },
+    /// The answer to `RemoveForceField`: `reason` is empty when the field was taken out, else why it was not (no field for the tower).
+    ForceFieldRemoved {
+        tower_id: i64,
+        reason: String,
+    },
+    /// The host sets who a tower's force field admits by corporation and alliance (protocol 104). The field of the tower now or placed later takes it.
+    SetForceFieldAccess {
+        tower_id: i64,
+        solar_system_id: i32,
+        corporation_id: i32,
+        alliance_id: i32,
+        allow_corporation: bool,
+        allow_alliance: bool,
+    },
+    /// The host says whether a pilot's ship password matches a tower's (protocol 104): a matching ship is admitted by the tower's field.
+    ShipForceFieldPassword {
+        session_id: u64,
+        tower_id: i64,
+        solar_system_id: i32,
+        matched: bool,
+    },
     GetAbyssalParticipantPose {
         request_id: u64,
         scene: SceneKey,
@@ -1869,6 +1919,12 @@ impl Message {
             Self::BatteryTargets { .. } => kind::BATTERY_TARGETS,
             Self::BatteryFire { .. } => kind::BATTERY_FIRE,
             Self::BatteryFired { .. } => kind::BATTERY_FIRED,
+            Self::PlaceForceField(_) => kind::PLACE_FORCE_FIELD,
+            Self::ForceFieldPlaced { .. } => kind::FORCE_FIELD_PLACED,
+            Self::RemoveForceField { .. } => kind::REMOVE_FORCE_FIELD,
+            Self::ForceFieldRemoved { .. } => kind::FORCE_FIELD_REMOVED,
+            Self::SetForceFieldAccess { .. } => kind::SET_FORCE_FIELD_ACCESS,
+            Self::ShipForceFieldPassword { .. } => kind::SHIP_FORCE_FIELD_PASSWORD,
             Self::GetAbyssalParticipantPose { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE,
             Self::GetAbyssalParticipantPoseReply { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE_REPLY,
             Self::Enter(_) => kind::ENTER,

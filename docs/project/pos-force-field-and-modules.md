@@ -86,7 +86,7 @@ Client and EveJS facts, read from `/home/user/eve-logic` (codebase-memory `get_c
 
 Implemented:
 
-- Rust (`crates/eve-space/src/targeting/battery.rs`, `battery_fire`): a battery has `firing`, a target it locks. A start needs the battery online, a holder, and a locked target (`TARGET_NOT_LOCKED`); a second target while one fires is `MODULE_ALREADY_ACTIVE`; a stop is always accepted. Firing ends with its lock, with a holder change, and when the battery goes offline. Messages `BatteryFire` (190) and `BatteryFired` (191) are in `link/kind.rs`, `link/mod.rs`, `link/payload.rs`, `link/decode_message.rs`, `scene/mod.rs` and `sim/dispatch.rs`. `PROTOCOL_VERSION` is 104; 103 and kinds 180 to 189 belong to another worker and are not used.
+- Rust (`crates/eve-space/src/targeting/battery.rs`, `battery_fire`): a battery has `firing`, a target it locks. A start needs the battery online, a holder, and a locked target (`TARGET_NOT_LOCKED`); a second target while one fires is `MODULE_ALREADY_ACTIVE`; a stop is always accepted. Firing ends with its lock, with a holder change, and when the battery goes offline. Messages `BatteryFire` (190) and `BatteryFired` (191) are in `link/kind.rs`, `link/mod.rs`, `link/payload.rs`, `link/decode_message.rs`, `scene/mod.rs` and `sim/dispatch.rs`. `PROTOCOL_VERSION` is 104. Kinds 180 to 185 (the force field) are in protocol 104 as well.
 - C#: `SimCodec` (`ProtocolVersion` 104), `SimMessages` (`SimBatteryFire`, `SimBatteryFired`), `ISimulation.BatteryFireAsync` and `SimClient.BatteryFireAsync`.
 - Host: `DogmaIMService.Modules.cs` sends `Activate` and `Deactivate` on a battery's item id to the space before the ship module path (`BatteryFireOrderAsync`, `DogmaIMService.Targeting.cs`). `SpaceContainers.Batteries.cs` `BatteryFireAsync` returns null for an item that is not a player-controlled battery, so ship modules are unchanged. For a battery it refuses a pilot without the grant (`NO_CONTROL_GRANT`, which the client sees as "You must assume control of this starbase battery before operating it."), refuses an effect that is not the type's offensive effect (`EFFECT_INVALID`, checked by `DogmaStatic.OffensiveEffectNameAsync` from SDE `typeDogma` / `dogmaEffects.isOffensive`), refuses an offline battery (`BATTERY_OFFLINE`), and otherwise places the battery with its holder and asks the simulation. Holder and online state are read from PostgreSQL (`starbase_battery_control`, tower state) on every call.
 
@@ -117,9 +117,113 @@ No code or migration was added for this slice. The premise does not hold in this
 
 What is needed before a live item row can be authoritative: a verified source for the bunker's position and ball in a system (EveJS or a client fact), and a verified source for its online and owner state. Adding a table or column now would store values that no verified source sets, so it is not done. The DB regression for the existing lifecycle has not been rerun in this session.
 
+### POS force field ball, slice 1 (2026-11-18)
+
+Scope: the force field ball of an online control tower, in the simulation, created and removed by SimLink kinds 180 to 183 (protocol 104). The V24 client reads a tower's field through `playerOwned.py:91-115` (`forceFieldID` and the ball's harmonic, compared with the ship's); EveJS creates the field as an inventory item with `createSpaceItemForOwner` (`controlTowerRuntime.js:935-1032`).
+
+Implemented:
+
+- `crates/eve-space`: `PlaceForceField` / `ForceFieldPlaced` / `RemoveForceField` / `ForceFieldRemoved` in `link` (kind 180 to 183), a `Role::ForceField { tower_id }` deployable in `deployable.rs` (`place_force_field`, `remove_force_field`), and dispatch in `sim/dispatch.rs`. A field is a ball with the scene's usual visibility, removal and watcher handling.
+- `dotnet/src/Eve.Space`: the same four records in `SimMessages.cs`, their decode and encode arms, kind constants and a placement validator in `SimCodec.Shared.cs`; `SimCodec.ProtocolVersion` is 104.
+- `tools/dev/gen-simlink-fixtures.py`: kinds, encoders, valid and invalid cases for the four messages, and Hello/HelloAck at 104.
+
+Verified:
+
+- `cargo test -p eve-space --lib`: 1064 passed, 0 failed, 0 skipped. Nine of them are new: four link frame tests (`link::force_field_tests`) and five simulation tests (`sim::tests::force_field_tests`): placement and removal, an unchanged re-placement, a replacement id, a refused radius (0, -5, NaN), an id held by another tower, a missing field, and an unknown system.
+- `cargo clippy -p eve-space --all-targets -- -D warnings`: clean. `cargo fmt --all` applied.
+- `dotnet test dotnet/tests/Eve.Space.Tests`: 574 passed, 0 failed, 0 skipped (3 are new in `ForceFieldCodecTests`).
+- Release builds with warnings as errors: `Eve.Space` and `Eve.Space.Tests`, 0 warnings, 0 errors.
+
+Not done in slice 1 (the gaps stay open):
+
+- The golden fixtures are not regenerated: `tools/dev/gen-simlink-fixtures.py` is refused by the command policy in this session, so `oracle/fixtures/simlink/messages.json` and the shared Rust/C# fixture tests do not cover kinds 180 to 183 or version 104. The generator source is updated and must be run to regenerate the file.
+- The Host does not send `PlaceForceField` / `RemoveForceField`. The tower-online and tower-offline transitions (`SpaceContainers.ControlTowers.cs`) need a durable item id for the field (EveJS creates a real inventory item); the Host has no allocator for it, and inventing an id would be a fake success. No `ISimulation` / `SimClient` method for the two kinds exists yet.
+- The field's category is the default charge category (`category_of`), not the SDE category of the force field type; the radius and the type come from the message.
+- Admission and the boundary are slice 2 (below); the harmonic publication and the field's start time are slice 3 (below).
+
+### POS force field admission and boundary, slice 2 (2026-11-18)
+
+Scope: who a force field admits and what happens to a ship it does not admit, in the simulation. Sources: EveJS `starbaseAccessRuntime.js` (`getForceFieldAccess`, `canShipEnterForceField`, `matchesPassword`), `starbaseForceFieldBoundary.js` (`enforceForceFieldMovement`, `resolveDeniedEntry`, `synchronizeShipHarmonic`, `BOUNDARY_CLEARANCE_METERS` 1 m, repulsion 500 to 2 500 m/s), and `forceFieldContainment.js` (group 411 containment, the `centerDistance + shipRadius < fieldRadius` test, which the boundary does not use). The client compares a ship's harmonic with the field's (`playerOwned.py:91-115`).
+
+Implemented in `crates/eve-space/src/scene/force_field.rs`:
+
+- Admission (`Access::admits_group` plus the password set): a ship is admitted by its corporation when the tower allows the corporation and the ids are non-zero; by its alliance when the tower allows the alliance and the id is non-zero; or by a matching ship password. Other ships are not admitted.
+- Boundary (`enforce_force_fields`, called from the pilot settle path in `scene/movement.rs`): for each field, the boundary is the field radius plus the ship radius plus 1 m. A move that crosses the boundary is stopped on its surface where it enters. A ship that starts inside is not pulled back, and is pushed out at 500 to 2 500 m/s. A crossing move is always in EveJS's boundary-contact band, so its outward speed is 10% of the inward speed, capped at 100 m/s. An order that pulls the ship back in is cancelled (`Course::Stop`). A ship in warp is not checked; a warp that completes is checked at its end.
+- Harmonic (state only): a ship admitted inside a field gets the tower's id as its harmonic, a ship with no admitted field has none. It is held in `Scene::force_field_harmonics` and is told to the client in slice 3 (below).
+- Protocol 103, kinds 184 `SetForceFieldAccess` and 185 `ShipForceFieldPassword` (no answer). `Access` is held per tower, so an access set before the field is placed applies to it. A pilot that is no longer in the scene loses its password and harmonic at the next settle.
+
+Verified:
+
+- `cargo test -p eve-space --lib`: 1082 passed, 0 failed, 0 skipped, after a clean rebuild of the package. Slice 2 adds 18 of them: 15 scene tests (`scene::force_field_tests`: the EveJS geometry, admission by corporation, alliance and password, a denied alliance, a field without access, the boundary push and its 100 m/s contact value, the 500 m/s push for a ship inside, the order cancel, the warp exemption, the scene settle path, and the leave cleanup), two link frame tests for kinds 184 and 185 (roundtrip, kinds, bad flags), and one sim test (access and password kept without an answer).
+- `cargo clippy -p eve-space --all-targets -- -D warnings`: clean. `cargo fmt --all` applied.
+- `dotnet test dotnet/tests/Eve.Space.Tests`: 575 passed, 0 failed, 0 skipped. One is new: `Force_field_access_and_ship_password_roundtrip_over_the_sim_link`.
+- Release builds with warnings as errors: `Eve.Space` and `Eve.Space.Tests`, 0 warnings, 0 errors.
+
+Gaps and approximations (not verified against a client):
+
+- Standings admission is not implemented: the pinned EveJS tree does not back it (the rule the task named), so it is recorded here as a gap rather than invented.
+- The Host does not send `SetForceFieldAccess` or `ShipForceFieldPassword`, and it cannot place a field yet (the slice 1 gap: no field item id). The Host already has `SetShipPasswordAsync` (`dotnet/src/Eve.Services.Space/SpaceSessions.cs:181-217`), which matches the password with `StarbasePasswordHash` and sets a `harmonic` slim field from the tower's deployable id without any field. That is a separate path from the simulation's harmonic and must be reconciled when the Host is wired.
+- A ship that is not in a field's range is never checked, so a field that is not placed does not stop anything. Nothing reaches the client yet: the boundary correction moves the ship in the simulation, and the correction is published only through the existing position updates.
+- Approximations: a warp is treated as completed when the flight is gone after a settle (EveJS marks the completion explicitly); the order cancel for `Goto` uses the heading, and for `Follow` and `Orbit` always cancels (EveJS's `targetPoint` is null for an entity target, which is what it does); NPC pilots are checked like player pilots, which EveJS does not confirm for NPC ships.
+- The `Role::ForceField` ball still has the default charge category (slice 1).
+
+### POS force field presentation, slice 3 (2026-11-18)
+
+Scope: what the clients that see a force field and its ships are told. Client facts used (V24.01, read with codebase-memory `get_code_snippet` and not run): `PlayerOwned.CompareShipStructureHarmonic` (`playerOwned.py:91-115`) returns true when the field ball's harmonic is not -1 and equals the ship's; `ForceField.Assemble` (`environment/spaceObject/forceField.py:11-23`) reads the slim item's `forcefieldStartTime` to play the field's start animation after 10 s. EveJS shapes: `buildForceFieldBoundaryCorrectionUpdates` and `buildStarbaseHarmonicUpdates` (`destiny/commands/starbaseForceField.js`), and `buildSetBallHarmonicPayload` (`destiny/stream/actions.js:209-226`, `SetBallHarmonic` with entity, harmonic, corporation, alliance, forcefield flag).
+
+Implemented:
+
+- The field's ball carries its tower as its harmonic (`deployable.rs` `ball_harmonic`, in the AddBalls the watchers receive).
+- The field's slim item carries `forcefieldStartTime` set to the tick it was placed at (a field placed again starts again).
+- A boundary stop is told to the bound pilot and to its observers (`scene/force_field.rs` `publish_force_field`, through the same `tell_split` path as the collision correction): `SetSpeedFraction 0` and `Stop` if the order was cancelled, then `SetBallPosition` if the ship was moved, then `SetBallVelocity`, in EveJS's order.
+- A change of a pilot's harmonic is told as `SetBallHarmonic [ship, harmonic, corporation, alliance, 0]`, with -1 for none.
+- A field going down and coming back is the existing deployable path: the ball is removed from, or added to, the views of the pilots who see it.
+
+Verified (headless, Rust unit tests on the scene's own output):
+
+- `cargo test -p eve-space --lib`: 1087 passed, 0 failed, 0 skipped after a clean rebuild of the package. Slice 3 adds five: the ball's harmonic, the start time (placed, and placed again), the stop told as position and velocity with no harmonic, the cancelled order told in EveJS's order, and an admitted ship told the tower's harmonic.
+- `cargo clippy -p eve-space --all-targets -- -D warnings`: clean.
+
+Not verified and not done:
+
+- No graphical client run, so nothing here is shown to a pilot yet.
+- The notification a pilot sees when a field goes down or comes back is not implemented. The client events for a tower's state come from the Host through `posState` and `OnStructureFullyOnline` (`playerOwned.py:73-89`); no client event named for a force field going down was found (codebase-memory: `forceField.py`, `moonmining.py`, `menusvc.py` `EnterForceFieldPassword` only). The Host does not place fields yet, so there is nothing to notify.
+- A ship's harmonic is told only when the boundary runs on a move and the harmonic changes. A pilot who is already inside an admitted field when another pilot first sees it is not given the harmonic in its first ball (its ball is sent with no harmonic), and the `SetBallHarmonic` argument shape is EveJS's, not a client-verified one.
+- A pilot's harmonic is kept per session; a ship that is not moved is not re-told, which matches EveJS only as far as its move-driven sync goes.
+- The field's category is still the default charge category (slice 1).
+
+### POS force field Host wiring, slice 4 (2026-11-19)
+
+Scope: the Host gives an online control tower its force field and sends the admission state, so slices 1 to 3 reach the simulation. The gap this closes was the missing durable item id: the field is now a real inventory item, as EveJS creates it (`controlTowerRuntime.js:935-1032`, `TYPE_FORCE_FIELD` 16103, group 411, name "Force Field", `ATTRIBUTE_SHIELD_RADIUS` 680).
+
+Implemented:
+
+- Persistence: `SpaceItemKind.ForceField` (6) in `PgSpaceItemStore.cs`, and migration `0034_force_field_kind.sql`, which widens the `space_items_kind_valid` check to 0 to 6 and adds a partial unique index on `launcher_id` where `kind = 6`, so a tower has at most one field item. The field item is created with `PgItemStore.CreateAsync` and its space row written with `PgSpaceItemStore.SaveAsync`. Its launcher is the tower, its corporation and alliance are the tower's, its radius is the tower type's SDE `shieldRadius` (30 000 m for the Amarr Control Tower, type 12235), and its type is 16103.
+- Reconcile (`SpaceContainers.ControlTowers.cs` `ReconcileForceFieldAsync`): run by `SynchronizeControlTowerSlimStateAsync` after the state transaction commits, and by `RestoreDeployedAsync` when a system opens. An online tower gets one field item (kept on a repeat sync) and `PlaceForceField`. Any other state deletes the item and sends `RemoveForceField`, and a removal the simulation answers with `FORCE_FIELD_NOT_IN_SPACE` counts as done. A placement the simulation refuses is an error (`InvalidOperationException`) and the item stays, so the next sync retries.
+- Triggers covered: the online job (`CompleteControlTowerOnlineAsync`), the hourly fuel job when the bay cannot pay, explicit offline (`OfflineControlTowerAsync`), and restart.
+- Simulation interface: `ISimulation.PlaceForceFieldAsync` and `RemoveForceFieldAsync` (answers matched by field id and tower id in `SimClient`), and `SetForceFieldAccess` (kind 184) and `SetShipForceFieldPassword` (kind 185), both without an answer.
+- Access: `SetTowerPassword` sends `SetForceFieldAccess` after its commit, with the corporation and alliance of the tower and the access flags it saved. A password of `false` keeps the saved password, as before.
+- Ship password: `SpaceSessions.SetShipPasswordAsync` now matches the password once against every control tower of the system. The harmonic slim field is written once from the first online match (as before), and the simulation receives `SetShipForceFieldPassword` for each tower with that same match, so the two cannot disagree.
+
+Verified (PostgreSQL `eve_p6`, `EVE_SDE_DIR` of the pinned SDE, Release, warnings as errors):
+
+- `ControlTowerHostTests`: 20 passed, 0 failed, 0 skipped. Three are new: `Force_field_follows_its_online_tower_once_and_is_taken_out_when_the_tower_goes_offline_by_fuel_or_by_request` (one item, SDE radius and type, repeat sync keeps the id, restart re-places it, fuel-out removal, online again, explicit offline removal), `A_field_the_simulation_refuses_is_an_error_and_is_placed_again_once_the_simulation_accepts_it`, and `Tower_access_reaches_the_simulation_each_time_the_posMgr_password_is_saved_over_host_wire` (real posMgr Host wire).
+- `SetShipPasswordHostTests`: 1 passed, 0 failed, 0 skipped. The existing registered-route test gained assertions: one harmonic write per call, one `SetShipForceFieldPassword` matching the tower, a refused match for the wrong password, and none for an invalid password. Its existing assertions are unchanged.
+- Release build of `Eve.Services.Space.Tests` with `TreatWarningsAsErrors`: succeeded, 0 warnings.
+
+Not verified and not done:
+
+- The full `Eve.Services.Space.Tests` project on `eve_p6` (Release, warnings as errors): 1270 passed, 0 failed, 0 skipped (8 m 13 s).
+- `Eve.Host` and `Eve.Host.Tests` were not built or run for this slice.
+- `oracle/fixtures/simlink/messages.json` is not regenerated (the generator is not run, per the session's policy).
+- A tower's password change does not re-match pilots that already hold a credential: `SpaceSessions` keeps only the SHA-256 digest of each pilot's password, so it cannot match against the new tower hash. Those pilots are matched again only when they set their password.
+- The simulation's per-pilot harmonic (`SetBallHarmonic`, slice 3) and the ship's `harmonic` slim field (the Host's write) remain two separate paths, each written once per event; they are not unified.
+- Standings admission remains a documented gap (slice 2).
+- No graphical client run.
+
 ## Open items
 
-- **POS force field and password admission:** the Host still does not create a force-field item/ball when a tower comes online, remove it on fuel failure/offline, publish `forceFieldID`, update its Destiny harmonic, or check corp/alliance/ship-password admission at a movement boundary. `SetTowerPassword` persistence alone is not the feature. The existing command-burst check uses the SDE shield radius and tower online state for that module's eligibility; it does not supply the force-field ball or crossing behavior.
+- **POS force field and password admission:** the Host now places and removes an online tower's field and sends its access and ship-password state (slice 4, migration 0034). Still open: the client-visible force-field presentation is not verified on the graphical client; a tower's password change does not re-match pilots already holding a credential; standings admission is not implemented; the simulation's per-pilot harmonic and the ship's `harmonic` slim field are separate paths.
 - **Starbase OBO target calls:** `AddTargetOBO` and `RemoveTargetOBO` remain unimplemented. The battery control grant (`AssumeStructureControl` / `RelinquishStructureControl`) now exists (see POS battery control grant below), but the DogmaLM bound object and the battery's target lock state in the Rust scene do not. Registering the two RPC names without them would not implement the client flow.
 - **Sentry targeting:** sentry settings persist and round-trip, but no associated battery targeting/defense controller consumes the policy.
 - **Other POS inventory/use consumers:** silo `viewput`/`viewputtake` is enforced. Ship-maintenance, reprocessing/compression arrays and jump-bridge `use` behavior remain incomplete.

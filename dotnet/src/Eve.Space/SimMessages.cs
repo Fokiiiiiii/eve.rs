@@ -1271,6 +1271,21 @@ public sealed record SimBatteryTargets(ulong RequestId, long BatteryId, string R
 public sealed record SimBatteryFire(ulong RequestId, long BatteryId, int SolarSystemId, bool On, long Target) : SimMessage;
 /// <summary>The answer to <see cref="SimBatteryFire"/>: an empty reason means the order was accepted; <paramref name="Active"/> says the battery fires at <paramref name="Target"/> (0 for none).</summary>
 public sealed record SimBatteryFired(ulong RequestId, long BatteryId, string Reason, bool Active, long Target) : SimMessage;
+/// <summary>The host puts an online POS control tower's force field in its system's scene (protocol 104): a ball of <paramref name="Radius"/> metres around
+/// <paramref name="Position"/>, whose harmonic is the tower. Answered by <see cref="SimForceFieldPlaced"/>.</summary>
+public sealed record SimPlaceForceField(long FieldId, long TowerId, int SolarSystemId, int TypeId, int GroupId, string DisplayName,
+    IReadOnlyList<double> Position, double Radius) : SimMessage;
+/// <summary>The answer to <see cref="SimPlaceForceField"/>: an empty reason means the field is in the scene.</summary>
+public sealed record SimForceFieldPlaced(long FieldId, string Reason) : SimMessage;
+/// <summary>The host takes a tower's force field out of its system's scene (protocol 104). Answered by <see cref="SimForceFieldRemoved"/>.</summary>
+public sealed record SimRemoveForceField(long TowerId, int SolarSystemId) : SimMessage;
+/// <summary>The answer to <see cref="SimRemoveForceField"/>: an empty reason means the field was taken out.</summary>
+public sealed record SimForceFieldRemoved(long TowerId, string Reason) : SimMessage;
+/// <summary>The host sets who a tower's force field admits by corporation and alliance (protocol 104). The field of the tower now or placed later takes it.
+/// No answer.</summary>
+public sealed record SimSetForceFieldAccess(long TowerId, int SolarSystemId, int CorporationId, int AllianceId, bool AllowCorporation, bool AllowAlliance) : SimMessage;
+/// <summary>The host says whether a pilot's ship password matches a tower's (protocol 104): a matching ship is admitted by the tower's field. No answer.</summary>
+public sealed record SimShipForceFieldPassword(ulong SessionId, long TowerId, int SolarSystemId, bool Matched) : SimMessage;
 
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;

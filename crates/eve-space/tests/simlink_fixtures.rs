@@ -2244,6 +2244,90 @@ fn message_of(case: &Value) -> Message {
                 war_faction_id: wide(case, "warFactionId"),
             },
         },
+        "PlaceBattery" => Message::PlaceBattery(Box::new(eve_space::link::BatteryPlacement {
+            battery_id: wide(case, "batteryId"),
+            solar_system_id: number("solarSystemId") as i32,
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            display_name: text(case, "displayName"),
+            holder_session: number("holderSession"),
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+            scan_resolution: case["scanResolution"].as_f64().unwrap(),
+            max_target_range: case["maxTargetRange"].as_f64().unwrap(),
+            max_locked_targets: number("maxLockedTargets") as i32,
+            online: case["online"].as_bool().unwrap(),
+        })),
+        "BatteryPlaced" => {
+            Message::BatteryPlaced { battery_id: wide(case, "batteryId"), reason: text(case, "reason") }
+        }
+        "BatteryTarget" => Message::BatteryTarget {
+            request_id: number("requestId"),
+            battery_id: wide(case, "batteryId"),
+            solar_system_id: number("solarSystemId") as i32,
+            order: number("order") as u8,
+            target: wide(case, "target"),
+        },
+        "BatteryTargets" => Message::BatteryTargets {
+            request_id: number("requestId"),
+            battery_id: wide(case, "batteryId"),
+            reason: text(case, "reason"),
+            pending: case["pending"].as_bool().unwrap(),
+            targets: case["targets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|target| target.as_str().unwrap().parse().unwrap())
+                .collect(),
+        },
+        "PlaceForceField" => Message::PlaceForceField(Box::new(eve_space::link::ForceFieldPlacement {
+            field_id: wide(case, "fieldId"),
+            tower_id: wide(case, "towerId"),
+            solar_system_id: number("solarSystemId") as i32,
+            type_id: number("typeId") as i32,
+            group_id: number("groupId") as i32,
+            display_name: text(case, "displayName"),
+            position: vector_of(case, "position"),
+            radius: case["radius"].as_f64().unwrap(),
+        })),
+        "ForceFieldPlaced" => {
+            Message::ForceFieldPlaced { field_id: wide(case, "fieldId"), reason: text(case, "reason") }
+        }
+        "RemoveForceField" => Message::RemoveForceField {
+            tower_id: wide(case, "towerId"),
+            solar_system_id: number("solarSystemId") as i32,
+        },
+        "ForceFieldRemoved" => {
+            Message::ForceFieldRemoved { tower_id: wide(case, "towerId"), reason: text(case, "reason") }
+        }
+        "SetForceFieldAccess" => Message::SetForceFieldAccess {
+            tower_id: wide(case, "towerId"),
+            solar_system_id: number("solarSystemId") as i32,
+            corporation_id: number("corporationId") as i32,
+            alliance_id: number("allianceId") as i32,
+            allow_corporation: case["allowCorporation"].as_bool().unwrap(),
+            allow_alliance: case["allowAlliance"].as_bool().unwrap(),
+        },
+        "ShipForceFieldPassword" => Message::ShipForceFieldPassword {
+            session_id: session_id(),
+            tower_id: wide(case, "towerId"),
+            solar_system_id: number("solarSystemId") as i32,
+            matched: case["matched"].as_bool().unwrap(),
+        },
+        "BatteryFire" => Message::BatteryFire {
+            request_id: number("requestId"),
+            battery_id: wide(case, "batteryId"),
+            solar_system_id: number("solarSystemId") as i32,
+            on: case["on"].as_bool().unwrap(),
+            target: wide(case, "target"),
+        },
+        "BatteryFired" => Message::BatteryFired {
+            request_id: number("requestId"),
+            battery_id: wide(case, "batteryId"),
+            reason: text(case, "reason"),
+            active: case["active"].as_bool().unwrap(),
+            target: wide(case, "target"),
+        },
         other => panic!("unknown kind {other}"),
     }
 }

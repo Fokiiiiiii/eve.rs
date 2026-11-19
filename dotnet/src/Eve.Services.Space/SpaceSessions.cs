@@ -761,12 +761,22 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
         return attributes;
     }
 
+    /// <summary>
+    /// Releases the POS battery control grants of a pilot that has left space, for any reason that takes it out of the scene: a logoff, a dock (at a station
+    /// or a structure) or a jump to another system. The grants go as a logoff's do: the battery's holder is cleared in the scene, so the former holder's
+    /// locks go with it.
+    /// </summary>
+    private async Task ReleaseBatteryControlsOfLeavingPilotAsync(long characterId, CancellationToken cancellationToken)
+    {
+        if (ReleaseBatteryControl is { } release)
+            await release(characterId, cancellationToken);
+    }
+
     public async ValueTask OnCharacterLeavingAsync(
         ClientSession session, long characterId, CancellationToken cancellationToken)
     {
         await OnSessionClosedAsync(session);
-        if (ReleaseBatteryControl is { } release)
-            await release(characterId, cancellationToken);
+        await ReleaseBatteryControlsOfLeavingPilotAsync(characterId, cancellationToken);
     }
 
     /// <summary>What a pilot that enters space does once it is in the scene (the squadrons its character has out there are taken up again).</summary>

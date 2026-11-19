@@ -303,6 +303,69 @@ public class ControlTowerHostTests
         Assert.Equal((0UL, true), (again.HolderSession, again.Online));
     }
 
+    /// <summary>The stargate a holder jumps through in the jump test, its far gate, and the system the far gate leads to.</summary>
+    private const long HolderJumpGate = 50016630;
+    private const long HolderJumpFarGate = 50016839;
+    private const int HolderJumpDestinationSystem = 30100034;
+
+    /// <summary>Records the battery grants that a pilot leaving space releases, through the same release the composition wires.</summary>
+    private static List<long> RecordBatteryReleases(Rig rig)
+    {
+        var released = new List<long>();
+        rig.Space.ReleaseBatteryControl = async (characterId, cancellationToken) =>
+        {
+            await rig.Containers.ReleaseBatteryControlAsync(characterId, cancellationToken);
+            released.Add(characterId);
+        };
+        return released;
+    }
+
+    /// <summary>Waits, for a bounded time, until a pilot's leaving space has released its grants (the release is made in the background).</summary>
+    private static async Task UntilBatteryReleasedAsync(List<long> released)
+    {
+        for (var attempt = 0; attempt < 500 && released.Count == 0; attempt++)
+            await Task.Delay(10);
+    }
+
+    [PgFact]
+    public async Task A_holder_that_docks_gives_up_its_battery_grant_so_the_scene_tells_the_battery_it_has_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var released = RecordBatteryReleases(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        rig.Sim.Heard.Clear();
+
+        // the simulation reports the dock; the pilot leaves space and its grant goes, as it does at a logoff
+        rig.Sim.Say(new SimDocked((ulong)fixture.Session.SessionId, Rig.Station, SimCondition.Full));
+        await UntilBatteryReleasedAsync(released);
+
+        Assert.False(rig.Space.IsInSpace(fixture.Session));
+        Assert.Equal(new[] { fixture.Session.CharacterId!.Value }, released);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (placed.HolderSession, placed.Online));
+    }
+
+    [PgFact]
+    public async Task A_holder_that_jumps_to_another_system_gives_up_its_battery_grant_so_the_scene_tells_the_battery_it_has_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var released = RecordBatteryReleases(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        rig.Sim.Heard.Clear();
+
+        // the simulation reports the jump through a gate; the pilot is in the far system, and its grant has gone with the old one
+        rig.Sim.Say(new SimJumped((ulong)fixture.Session.SessionId, (int)LowSecSystem, HolderJumpGate, HolderJumpDestinationSystem, HolderJumpFarGate));
+        await UntilBatteryReleasedAsync(released);
+
+        Assert.Equal(new[] { fixture.Session.CharacterId!.Value }, released);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (placed.HolderSession, placed.Online));
+    }
+
     /// <summary>The pilot holding a POS battery's control grant, read from PostgreSQL.</summary>
     private static async Task<long?> HeldByAsync(Rig rig, long battery)
     {

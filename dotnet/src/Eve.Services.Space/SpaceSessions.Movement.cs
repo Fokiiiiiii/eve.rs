@@ -566,6 +566,7 @@ public sealed partial class SpaceSessions
                 _log?.Invoke($"jump of character {pilot.CharacterId} to system {jumped.ToSystem} failed: {transition.Refusal}");
             else
             {
+                        await ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None);
                         await NotifyPilotEnteredSystemAsync(pilot.CharacterId, (ulong)session.SessionId, jumped.ToSystem);
                 if (inspectContraband)
                     await ApplyContrabandAsync(session, pilot.CharacterId, pilot.ShipId, jumped.ToSystem, CancellationToken.None);
@@ -689,6 +690,8 @@ public sealed partial class SpaceSessions
             {
                 _log?.Invoke($"docking of character {pilot.CharacterId} at {stationId} failed: {transition.Refusal}");
             }
+            else
+                await ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None);
         }
         catch (Exception error)
         {

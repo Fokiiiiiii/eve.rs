@@ -1033,7 +1033,7 @@ impl Message {
                 out.extend_from_slice(&field.solar_system_id.to_le_bytes());
                 out.extend_from_slice(&field.type_id.to_le_bytes());
                 out.extend_from_slice(&field.group_id.to_le_bytes());
-                put_text(&mut out, &field.name);
+                put_text(&mut out, &field.display_name);
                 put_vector(&mut out, &field.position);
                 out.extend_from_slice(&field.radius.to_le_bytes());
             }

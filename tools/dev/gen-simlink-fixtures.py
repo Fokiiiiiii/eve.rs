@@ -537,7 +537,7 @@ def build(m):
     if k == "ShipForceFieldPassword":
         return frame(k, u64(m["sessionId"]) + i64(m["towerId"]) + struct.pack("<i", m["solarSystemId"]) + bytes([1 if m["matched"] else 0]))
     if k == "PlaceForceField":
-        body = i64(m["fieldId"]) + i64(m["towerId"]) + struct.pack("<iii", m["solarSystemId"], m["typeId"], m["groupId"]) + s(m["name"])
+        body = i64(m["fieldId"]) + i64(m["towerId"]) + struct.pack("<iii", m["solarSystemId"], m["typeId"], m["groupId"]) + s(m["displayName"])
         return frame(k, body + struct.pack("<3dd", *m["position"], m["radius"]))
     if k == "ForceFieldPlaced":
         return frame(k, i64(m["fieldId"]) + s(m["reason"]))
@@ -1018,7 +1018,7 @@ valid = [
     {"name": "battery target refused out of range", "kind": "BatteryTargets", "requestId": "71", "batteryId": "1050000001",
      "reason": "TARGET_OUT_OF_RANGE", "pending": False, "targets": []},
     {"name": "place a force field for an online tower (protocol 103)", "kind": "PlaceForceField", "fieldId": "1050000100", "towerId": "1050000099",
-     "solarSystemId": 30000142, "typeId": 16000, "groupId": 411, "name": "Force Field", "position": [1.0, 2.0, 3.0], "radius": 1000.0},
+     "solarSystemId": 30000142, "typeId": 16000, "groupId": 411, "displayName": "Force Field", "position": [1.0, 2.0, 3.0], "radius": 1000.0},
     {"name": "force field placed", "kind": "ForceFieldPlaced", "fieldId": "1050000100", "reason": ""},
     {"name": "force field placement refused for a radius of zero", "kind": "ForceFieldPlaced", "fieldId": "1050000100", "reason": "FORCE_FIELD_RADIUS_INVALID"},
     {"name": "remove the force field of a tower", "kind": "RemoveForceField", "towerId": "1050000099", "solarSystemId": 30000142},

@@ -1341,12 +1341,12 @@ public static partial class SimCodec
                     var solarSystem = r.I32();
                     var type = r.I32();
                     var group = r.I32();
-                    var name = r.Text();
+                    var displayName = r.Text();
                     var position = ReadVector(ref r);
                     var radius = r.F64();
                     if (!ValidForceFieldPlacement(position, radius))
                         throw new SimLinkException(SimLinkError.BadValue, "bad force field placement");
-                    message = new SimPlaceForceField(field, tower, solarSystem, type, group, name, position, radius);
+                    message = new SimPlaceForceField(field, tower, solarSystem, type, group, displayName, position, radius);
                     break;
                 }
             case Kind.ForceFieldPlaced:

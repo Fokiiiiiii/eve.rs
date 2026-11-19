@@ -744,7 +744,7 @@ public class SimCodecTests
             "BatteryTargets" => new SimBatteryTargets((ulong)Wide(c, "requestId"), Wide(c, "batteryId"), (string)c["reason"]!, (bool)c["pending"]!,
                 [.. ((JsonArray)c["targets"]!).Select(t => long.Parse((string)t!, CultureInfo.InvariantCulture))]),
             "PlaceForceField" => new SimPlaceForceField(Wide(c, "fieldId"), Wide(c, "towerId"), (int)c["solarSystemId"]!, (int)c["typeId"]!, (int)c["groupId"]!,
-                (string)c["name"]!, VectorOf(c["position"]!), (double)c["radius"]!),
+                (string)c["displayName"]!, VectorOf(c["position"]!), (double)c["radius"]!),
             "ForceFieldPlaced" => new SimForceFieldPlaced(Wide(c, "fieldId"), (string)c["reason"]!),
             "RemoveForceField" => new SimRemoveForceField(Wide(c, "towerId"), (int)c["solarSystemId"]!),
             "ForceFieldRemoved" => new SimForceFieldRemoved(Wide(c, "towerId"), (string)c["reason"]!),

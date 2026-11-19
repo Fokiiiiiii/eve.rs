@@ -2754,7 +2754,7 @@ impl Message {
                 let solar_system_id = r.i32()?;
                 let type_id = r.i32()?;
                 let group_id = r.i32()?;
-                let name = r.text()?;
+                let display_name = r.text()?;
                 let position = read_vector(&mut r)?;
                 let radius = r.f64()?;
                 if !radius.is_finite() || position.iter().any(|value| !value.is_finite()) {
@@ -2766,7 +2766,7 @@ impl Message {
                     solar_system_id,
                     type_id,
                     group_id,
-                    name,
+                    display_name,
                     position,
                     radius,
                 }))

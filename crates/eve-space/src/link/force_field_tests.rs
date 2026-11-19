@@ -7,7 +7,7 @@ fn placement() -> ForceFieldPlacement {
         solar_system_id: 30_000_001,
         type_id: 16_000,
         group_id: 411,
-        name: "Force Field".to_string(),
+        display_name: "Force Field".to_string(),
         position: [1.0, 2.0, 3.0],
         radius: 1_000.0,
     }

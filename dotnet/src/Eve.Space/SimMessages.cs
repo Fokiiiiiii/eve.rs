@@ -1269,7 +1269,7 @@ public sealed record SimBatteryTarget(ulong RequestId, long BatteryId, int Solar
 public sealed record SimBatteryTargets(ulong RequestId, long BatteryId, string Reason, bool Pending, IReadOnlyList<long> Targets) : SimMessage;
 /// <summary>The host puts an online POS control tower's force field in its system's scene (protocol 103): a ball of <paramref name="Radius"/> metres around
 /// <paramref name="Position"/>, whose harmonic is the tower. Answered by <see cref="SimForceFieldPlaced"/>.</summary>
-public sealed record SimPlaceForceField(long FieldId, long TowerId, int SolarSystemId, int TypeId, int GroupId, string Name,
+public sealed record SimPlaceForceField(long FieldId, long TowerId, int SolarSystemId, int TypeId, int GroupId, string DisplayName,
     IReadOnlyList<double> Position, double Radius) : SimMessage;
 /// <summary>The answer to <see cref="SimPlaceForceField"/>: an empty reason means the field is in the scene.</summary>
 public sealed record SimForceFieldPlaced(long FieldId, string Reason) : SimMessage;

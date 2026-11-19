@@ -270,7 +270,7 @@ pub struct ForceFieldPlacement {
     pub solar_system_id: i32,
     pub type_id: i32,
     pub group_id: i32,
-    pub name: String,
+    pub display_name: String,
     pub position: [f64; 3],
     pub radius: f64,
 }

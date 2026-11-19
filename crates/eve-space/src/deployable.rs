@@ -1065,7 +1065,7 @@ impl Scene {
             spec: Spec {
                 charge_type_id: placement.type_id,
                 group_id: placement.group_id,
-                name: placement.name,
+                name: placement.display_name,
                 radius: placement.radius,
             },
             role: Role::ForceField { tower_id },

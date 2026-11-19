@@ -2286,7 +2286,7 @@ fn message_of(case: &Value) -> Message {
             solar_system_id: number("solarSystemId") as i32,
             type_id: number("typeId") as i32,
             group_id: number("groupId") as i32,
-            name: text(case, "name"),
+            display_name: text(case, "displayName"),
             position: vector_of(case, "position"),
             radius: case["radius"].as_f64().unwrap(),
         })),

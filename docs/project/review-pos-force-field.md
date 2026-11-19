@@ -90,6 +90,8 @@ Rejected candidates are listed at the end, with reasons.
 
 ## F4 (Medium, confirmed): a stale password match can finish after the rematch and overwrite it
 
+**Outcome (fixed):** `ControlTowerHostTests.A_tower_password_change_is_the_last_word_on_a_pilot_whose_ship_password_match_was_still_running` failed first (the last `SimShipForceFieldPassword` was the stale `Matched = True`). A pilot's match and its sends (`SetShipPasswordAsync`) and the system's rematch (`RematchShipPasswordsAsync`) now run under one per-system gate (`_passwordGates`), so the rematch that follows a saved tower password is always the last word. Verified: `ControlTowerHostTests` 26 of 26, `SetShipPasswordHostTests` 1 of 1 passed. The test drives the race through a test-only seam `SpaceSessions.AfterShipPasswordMatch` (null in the game, awaited after the match is computed and before the send).
+
 **Files**
 - `dotnet/src/Eve.Services.Space/SpaceSessions.cs:197-205` (`SetShipPasswordAsync`). The credential is stored at 197. The match is computed at 199 from a tower configuration read before the await. The send is at 204-205, after a check (201-203) that compares only the credential and the ship.
 - `dotnet/src/Eve.Services.Space/SpaceSessions.ShipPasswords.cs:35-47` (`RematchShipPasswordsAsync`), which runs from `SetTowerPasswordAsync` (`SpaceContainers.PosMgr.cs:183`).

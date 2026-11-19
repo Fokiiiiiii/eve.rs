@@ -195,16 +195,28 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You must be piloting a ship in space to set its starbase password.")));
 
         var credential = new ShipStarbaseCredential(characterId.Value, shipId.Value, SHA256.HashData(Encoding.UTF8.GetBytes(password)));
-        _shipStarbaseCredentials[sessionId] = credential;
-        // every control tower of the system is matched and the simulation is told each match: the simulation decides the ship's harmonic from them
-        var matches = await MatchShipPasswordAsync(systemId, credential.PasswordDigest, cancellationToken);
+        // the match and its sends hold the system's gate: a rematch of the system (a tower's password changed) is sent before them or after them, never between
+        var gate = _passwordGates.GetOrAdd(systemId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            _shipStarbaseCredentials[sessionId] = credential;
+            // every control tower of the system is matched and the simulation is told each match: the simulation decides the ship's harmonic from them
+            var matches = await MatchShipPasswordAsync(systemId, credential.PasswordDigest, cancellationToken);
+            if (AfterShipPasswordMatch is { } hold)
+                await hold(cancellationToken);
 
-        if (!_shipStarbaseCredentials.TryGetValue(sessionId, out var current) || !ReferenceEquals(current, credential) ||
-            session.GetInt("shipid") != shipId || !_pilots.TryGetValue(sessionId, out pilot) || pilot.ShipId != shipId)
+            if (!_shipStarbaseCredentials.TryGetValue(sessionId, out var current) || !ReferenceEquals(current, credential) ||
+                session.GetInt("shipid") != shipId || !_pilots.TryGetValue(sessionId, out pilot) || pilot.ShipId != shipId)
+                return PyNone.Instance;
+            foreach (var (towerId, matched) in matches)
+                _sim.SetShipForceFieldPassword(new SimShipForceFieldPassword(sessionId, towerId, systemId, matched));
             return PyNone.Instance;
-        foreach (var (towerId, matched) in matches)
-            _sim.SetShipForceFieldPassword(new SimShipForceFieldPassword(sessionId, towerId, systemId, matched));
-        return PyNone.Instance;
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     /// <summary>Blockers owned by adjacent systems (crime timers, targeting, fleet, drone and movement state).</summary>

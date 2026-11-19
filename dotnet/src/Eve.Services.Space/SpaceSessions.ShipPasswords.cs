@@ -4,6 +4,12 @@ namespace Eve.Services.Space;
 
 public sealed partial class SpaceSessions
 {
+    /// <summary>A test seam: awaited once a ship password's matches are computed and before they are sent to the simulation (null in the game).</summary>
+    public Func<CancellationToken, Task>? AfterShipPasswordMatch { get; set; }
+
+    /// <summary>The per-system gates of the ship password matches: a pilot's match and its sends, and a rematch of the system, run one after the other.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, SemaphoreSlim> _passwordGates = new();
+
     private readonly object _harmonicSync = new();
     private Task _harmonicWork = Task.CompletedTask;
 
@@ -34,6 +40,21 @@ public sealed partial class SpaceSessions
     /// new answers, and its harmonic reports then follow the saved passwords.
     /// </summary>
     public async Task RematchShipPasswordsAsync(int systemId, CancellationToken cancellationToken)
+    {
+        var gate = _passwordGates.GetOrAdd(systemId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await RematchShipPasswordsUnderGateAsync(systemId, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <summary>The rematch itself, run under the system's password gate.</summary>
+    private async Task RematchShipPasswordsUnderGateAsync(int systemId, CancellationToken cancellationToken)
     {
         foreach (var (sessionId, credential) in _shipStarbaseCredentials)
         {

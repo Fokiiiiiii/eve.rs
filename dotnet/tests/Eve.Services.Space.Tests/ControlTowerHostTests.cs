@@ -2043,6 +2043,42 @@ public class ControlTowerHostTests
         Assert.Empty(await ForceFieldItemsAsync(rig));
         Assert.Equal("offline", await rig.Deployed.TowerStateAsync(tower));
     }
+
+    [PgFact]
+    public async Task A_tower_password_change_is_the_last_word_on_a_pilot_whose_ship_password_match_was_still_running()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.Space.DeployedRecords = rig.Deployed;
+        var (session, tower) = await OnlineTowerAsync(rig);
+        var systemId = (int)LowSecSystem;
+        var sessionId = (ulong)session.SessionId;
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var holder = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+        Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("field-secret"), PyBool.True, PyBool.False));
+
+        // the pilot's match of the old password is held after it has been computed against the tower's saved password
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Space.AfterShipPasswordMatch = async _ =>
+        {
+            held.TrySetResult();
+            await release.Task;
+        };
+        var pilotMatch = rig.Space.SetShipPasswordAsync(session, new PyStr("field-secret"), CancellationToken.None);
+        await held.Task;
+
+        // the owner changes the tower's password meanwhile: its rematch is sent now, or it waits for the pilot's match in flight
+        var change = holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("tower-secret-two"), PyBool.True, PyBool.False);
+        await Task.WhenAny(change, Task.Delay(TimeSpan.FromSeconds(2)));
+        release.SetResult();
+        await pilotMatch;
+        Assert.IsType<PyNone>(await change);
+
+        // the password saved last is the last word: the pilot who holds the old one is refused, and the simulation is not told a stale match
+        Assert.Equal(new SimShipForceFieldPassword(sessionId, tower, systemId, false), rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Last());
+    }
 }
 
 

@@ -1337,7 +1337,7 @@ fn battery_placement(position: Vec3, holder: SessionId, online: bool) -> crate::
         solar_system_id: BATTERY_SYSTEM,
         type_id: 16631,
         group_id: 1_000,
-        name: "Test battery".to_string(),
+        display_name: "Test battery".to_string(),
         holder_session: holder,
         position: [position.x, position.y, position.z],
         radius: 60.0,
@@ -1412,6 +1412,40 @@ fn battery_offline_unheld_or_absent_refuses_every_order() {
     assert_eq!(unheld.reason, Some("NO_CONTROL_GRANT"), "{unheld:?}");
     let (absent, _) = scene.battery_order(BATTERY + 1, BatteryOrder::Lock(ship_id(B)), now);
     assert_eq!(absent.reason, Some("BATTERY_NOT_IN_SPACE"), "{absent:?}");
+}
+
+#[test]
+fn battery_going_offline_outside_an_order_drops_its_locks_and_tells_its_holder_clear() {
+    let (mut scene, now) = crowd(3);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, A, true)).expect("the battery is placed");
+    scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(B)), now);
+    let later = now + 200 * SECOND;
+    let settled = scene.settle_batteries(later);
+    assert_eq!(
+        obo_of(&settled),
+        vec![(A, vec![word("add"), id(BATTERY), id(ship_id(B)), Value::None])],
+        "{settled:?}"
+    );
+    scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(C)), later);
+    let offline = scene.place_battery(battery_placement(at, A, false)).expect("the battery is placed");
+    assert_eq!(
+        obo_of(&offline),
+        vec![(A, vec![word("clear"), id(BATTERY), Value::None, Value::None])],
+        "{offline:?}"
+    );
+    let (refused, told) = scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(B)), later);
+    assert_eq!(
+        refused,
+        BatteryAnswer { reason: Some("BATTERY_OFFLINE"), pending: false, targets: Vec::new() },
+        "{refused:?}"
+    );
+    assert!(obo_of(&told).is_empty(), "{told:?}");
+    let nothing_held = scene.place_battery(battery_placement(at, A, false)).expect("the battery is placed");
+    assert!(obo_of(&nothing_held).is_empty(), "{nothing_held:?}");
+    scene.place_battery(battery_placement(at, A, true)).expect("the battery is placed");
+    let (relocked, _) = scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(B)), later);
+    assert_eq!(relocked, BatteryAnswer { reason: None, pending: true, targets: Vec::new() }, "{relocked:?}");
 }
 
 #[test]

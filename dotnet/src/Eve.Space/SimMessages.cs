@@ -1258,7 +1258,7 @@ public sealed record SimArrived(ulong SessionId, long BeltId, IReadOnlyList<doub
 public sealed record SimWarpExited(ulong SessionId) : SimMessage;
 /// <summary>The host places a POS battery in its system's scene, or updates it (protocol 102). Its holder is the pilot whose control grant the host
 /// checked (0 for none); its locks are told to that pilot only. Answered by <see cref="SimBatteryPlaced"/>.</summary>
-public sealed record SimPlaceBattery(long BatteryId, int SolarSystemId, int TypeId, int GroupId, string Name, ulong HolderSession,
+public sealed record SimPlaceBattery(long BatteryId, int SolarSystemId, int TypeId, int GroupId, string DisplayName, ulong HolderSession,
     IReadOnlyList<double> Position, double Radius, double ScanResolution, double MaxTargetRange, int MaxLockedTargets, bool Online) : SimMessage;
 /// <summary>The answer to <see cref="SimPlaceBattery"/>: an empty reason means the battery is in the scene.</summary>
 public sealed record SimBatteryPlaced(long BatteryId, string Reason) : SimMessage;

@@ -1549,7 +1549,7 @@ private static void WriteStructureDamageCorrelation(
             case SimPlaceBattery m:
                 if (!ValidBatteryPlacement(m.Position, m.Radius, m.ScanResolution, m.MaxTargetRange))
                     throw new ArgumentException("Invalid battery placement.", nameof(message));
-                w.U8(Kind.PlaceBattery); w.I64(m.BatteryId); w.I32(m.SolarSystemId); w.I32(m.TypeId); w.I32(m.GroupId); w.Text(m.Name);
+                w.U8(Kind.PlaceBattery); w.I64(m.BatteryId); w.I32(m.SolarSystemId); w.I32(m.TypeId); w.I32(m.GroupId); w.Text(m.DisplayName);
                 w.U64(m.HolderSession); WriteVector(w, m.Position); w.F64(m.Radius); w.F64(m.ScanResolution); w.F64(m.MaxTargetRange);
                 w.I32(m.MaxLockedTargets); w.U8((byte)(m.Online ? 1 : 0));
                 break;

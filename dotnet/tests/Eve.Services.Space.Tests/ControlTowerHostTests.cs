@@ -1611,7 +1611,7 @@ public class ControlTowerHostTests
         Assert.Equal(41, await BayAsync(rig, tower, HeliumFuelBlock));
     }
     /// <summary>A battery and the two pilots around it, over the real registered PosMgr and dogma services: the holder's bound dogma location is <see cref="Oid"/>.</summary>
-    private sealed record BatteryObo(PosMgrHostWire Holder, PosMgrHostWire Other, ClientSession Session, ClientSession OtherSession, long Battery, long Target, string Oid) : IAsyncDisposable
+    private sealed record BatteryObo(PosMgrHostWire Holder, PosMgrHostWire Other, ClientSession Session, ClientSession OtherSession, long Battery, long Target, string Oid, long Tower) : IAsyncDisposable
     {
         public async ValueTask DisposeAsync()
         {
@@ -1660,7 +1660,7 @@ public class ControlTowerHostTests
         }
         var bound = Assert.IsType<PyTuple>(await holder.CallServiceAsync("dogmaIM", "MachoBindObject",
             new PyTuple([new PyLong(LowSecSystem), new PyInt(5)]), PyNone.Instance));
-        return new BatteryObo(holder, otherHost, session, other, battery, other.GetInt("shipid")!.Value, BoundOid(bound.Items[0]));
+        return new BatteryObo(holder, otherHost, session, other, battery, other.GetInt("shipid")!.Value, BoundOid(bound.Items[0]), tower);
     }
 
     [PgFact]
@@ -1698,6 +1698,28 @@ public class ControlTowerHostTests
         Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
         Assert.False(rig.Sim.Heard.OfType<SimPlaceBattery>().Last().Online);
         Assert.Empty(rig.Sim.Heard.OfType<SimBatteryTarget>());
+    }
+
+    [PgFact]
+    public async Task Battery_obo_is_placed_offline_in_the_simulation_when_its_tower_runs_out_of_fuel_outside_an_order()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        Assert.DoesNotContain(rig.Sim.Heard.OfType<SimPlaceBattery>(), placed => !placed.Online);
+
+        // the tower is online and its hourly fuel job finds an empty fuel bay: the tower and its battery go offline in one transaction, and the
+        // committed state is then placed in the simulation offline, with no holder, so the simulation releases the battery's locks and tells its holder
+        await rig.Deployed.SetTowerStateAsync(fixture.Tower, "online");
+        await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(SpaceContainers.ControlTowerFuelJob, rig.Now)
+        {
+            Key = $"tower:{fixture.Tower}",
+            Payload = new SpaceContainers.ControlTowerFuelDue(fixture.Tower),
+            OnDuplicate = Eve.Scheduler.OnDuplicate.Replace,
+        });
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(fixture.Battery));
+        var offline = Assert.Single(rig.Sim.Heard.OfType<SimPlaceBattery>(), placed => !placed.Online);
+        Assert.Equal((fixture.Battery, 0UL, LowSecSystem), (offline.BatteryId, offline.HolderSession, offline.SolarSystemId));
     }
 
     [PgFact]

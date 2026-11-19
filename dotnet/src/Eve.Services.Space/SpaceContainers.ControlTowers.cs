@@ -534,6 +534,8 @@ public sealed partial class SpaceContainers
                 _ => StructureAnchored,
             }, startedAt);
         }
+
+        await OfflineBatteriesAsync(towerId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Turns every associated online or onlining module off in the tower's state transaction.</summary>

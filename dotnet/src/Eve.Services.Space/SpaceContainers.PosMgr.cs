@@ -354,7 +354,9 @@ public sealed partial class SpaceContainers
     public async Task ReleaseBatteryControlAsync(long characterId, CancellationToken cancellationToken)
     {
         if (_deployed is null || characterId <= 0) return;
-        await _deployed.ReleaseBatteryControlsOfCharacterAsync(characterId, cancellationToken).ConfigureAwait(false);
+        // the simulation must learn each released battery has no holder, as RelinquishStructureControlAsync tells it
+        foreach (var tower in await _deployed.ReleaseBatteryControlsOfCharacterAsync(characterId, cancellationToken).ConfigureAwait(false))
+            await ReconcileSentryAsync(tower, cancellationToken).ConfigureAwait(false);
     }
 
     private bool IsPlayerControlledBattery(int typeId) =>

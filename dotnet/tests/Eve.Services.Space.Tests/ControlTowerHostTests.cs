@@ -1945,6 +1945,22 @@ public class ControlTowerHostTests
         Assert.Equal((fixture.Battery, 0UL), (released.BatteryId, released.HolderSession));
     }
 
+    [PgFact]
+    public async Task A_pilot_leaving_the_cluster_takes_its_batteries_out_of_the_simulation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "", true, []));
+        await fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO", new PyLong(fixture.Battery), new PyLong(fixture.Target));
+        Assert.Equal((ulong)fixture.Session.SessionId, rig.Sim.Heard.OfType<SimPlaceBattery>().Last().HolderSession);
+
+        // the pilot leaves the cluster: its grants are gone, and the simulation must be told the battery has no holder
+        await rig.Containers.ReleaseBatteryControlAsync(fixture.Session.CharacterId!.Value, CancellationToken.None);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var released = rig.Sim.Heard.OfType<SimPlaceBattery>().Last();
+        Assert.Equal((fixture.Battery, 0UL), (released.BatteryId, released.HolderSession));
+    }
+
     private const int ForceFieldType = 16_103, ForceFieldGroup = 411;
 
     /// <summary>An online control tower at a moon of <see cref="LowSecSystem"/>, with the pilot that manages it (the fuel test's path).</summary>

@@ -92,3 +92,12 @@ Each item below has its own commit. A failing test was written and seen to fail 
 - Not done: the Host has no battery fire effect (no `activateBattery`), so a holder with its grant still gets `MODULE_NOT_FOUND`. Implementing the fire is a feature, not a fix of this review. It needs the reference's effect name and cycle, and a sim command that the protocol does not yet have, so it is recorded here and not added.
 - Tests: `A_battery_activate_and_deactivate_are_refused_for_want_of_the_control_grant_once_the_grant_is_gone` (before the fix: `Assert.Equal` failed with `MODULE_NOT_FOUND`; after: passes, and no simulation command is sent). `A_battery_activate_is_not_refused_for_the_grant_while_its_holder_holds_the_grant` passes before and after (a guard: the gate does not refuse the holder).
 - Test run: `ControlTowerHostTests` 27 of 27 passed.
+
+### Full project run after the four items
+- `Eve.Services.Space.Tests`, no filter, after FU-R13: 1277 passed, 0 failed, 0 skipped, 1277 total (10 min 20 s). The six new tests are included (R8 1, R5 2, R4 1, R13 2).
+- Not run: the Rust crate (no Rust file changed); the other test projects (only Space code changed).
+
+### Still open after this round
+- FU-R5: the exits from space that are not a dock or a jump (`SpaceSessions.Death.cs`, `SpaceSessions.Abyssal.cs`, `SpaceSessions.AbyssalArtifacts.cs`, `SpaceSessions.Ships.cs`) still keep their grant. Each needs a decision.
+- FU-R13: the Host has no battery fire effect, so a holder with its grant is still refused as `MODULE_NOT_FOUND`.
+- FU-R8: the sweep runs on the first restore of a composition and only for grants written before it started, not for every row, as explained above.

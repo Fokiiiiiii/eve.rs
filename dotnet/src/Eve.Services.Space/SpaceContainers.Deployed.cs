@@ -91,6 +91,7 @@ public sealed partial class SpaceContainers
         try
         {
             var now = _nowUnixMs();
+            var restoredTower = false;
             foreach (var record in await _deployed.InSystemAsync(system))
             {
                 if (record.ExpiresAtMs <= now)
@@ -123,9 +124,13 @@ public sealed partial class SpaceContainers
                         record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.ActivateAtMs <= now,
                         record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
                     await RestoreControlTowerSlimStateAsync(record, CancellationToken.None);
-                    // a restarted simulation has no force field: an online tower's field is put back, and a field a stale record still holds is taken out
                     if (record.Kind == ControlTowerKind)
+                    {
+                        // a restarted simulation has none of the access a tower saved: it is told again, then an online tower's field is put back
+                        await SendSavedForceFieldAccessAsync(record, CancellationToken.None);
                         await ReconcileForceFieldAsync(record.DeployableId, CancellationToken.None);
+                        restoredTower = true;
+                    }
                     continue;
                 }
                 if (record.Kind == InhibitorKind)
@@ -167,6 +172,9 @@ public sealed partial class SpaceContainers
                     record.SolarSystemId, record.DeployableId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.OwnerId,
                     record.CorporationId, record.AllianceId, record.ShipId, record.ExpiresAtMs - now));
             }
+            // a restarted simulation is told each pilot's ship password match again, as the password save tells it
+            if (restoredTower)
+                await _space.RematchShipPasswordsAsync(system, CancellationToken.None);
         }
         catch (Exception error)
         {

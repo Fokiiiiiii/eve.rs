@@ -1949,6 +1949,50 @@ public class ControlTowerHostTests
         // one slim write per answer the simulation gave, in order: the Host adds none of its own
         Assert.Equal(3, HarmonicWrites().Count());
     }
+
+    [PgFact]
+    public async Task A_restarted_simulation_is_given_the_access_the_tower_saves_again_with_its_field()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, tower) = await OnlineTowerAsync(rig);
+        var record = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(tower));
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var holder = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+        // the corporation admitted, the alliance not: the simulation is told it when the password is saved
+        Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("field-secret"), PyBool.True, PyBool.False));
+        Assert.Single(rig.Sim.Heard.OfType<SimSetForceFieldAccess>());
+
+        // a restarted simulation has no access: the restore puts the access back with the field, as the tower saved it
+        rig.Sim.Heard.Clear();
+        await rig.Containers.RestoreDeployedAsync((int)LowSecSystem);
+        Assert.Equal(new SimSetForceFieldAccess(tower, (int)LowSecSystem, (int)record.CorporationId, (int)record.AllianceId, true, false),
+            Assert.Single(rig.Sim.Heard.OfType<SimSetForceFieldAccess>()));
+        Assert.Equal(tower, Assert.Single(rig.Sim.Heard.OfType<SimPlaceForceField>()).TowerId);
+    }
+
+    [PgFact]
+    public async Task A_restarted_simulation_is_told_again_the_ship_password_matches_of_the_pilots_in_the_system()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.Space.DeployedRecords = rig.Deployed;
+        var (session, tower) = await OnlineTowerAsync(rig);
+        var systemId = (int)LowSecSystem;
+        var sessionId = (ulong)session.SessionId;
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var holder = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+        Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("field-secret"), PyBool.True, PyBool.False));
+        await rig.Space.SetShipPasswordAsync(session, new PyStr("field-secret"), CancellationToken.None);
+        Assert.Equal(new SimShipForceFieldPassword(sessionId, tower, systemId, true), rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Last());
+
+        // the restarted simulation is told the pilot's match again, so the pilot who entered the password is admitted without typing it again
+        rig.Sim.Heard.Clear();
+        await rig.Containers.RestoreDeployedAsync(systemId);
+        Assert.Contains(new SimShipForceFieldPassword(sessionId, tower, systemId, true), rig.Sim.Heard.OfType<SimShipForceFieldPassword>());
+    }
 }
 
 

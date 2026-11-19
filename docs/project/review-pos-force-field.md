@@ -26,6 +26,8 @@ Rejected candidates are listed at the end, with reasons.
 
 ## F1 (High, confirmed): a simulation restart loses access and passwords, and the Host never re-sends them
 
+**Outcome (fixed):** the two restart tests `A_restarted_simulation_*` in `ControlTowerHostTests.cs` failed first (access and password match not re-sent; `Assert.Single` on an empty collection). `RestoreDeployedAsync` now re-sends the tower's saved access (`SendSavedForceFieldAccessAsync`, `SpaceContainers.PosMgr.cs`) and rematches the system's ship passwords once after the restore loop. Verified: `ControlTowerHostTests` 23 of 23 passed.
+
 **Files**
 - Rust state, in memory only: `crates/eve-space/src/scene/mod.rs:917-921` (`force_field_access`, `force_field_passwords`, `force_field_harmonics`).
 - Host restore: `dotnet/src/Eve.Services.Space/SpaceContainers.Deployed.cs:84` (`RestoreDeployedAsync`), `:121-127` (the control tower branch). It places the tower and calls `ReconcileForceFieldAsync`, but nothing else.

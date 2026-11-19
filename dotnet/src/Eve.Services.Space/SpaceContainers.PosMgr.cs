@@ -188,6 +188,21 @@ public sealed partial class SpaceContainers
         return PyNone.Instance;
     }
 
+    /// <summary>
+    /// Tells the simulation the access a tower saves for its force field: who it admits by corporation and by alliance. A restarted simulation has none of it,
+    /// so the restore gives it back with the field, as the password save does.
+    /// </summary>
+    private async Task SendSavedForceFieldAccessAsync(DeployedRecord tower, CancellationToken cancellationToken)
+    {
+        if (_deployed is null)
+            return;
+        var raw = await _deployed.TowerConfigurationAsync(tower.DeployableId, cancellationToken).ConfigureAwait(false);
+        var configuration = Normalize(raw is null ? new PosMgrTowerConfiguration() :
+            JsonSerializer.Deserialize<PosMgrTowerConfiguration>(raw, PosMgrJson) ?? new PosMgrTowerConfiguration());
+        _sim.SetForceFieldAccess(new SimSetForceFieldAccess(tower.DeployableId, tower.SolarSystemId, tower.CorporationId, tower.AllianceId,
+            configuration.AllowCorp, configuration.AllowAlliance));
+    }
+
     private async Task<PyValue> GetStarbasePermissionsAsync(ServiceCall call)
     {
         var (tower, configuration) = await ReadTowerConfigurationAsync(call, ReadPositiveId(call.Arg(0)), false).ConfigureAwait(false);

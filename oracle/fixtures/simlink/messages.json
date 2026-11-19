@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 103,
-   "hex": "03000000016700"
+   "version": 104,
+   "hex": "03000000016800"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 103,
+   "version": 104,
    "pollHz": 4,
-   "hex": "0700000002670004000000"
+   "hex": "0700000002680004000000"
   },
   {
    "name": "active Crimewatch flag",
@@ -818,7 +818,47 @@
    "hex": "2b000000ab470000000000000081ba953e0000000013005441524745545f4f55545f4f465f52414e47450000000000"
   },
   {
-   "name": "place a force field for an online tower (protocol 103)",
+   "name": "start a battery's fire at a held target",
+   "kind": "BatteryFire",
+   "requestId": "72",
+   "batteryId": "1050000001",
+   "solarSystemId": 30000142,
+   "on": true,
+   "target": "1790646377000016",
+   "hex": "1e000000be480000000000000081ba953e000000000ec4c90101502c3859955c0600"
+  },
+  {
+   "name": "stop a battery's fire",
+   "kind": "BatteryFire",
+   "requestId": "73",
+   "batteryId": "1050000001",
+   "solarSystemId": 30000142,
+   "on": false,
+   "target": "0",
+   "hex": "1e000000be490000000000000081ba953e000000000ec4c901000000000000000000"
+  },
+  {
+   "name": "battery fire accepted",
+   "kind": "BatteryFired",
+   "requestId": "72",
+   "batteryId": "1050000001",
+   "reason": "",
+   "active": true,
+   "target": "1790646377000016",
+   "hex": "1c000000bf480000000000000081ba953e00000000000001502c3859955c0600"
+  },
+  {
+   "name": "battery fire refused for a target not locked",
+   "kind": "BatteryFired",
+   "requestId": "74",
+   "batteryId": "1050000001",
+   "reason": "TARGET_NOT_LOCKED",
+   "active": false,
+   "target": "0",
+   "hex": "2d000000bf4a0000000000000081ba953e0000000011005441524745545f4e4f545f4c4f434b4544000000000000000000"
+  },
+  {
+   "name": "place a force field for an online tower (protocol 104)",
    "kind": "PlaceForceField",
    "fieldId": "1050000100",
    "towerId": "1050000099",
@@ -870,7 +910,7 @@
    "hex": "23000000b7e3ba953e000000001800464f5243455f4649454c445f4e4f545f494e5f5350414345"
   },
   {
-   "name": "set who a tower's force field admits by corporation and alliance (protocol 103)",
+   "name": "set who a tower's force field admits by corporation and alliance (protocol 104)",
    "kind": "SetForceFieldAccess",
    "towerId": "1050000099",
    "solarSystemId": 30000142,
@@ -881,7 +921,7 @@
    "hex": "17000000b8e3ba953e000000000ec4c901815cd705411ac8050100"
   },
   {
-   "name": "a pilot's ship password matches a tower (protocol 103)",
+   "name": "a pilot's ship password matches a tower (protocol 104)",
    "kind": "ShipForceFieldPassword",
    "sessionId": "1790646377000015",
    "towerId": "1050000099",
@@ -8540,6 +8580,11 @@
    "name": "battery target order five",
    "reason": "bad-value",
    "hex": "1e000000aa460000000000000081ba953e000000000ec4c90105502c3859955c0600"
+  },
+  {
+   "name": "battery fire flag not a boolean",
+   "reason": "bad-value",
+   "hex": "1e000000be480000000000000081ba953e000000000ec4c90102502c3859955c0600"
   },
   {
    "name": "battery radius not finite",

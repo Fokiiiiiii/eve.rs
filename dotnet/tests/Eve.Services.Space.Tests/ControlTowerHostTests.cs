@@ -1778,5 +1778,29 @@ public class ControlTowerHostTests
         Assert.Equal(new PyLong(fixture.Target), added.Args[2]);
         Assert.DoesNotContain(Events.Of(fixture.OtherSession), item => item.Name == "OnTargetOBO");
     }
+
+    [PgFact]
+    public async Task Battery_control_is_released_when_its_tower_runs_out_of_fuel_so_the_old_holder_cannot_order_it_back_online()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        await rig.Deployed.SetTowerStateAsync(fixture.Tower, "online");
+        await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(SpaceContainers.ControlTowerFuelJob, rig.Now)
+        {
+            Key = $"tower:{fixture.Tower}",
+            Payload = new SpaceContainers.ControlTowerFuelDue(fixture.Tower),
+            OnDuplicate = Eve.Scheduler.OnDuplicate.Replace,
+        });
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(fixture.Battery));
+
+        // the tower and its battery come back online, but nobody assumed the battery again: the offline transition released the old grant
+        await rig.Deployed.SetTowerStateAsync(fixture.Tower, "online");
+        await rig.Deployed.SetTowerStateAsync(fixture.Battery, "online");
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        Assert.Equal("DeniedShipChanged", refused.Error.UserErrorMessage);
+        Assert.Empty(rig.Sim.Heard.OfType<SimBatteryTarget>());
+    }
 }
 

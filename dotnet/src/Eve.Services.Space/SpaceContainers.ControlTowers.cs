@@ -552,6 +552,7 @@ public sealed partial class SpaceContainers
                 continue;
 
             await _deployed.SetTowerStateAsync(connection, transaction, module.DeployableId, TowerOffline, cancellationToken).ConfigureAwait(false);
+            await _deployed.ClearBatteryControlAsync(connection, transaction, module.DeployableId, cancellationToken).ConfigureAwait(false);
             if (_scheduler is not null)
                 await _scheduler.CancelAsync(connection, transaction, StarbaseModuleOnlineJob, $"module:{module.DeployableId}", cancellationToken).ConfigureAwait(false);
         }

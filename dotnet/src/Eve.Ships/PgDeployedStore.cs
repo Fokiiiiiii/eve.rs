@@ -158,6 +158,16 @@ public sealed class PgDeployedStore
         return await command.ExecuteNonQueryAsync(cancellationToken) == 1;
     }
 
+    /// <summary>Clears a POS battery's control grant whoever holds it, in the caller's transaction: the battery went offline, so its grant ends with it.</summary>
+    public async Task ClearBatteryControlAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long deployableId,
+        CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"DELETE FROM {_schema}.starbase_battery_control WHERE deployable_id = $1", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = deployableId });
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     /// <summary>Releases every POS battery control grant a pilot holds, when the pilot leaves the cluster.</summary>
     public async Task ReleaseBatteryControlsOfCharacterAsync(long characterId, CancellationToken cancellationToken = default)
     {

@@ -120,6 +120,12 @@ public sealed partial class SpaceSessions
     /// <summary>
     /// Starts an effect of a module of the pilot's ship. <paramref name="aim"/> is the point a point-targeted effect is aimed at (an offset from the ship's centre), or null.
     /// </summary>
+    /// <summary>
+    /// Whether an activation or deactivation of a module is refused for want of the control grant of the POS battery it names (set by the space containers,
+    /// which hold the grants). A module that is not a player-controlled battery is not this check's, and the ship's own refusal stands.
+    /// </summary>
+    public Func<ClientSession, long, CancellationToken, Task<bool>>? BatteryControlRefused { get; set; }
+
     public async Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
     {
         RequirePublicMoveSettled(session);
@@ -217,6 +223,8 @@ public sealed partial class SpaceSessions
         var made = ModulePackages.Of(snapshot.WithNeighbours(neighbours), _statics, moduleId, effectName, targetId, repeat, aim, aimEnd, AutoReloadsOf(pilot));
         if (made.Effect is not { } package)
         {
+            if (BatteryControlRefused is { } batteryRefused && await batteryRefused(session, moduleId, cancellationToken).ConfigureAwait(false))
+                return ModuleResult.Refusal("STARBASE_CONTROL_REQUIRED");
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
 
@@ -846,6 +854,8 @@ public sealed partial class SpaceSessions
             return structureObserver || session.GetInt("shipid") != pilot.ShipId ? ModuleResult.Refusal("REFUSED") : null;
         }
         var module = snapshot.Fitted.FirstOrDefault(item => item.Id == moduleId);
+        if (module is null && BatteryControlRefused is { } batteryRefused && await batteryRefused(session, moduleId, cancellationToken).ConfigureAwait(false))
+            return ModuleResult.Refusal("STARBASE_CONTROL_REQUIRED");
         if (structureObserver && (snapshot.Ship.OwnerId <= 0 || module is null || module.OwnerId != snapshot.Ship.OwnerId))
         {
             return ModuleResult.Refusal("REFUSED");

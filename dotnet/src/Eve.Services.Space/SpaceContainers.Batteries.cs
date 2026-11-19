@@ -142,6 +142,27 @@ public sealed partial class SpaceContainers
         }
     }
 
+    /// <summary>
+    /// Whether an activation or deactivation of a module is refused because it is a player-controlled POS battery whose control grant the session's pilot does
+    /// not hold in place. The grant is checked before the effect's name, as the reference checks it (starbaseControlRuntime's activateControlledBattery).
+    /// Any other module is not refused here (false).
+    /// </summary>
+    private async Task<bool> BatteryControlRefusedAsync(ClientSession session, long moduleId, CancellationToken cancellationToken)
+    {
+        if (_deployed is null || _source is null || moduleId <= 0)
+            return false;
+        var battery = await _deployed.GetAsync(moduleId, cancellationToken).ConfigureAwait(false);
+        if (battery is not { Kind: StarbaseModuleKind })
+            return false;
+        await _statics.EnsureTypesAsync([battery.TypeId], cancellationToken).ConfigureAwait(false);
+        if (!IsPlayerControlledBattery(battery.TypeId))
+            return false;
+        var characterId = session.CharacterId ?? 0;
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        var holder = await _deployed.BatteryControllerAsync(connection, null, moduleId, cancellationToken).ConfigureAwait(false);
+        return characterId <= 0 || holder != characterId || !BatteryOperatorInPlace(session, battery);
+    }
+
     /// <summary>A battery's numbers as its type's dogma gives them: its locks' range, its locked-target limit and its scan resolution.</summary>
     private readonly record struct BatteryNumbers(double MaxTargetRange, int MaxLockedTargets, double ScanResolution);
 

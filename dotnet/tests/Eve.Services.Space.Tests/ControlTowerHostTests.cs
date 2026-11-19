@@ -418,6 +418,31 @@ public class ControlTowerHostTests
         Assert.Equal((0UL, true), (last.HolderSession, last.Online));
     }
 
+    [PgFact]
+    public async Task A_battery_activate_and_deactivate_are_refused_for_want_of_the_control_grant_once_the_grant_is_gone()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        rig.Sim.Heard.Clear();
+
+        // the grant is checked before the effect's name, as the reference checks it before anything else of a battery's operation
+        var activated = await rig.Space.ActivateAsync(fixture.Session, fixture.Battery, "projectileFire", 0, 1, CancellationToken.None);
+        Assert.Equal(ModuleResult.Refusal("STARBASE_CONTROL_REQUIRED"), activated);
+        var deactivated = await rig.Space.DeactivateAsync(fixture.Session, fixture.Battery, "projectileFire", CancellationToken.None);
+        Assert.Equal(ModuleResult.Refusal("STARBASE_CONTROL_REQUIRED"), deactivated);
+        Assert.Empty(rig.Sim.Heard.OfType<SimCommand>());
+    }
+
+    [PgFact]
+    public async Task A_battery_activate_is_not_refused_for_the_grant_while_its_holder_holds_the_grant()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+
+        var activated = await rig.Space.ActivateAsync(fixture.Session, fixture.Battery, "projectileFire", 0, 1, CancellationToken.None);
+        Assert.NotEqual(ModuleResult.Refusal("STARBASE_CONTROL_REQUIRED"), activated);
+    }
+
     /// <summary>The pilot holding a POS battery's control grant, read from PostgreSQL.</summary>
     private static async Task<long?> HeldByAsync(Rig rig, long battery)
     {

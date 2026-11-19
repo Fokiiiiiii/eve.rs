@@ -429,6 +429,28 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceObservatory(SimPlaceObservatory observatory) => Heard.Enqueue(observatory);
     public void PlaceControlTower(SimPlaceControlTower tower) => Heard.Enqueue(tower);
+
+    /// <summary>What a force field placement is answered with: empty (in the scene) or a reason.</summary>
+    public string ForceFieldPlacementReason { get; set; } = "";
+
+    /// <summary>What a force field removal is answered with: empty (taken out) or a reason.</summary>
+    public string ForceFieldRemovalReason { get; set; } = "";
+
+    public Task<SimForceFieldPlaced> PlaceForceFieldAsync(SimPlaceForceField field, CancellationToken cancellationToken = default)
+    {
+        Heard.Enqueue(field);
+        return Task.FromResult(new SimForceFieldPlaced(field.FieldId, ForceFieldPlacementReason));
+    }
+
+    public Task<SimForceFieldRemoved> RemoveForceFieldAsync(SimRemoveForceField removal, CancellationToken cancellationToken = default)
+    {
+        Heard.Enqueue(removal);
+        return Task.FromResult(new SimForceFieldRemoved(removal.TowerId, ForceFieldRemovalReason));
+    }
+
+    public void SetForceFieldAccess(SimSetForceFieldAccess access) => Heard.Enqueue(access);
+
+    public void SetShipForceFieldPassword(SimShipForceFieldPassword password) => Heard.Enqueue(password);
     public void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket) => Heard.Enqueue(pocket);
     public Task<bool> PlaceDeadspacePocketAsync(SimPlaceDeadspacePocket pocket, CancellationToken cancellationToken = default)
     {

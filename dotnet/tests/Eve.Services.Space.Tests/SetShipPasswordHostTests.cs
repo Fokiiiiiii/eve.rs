@@ -46,13 +46,22 @@ public sealed class SetShipPasswordHostTests
 
         Assert.Equal(new SimSetSlimField(shipId, "harmonic", new SimSlimInt(towerId)),
             Assert.Single(rig.Sim.Heard.OfType<SimSetSlimField>()));
+        // the simulation is told the same match the one harmonic write came from: the tower matches the password
+        var sessionId = (ulong)session.SessionId;
+        Assert.Equal(new SimShipForceFieldPassword(sessionId, towerId, systemId, true),
+            Assert.Single(rig.Sim.Heard.OfType<SimShipForceFieldPassword>()));
         Assert.Same(PyNone.Instance, await rig.RegisteredCallAsync(session, bound, "SetShipPassword", new PyStr("not-the-tower-password")));
         Assert.Equal(new SimSetSlimField(shipId, "harmonic", new SimSlimInt(-1)), rig.Sim.Heard.OfType<SimSetSlimField>().Last());
+        // one harmonic write per call (two calls, two writes), and the wrong password is told to the simulation as a refused match
+        Assert.Equal(2, rig.Sim.Heard.OfType<SimSetSlimField>().Count(field => field.FieldName == "harmonic"));
+        Assert.Equal(new SimShipForceFieldPassword(sessionId, towerId, systemId, false), rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Last());
+        Assert.Equal(2, rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Count());
         var beforeInvalid = rig.Sim.Heard.OfType<SimSetSlimField>().Count();
         var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.RegisteredCallAsync(
             session, bound, "SetShipPassword", new PyStr(new string('x', 51))));
 
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
         Assert.Equal(beforeInvalid, rig.Sim.Heard.OfType<SimSetSlimField>().Count());
+        Assert.Equal(2, rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Count());
     }
 }

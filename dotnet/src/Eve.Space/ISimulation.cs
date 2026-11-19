@@ -308,6 +308,16 @@ public interface ISimulation
     void PlaceObservatory(SimPlaceObservatory observatory);
     void PlaceControlTower(SimPlaceControlTower tower);
 
+    /// <summary>Puts an online POS control tower's force field in its system's scene (protocol 103). Answered by the field's id.</summary>
+    Task<SimForceFieldPlaced> PlaceForceFieldAsync(SimPlaceForceField field, CancellationToken cancellationToken = default);
+    /// <summary>Takes a POS control tower's force field out of its system's scene (protocol 103). Answered by the tower's id.</summary>
+    Task<SimForceFieldRemoved> RemoveForceFieldAsync(SimRemoveForceField removal, CancellationToken cancellationToken = default);
+    /// <summary>Sets who a POS control tower's force field admits by corporation and alliance (protocol 103). No answer.</summary>
+    void SetForceFieldAccess(SimSetForceFieldAccess access);
+    /// <summary>Says whether a pilot's ship password matches a POS control tower's (protocol 103). No answer.</summary>
+    void SetShipForceFieldPassword(SimShipForceFieldPassword password);
+
+
     /// <summary>Puts a deadspace pocket of a dungeon in its system's scene at its origin (protocol 74).</summary>
     void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket);
     /// <summary>Queues a deadspace pocket, waiting for outbound queue room when needed.</summary>

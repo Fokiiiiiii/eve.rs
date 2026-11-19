@@ -43,6 +43,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimGetDeploymentBallsReply>> _deploymentBalls = new();
     private readonly ConcurrentDictionary<long, TaskCompletionSource<SimBatteryPlaced>> _batteryPlacements = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimBatteryTargets>> _batteryTargets = new();
+    private readonly ConcurrentDictionary<long, TaskCompletionSource<SimForceFieldPlaced>> _forceFieldPlacements = new();
+    private readonly ConcurrentDictionary<long, TaskCompletionSource<SimForceFieldRemoved>> _forceFieldRemovals = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReleaseTournamentCutoffReply>> _cutoffReleases = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRegisterTournamentCutoffReply>> _cutoffRegistrations = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimReadTournamentCutoffReply>> _cutoffReads = new();
@@ -372,6 +374,16 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 order.TrySetResult(targets);
                 break;
             case SimBatteryTargets:
+                break;
+            case SimForceFieldPlaced placed when _forceFieldPlacements.TryRemove(placed.FieldId, out var fieldPlacement):
+                fieldPlacement.TrySetResult(placed);
+                break;
+            case SimForceFieldPlaced:
+                break;
+            case SimForceFieldRemoved removed when _forceFieldRemovals.TryRemove(removed.TowerId, out var fieldRemoval):
+                fieldRemoval.TrySetResult(removed);
+                break;
+            case SimForceFieldRemoved:
                 break;
             case SimGetAbyssalParticipantPoseReply reply when _abyssalParticipantPoses.TryRemove(reply.RequestId, out var poseRequest):
                 poseRequest.TrySetResult(reply);
@@ -1044,6 +1056,20 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     /// <summary>Places a POS battery in its system's scene, or updates it (protocol 102). The answer is matched by the battery's id.</summary>
     public Task<SimBatteryPlaced> PlaceBatteryAsync(SimPlaceBattery request, CancellationToken cancellationToken = default) =>
         AwaitAsync(_batteryPlacements, request.BatteryId, request, cancellationToken);
+
+    /// <summary>Puts an online POS control tower's force field in its system's scene (protocol 103). The answer is matched by the field's id.</summary>
+    public Task<SimForceFieldPlaced> PlaceForceFieldAsync(SimPlaceForceField request, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_forceFieldPlacements, request.FieldId, request, cancellationToken);
+
+    /// <summary>Takes a POS control tower's force field out of its system's scene (protocol 103). The answer is matched by the tower's id.</summary>
+    public Task<SimForceFieldRemoved> RemoveForceFieldAsync(SimRemoveForceField request, CancellationToken cancellationToken = default) =>
+        AwaitAsync(_forceFieldRemovals, request.TowerId, request, cancellationToken);
+
+    /// <summary>Sets who a POS control tower's force field admits (protocol 103). No answer.</summary>
+    public void SetForceFieldAccess(SimSetForceFieldAccess access) => Send(access);
+
+    /// <summary>Says whether a pilot's ship password matches a POS control tower's (protocol 103). No answer.</summary>
+    public void SetShipForceFieldPassword(SimShipForceFieldPassword password) => Send(password);
 
     /// <summary>Asks the scene for a battery's lock, removal, clear or cancel (protocol 102). The answer is matched by the request id.</summary>
     public async Task<SimBatteryTargets> BatteryTargetAsync(SimBatteryTarget request, CancellationToken cancellationToken = default)

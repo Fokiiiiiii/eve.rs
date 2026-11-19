@@ -151,9 +151,38 @@ Not verified and not done:
 - A pilot's harmonic is kept per session; a ship that is not moved is not re-told, which matches EveJS only as far as its move-driven sync goes.
 - The field's category is still the default charge category (slice 1).
 
+### POS force field Host wiring, slice 4 (2026-11-19)
+
+Scope: the Host gives an online control tower its force field and sends the admission state, so slices 1 to 3 reach the simulation. The gap this closes was the missing durable item id: the field is now a real inventory item, as EveJS creates it (`controlTowerRuntime.js:935-1032`, `TYPE_FORCE_FIELD` 16103, group 411, name "Force Field", `ATTRIBUTE_SHIELD_RADIUS` 680).
+
+Implemented:
+
+- Persistence: `SpaceItemKind.ForceField` (6) in `PgSpaceItemStore.cs`, and migration `0034_force_field_kind.sql`, which widens the `space_items_kind_valid` check to 0 to 6 and adds a partial unique index on `launcher_id` where `kind = 6`, so a tower has at most one field item. The field item is created with `PgItemStore.CreateAsync` and its space row written with `PgSpaceItemStore.SaveAsync`. Its launcher is the tower, its corporation and alliance are the tower's, its radius is the tower type's SDE `shieldRadius` (30 000 m for the Amarr Control Tower, type 12235), and its type is 16103.
+- Reconcile (`SpaceContainers.ControlTowers.cs` `ReconcileForceFieldAsync`): run by `SynchronizeControlTowerSlimStateAsync` after the state transaction commits, and by `RestoreDeployedAsync` when a system opens. An online tower gets one field item (kept on a repeat sync) and `PlaceForceField`. Any other state deletes the item and sends `RemoveForceField`, and a removal the simulation answers with `FORCE_FIELD_NOT_IN_SPACE` counts as done. A placement the simulation refuses is an error (`InvalidOperationException`) and the item stays, so the next sync retries.
+- Triggers covered: the online job (`CompleteControlTowerOnlineAsync`), the hourly fuel job when the bay cannot pay, explicit offline (`OfflineControlTowerAsync`), and restart.
+- Simulation interface: `ISimulation.PlaceForceFieldAsync` and `RemoveForceFieldAsync` (answers matched by field id and tower id in `SimClient`), and `SetForceFieldAccess` (kind 184) and `SetShipForceFieldPassword` (kind 185), both without an answer.
+- Access: `SetTowerPassword` sends `SetForceFieldAccess` after its commit, with the corporation and alliance of the tower and the access flags it saved. A password of `false` keeps the saved password, as before.
+- Ship password: `SpaceSessions.SetShipPasswordAsync` now matches the password once against every control tower of the system. The harmonic slim field is written once from the first online match (as before), and the simulation receives `SetShipForceFieldPassword` for each tower with that same match, so the two cannot disagree.
+
+Verified (PostgreSQL `eve_p6`, `EVE_SDE_DIR` of the pinned SDE, Release, warnings as errors):
+
+- `ControlTowerHostTests`: 20 passed, 0 failed, 0 skipped. Three are new: `Force_field_follows_its_online_tower_once_and_is_taken_out_when_the_tower_goes_offline_by_fuel_or_by_request` (one item, SDE radius and type, repeat sync keeps the id, restart re-places it, fuel-out removal, online again, explicit offline removal), `A_field_the_simulation_refuses_is_an_error_and_is_placed_again_once_the_simulation_accepts_it`, and `Tower_access_reaches_the_simulation_each_time_the_posMgr_password_is_saved_over_host_wire` (real posMgr Host wire).
+- `SetShipPasswordHostTests`: 1 passed, 0 failed, 0 skipped. The existing registered-route test gained assertions: one harmonic write per call, one `SetShipForceFieldPassword` matching the tower, a refused match for the wrong password, and none for an invalid password. Its existing assertions are unchanged.
+- Release build of `Eve.Services.Space.Tests` with `TreatWarningsAsErrors`: succeeded, 0 warnings.
+
+Not verified and not done:
+
+- The full `Eve.Services.Space.Tests` run was started after these changes and had not finished when this section was written; its result is recorded in the verification section below once it ends.
+- `Eve.Host` and `Eve.Host.Tests` were not built or run for this slice.
+- `oracle/fixtures/simlink/messages.json` is not regenerated (the generator is not run, per the session's policy).
+- A tower's password change does not re-match pilots that already hold a credential: `SpaceSessions` keeps only the SHA-256 digest of each pilot's password, so it cannot match against the new tower hash. Those pilots are matched again only when they set their password.
+- The simulation's per-pilot harmonic (`SetBallHarmonic`, slice 3) and the ship's `harmonic` slim field (the Host's write) remain two separate paths, each written once per event; they are not unified.
+- Standings admission remains a documented gap (slice 2).
+- No graphical client run.
+
 ## Open items
 
-- **POS force field and password admission:** the simulation now has the force-field ball (slice 1, protocol 103), but the Host does not yet send it when a tower comes online or goes offline (no field item id), does not publish `forceFieldID`, update its Destiny harmonic, or check corp/alliance/ship-password admission at a movement boundary. `SetTowerPassword` persistence alone is not the feature. The existing command-burst check uses the SDE shield radius and tower online state for that module's eligibility; it does not supply the force-field ball or crossing behavior.
+- **POS force field and password admission:** the Host now places and removes an online tower's field and sends its access and ship-password state (slice 4, migration 0034). Still open: the client-visible force-field presentation is not verified on the graphical client; a tower's password change does not re-match pilots already holding a credential; standings admission is not implemented; the simulation's per-pilot harmonic and the ship's `harmonic` slim field are separate paths.
 - **Starbase OBO target calls:** `AddTargetOBO` and `RemoveTargetOBO` remain unimplemented. The battery control grant (`AssumeStructureControl` / `RelinquishStructureControl`) now exists (see POS battery control grant below), but the DogmaLM bound object and the battery's target lock state in the Rust scene do not. Registering the two RPC names without them would not implement the client flow.
 - **Sentry targeting:** sentry settings persist and round-trip, but no associated battery targeting/defense controller consumes the policy.
 - **Other POS inventory/use consumers:** silo `viewput`/`viewputtake` is enforced. Ship-maintenance, reprocessing/compression arrays and jump-bridge `use` behavior remain incomplete.

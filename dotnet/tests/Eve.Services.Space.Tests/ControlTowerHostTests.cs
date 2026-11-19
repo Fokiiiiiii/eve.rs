@@ -1778,5 +1778,133 @@ public class ControlTowerHostTests
         Assert.Equal(new PyLong(fixture.Target), added.Args[2]);
         Assert.DoesNotContain(Events.Of(fixture.OtherSession), item => item.Name == "OnTargetOBO");
     }
+
+    /// <summary>The Amarr Control Tower's shield radius (SDE attribute 680, shieldRadius): the radius of its force field, not of the tower's ball.</summary>
+    private const double TowerShieldRadius = 30_000d;
+    /// <summary>The SDE's Force Field type (group 411), which every POS control tower's field is an item of.</summary>
+    private const int ForceFieldType = 16_103, ForceFieldGroup = 411;
+
+    /// <summary>An online control tower at a moon of <see cref="LowSecSystem"/>, with the pilot that manages it (the fuel test's path).</summary>
+    private static async Task<(ClientSession Session, long Tower)> OnlineTowerAsync(Rig rig)
+    {
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower], LowSecSystem);
+        var tower = items[0];
+        var owner = session.GetInt("corpid") ?? 0;
+        await FuelAsync(rig, tower, HeliumFuelBlock, 39, owner);
+        await FuelAsync(rig, tower, NitrogenFuelBlock, 40, owner);
+        await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None);
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        await FuelAsync(rig, tower, HeliumFuelBlock, 2, owner);
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, tower, "onlineForStructures", 0, 1, CancellationToken.None));
+        rig.Now += OnliningMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("online", await rig.Deployed.TowerStateAsync(tower));
+        return (session, tower);
+    }
+
+    /// <summary>The force field items of the test system (their kind is <see cref="SpaceItemKind.ForceField"/>).</summary>
+    private static async Task<SpaceItem[]> ForceFieldItemsAsync(Rig rig) =>
+        (await rig.SpaceItems.InSystemAsync((int)LowSecSystem)).Where(item => item.Kind == SpaceItemKind.ForceField).ToArray();
+
+    [PgFact]
+    public async Task Force_field_follows_its_online_tower_once_and_is_taken_out_when_the_tower_goes_offline_by_fuel_or_by_request()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, tower) = await OnlineTowerAsync(rig);
+        var owner = session.GetInt("corpid") ?? 0;
+        var record = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(tower));
+
+        // one field for the online tower: the simulation is told its id, type, system, pose and the SDE shield radius, and the database holds one item for it
+        var placed = Assert.Single(rig.Sim.Heard.OfType<SimPlaceForceField>());
+        Assert.Equal(tower, placed.TowerId);
+        Assert.Equal((int)LowSecSystem, placed.SolarSystemId);
+        Assert.Equal(ForceFieldType, placed.TypeId);
+        Assert.Equal(ForceFieldGroup, placed.GroupId);
+        Assert.Equal("Force Field", placed.Name);
+        Assert.Equal(TowerShieldRadius, placed.Radius);
+        Assert.Equal(record.Position, placed.Position);
+        var item = Assert.Single(await ForceFieldItemsAsync(rig));
+        Assert.Equal(placed.FieldId, item.ItemId);
+        Assert.Equal(tower, item.LauncherId);
+        Assert.Equal(TowerShieldRadius, item.Radius);
+
+        // a repeat sync keeps the same item (no second field) and sends the same placement again, which the simulation takes as unchanged
+        await rig.Containers.SynchronizeControlTowerSlimStateAsync(tower);
+        Assert.Equal(placed.FieldId, rig.Sim.Heard.OfType<SimPlaceForceField>().Last().FieldId);
+        Assert.Single(await ForceFieldItemsAsync(rig));
+
+        // a restarted system (an empty simulation) puts the same field back in its scene
+        rig.Sim.Heard.Clear();
+        await rig.Containers.RestoreDeployedAsync((int)LowSecSystem);
+        Assert.Equal(placed.FieldId, Assert.Single(rig.Sim.Heard.OfType<SimPlaceForceField>()).FieldId);
+        Assert.Single(await ForceFieldItemsAsync(rig));
+
+        // the hourly period finds the bay short: the tower goes offline, and its field leaves the scene and the database
+        rig.Now += HourMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(tower));
+        Assert.Equal(new SimRemoveForceField(tower, (int)LowSecSystem), Assert.Single(rig.Sim.Heard.OfType<SimRemoveForceField>()));
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+        Assert.Null(await rig.SpaceItems.GetAsync(placed.FieldId));
+
+        // back online by request: a field again, and an explicit offline takes it out again
+        await FuelAsync(rig, tower, HeliumFuelBlock, 40, owner);
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(session, tower, "onlineForStructures", 0, 1, CancellationToken.None));
+        rig.Now += OnliningMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("online", await rig.Deployed.TowerStateAsync(tower));
+        var replaced = rig.Sim.Heard.OfType<SimPlaceForceField>().Last();
+        Assert.Equal(replaced.FieldId, Assert.Single(await ForceFieldItemsAsync(rig)).ItemId);
+
+        Assert.Equal(ModuleResult.Done, await rig.Space.DeactivateAsync(session, tower, "onlineForStructures", CancellationToken.None));
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(tower));
+        Assert.Equal(2, rig.Sim.Heard.OfType<SimRemoveForceField>().Count());
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+    }
+
+    [PgFact]
+    public async Task A_field_the_simulation_refuses_is_an_error_and_is_placed_again_once_the_simulation_accepts_it()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (_, tower) = await OnlineTowerAsync(rig);
+        var item = Assert.Single(await ForceFieldItemsAsync(rig));
+
+        rig.Sim.ForceFieldPlacementReason = "FORCE_FIELD_ID_TAKEN";
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Containers.SynchronizeControlTowerSlimStateAsync(tower));
+        Assert.Contains("FORCE_FIELD_ID_TAKEN", refused.Message);
+        // the tower is still online, so its item stays: the next sync sends the placement again
+        Assert.Equal(item.ItemId, Assert.Single(await ForceFieldItemsAsync(rig)).ItemId);
+
+        rig.Sim.ForceFieldPlacementReason = "";
+        await rig.Containers.SynchronizeControlTowerSlimStateAsync(tower);
+        Assert.Equal(item.ItemId, rig.Sim.Heard.OfType<SimPlaceForceField>().Last().FieldId);
+        Assert.Single(await ForceFieldItemsAsync(rig));
+    }
+
+    [PgFact]
+    public async Task Tower_access_reaches_the_simulation_each_time_the_posMgr_password_is_saved_over_host_wire()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, tower) = await OnlineTowerAsync(rig);
+        var record = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(tower));
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var holder = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+
+        // the corporation admitted, the alliance not, and a new password: the simulation is told the access, never the password
+        Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("field-secret"), PyBool.True, PyBool.False));
+        Assert.Equal(new SimSetForceFieldAccess(tower, (int)LowSecSystem, (int)record.CorporationId, (int)record.AllianceId, true, false),
+            Assert.Single(rig.Sim.Heard.OfType<SimSetForceFieldAccess>()));
+
+        // a password of false keeps the saved password and an alliance of None keeps the saved alliance access: only the corporation changes
+        Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), PyBool.False, PyBool.False, PyNone.Instance));
+        Assert.Equal(new SimSetForceFieldAccess(tower, (int)LowSecSystem, (int)record.CorporationId, (int)record.AllianceId, false, false),
+            rig.Sim.Heard.OfType<SimSetForceFieldAccess>().Last());
+        Assert.Equal(2, rig.Sim.Heard.OfType<SimSetForceFieldAccess>().Count());
+    }
 }
+
 

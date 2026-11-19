@@ -8,12 +8,12 @@ use crate::scene::{Command, Departure};
 use crate::ship::ShipSpec;
 use crate::world::{Body, BodyKind, Detail};
 
-const A: SessionId = 7;
-const B: SessionId = 8;
+pub(super) const A: SessionId = 7;
+pub(super) const B: SessionId = 8;
 const C: SessionId = 9;
 const D: SessionId = 10;
 const E: SessionId = 11;
-const SECOND: i64 = 10_000_000;
+pub(super) const SECOND: i64 = 10_000_000;
 const PLANET: i64 = 40_000_001;
 
 fn spec_of(offset: i64) -> ShipSpec {
@@ -25,7 +25,7 @@ fn spec_of(offset: i64) -> ShipSpec {
     other
 }
 
-fn ship_id(session: SessionId) -> i64 {
+pub(super) fn ship_id(session: SessionId) -> i64 {
     spec_of(session as i64 - A as i64).ship_id
 }
 
@@ -49,7 +49,7 @@ fn world() -> Arc<crate::world::SolarSystem> {
 }
 
 /// Ships A and B (and C when asked), bound, thirty seconds after they undocked one second apart: no one is protected.
-fn crowd(ships: usize) -> (Scene, i64) {
+pub(super) fn crowd(ships: usize) -> (Scene, i64) {
     let mut scene = Scene::new(world());
     for n in 0..ships {
         let session = A + n as u64;
@@ -1328,10 +1328,14 @@ fn a_passive_lock_is_held_to_the_range_and_the_capacity_like_any_other() {
 
 // POS batteries (protocol 102): a battery's own lock state, told to its holder only.
 
-const BATTERY: i64 = 1_050_000_001;
-const BATTERY_SYSTEM: i32 = 30_000_001;
+pub(super) const BATTERY: i64 = 1_050_000_001;
+pub(super) const BATTERY_SYSTEM: i32 = 30_000_001;
 
-fn battery_placement(position: Vec3, holder: SessionId, online: bool) -> crate::link::BatteryPlacement {
+pub(super) fn battery_placement(
+    position: Vec3,
+    holder: SessionId,
+    online: bool,
+) -> crate::link::BatteryPlacement {
     crate::link::BatteryPlacement {
         battery_id: BATTERY,
         solar_system_id: BATTERY_SYSTEM,
@@ -1349,13 +1353,13 @@ fn battery_placement(position: Vec3, holder: SessionId, online: bool) -> crate::
 }
 
 /// A point `offset` metres along z from where pilot A sits.
-fn beside_a(scene: &Scene, offset: f64) -> Vec3 {
+pub(super) fn beside_a(scene: &Scene, offset: f64) -> Vec3 {
     let a = scene.pilots[&A].ship.position;
     Vec3::new(a.x, a.y, a.z + offset)
 }
 
 /// The `OnTargetOBO` notifications of a list of outputs: who each is for and its arguments.
-fn obo_of(out: &[Out]) -> Vec<(SessionId, Vec<Value>)> {
+pub(super) fn obo_of(out: &[Out]) -> Vec<(SessionId, Vec<Value>)> {
     out.iter()
         .filter_map(|out| match out {
             Out::Notify { session, name: "OnTargetOBO", args, .. } => Some((*session, args.clone())),

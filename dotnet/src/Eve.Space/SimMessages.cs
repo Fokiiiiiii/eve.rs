@@ -1286,6 +1286,15 @@ public sealed record SimForceFieldRemoved(long TowerId, string Reason) : SimMess
 public sealed record SimSetForceFieldAccess(long TowerId, int SolarSystemId, int CorporationId, int AllianceId, bool AllowCorporation, bool AllowAlliance) : SimMessage;
 /// <summary>The host says whether a pilot's ship password matches a tower's (protocol 104): a matching ship is admitted by the tower's field. No answer.</summary>
 public sealed record SimShipForceFieldPassword(ulong SessionId, long TowerId, int SolarSystemId, bool Matched) : SimMessage;
+/// <summary>The host sets a POS tower's sentry policy in its system's scene (protocol 106): its stored thresholds (null when unset), the war flag, the
+/// high-security gate and the owner. <paramref name="Online"/> is false when the tower is offline or out of fuel. No answer.</summary>
+public sealed record SimSentryPolicy(long TowerId, int SolarSystemId, bool Online, double? Standing, double? SecurityStatus, bool War, bool HighSecurity,
+    long OwnerCorporationId, long OwnerAllianceId) : SimMessage;
+/// <summary>The host binds a battery to a tower's sentry policy; a tower id of 0 unbinds it (protocol 106). No answer.</summary>
+public sealed record SimSentryBattery(long BatteryId, int SolarSystemId, long TowerId) : SimMessage;
+/// <summary>What the host knows of a pilot's ship toward a tower's policy (protocol 106); a ship id of 0 forgets every pilot of the tower. No answer.</summary>
+public sealed record SimSentryPilot(long TowerId, int SolarSystemId, long ShipId, long CorporationId, long AllianceId, double? SecurityStatus,
+    double Standing, bool AtWar) : SimMessage;
 
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;

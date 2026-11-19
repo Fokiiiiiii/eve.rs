@@ -930,6 +930,10 @@ pub struct Scene {
     pub(crate) structure_modules: BTreeMap<i64, ControlledStructureModules>,
     /// The POS batteries of the scene (protocol 102): each has its own lock state, independent of any pilot ship.
     pub(crate) batteries: BTreeMap<i64, crate::targeting::Battery>,
+    /// The sentry policy of each tower the scene knows (protocol 106), by tower id.
+    pub(crate) sentry_policies: BTreeMap<i64, crate::targeting::SentryPolicy>,
+    /// What the Host knows of each pilot toward each tower (protocol 106), by (tower id, ship id).
+    pub(crate) sentry_pilots: BTreeMap<(i64, i64), crate::targeting::SentryPilot>,
     /// Host-authoritative mechanics for a private Abyssal room scene.
     pub(crate) abyssal: Option<AbyssalSceneSpec>,
     /// NPCs materialized by stable content/run/ship identity, retained as tombstones after destruction.
@@ -1009,6 +1013,8 @@ impl Scene {
             structure_health: BTreeMap::new(),
             structure_modules: BTreeMap::new(),
             batteries: BTreeMap::new(),
+            sentry_policies: BTreeMap::new(),
+            sentry_pilots: BTreeMap::new(),
             abyssal: None,
             abyssal_npc_spawn_receipts: HashMap::new(),
             abyssal_participant_deaths: HashMap::new(),

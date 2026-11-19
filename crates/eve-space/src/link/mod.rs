@@ -18,6 +18,8 @@ mod moon_mining_tests;
 mod payload;
 mod reader;
 #[cfg(test)]
+mod sentry_tests;
+#[cfg(test)]
 mod structure_tests;
 mod tournament_cutoff;
 pub(crate) mod tournament_metrics;
@@ -52,7 +54,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 104;
+pub const PROTOCOL_VERSION: u16 = 106;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -1183,6 +1185,36 @@ pub enum Message {
         solar_system_id: i32,
         matched: bool,
     },
+    /// The host sets a tower's sentry policy (protocol 106). `standing` and `security_status` are the stored thresholds (`None` when unset), `online`
+    /// is false when the tower is offline or out of fuel, and `high_security` hides both thresholds. No answer.
+    SentryPolicy {
+        tower_id: i64,
+        solar_system_id: i32,
+        online: bool,
+        standing: Option<f64>,
+        security_status: Option<f64>,
+        war: bool,
+        high_security: bool,
+        owner_corporation_id: i64,
+        owner_alliance_id: i64,
+    },
+    /// The host binds a battery to a tower's sentry policy; `tower_id` 0 unbinds it (protocol 106). No answer.
+    SentryBattery {
+        battery_id: i64,
+        solar_system_id: i32,
+        tower_id: i64,
+    },
+    /// What the host knows of a pilot's ship toward a tower's policy (protocol 106); `ship_id` 0 forgets every pilot of the tower. No answer.
+    SentryPilot {
+        tower_id: i64,
+        solar_system_id: i32,
+        ship_id: i64,
+        corporation_id: i64,
+        alliance_id: i64,
+        security_status: Option<f64>,
+        standing: f64,
+        at_war: bool,
+    },
     GetAbyssalParticipantPose {
         request_id: u64,
         scene: SceneKey,
@@ -1925,6 +1957,9 @@ impl Message {
             Self::ForceFieldRemoved { .. } => kind::FORCE_FIELD_REMOVED,
             Self::SetForceFieldAccess { .. } => kind::SET_FORCE_FIELD_ACCESS,
             Self::ShipForceFieldPassword { .. } => kind::SHIP_FORCE_FIELD_PASSWORD,
+            Self::SentryPolicy { .. } => kind::SENTRY_POLICY,
+            Self::SentryBattery { .. } => kind::SENTRY_BATTERY,
+            Self::SentryPilot { .. } => kind::SENTRY_PILOT,
             Self::GetAbyssalParticipantPose { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE,
             Self::GetAbyssalParticipantPoseReply { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE_REPLY,
             Self::Enter(_) => kind::ENTER,

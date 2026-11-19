@@ -34,7 +34,7 @@ public sealed class ForceFieldCodecTests
         Assert.Equal((byte)181, SimCodec.Encode(new SimForceFieldPlaced(1, string.Empty))[4]);
         Assert.Equal((byte)182, SimCodec.Encode(new SimRemoveForceField(2, 3))[4]);
         Assert.Equal((byte)183, SimCodec.Encode(new SimForceFieldRemoved(2, string.Empty))[4]);
-        Assert.Equal(104, SimCodec.ProtocolVersion);
+        Assert.Equal(106, SimCodec.ProtocolVersion);
     }
 
     [Fact]

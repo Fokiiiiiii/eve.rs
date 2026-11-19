@@ -51,6 +51,14 @@ pub const FORCE_FIELD_REMOVED: u8 = 183;
 pub const SET_FORCE_FIELD_ACCESS: u8 = 184;
 /// The host says whether a pilot's ship password matches a tower's (protocol 104). No answer.
 pub const SHIP_FORCE_FIELD_PASSWORD: u8 = 185;
+/// The host sets a tower's sentry policy in its system's scene (protocol 106): its stored standing and security-status thresholds (each
+/// optional), the war flag, the high-security gate and the tower owner. `online` is false when the tower is offline or out of fuel. No answer.
+pub const SENTRY_POLICY: u8 = 192;
+/// The host binds a battery to a tower's sentry policy; a tower id of 0 unbinds it (protocol 106). No answer.
+pub const SENTRY_BATTERY: u8 = 193;
+/// What the host knows of a pilot's ship toward a tower's policy (protocol 106): corporation, alliance, security status (optional), the owner's
+/// standing and war. A ship id of 0 forgets every pilot of the tower. No answer.
+pub const SENTRY_PILOT: u8 = 194;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

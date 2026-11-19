@@ -1077,6 +1077,15 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     /// <summary>Says whether a pilot's ship password matches a POS control tower's (protocol 104). No answer.</summary>
     public void SetShipForceFieldPassword(SimShipForceFieldPassword password) => Send(password);
 
+    /// <summary>Sets a POS control tower's sentry policy (protocol 106). No answer.</summary>
+    public void SetSentryPolicy(SimSentryPolicy policy) => Send(policy);
+
+    /// <summary>Binds a POS battery to a tower's sentry policy (protocol 106). No answer.</summary>
+    public void SetSentryBattery(SimSentryBattery battery) => Send(battery);
+
+    /// <summary>Says what the host knows of a pilot's ship toward a tower's sentry policy (protocol 106). No answer.</summary>
+    public void SetSentryPilot(SimSentryPilot pilot) => Send(pilot);
+
     /// <summary>Asks the scene for a battery's lock, removal, clear or cancel (protocol 102). The answer is matched by the request id.</summary>
     public async Task<SimBatteryTargets> BatteryTargetAsync(SimBatteryTarget request, CancellationToken cancellationToken = default)
     {

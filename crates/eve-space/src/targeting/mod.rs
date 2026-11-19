@@ -6,10 +6,12 @@
 //! `otheradd`, `otherlost` to the one that is locked) and with the damage state of what has been locked, to everyone who can see it.
 mod battery;
 mod lock;
+mod sentry;
 mod settle;
 mod unlock;
 
 pub(crate) use battery::{Battery, BatteryAnswer, BatteryFire, BatteryFireAnswer, BatteryOrder};
+pub(crate) use sentry::{SentryPilot, SentryPolicy};
 
 use eve_destiny::Vec3;
 
@@ -450,5 +452,7 @@ fn distance(a: Vec3, b: Vec3) -> f64 {
     ((a.x - b.x).powi(2) + (a.y - b.y).powi(2) + (a.z - b.z).powi(2)).sqrt()
 }
 
+#[cfg(test)]
+mod sentry_tests;
 #[cfg(test)]
 mod tests;

@@ -53,6 +53,12 @@ public static partial class SimCodec
         public const byte SetForceFieldAccess = 184;
         /// <summary>Protocol 103: the host says whether a pilot's ship password matches a tower's. No answer.</summary>
         public const byte ShipForceFieldPassword = 185;
+        /// <summary>Protocol 106: the host sets a tower's sentry policy (thresholds, war, high-security gate, owner). No answer.</summary>
+        public const byte SentryPolicy = 192;
+        /// <summary>Protocol 106: the host binds a battery to a tower's sentry policy (tower 0 unbinds it). No answer.</summary>
+        public const byte SentryBattery = 193;
+        /// <summary>Protocol 106: what the host knows of a pilot's ship toward a tower's policy (ship 0 forgets the tower's pilots). No answer.</summary>
+        public const byte SentryPilot = 194;
         public const byte EnsureTournamentBeacon = 128;
         public const byte EnsureTournamentBeaconReply = 129;
         public const byte RemoveTournamentBeacon = 130;

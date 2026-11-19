@@ -463,6 +463,9 @@ internal sealed class FakeSim : ISimulation
     public void SetForceFieldAccess(SimSetForceFieldAccess access) => Heard.Enqueue(access);
 
     public void SetShipForceFieldPassword(SimShipForceFieldPassword password) => Heard.Enqueue(password);
+    public void SetSentryPolicy(SimSentryPolicy policy) => Heard.Enqueue(policy);
+    public void SetSentryBattery(SimSentryBattery battery) => Heard.Enqueue(battery);
+    public void SetSentryPilot(SimSentryPilot pilot) => Heard.Enqueue(pilot);
     public void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket) => Heard.Enqueue(pocket);
     public Task<bool> PlaceDeadspacePocketAsync(SimPlaceDeadspacePocket pocket, CancellationToken cancellationToken = default)
     {

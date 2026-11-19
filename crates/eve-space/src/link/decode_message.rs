@@ -194,6 +194,16 @@ fn read_flag(reader: &mut Reader, what: &'static str) -> Result<bool, DecodeErro
 
 /// A structure's health: its shield, armor and hull points, the resonances of each layer (shield, armor, hull; four kinds each), the shield's recharge
 /// in milliseconds, the limit each layer takes in a second and the repair pause of each layer.
+/// A flag, then a finite number that is only meaningful when the flag is set (protocol 106's optional thresholds).
+fn read_optional_f64(reader: &mut Reader, what: &'static str) -> Result<Option<f64>, DecodeError> {
+    let present = read_flag(reader, what)?;
+    let value = reader.f64()?;
+    if present && !value.is_finite() {
+        return Err(DecodeError::BadValue(what));
+    }
+    Ok(present.then_some(value))
+}
+
 fn read_structure_health(reader: &mut Reader) -> Result<(Vitals, f64, StructureLimits), DecodeError> {
     let mut point = || -> Result<f64, DecodeError> {
         let value = reader.f64()?;
@@ -2798,6 +2808,57 @@ impl Message {
                     alliance_id,
                     allow_corporation,
                     allow_alliance,
+                }
+            }
+            kind::SENTRY_POLICY => {
+                let tower_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let online = read_flag(&mut r, "sentry online")?;
+                let standing = read_optional_f64(&mut r, "sentry standing")?;
+                let security_status = read_optional_f64(&mut r, "sentry security status")?;
+                let war = read_flag(&mut r, "sentry war")?;
+                let high_security = read_flag(&mut r, "sentry high security")?;
+                let owner_corporation_id = r.i64()?;
+                let owner_alliance_id = r.i64()?;
+                Message::SentryPolicy {
+                    tower_id,
+                    solar_system_id,
+                    online,
+                    standing,
+                    security_status,
+                    war,
+                    high_security,
+                    owner_corporation_id,
+                    owner_alliance_id,
+                }
+            }
+            kind::SENTRY_BATTERY => {
+                let battery_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let tower_id = r.i64()?;
+                Message::SentryBattery { battery_id, solar_system_id, tower_id }
+            }
+            kind::SENTRY_PILOT => {
+                let tower_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let ship_id = r.i64()?;
+                let corporation_id = r.i64()?;
+                let alliance_id = r.i64()?;
+                let security_status = read_optional_f64(&mut r, "sentry pilot security status")?;
+                let standing = r.f64()?;
+                if !standing.is_finite() {
+                    return Err(DecodeError::BadValue("sentry pilot standing"));
+                }
+                let at_war = read_flag(&mut r, "sentry pilot war")?;
+                Message::SentryPilot {
+                    tower_id,
+                    solar_system_id,
+                    ship_id,
+                    corporation_id,
+                    alliance_id,
+                    security_status,
+                    standing,
+                    at_war,
                 }
             }
             kind::SHIP_FORCE_FIELD_PASSWORD => {

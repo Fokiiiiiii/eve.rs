@@ -11,6 +11,14 @@ public static partial class SimCodec
             0, 0, 0, 0, 0, string.Empty, [0d, 0d, 0d, 0d], 0, 0, 0, 0));
     }
 
+    /// <summary>A flag, then the number (zero when there is none): protocol 106's optional thresholds. A number the simulation cannot read is refused.</summary>
+    private static void WriteOptionalNumber(Writer w, double? value)
+    {
+        if (value is { } number && !double.IsFinite(number)) throw new ArgumentException("A sentry threshold must be finite.", nameof(value));
+        w.U8((byte)(value is null ? 0 : 1));
+        w.F64(value ?? 0.0);
+    }
+
     private static void WriteWeapon(Writer w, SimNpcWeapon weapon)
     {
         w.I64(weapon.ModuleId);
@@ -1541,6 +1549,19 @@ private static void WriteStructureDamageCorrelation(
             case SimSetForceFieldAccess m:
                 w.U8(Kind.SetForceFieldAccess); w.I64(m.TowerId); w.I32(m.SolarSystemId); w.I32(m.CorporationId); w.I32(m.AllianceId);
                 w.U8((byte)(m.AllowCorporation ? 1 : 0)); w.U8((byte)(m.AllowAlliance ? 1 : 0));
+                break;
+            case SimSentryPolicy m:
+                w.U8(Kind.SentryPolicy); w.I64(m.TowerId); w.I32(m.SolarSystemId); w.U8((byte)(m.Online ? 1 : 0));
+                WriteOptionalNumber(w, m.Standing); WriteOptionalNumber(w, m.SecurityStatus);
+                w.U8((byte)(m.War ? 1 : 0)); w.U8((byte)(m.HighSecurity ? 1 : 0)); w.I64(m.OwnerCorporationId); w.I64(m.OwnerAllianceId);
+                break;
+            case SimSentryBattery m:
+                w.U8(Kind.SentryBattery); w.I64(m.BatteryId); w.I32(m.SolarSystemId); w.I64(m.TowerId);
+                break;
+            case SimSentryPilot m:
+                if (!double.IsFinite(m.Standing)) throw new ArgumentException("The sentry standing must be finite.", nameof(m));
+                w.U8(Kind.SentryPilot); w.I64(m.TowerId); w.I32(m.SolarSystemId); w.I64(m.ShipId); w.I64(m.CorporationId); w.I64(m.AllianceId);
+                WriteOptionalNumber(w, m.SecurityStatus); w.F64(m.Standing); w.U8((byte)(m.AtWar ? 1 : 0));
                 break;
             case SimShipForceFieldPassword m:
                 w.U8(Kind.ShipForceFieldPassword); w.U64(m.SessionId); w.I64(m.TowerId); w.I32(m.SolarSystemId);

@@ -320,6 +320,12 @@ public interface ISimulation
     void SetForceFieldAccess(SimSetForceFieldAccess access);
     /// <summary>Says whether a pilot's ship password matches a POS control tower's (protocol 104). No answer.</summary>
     void SetShipForceFieldPassword(SimShipForceFieldPassword password);
+    /// <summary>Sets a POS control tower's sentry policy in its system's scene (protocol 106). No answer.</summary>
+    void SetSentryPolicy(SimSentryPolicy policy);
+    /// <summary>Binds a POS battery to a tower's sentry policy; tower 0 unbinds it (protocol 106). No answer.</summary>
+    void SetSentryBattery(SimSentryBattery battery);
+    /// <summary>Says what the host knows of a pilot's ship toward a tower's sentry policy (protocol 106). No answer.</summary>
+    void SetSentryPilot(SimSentryPilot pilot);
 
 
     /// <summary>Puts a deadspace pocket of a dungeon in its system's scene at its origin (protocol 74).</summary>

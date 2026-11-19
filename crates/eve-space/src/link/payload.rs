@@ -1056,6 +1056,54 @@ impl Message {
                 out.push(u8::from(*allow_corporation));
                 out.push(u8::from(*allow_alliance));
             }
+            Self::SentryPolicy {
+                tower_id,
+                solar_system_id,
+                online,
+                standing,
+                security_status,
+                war,
+                high_security,
+                owner_corporation_id,
+                owner_alliance_id,
+            } => {
+                out.extend_from_slice(&tower_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.push(u8::from(*online));
+                out.push(u8::from(standing.is_some()));
+                out.extend_from_slice(&standing.unwrap_or(0.0).to_le_bytes());
+                out.push(u8::from(security_status.is_some()));
+                out.extend_from_slice(&security_status.unwrap_or(0.0).to_le_bytes());
+                out.push(u8::from(*war));
+                out.push(u8::from(*high_security));
+                out.extend_from_slice(&owner_corporation_id.to_le_bytes());
+                out.extend_from_slice(&owner_alliance_id.to_le_bytes());
+            }
+            Self::SentryBattery { battery_id, solar_system_id, tower_id } => {
+                out.extend_from_slice(&battery_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&tower_id.to_le_bytes());
+            }
+            Self::SentryPilot {
+                tower_id,
+                solar_system_id,
+                ship_id,
+                corporation_id,
+                alliance_id,
+                security_status,
+                standing,
+                at_war,
+            } => {
+                out.extend_from_slice(&tower_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&corporation_id.to_le_bytes());
+                out.extend_from_slice(&alliance_id.to_le_bytes());
+                out.push(u8::from(security_status.is_some()));
+                out.extend_from_slice(&security_status.unwrap_or(0.0).to_le_bytes());
+                out.extend_from_slice(&standing.to_le_bytes());
+                out.push(u8::from(*at_war));
+            }
             Self::ShipForceFieldPassword { session_id, tower_id, solar_system_id, matched } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&tower_id.to_le_bytes());

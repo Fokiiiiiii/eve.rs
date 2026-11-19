@@ -35,7 +35,8 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "PlaceBattery": 168, "BatteryPlaced": 169, "BatteryTarget": 170, "BatteryTargets": 171,
          "PlaceForceField": 180, "ForceFieldPlaced": 181, "RemoveForceField": 182, "ForceFieldRemoved": 183,
          "SetForceFieldAccess": 184, "ShipForceFieldPassword": 185,
-         "BatteryFire": 190, "BatteryFired": 191}
+         "BatteryFire": 190, "BatteryFired": 191,
+          "SentryPolicy": 192, "SentryBattery": 193, "SentryPilot": 194}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -541,6 +542,20 @@ def build(m):
     if k == "SetForceFieldAccess":
         return frame(k, i64(m["towerId"]) + struct.pack("<iii", m["solarSystemId"], m["corporationId"], m["allianceId"])
                      + bytes([1 if m["allowCorporation"] else 0, 1 if m["allowAlliance"] else 0]))
+    if k == "SentryPolicy":  # protocol 106: a tower's stored thresholds (each optional: a flag, then the number), the war flag, the high-security gate and the owner
+        def optional_number(value):
+            return bytes([1 if value is not None else 0]) + struct.pack("<d", value if value is not None else 0.0)
+        return frame(k, i64(m["towerId"]) + struct.pack("<i", m["solarSystemId"]) + bytes([1 if m["online"] else 0])
+                     + optional_number(m["standing"]) + optional_number(m["securityStatus"])
+                     + bytes([1 if m["war"] else 0, 1 if m["highSecurity"] else 0])
+                     + i64(m["ownerCorporationId"]) + i64(m["ownerAllianceId"]))
+    if k == "SentryBattery":  # protocol 106: a battery bound to a tower's policy (tower 0 unbinds it)
+        return frame(k, i64(m["batteryId"]) + struct.pack("<i", m["solarSystemId"]) + i64(m["towerId"]))
+    if k == "SentryPilot":  # protocol 106: what the host knows of a pilot's ship toward a tower (ship 0 forgets the tower's pilots)
+        return frame(k, i64(m["towerId"]) + struct.pack("<i", m["solarSystemId"]) + i64(m["shipId"])
+                     + i64(m["corporationId"]) + i64(m["allianceId"])
+                     + bytes([1 if m["securityStatus"] is not None else 0]) + struct.pack("<d", m["securityStatus"] if m["securityStatus"] is not None else 0.0)
+                     + struct.pack("<d", m["standing"]) + bytes([1 if m["atWar"] else 0]))
     if k == "ShipForceFieldPassword":
         return frame(k, u64(m["sessionId"]) + i64(m["towerId"]) + struct.pack("<i", m["solarSystemId"]) + bytes([1 if m["matched"] else 0]))
     if k == "PlaceForceField":
@@ -906,8 +921,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 104},
-    {"name": "hello ack", "kind": "HelloAck", "version": 104, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 106},
+    {"name": "hello ack", "kind": "HelloAck", "version": 106, "pollHz": 4},
     {"name": "active Crimewatch flag", "kind": "CrimewatchFlagActive", "sessionId": "1001",
      "isCriminal": True, "expiresAtUnixMs": "1800000000000"},
     {"name": "Empire sentry offense", "kind": "EmpireSentryOffense", "sessionId": "1001"},
@@ -1043,6 +1058,15 @@ valid = [
      "solarSystemId": 30000142, "corporationId": 98000001, "allianceId": 97000001, "allowCorporation": True, "allowAlliance": False},
     {"name": "a pilot's ship password matches a tower (protocol 104)", "kind": "ShipForceFieldPassword", "sessionId": "1790646377000015",
      "towerId": "1050000099", "solarSystemId": 30000142, "matched": True},
+    {"name": "a tower's sentry policy: standing below -2.5, war on, the owner's corporation and alliance (protocol 106)", "kind": "SentryPolicy", "towerId": "1050000099",
+     "solarSystemId": 30000142, "online": True, "standing": -2.5, "securityStatus": None, "war": True, "highSecurity": False,
+     "ownerCorporationId": 98000001, "ownerAllianceId": 97000001},
+    {"name": "a battery bound to its tower's sentry policy (protocol 106)", "kind": "SentryBattery", "batteryId": "1050000001", "solarSystemId": 30000142, "towerId": "1050000099"},
+    {"name": "a battery unbound from its sentry policy (protocol 106)", "kind": "SentryBattery", "batteryId": "1050000001", "solarSystemId": 30000142, "towerId": "0"},
+    {"name": "a pilot's facts toward a tower's sentry policy (protocol 106)", "kind": "SentryPilot", "towerId": "1050000099", "solarSystemId": 30000142,
+     "shipId": "9988400001940", "corporationId": 98000002, "allianceId": 0, "securityStatus": -4.9, "standing": 0.0, "atWar": False},
+    {"name": "forget every pilot a tower's sentry policy knows (protocol 106)", "kind": "SentryPilot", "towerId": "1050000099", "solarSystemId": 30000142,
+     "shipId": "0", "corporationId": 0, "allianceId": 0, "securityStatus": None, "standing": 0.0, "atWar": False},
     {"name": "read a public-system source ship pose", "kind": "GetAbyssalParticipantPose", "requestId": "50",
      "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940"},
     {"name": "public-system source ship pose receipt", "kind": "GetAbyssalParticipantPoseReply", "requestId": "50",

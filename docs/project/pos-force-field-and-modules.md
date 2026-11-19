@@ -105,6 +105,39 @@ Gaps in slice 1 (not verified):
 - `oracle/fixtures/simlink/messages.json` is NOT regenerated. `tools/dev/gen-simlink-fixtures.py` now has kinds 190 and 191, their frame writers, valid and invalid cases, and version 104. Running the script was refused by the command policy hook (both the relative and the absolute path), so the shared golden frames do not cover the fire kinds, and the file still says 102. The Rust and C# fixture tests pass against the old file.
 - Every `Activate` on a ship module now makes one extra PostgreSQL read (`BatteryFireAsync` → `_deployed.GetAsync`) before the module path. This is not measured.
 
+### Sentry policy: slice 1, scene and wire (2026-11-19, protocol 106)
+
+Verified from the client and EveJS (read this session):
+
+- Client: `MoonMining.InitStandingsPanel` (`moonmining.py:1072-1126`) offers use-alliance-standings, attack if standing is lower than a value (-10 to 10), attack if security status is below a value (-10 to 10), attack if security status is dropping, and attack if at war. Both thresholds are hidden in high security. `SaveStandings` (`moonmining.py:1128-1138`) sends `SetTowerSentrySettings(towerID, standing, status, statusDrop, war, useAllianceStandings)` only when the values changed. `ShowStandings` (`moonmining.py:538-562`) reads `GetTowerSentrySettings` back into the same controls.
+- EveJS `server/src/services/starbase/starbaseDefenseController.js`, `tickScene` (lines 115-210) and `evaluateSentryTargetPolicy` (lines 59-76): a battery of an online, anchored tower is driven when it is not manually controlled. A candidate is a visible ship (not cloaked, not warping, not pending dock, `canEntitiesInteractLocally`). The owner corporation and its alliance are never named. War (when `war` is set and a war is active) is checked first and applies in high security. The standing and security-status thresholds apply only outside high security. The standing is the owner's contact standing (the owner corporation's contacts, or the alliance's when `useAllianceStandings` is set), with a pilot entry over the corporation over the alliance and 0 when absent. The status-drop rule needs a persisted security-penalty receipt. Candidates are sorted by distance to the tower, then item id. A battery keeps its previous target while that target stays eligible; otherwise it tries candidates in order with `activateBattery(automatic: true)` (`starbaseDefenseRuntime.js:167-194`), which takes a lock (which may be pending) and then runs the offensive module activation. A lost target or an unavailable battery releases the automatic assignment.
+- The EveJS automatic path runs the battery's cycle, capacitor and charge through the generic module activation. eve.rs does not run those for a battery (see the fire section above).
+
+Implemented in eve.rs (slice 1; the Host feed is slice 2):
+
+- `link/kind.rs`: `SENTRY_POLICY` 192, `SENTRY_BATTERY` 193, `SENTRY_PILOT` 194 (no answer). `PROTOCOL_VERSION` 106 in Rust (`link/mod.rs`) and `SimCodec.ProtocolVersion` 106 in C#.
+- `targeting/sentry.rs`: the policy (standing, security threshold, war, high-security gate, owner corporation and alliance, online), the pilot facts (corporation, alliance, optional security status, standing, war) and `sentry_pass`, run from `settle_batteries`. A sentry battery has no holder, so it is driven only while no pilot holds it; a holder's locks are never touched. An offline policy, an unbound or offline battery, or a pilot the policy no longer names releases the sentry's lock and fire silently. The sentry locks through `battery_lock` and fires through `apply_fire`, the same rule the holder's fire order uses.
+- `sim/dispatch.rs` handles the three kinds in the world group. A policy or pilot message creates the scene like the force field messages do; a binding does not (the battery must already be placed).
+- The `Battery.firing` field is now cleared when a battery goes offline (`go_offline`). Before this slice it could survive an offline spell.
+
+Not in this slice (open):
+
+- The status-drop receipt: EveJS reads a persisted security-penalty receipt, and the Host does not feed one. The stored `statusDrop` flag is stored and round-trips, but it is not on the wire and drives no target.
+- NPC ships: EveJS can consider any ship entity; eve.rs names only ships that have pilot facts, so NPCs are not chosen.
+- The Host feed (SimLink from the Host to the scene): slice 2.
+- Battery damage, cycle, capacitor and charge: not run (as in the fire section).
+- Distance: the scene sorts candidates by distance to the battery, not to the tower (EveJS sorts by the tower's distance).
+- Freshness: the scene knows only the pilot facts the Host last sent. A pilot who enters the system after the last Host snapshot is not named until the next one.
+- `oracle/fixtures/simlink/messages.json` is not regenerated (the orchestrator does that). The generator cases for kinds 192 to 194 are added and not run. The harness mapping in `crates/eve-space/tests/simlink_fixtures.rs` and `SimCodecTests.cs` covers the new names. `SimCodecTests.The_fixtures_cover_every_message_kind` already fails on the committed file (its expected list names `BatteryFire` and `BatteryFired`, and the committed file is version 103 without them); it stays failing until the regenerated file lands and its expected list is updated for 192 to 194.
+
+Verification (slice 1):
+
+- `cargo test -p eve-space --lib -- --test-threads=2`: 1099 passed, 0 failed, 0 skipped. Sentry tests: `targeting::sentry_tests` (7) and `link::sentry_tests` (2) pass.
+- `cargo test -p eve-space --test simlink_fixtures`: 14 passed, 0 failed.
+- `cargo clippy -p eve-space --all-targets -- -D warnings` and `cargo fmt -p eve-space -- --check`: clean.
+- `dotnet test dotnet/tests/Eve.Space.Tests -c Release`: 601 passed, 1 failed (the pre-existing `The_fixtures_cover_every_message_kind` above), 0 skipped. The four `SentryCodecTests` pass.
+- `dotnet build dotnet/tests/Eve.Services.Space.Tests -c Release -warnaserror`: 0 warnings, 0 errors (its tests are run with the Host slice).
+
 ### Control Bunker live item authority: slice 2 blocked (2026-11-18)
 
 No code or migration was added for this slice. The premise does not hold in this checkout, verified as follows:

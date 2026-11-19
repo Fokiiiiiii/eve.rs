@@ -477,6 +477,7 @@ public sealed partial class SpaceSessions
         _log?.Invoke($"the simulation did not take {description} of character {pilot.CharacterId}: {refusal}");
         _pilots.TryRemove((ulong)pilot.Session.SessionId, out _);
         _sim.Leave((ulong)pilot.Session.SessionId, LeaveWhy.Docked);
+        await ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None);
         await _ships.RecoverFromSpaceAsync(pilot.CharacterId, PlaceOfStation);
         if (await _ships.LoadAsync(pilot.CharacterId) is { } recovered)
             CharacterSessionRelocation.Docked(pilot.Session, recovered.Character.StationId, recovered.Character.SolarSystemId,
@@ -612,6 +613,7 @@ public sealed partial class SpaceSessions
                             return true;
                         }
                         _pilots.TryRemove(id, out _);
+                        await ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None);
                         NotifyDeathClient(pilot, lost, recovered.Ship);
                         var character = recovered.Character;
                         CharacterSessionRelocation.Docked(session, character.StationId, character.SolarSystemId, character.ConstellationId, character.RegionId, recovered.Ship.Id);
@@ -629,6 +631,8 @@ public sealed partial class SpaceSessions
                         session.Close();
                         return true;
                     }
+                    // the pilot now flies its survivor: its ship changed in space, so its battery grants go
+                    await ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None);
                     NotifyDeathClient(pilot, lost);
                     session.Change(("shipid", new PyLong(survivor.Id)));
                     Background(() => RefreshTetherPolicyAsync(session));
@@ -676,6 +680,7 @@ public sealed partial class SpaceSessions
             if (!handedOver && _pilots.TryRemove(id, out _))
             {
                 _sim.Leave(id, LeaveWhy.LoggedOff);
+                await ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None);
             }
             _dying.TryRemove(pilot.ShipId, out _);
             if (_deaths.TryRemove(pilot.ShipId, out var waiting))
@@ -779,6 +784,7 @@ public sealed partial class SpaceSessions
                 var death = result!;
                 _pilots.TryRemove(id, out _);
                 _sim.Leave(id, LeaveWhy.Docked);
+                Background(() => ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None));
                 RaisePodLost(pilot, death.Capsule, destroyed, death.Implants);
                 AnnounceOnce(ShipKillmailEvent.Topic,
                     new ShipKillmailEvent(

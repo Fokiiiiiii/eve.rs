@@ -389,6 +389,26 @@ public class ControlTowerHostTests
     }
 
     [PgFact]
+    public async Task A_holder_whose_ship_is_destroyed_gives_up_its_battery_grant_so_the_scene_tells_the_battery_it_has_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var released = RecordBatteryReleases(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        rig.Sim.Heard.Clear();
+
+        // the simulation reports the holder's ship destroyed in space: the pilot is handed a survivor, so its ship changes, and the grant goes
+        var shipId = fixture.Session.GetInt("shipid")!.Value;
+        rig.Sim.Say(new SimDestroyed((ulong)fixture.Session.SessionId, shipId, 0, [100.0, 200.0, 300.0], [0.0, 0.0, 1.0], 47.0, 0));
+        await UntilBatteryReleasedAsync(released);
+
+        Assert.Equal(new[] { fixture.Session.CharacterId!.Value }, released);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (placed.HolderSession, placed.Online));
+    }
+
+    [PgFact]
     public async Task A_relinquish_made_while_the_holders_lock_order_is_in_the_scene_takes_the_lock_back_and_refuses_the_order()
     {
         await using var rig = await Rig.CreateAsync();

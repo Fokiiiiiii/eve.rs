@@ -629,7 +629,7 @@ public sealed partial class SpaceContainers
             }, startedAt);
         }
 
-        await OfflineBatteriesAsync(towerId, cancellationToken).ConfigureAwait(false);
+        // the sentry pass places every battery of the tower that no pilot holds (online or offline, with no holder): a separate offline sweep placed the same battery twice
         await ReconcileForceFieldAsync(towerId, cancellationToken).ConfigureAwait(false);
         await ReconcileSentryAsync(towerId, cancellationToken).ConfigureAwait(false);
     }

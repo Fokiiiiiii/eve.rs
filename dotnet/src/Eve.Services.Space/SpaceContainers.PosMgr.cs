@@ -122,6 +122,8 @@ public sealed partial class SpaceContainers
             if (useAlliance && record.AllianceId <= 0) throw MachoErrors.ThrowUserError("STARBASE_ALLIANCE_REQUIRED");
             return config with { Sentry = new SentrySettings(standing, security, statusDrop, war, useAlliance) };
         }).ConfigureAwait(false);
+        // the sentry is published after the commit, so a refused change is never sent
+        await ReconcileSentryAsync(id, call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
     }
 

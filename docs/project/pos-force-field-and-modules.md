@@ -124,10 +124,10 @@ Not in this slice (open):
 
 - The status-drop receipt: EveJS reads a persisted security-penalty receipt, and the Host does not feed one. The stored `statusDrop` flag is stored and round-trips, but it is not on the wire and drives no target.
 - NPC ships: EveJS can consider any ship entity; eve.rs names only ships that have pilot facts, so NPCs are not chosen.
-- The Host feed (SimLink from the Host to the scene): slice 2.
+- The Host feed is done in slice 2 (below).
 - Battery damage, cycle, capacitor and charge: not run (as in the fire section).
 - Distance: the scene sorts candidates by distance to the battery, not to the tower (EveJS sorts by the tower's distance).
-- Freshness: the scene knows only the pilot facts the Host last sent. A pilot who enters the system after the last Host snapshot is not named until the next one.
+- Freshness: the scene acts on the pilot facts the Host last sent (slice 2 gives the snapshot and its triggers).
 - `oracle/fixtures/simlink/messages.json` is not regenerated (the orchestrator does that). The generator cases for kinds 192 to 194 are added and not run. The harness mapping in `crates/eve-space/tests/simlink_fixtures.rs` and `SimCodecTests.cs` covers the new names. `SimCodecTests.The_fixtures_cover_every_message_kind` already fails on the committed file (its expected list names `BatteryFire` and `BatteryFired`, and the committed file is version 103 without them); it stays failing until the regenerated file lands and its expected list is updated for 192 to 194.
 
 Verification (slice 1):
@@ -137,6 +137,31 @@ Verification (slice 1):
 - `cargo clippy -p eve-space --all-targets -- -D warnings` and `cargo fmt -p eve-space -- --check`: clean.
 - `dotnet test dotnet/tests/Eve.Space.Tests -c Release`: 601 passed, 1 failed (the pre-existing `The_fixtures_cover_every_message_kind` above), 0 skipped. The four `SentryCodecTests` pass.
 - `dotnet build dotnet/tests/Eve.Services.Space.Tests -c Release -warnaserror`: 0 warnings, 0 errors (its tests are run with the Host slice).
+
+### Sentry policy: slice 2, Host feed (2026-11-19, protocol 106)
+
+What the Host now does (`dotnet/src/Eve.Services.Space/SpaceContainers.Sentry.cs`, `ReconcileSentryAsync`):
+
+- Reads the tower's stored sentry settings (the same `PosMgrTowerConfiguration.Sentry` that `GetTowerSentrySettings` returns) and sends `SENTRY_POLICY`. `online` is the tower's state (`TowerOnline`, anchored, activated), which implies fuel because an out-of-fuel tower goes offline. A system whose security is unknown gets an offline policy. The owner corporation is `tower.OwnerId` and the owner alliance is `tower.AllianceId`, as the PosMgr standing owner already uses them.
+- For each battery of the tower (`ByControlTowerAsync`) that is a player-controlled battery with numbers in its type, places it with `PLACE_BATTERY` holder 0 (online when the tower and the battery are online) and sends `SENTRY_BATTERY` (the tower, or 0 when offline). A battery a pilot holds is skipped: its holder's orders place it, and this pass must not take the holder away.
+- Sends the pilot facts as a snapshot: `SENTRY_PILOT` with ship 0 forgets the tower's facts, then one fact for each pilot session of the system (`SessionsInSystem`) whose identity is known.
+- Facts come from `SpaceComposition` (`spaceContainers.SentryPilotFactsOf`), which reuses the sources the weapon rules read: the character's affiliation (`AffiliationOfAsync`), its security status (`securityStatusOf`), the owner's war with it (`ReadStructureAsync(...).ActiveWar`), and the owner's contacts (`CorporationStore.CorporationContactsAsync`, or `AllianceContactsAsync` when alliance standings are used). The standing is the first contact entry among character, corporation and alliance, and 0 when there is none, as EveJS's `resolveContactStanding` does. The contact's `RelationshipId` is taken as the standing, as EveJS compares `relationshipID` with the threshold; this is not verified against a client-visible contact value.
+- High security is `SpaceSessions.IsHighSecuritySystem` (the SDE security class of the system).
+- Triggers: `SynchronizeControlTowerSlimStateAsync` (tower and module state changes, after the force field), a successful `SetTowerSentrySettings` (after the commit), and `SystemEntered` (each control tower of that system). A per-tower gate serializes the reconciles.
+
+Verified (2026-11-19):
+
+- `ControlTowerHostTests.Sentry_policy_batteries_and_pilot_facts_follow_the_tower_and_its_saved_settings_into_the_simulation` (new, `[PgFact]`, `eve_p5`): the online tower's unset policy, the unheld battery placed with holder 0 and bound, the settings saved over the registered PosMgr wire reach the simulation (5.5, -2.5, war, online), the pilot fact snapshot (forgotten first, then the named pilot), and the tower's offline policy by request. Passed.
+- `dotnet test dotnet/tests/Eve.Services.Space.Tests -c Release` on `eve_p5` (one run, full): 1273 passed, 0 failed, 0 skipped. `ControlTowerHostTests` alone: 23 passed.
+- `dotnet build -c Release -warnaserror` of `Eve.Services.Space.Tests` and `Eve.Host.Tests`: 0 warnings, 0 errors.
+
+Open after slice 2:
+
+- The status-drop receipt is not sourced, so the stored `statusDrop` flag is not on the wire and drives no target (EveJS reads a persisted security-penalty receipt).
+- The facts are a snapshot at the triggers above. A standing edit, a security-status change or a war declared or ended between triggers is not re-sent until the next trigger; a pilot who enters the system is covered by `SystemEntered` only for the towers of that system. Until a trigger, the scene acts on the older facts.
+- NPC ships are not named (no pilot facts).
+- Battery damage, cycle, capacitor and charge are not run (the fire section above).
+- Not verified on the graphical V24 client or on a live server (the sentry's visible effect and the battery's firing are not shown to the pilot).
 
 ### Control Bunker live item authority: slice 2 blocked (2026-11-18)
 
@@ -258,7 +283,7 @@ Not verified and not done:
 
 - **POS force field and password admission:** the Host now places and removes an online tower's field and sends its access and ship-password state (slice 4, migration 0034). Still open: the client-visible force-field presentation is not verified on the graphical client; a tower's password change does not re-match pilots already holding a credential; standings admission is not implemented; the simulation's per-pilot harmonic and the ship's `harmonic` slim field are separate paths.
 - **Starbase OBO target calls:** `AddTargetOBO` and `RemoveTargetOBO` remain unimplemented. The battery control grant (`AssumeStructureControl` / `RelinquishStructureControl`) now exists (see POS battery control grant below), but the DogmaLM bound object and the battery's target lock state in the Rust scene do not. Registering the two RPC names without them would not implement the client flow.
-- **Sentry targeting:** sentry settings persist and round-trip, but no associated battery targeting/defense controller consumes the policy.
+- **Sentry targeting:** the stored policy drives a battery with no holder in the scene (protocol 106, the sentry sections above). Open: the status-drop receipt, damage and cycle, and re-sending the facts when a standing, security status or war changes between triggers.
 - **Other POS inventory/use consumers:** silo `viewput`/`viewputtake` is enforced. Ship-maintenance, reprocessing/compression arrays and jump-bridge `use` behavior remain incomplete.
 - **Moon/reaction production:** module onlining/resource accounting and silo-to-silo transfer are implemented, but historical moon output is not configured in the pinned EveJS legacy authority, and the SDE contains no historical moon abundance. The server does not fabricate output.
 - **Control Bunker:** `GetControlBunkerIDInSystem` remains `None`. The client at `eve/client/script/ui/shared/agencyNew/ui/contentPageInfoConts/factionWarfareSystemInfoContainer.py:49-60` requires a live inventory item and ball. The pinned SDE has bunker types but no per-system live item IDs/positions, and the matching EveJS tree has no live bunker placement authority. Do not synthesize an ID or position.

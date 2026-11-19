@@ -1842,6 +1842,58 @@ public class ControlTowerHostTests
     /// <summary>The Amarr Control Tower's shield radius (SDE attribute 680, shieldRadius): the radius of its force field, not of the tower's ball.</summary>
     private const double TowerShieldRadius = 30_000d;
     /// <summary>The SDE's Force Field type (group 411), which every POS control tower's field is an item of.</summary>
+    [PgFact]
+    public async Task Sentry_policy_batteries_and_pilot_facts_follow_the_tower_and_its_saved_settings_into_the_simulation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        var owner = fixture.Session.GetInt("corpid") ?? 0;
+        var pilot = fixture.OtherSession;
+        // the anchored tower is fuelled and brought online, as OnlineTowerAsync does
+        await FuelAsync(rig, fixture.Tower, HeliumFuelBlock, 39, owner);
+        await FuelAsync(rig, fixture.Tower, NitrogenFuelBlock, 40, owner);
+        await FuelAsync(rig, fixture.Tower, HeliumFuelBlock, 2, owner);
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(fixture.Session, fixture.Tower, "onlineForStructures", 0, 1, CancellationToken.None));
+        rig.Now += OnliningMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("online", await rig.Deployed.TowerStateAsync(fixture.Tower));
+
+        // the online tower's policy is sent with no thresholds set: nothing is named until the owner saves its settings
+        await rig.Containers.SynchronizeControlTowerSlimStateAsync(fixture.Tower);
+        var unset = rig.Sim.Heard.OfType<SimSentryPolicy>().Last();
+        Assert.Equal((fixture.Tower, true, (int)LowSecSystem, false, false, owner), (unset.TowerId, unset.Online, unset.SolarSystemId, unset.War, unset.HighSecurity, unset.OwnerCorporationId));
+        Assert.Null(unset.Standing);
+        Assert.Null(unset.SecurityStatus);
+
+        // the battery no pilot holds is placed with no holder, online, and bound to its tower
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last();
+        Assert.Equal((fixture.Battery, true, 0UL), (placed.BatteryId, placed.Online, placed.HolderSession));
+        var bound = rig.Sim.Heard.OfType<SimSentryBattery>().Last();
+        Assert.Equal((fixture.Battery, (int)LowSecSystem, fixture.Tower), (bound.BatteryId, bound.SolarSystemId, bound.TowerId));
+
+        // the owner saves its settings over the registered wire: the simulation is told the saved thresholds, the war flag and the owner
+        Assert.IsType<PyNone>(await fixture.Holder.CallAsync("SetTowerSentrySettings", new PyLong(fixture.Tower), new PyReal(5.5), new PyReal(-2.5),
+            PyBool.False, PyBool.True, PyBool.False));
+        var saved = rig.Sim.Heard.OfType<SimSentryPolicy>().Last();
+        Assert.Equal(5.5, saved.Standing);
+        Assert.Equal(-2.5, saved.SecurityStatus);
+        Assert.True(saved.War);
+        Assert.True(saved.Online);
+
+        // the pilot the policy names: its facts go to the simulation, and the tower's old facts are forgotten first
+        rig.Containers.SentryPilotFactsOf = (request, _) => Task.FromResult<SpaceContainers.SentryPilotFacts?>(
+            request.CharacterId == pilot.CharacterId ? new SpaceContainers.SentryPilotFacts(98_000_002, 0, -4.9, -2.0, false) : null);
+        await rig.Containers.SynchronizeControlTowerSlimStateAsync(fixture.Tower);
+        var fact = Assert.Single(rig.Sim.Heard.OfType<SimSentryPilot>(), message => message.ShipId != 0);
+        Assert.Equal((fixture.Tower, fixture.Target, 98_000_002L, (double?)(-4.9), -2.0, false), (fact.TowerId, fact.ShipId, fact.CorporationId, fact.SecurityStatus, fact.Standing, fact.AtWar));
+        Assert.Equal(fixture.Tower, rig.Sim.Heard.OfType<SimSentryPilot>().Last(message => message.ShipId == 0).TowerId);
+
+        // the tower goes offline by request: its policy is sent offline, so the simulation lets its sentries go
+        await rig.Space.DeactivateAsync(fixture.Session, fixture.Tower, "onlineForStructures", CancellationToken.None);
+        var offline = rig.Sim.Heard.OfType<SimSentryPolicy>().Last();
+        Assert.Equal((fixture.Tower, false), (offline.TowerId, offline.Online));
+    }
+
     private const int ForceFieldType = 16_103, ForceFieldGroup = 411;
 
     /// <summary>An online control tower at a moon of <see cref="LowSecSystem"/>, with the pilot that manages it (the fuel test's path).</summary>

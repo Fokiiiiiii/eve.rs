@@ -695,6 +695,7 @@ private void OnReceived(SimMessage message)
     {
         _ = RestoreAsync(system);
         _ = RestoreDeployedAsync(system);
+        _ = ReconcileSystemSentriesAsync(system);
     }
 
     /// <summary>

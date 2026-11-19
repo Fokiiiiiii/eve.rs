@@ -562,7 +562,16 @@ public sealed partial class SpaceContainers
         {
             var answer = await _sim.PlaceForceFieldAsync(placement, cancellationToken).ConfigureAwait(false);
             if (answer.Reason.Length > 0)
+            {
+                // the simulation holds no field of the tower, so the item the placement wrote is taken back: an item exists only with a field in the scene, and the next sync writes a new one
+                await using (var compensation = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
+                await using (var transaction = await compensation.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
+                {
+                    await RemoveForceFieldInTransactionAsync(compensation, transaction, towerId, cancellationToken).ConfigureAwait(false);
+                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                }
                 throw new InvalidOperationException($"The simulation did not place force field {placement.FieldId} of control tower {towerId}: {answer.Reason}");
+            }
         }
         if (removal is not null)
         {

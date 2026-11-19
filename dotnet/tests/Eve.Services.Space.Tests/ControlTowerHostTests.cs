@@ -1874,13 +1874,35 @@ public class ControlTowerHostTests
         rig.Sim.ForceFieldPlacementReason = "FORCE_FIELD_ID_TAKEN";
         var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Containers.SynchronizeControlTowerSlimStateAsync(tower));
         Assert.Contains("FORCE_FIELD_ID_TAKEN", refused.Message);
-        // the tower is still online, so its item stays: the next sync sends the placement again
-        Assert.Equal(item.ItemId, Assert.Single(await ForceFieldItemsAsync(rig)).ItemId);
+        // the simulation holds no field of the tower, so the item the refused placement wrote is taken back: an item exists only with a field in the scene
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+        Assert.Null(await rig.SpaceItems.GetAsync(item.ItemId));
 
+        // the next sync writes a new item and sends its placement, which the simulation now accepts
         rig.Sim.ForceFieldPlacementReason = "";
         await rig.Containers.SynchronizeControlTowerSlimStateAsync(tower);
-        Assert.Equal(item.ItemId, rig.Sim.Heard.OfType<SimPlaceForceField>().Last().FieldId);
-        Assert.Single(await ForceFieldItemsAsync(rig));
+        var placed = rig.Sim.Heard.OfType<SimPlaceForceField>().Last();
+        Assert.Equal(placed.FieldId, Assert.Single(await ForceFieldItemsAsync(rig)).ItemId);
+    }
+
+    [PgFact]
+    public async Task A_refused_field_in_a_restore_does_not_stop_the_other_records_of_the_system_being_put_back()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (_, tower) = await OnlineTowerAsync(rig);
+        // a cynosural field of the same system, on record: the restore puts it back after the tower's field
+        const long cynoField = 4_250_000_000_000_777;
+        await rig.Deployed.SaveAsync(new DeployedRecord(cynoField, "cyno_field", (int)LowSecSystem, "Cynosural Field", 21_094, 2_020, [1, 2, 3], 250,
+            1_790_646_377_000_015, 98_000_001, 0, 9_988_400_001_943, rig.Now + 3_600_000));
+
+        // a restarted simulation refuses the tower's field: the refusal is logged, and the restore goes on to the cynosural field
+        rig.Sim.ForceFieldPlacementReason = "SYSTEM_UNKNOWN";
+        rig.Sim.Heard.Clear();
+        await rig.Containers.RestoreDeployedAsync((int)LowSecSystem);
+        Assert.Equal(tower, Assert.Single(rig.Sim.Heard.OfType<SimPlaceForceField>()).TowerId);
+        Assert.Equal(cynoField, Assert.Single(rig.Sim.Heard.OfType<SimDeployed>()).DeployableId);
+        Assert.Contains(rig.Log, line => line.Contains("force field") && line.Contains("was not put back"));
+        Assert.Empty(await ForceFieldItemsAsync(rig));
     }
 
     [PgFact]

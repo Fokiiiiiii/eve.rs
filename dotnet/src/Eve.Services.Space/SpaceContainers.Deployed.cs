@@ -128,7 +128,15 @@ public sealed partial class SpaceContainers
                     {
                         // a restarted simulation has none of the access a tower saved: it is told again, then an online tower's field is put back
                         await SendSavedForceFieldAccessAsync(record, CancellationToken.None);
-                        await ReconcileForceFieldAsync(record.DeployableId, CancellationToken.None);
+                        try
+                        {
+                            await ReconcileForceFieldAsync(record.DeployableId, CancellationToken.None);
+                        }
+                        catch (Exception error)
+                        {
+                            // a field the simulation refuses is logged, and the records of the system that follow are still put back
+                            _log?.Invoke($"the force field of control tower {record.DeployableId} was not put back: {error.Message}");
+                        }
                         restoredTower = true;
                     }
                     continue;

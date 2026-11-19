@@ -127,6 +127,8 @@ Rejected candidates are listed at the end, with reasons.
 
 ## F6 (Medium, confirmed): a refused placement leaves the item and aborts restore for the whole system
 
+**Outcome (fixed):** two red tests first. (1) `A_refused_field_in_a_restore_does_not_stop_the_other_records_of_the_system_being_put_back`: without the restore guard the cynosural field of the same system was never put back (`Assert.Single` on an empty `SimDeployed`); confirmed by removing the guard temporarily, then restoring it. (2) The pinned test `A_field_the_simulation_refuses_is_an_error_and_is_placed_again_once_the_simulation_accepts_it` was corrected: it asserted that the refused item stays, which breaks the invariant "an item exists only with a field in the scene"; it now asserts that the item is gone and the next sync writes a new one. Fixes: a refused placement deletes the item it just wrote, in its own transaction, then still throws for the RPC caller (`ReconcileForceFieldUnderGateAsync`); `RestoreDeployedAsync` logs a refused field for its tower and carries on with the other records. Verified: `ControlTowerHostTests` 27 of 27 passed. The review's suggestion to keep the item on refusal was rejected: the field is not in the scene, so the item must go.
+
 **Files**
 - `dotnet/src/Eve.Services.Space/SpaceContainers.ControlTowers.cs:519-553`. The item is committed (about line 540) before the send at 544. A refusal throws at 546, after the commit.
 - `dotnet/src/Eve.Services.Space/SpaceContainers.Deployed.cs:84-172`. The `foreach` runs inside one `try`. The reconcile call at 127 is not wrapped, so its exception lands in the catch at 170-172 and every later record in the system is skipped.

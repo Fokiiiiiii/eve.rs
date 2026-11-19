@@ -104,3 +104,10 @@ Dirty `/home/user/wt-cx5` の SimLink patch は、この worktree の開始 comm
 - Build 3396210 に一致する mission binary/reward source が得られていない。Offer catalog、mission reward values、LP reward formulas、3 missing kill-dungeon authorities remain open in `TODO.md` section 43.
 - Native V24.01 graphical client, rendered journal / mission images, every mission branch, retry/restart concurrency across the whole economy/social set, and all issuer / station location combinations remain unverified beyond the cited focused regressions.
 - GitHub main CI result is recorded in the job summary after the push.
+
+
+## Notification gap review (run without a Host change)
+
+- `OnStartClientNodeGraph` (economy/onboarding): V24 `nodegraph/client/service.py:42-44` starts a client node graph from `(node_graph_id, node_graph_instance_id, blackboard_parameters)` and calls `start_node_graph`. eve.rs has a `NodeGraphService` that forwards `qa_*` and client-graph requests only (`dotnet/src/Eve.Services.Core/UnportedFeatureRpcServices.cs:196-272`) and sends no `OnStartClientNodeGraph`. Closing this needs the node-graph definitions and the onboarding flow that drives them, which eve.rs does not have. **Not implemented; open.** Economy and core captures show the difference only in the skipTutorial=False path.
+- `OnStandingSet` value types: `dotnet/src/Eve.Host/Rpc/StandingSetNotification.cs` sends `PyInt(owner)`, `PyLong(character)`, `PyReal(standing)`. The doc's suggestion to match EveJS's Python-2 `int` was **not applied**: standings are fractional (for example 2.5), so `PyInt` would truncate them, and no V24 source shows the consumer requires an int. The numeric type difference remains open and is harmless unless a consumer checks the type.
+- Not verified in this pass: the raw notification and reply diffs in the v8 paired captures, because the mitm CLI is blocked for this session and the capture files are large. The v8 captures are single runs, so option C cannot be run on them.

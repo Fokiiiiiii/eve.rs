@@ -926,6 +926,29 @@ public sealed class AbyssalSpaceSessionsTests
     }
 
     [PgFact]
+    public async Task Detaching_a_pocket_participant_gives_up_its_battery_grant()
+    {
+        var (rig, character, session) = await InSpaceAsync();
+        await using var _ = rig;
+        var contentId = Guid.NewGuid().ToString();
+        var origin = SimSceneKey.SolarSystem(checked((int)session.GetInt("solarsystemid2")!.Value));
+        var room = new SimSceneKey(origin.LocationId, 89, 1);
+        Assert.Null(await rig.Space.EnsureAbyssalSceneAsync(SceneSpec(room)));
+        Assert.Null(await rig.Space.MoveAbyssalParticipantAsync(contentId, new SimMoveAbyssalParticipant(
+            903, character.ShipId, origin, room, [100.0, 200.0, 300.0], [0.0, 0.0, 1.0])));
+        var released = RecordBatteryReleases(rig);
+        var persistedCharacter = (await rig.Characters.GetAsync(character.CharacterId))!;
+        var persistedShip = (await rig.Items.GetAsync(character.ShipId))!;
+
+        // the administrative detach takes the pilot out of its pocket: the pilot leaves the scene, so its grants go
+        var detach = await rig.Space.DetachAbyssalParticipantAsync(contentId, room, persistedCharacter, persistedShip, CancellationToken.None);
+        Assert.NotNull(detach);
+        await UntilBatteryReleasedAsync(released);
+
+        Assert.Equal([character.CharacterId], released);
+    }
+
+    [PgFact]
     public async Task Domain_owned_loot_is_removed_from_its_private_scene_before_the_scene_is_removed()
     {
         var (rig, _, _) = await InSpaceAsync();

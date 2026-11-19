@@ -59,6 +59,8 @@ public static partial class SimCodec
         public const byte SentryBattery = 193;
         /// <summary>Protocol 106: what the host knows of a pilot's ship toward a tower's policy (ship 0 forgets the tower's pilots). No answer.</summary>
         public const byte SentryPilot = 194;
+        /// <summary>The simulation says a pilot's ship harmonic changed: the admitted tower it is inside, or -1 (protocol 105).</summary>
+        public const byte ShipForceFieldHarmonic = 186;
         public const byte EnsureTournamentBeacon = 128;
         public const byte EnsureTournamentBeaconReply = 129;
         public const byte RemoveTournamentBeacon = 130;

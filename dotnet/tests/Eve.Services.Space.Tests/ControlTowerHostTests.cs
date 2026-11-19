@@ -2017,6 +2017,50 @@ public class ControlTowerHostTests
             rig.Sim.Heard.OfType<SimSetForceFieldAccess>().Last());
         Assert.Equal(2, rig.Sim.Heard.OfType<SimSetForceFieldAccess>().Count());
     }
+
+    [PgFact]
+    public async Task Tower_password_change_rematches_a_pilot_and_the_ship_harmonic_follows_the_simulation_answer()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.Space.DeployedRecords = rig.Deployed;
+        var (session, tower) = await OnlineTowerAsync(rig);
+        var shipId = session.GetInt("shipid")!.Value;
+        var systemId = (int)LowSecSystem;
+        var sessionId = (ulong)session.SessionId;
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var holder = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+        IEnumerable<SimSetSlimField> HarmonicWrites() =>
+            rig.Sim.Heard.OfType<SimSetSlimField>().Where(field => field.FieldName == "harmonic");
+
+        // the pilot sets the tower's password: the simulation is told the match, and the Host writes no harmonic before the simulation answers
+        Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("field-secret"), PyBool.True, PyBool.False));
+        await rig.Space.SetShipPasswordAsync(session, new PyStr("field-secret"), CancellationToken.None);
+        Assert.Equal(new SimShipForceFieldPassword(sessionId, tower, systemId, true), rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Last());
+        Assert.Empty(HarmonicWrites());
+
+        // the simulation puts the ship inside the admitted field: its harmonic is the slim field's value
+        rig.Sim.Report(new SimShipForceFieldHarmonic(sessionId, shipId, tower));
+        await rig.Space.QuiesceAsync();
+        Assert.Equal(new SimSetSlimField(shipId, "harmonic", new SimSlimInt(tower)), Assert.Single(HarmonicWrites()));
+
+        // the tower takes another password: the pilot's digest no longer matches, the refusal is told, and the simulation takes the harmonic away
+        Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("tower-secret-two"), PyBool.True, PyBool.False));
+        Assert.Equal(new SimShipForceFieldPassword(sessionId, tower, systemId, false), rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Last());
+        rig.Sim.Report(new SimShipForceFieldHarmonic(sessionId, shipId, -1));
+        await rig.Space.QuiesceAsync();
+        Assert.Equal(new SimSetSlimField(shipId, "harmonic", new SimSlimInt(-1)), HarmonicWrites().Last());
+
+        // the tower takes the pilot's password again: matched again, and the simulation gives the ship the tower's harmonic back
+        Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("field-secret"), PyBool.True, PyBool.False));
+        Assert.Equal(new SimShipForceFieldPassword(sessionId, tower, systemId, true), rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Last());
+        rig.Sim.Report(new SimShipForceFieldHarmonic(sessionId, shipId, tower));
+        await rig.Space.QuiesceAsync();
+        Assert.Equal(new SimSetSlimField(shipId, "harmonic", new SimSlimInt(tower)), HarmonicWrites().Last());
+        // one slim write per answer the simulation gave, in order: the Host adds none of its own
+        Assert.Equal(3, HarmonicWrites().Count());
+    }
 }
 
 

@@ -189,6 +189,9 @@ impl Sim {
             Out::TetherChanged { session, previous_structure_id, structure_id, repairing } => {
                 Message::TetherChanged { session_id: session, previous_structure_id, structure_id, repairing }
             }
+            Out::ShipForceFieldHarmonic { session, ship_id, harmonic } => {
+                Message::ShipForceFieldHarmonic { session_id: session, ship_id, harmonic }
+            }
             Out::DeployedLit { placement, .. } => Message::Deployed(placement),
             Out::StructureDamaged { structure_id, depleted, over_threshold } => {
                 Message::StructureDamaged { structure_id, depleted, over_threshold }
@@ -2046,7 +2049,11 @@ impl Sim {
                     self.scenes.insert(scene_key, self.universe.scene_of(system));
                 }
                 let placed = match self.scenes.get_mut(&scene_key) {
-                    Some(scene) => scene.place_force_field(field, now),
+                    // a pilot already admitted inside the new field takes its harmonic at once, and one left outside it loses none
+                    Some(scene) => scene.place_force_field(field, now).map(|mut told| {
+                        told.extend(scene.refresh_all_force_field_harmonics(now));
+                        told
+                    }),
                     None => Err("SYSTEM_UNKNOWN"),
                 };
                 match placed {
@@ -2058,7 +2065,11 @@ impl Sim {
             }
             Message::RemoveForceField { tower_id, solar_system_id } => {
                 let removed = match self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
-                    Some(scene) => scene.remove_force_field(tower_id, now),
+                    // a pilot that was inside the field takes its harmonic away with it
+                    Some(scene) => scene.remove_force_field(tower_id, now).map(|mut told| {
+                        told.extend(scene.refresh_all_force_field_harmonics(now));
+                        told
+                    }),
                     None => Err("FORCE_FIELD_NOT_IN_SPACE"),
                 };
                 match removed {
@@ -2082,16 +2093,19 @@ impl Sim {
                 {
                     self.scenes.insert(scene_key, self.universe.scene_of(system));
                 }
-                if let Some(scene) = self.scenes.get_mut(&scene_key) {
-                    let access = crate::scene::force_field::Access {
-                        corporation_id,
-                        alliance_id,
-                        allow_corporation,
-                        allow_alliance,
-                    };
-                    scene.set_force_field_access(tower_id, access);
+                match self.scenes.get_mut(&scene_key) {
+                    Some(scene) => {
+                        let access = crate::scene::force_field::Access {
+                            corporation_id,
+                            alliance_id,
+                            allow_corporation,
+                            allow_alliance,
+                        };
+                        scene.set_force_field_access(tower_id, access);
+                        scene.refresh_all_force_field_harmonics(now)
+                    }
+                    None => Vec::new(),
                 }
-                Vec::new()
             }
             Message::SentryPolicy {
                 tower_id,
@@ -2160,10 +2174,13 @@ impl Sim {
                 Vec::new()
             }
             Message::ShipForceFieldPassword { session_id, tower_id, solar_system_id, matched } => {
-                if let Some(scene) = self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
-                    scene.set_force_field_password(session_id, tower_id, matched);
+                match self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
+                    Some(scene) => {
+                        scene.set_force_field_password(session_id, tower_id, matched);
+                        scene.refresh_force_field_harmonic(session_id, now)
+                    }
+                    None => Vec::new(),
                 }
-                Vec::new()
             }
             Message::PlaceControlTower(tower) => {
                 let tower = *tower;

@@ -2102,6 +2102,11 @@ impl Message {
                     out.extend_from_slice(&candidate.range.to_le_bytes());
                 }
             }
+            Self::ShipForceFieldHarmonic { session_id, ship_id, harmonic } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&harmonic.to_le_bytes());
+            }
             Self::TetherChanged { session_id, previous_structure_id, structure_id, repairing } => {
                 out.extend_from_slice(&session_id.to_le_bytes());
                 out.extend_from_slice(&(*previous_structure_id as u64).to_le_bytes());

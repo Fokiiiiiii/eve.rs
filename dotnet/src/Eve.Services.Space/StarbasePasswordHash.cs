@@ -14,10 +14,16 @@ internal static class StarbasePasswordHash
     private const int SalsaBytes = SalsaWords * sizeof(uint);
     private const int ScryptBlockBytes = 128 * ScryptR;
 
-    public static async Task<byte[]> DeriveAsync(string password, string salt, CancellationToken cancellationToken = default)
+    public static Task<byte[]> DeriveAsync(string password, string salt, CancellationToken cancellationToken = default) =>
+        DeriveFromDigestAsync(SHA256.HashData(Encoding.UTF8.GetBytes(password)), salt, cancellationToken);
+
+    /// <summary>
+    /// Derives the stored hash from the raw SHA-256 digest of the password. The scrypt input is the lowercase hex text of
+    /// the digest, as EveJS passes it, so a digest kept in place of the password is enough to check the password again.
+    /// </summary>
+    public static async Task<byte[]> DeriveFromDigestAsync(byte[] digest, string salt, CancellationToken cancellationToken = default)
     {
-        var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(password)));
-        var passwordBytes = Encoding.ASCII.GetBytes(digest);
+        var passwordBytes = Encoding.ASCII.GetBytes(Convert.ToHexStringLower(digest));
         var saltBytes = Encoding.ASCII.GetBytes(salt);
         try
         {
@@ -29,7 +35,11 @@ internal static class StarbasePasswordHash
         }
     }
 
-    public static async Task<bool> MatchesAsync(string? configuration, string password, CancellationToken cancellationToken = default)
+    public static Task<bool> MatchesAsync(string? configuration, string password, CancellationToken cancellationToken = default) =>
+        MatchesDigestAsync(configuration, SHA256.HashData(Encoding.UTF8.GetBytes(password)), cancellationToken);
+
+    /// <summary>Checks the SHA-256 digest of a password against one tower's saved hash; the password itself is not needed.</summary>
+    public static async Task<bool> MatchesDigestAsync(string? configuration, byte[] digest, CancellationToken cancellationToken = default)
     {
         if (configuration is null)
             return false;
@@ -44,7 +54,7 @@ internal static class StarbasePasswordHash
                 return false;
 
             var expected = Convert.FromHexString(hash);
-            var actual = await DeriveAsync(password, salt, cancellationToken).ConfigureAwait(false);
+            var actual = await DeriveFromDigestAsync(digest, salt, cancellationToken).ConfigureAwait(false);
             try
             {
                 return CryptographicOperations.FixedTimeEquals(actual, expected);

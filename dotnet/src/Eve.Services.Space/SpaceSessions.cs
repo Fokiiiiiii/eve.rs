@@ -196,29 +196,12 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
 
         var credential = new ShipStarbaseCredential(characterId.Value, shipId.Value, SHA256.HashData(Encoding.UTF8.GetBytes(password)));
         _shipStarbaseCredentials[sessionId] = credential;
-        // every control tower of the system is matched once: the harmonic is the first online match, and the simulation is told the same matches
-        var harmonic = -1L;
-        var matches = new List<(long TowerId, bool Matched)>();
-        if (DeployedRecords is { } deployed)
-        {
-            foreach (var tower in await deployed.InSystemAsync(systemId, cancellationToken))
-            {
-                if (tower.Kind != "control_tower" || tower.GroupId != 365 || tower.ExpiresAtMs <= _nowUnixMs())
-                    continue;
-                var matched = await StarbasePasswordHash.MatchesAsync(
-                    await deployed.TowerConfigurationAsync(tower.DeployableId, cancellationToken), password, cancellationToken);
-                matches.Add((tower.DeployableId, matched));
-                if (matched && harmonic < 0 && tower.ActivateAtMs <= _nowUnixMs() &&
-                    StringComparer.Ordinal.Equals(await deployed.TowerStateAsync(tower.DeployableId, cancellationToken), "online"))
-                    harmonic = tower.DeployableId;
-            }
-        }
+        // every control tower of the system is matched and the simulation is told each match: the simulation decides the ship's harmonic from them
+        var matches = await MatchShipPasswordAsync(systemId, credential.PasswordDigest, cancellationToken);
 
         if (!_shipStarbaseCredentials.TryGetValue(sessionId, out var current) || !ReferenceEquals(current, credential) ||
             session.GetInt("shipid") != shipId || !_pilots.TryGetValue(sessionId, out pilot) || pilot.ShipId != shipId)
             return PyNone.Instance;
-        if (!await _sim.TrySetSlimFieldAsync(shipId.Value, "harmonic", new SimSlimInt(harmonic), cancellationToken))
-            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The ship's force-field password could not be applied.")));
         foreach (var (towerId, matched) in matches)
             _sim.SetShipForceFieldPassword(new SimShipForceFieldPassword(sessionId, towerId, systemId, matched));
         return PyNone.Instance;
@@ -1163,6 +1146,9 @@ internal void StartStructureDamageModuleForTest(ulong session, long moduleId, st
                     break;
                 case SimStructureDamageCandidatesRequest candidates:
                     Background(() => ReplyToStructureDamageCandidatesAsync(candidates));
+                    break;
+                case SimShipForceFieldHarmonic harmonic:
+                    HandleShipForceFieldHarmonic(harmonic);
                     break;
                 case SimTetherChanged tether:
                     HandleTetherChanged(tether);

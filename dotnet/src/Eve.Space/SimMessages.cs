@@ -1296,6 +1296,9 @@ public sealed record SimSentryBattery(long BatteryId, int SolarSystemId, long To
 public sealed record SimSentryPilot(long TowerId, int SolarSystemId, long ShipId, long CorporationId, long AllianceId, double? SecurityStatus,
     double Standing, bool AtWar) : SimMessage;
 
+/// <summary>The simulation's harmonic for a pilot's ship changed: the tower of the admitted field it is inside, or -1 (simulation to host, protocol 105).</summary>
+public sealed record SimShipForceFieldHarmonic(ulong SessionId, long ShipId, long Harmonic) : SimMessage;
+
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;
 

@@ -11,7 +11,7 @@ use eve_destiny::Vec3;
 
 use crate::deployable::Role;
 use crate::payload;
-use crate::scene::{Scene, SessionId};
+use crate::scene::{Out, Scene, SessionId};
 use crate::ship::Course;
 use crate::wire::{id, int, real, vector};
 
@@ -263,6 +263,62 @@ impl Scene {
         })
     }
 
+    /// Recomputes a pilot's harmonic where its ship is now, after the admission of a field changed (a password, or a tower's access). The ship is not
+    /// moved: inside a field it is admitted to it takes that tower's harmonic, and inside a field that does not admit it it has none.
+    pub(crate) fn refresh_force_field_harmonic(&mut self, session: SessionId, now: i64) -> Vec<Out> {
+        let harmonic = {
+            let Some(pilot) = self.pilots.get(&session) else { return Vec::new() };
+            if pilot.flight.is_some() {
+                return Vec::new();
+            }
+            let ship = &pilot.ship;
+            let position = ship.position;
+            let (corporation_id, alliance_id) = (ship.spec.corporation_id, ship.spec.alliance_id);
+            let ship_radius = ship.spec.radius.max(0.0);
+            let mut harmonic = NO_HARMONIC;
+            for held in self.deployables.values() {
+                let Role::ForceField { tower_id } = &held.role else { continue };
+                let (tower_id, center, field_radius) = (*tower_id, held.position, held.spec.radius);
+                if !field_radius.is_finite() || field_radius <= 0.0 || !is_finite(center) {
+                    continue;
+                }
+                let boundary = field_radius + ship_radius + BOUNDARY_CLEARANCE_METERS;
+                if norm(minus(position, center)) >= boundary {
+                    continue;
+                }
+                let admitted = self
+                    .force_field_access
+                    .get(&tower_id)
+                    .is_some_and(|access| access.admits_group(corporation_id, alliance_id))
+                    || self.force_field_passwords.contains(&(session, tower_id));
+                if !admitted {
+                    harmonic = NO_HARMONIC;
+                    break;
+                }
+                harmonic = tower_id;
+            }
+            harmonic
+        };
+        let before = self.force_field_harmonics.get(&session).copied().unwrap_or(NO_HARMONIC);
+        if harmonic == NO_HARMONIC {
+            self.force_field_harmonics.remove(&session);
+        } else {
+            self.force_field_harmonics.insert(session, harmonic);
+        }
+        self.publish_force_field(session, now, before, None);
+        self.with_backlog(Vec::new())
+    }
+
+    /// Recomputes the harmonic of every pilot in the scene, after a tower's access changed.
+    pub(crate) fn refresh_all_force_field_harmonics(&mut self, now: i64) -> Vec<Out> {
+        let sessions: Vec<SessionId> = self.pilots.keys().cloned().collect();
+        let mut out = Vec::new();
+        for session in sessions {
+            out.extend(self.refresh_force_field_harmonic(session, now));
+        }
+        out
+    }
+
     /// Tells the clients that see a pilot's ship what the field did to its move (`correction`), and its harmonic when it changed from `harmonic_before`:
     /// the correction is the cancel, the position and the velocity, in that order (EVE.js `buildForceFieldBoundaryCorrectionUpdates`), and the harmonic is
     /// `SetBallHarmonic` with the ship's corporation and alliance (`buildStarbaseHarmonicUpdates`).
@@ -278,6 +334,10 @@ impl Scene {
         let (corporation_id, alliance_id) = (pilot.ship.spec.corporation_id, pilot.ship.spec.alliance_id);
         let bound = pilot.bound;
         let harmonic = self.force_field_harmonics.get(&session).copied().unwrap_or(NO_HARMONIC);
+        if harmonic != harmonic_before {
+            // the host keeps the ship's slim harmonic in step with this one (protocol 105)
+            self.backlog.push(Out::ShipForceFieldHarmonic { session, ship_id, harmonic });
+        }
         if correction.is_none() && harmonic == harmonic_before {
             return;
         }

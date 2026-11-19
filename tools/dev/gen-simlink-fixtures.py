@@ -34,7 +34,7 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164, "WarpExited": 165, "GetDeploymentBalls": 166, "GetDeploymentBallsReply": 167,
          "PlaceBattery": 168, "BatteryPlaced": 169, "BatteryTarget": 170, "BatteryTargets": 171,
          "PlaceForceField": 180, "ForceFieldPlaced": 181, "RemoveForceField": 182, "ForceFieldRemoved": 183,
-         "SetForceFieldAccess": 184, "ShipForceFieldPassword": 185,
+         "SetForceFieldAccess": 184, "ShipForceFieldPassword": 185, "ShipForceFieldHarmonic": 186,
          "BatteryFire": 190, "BatteryFired": 191,
           "SentryPolicy": 192, "SentryBattery": 193, "SentryPilot": 194}
 
@@ -556,6 +556,8 @@ def build(m):
                      + i64(m["corporationId"]) + i64(m["allianceId"])
                      + bytes([1 if m["securityStatus"] is not None else 0]) + struct.pack("<d", m["securityStatus"] if m["securityStatus"] is not None else 0.0)
                      + struct.pack("<d", m["standing"]) + bytes([1 if m["atWar"] else 0]))
+    if k == "ShipForceFieldHarmonic":
+        return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + i64(m["harmonic"]))
     if k == "ShipForceFieldPassword":
         return frame(k, u64(m["sessionId"]) + i64(m["towerId"]) + struct.pack("<i", m["solarSystemId"]) + bytes([1 if m["matched"] else 0]))
     if k == "PlaceForceField":
@@ -1056,6 +1058,8 @@ valid = [
     {"name": "force field removal refused for a tower with no field", "kind": "ForceFieldRemoved", "towerId": "1050000099", "reason": "FORCE_FIELD_NOT_IN_SPACE"},
     {"name": "set who a tower's force field admits by corporation and alliance (protocol 104)", "kind": "SetForceFieldAccess", "towerId": "1050000099",
      "solarSystemId": 30000142, "corporationId": 98000001, "allianceId": 97000001, "allowCorporation": True, "allowAlliance": False},
+    {"name": "the simulation's harmonic for a pilot's ship is the tower it is inside (protocol 105)", "kind": "ShipForceFieldHarmonic", "sessionId": "1790646377000015",
+     "shipId": "1790000001", "harmonic": 1050000099},
     {"name": "a pilot's ship password matches a tower (protocol 104)", "kind": "ShipForceFieldPassword", "sessionId": "1790646377000015",
      "towerId": "1050000099", "solarSystemId": 30000142, "matched": True},
     {"name": "a tower's sentry policy: standing below -2.5, war on, the owner's corporation and alliance (protocol 106)", "kind": "SentryPolicy", "towerId": "1050000099",
@@ -1635,7 +1639,7 @@ valid = [
      "status": {"state": 110, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, None], "unanchoring": None, "repairing": None}},
     {"name": "customs office of a planet put in orbit by the host (protocol 67)", "kind": "PlaceStructure", "structureId": "1200000040486618", "solarSystemId": 30100032, "typeName": "Customs Office", "typeId": 2233, "groupId": 1025, "planetId": 40486618, "modules": [], "closestMoonId": "0", "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 8000.0, "ownerId": "1000125", "corporationId": 0, "allianceId": 0, "vitals": {"shieldCapacity": 0.0, "armorHp": 0.0, "structureHp": 0.0, "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}}, "shieldRechargeMs": 0.0, "perSecond": [0.0, 0.0, 0.0], "repairPause": [0.0, 0.0, 0.0], "status": {"state": 110, "upkeepState": 3, "timer": None, "unanchoring": None, "repairing": None}},
     {"name": "host updates the refinery moon and fitted drill modules", "kind": "SetStructureMoonMiningState", "solarSystemId": 30000001, "structureId": "1040000000001", "closestMoonId": "40000004", "modules": [{"itemId": "1040000000002", "typeId": 45009, "flagId": 164}]},
-    {"name": "host projects a moon chunk with its tractor phase", "kind": "UpsertMoonChunk", "chunkId": "1040000000003", "solarSystemId": 30000001,
+    {"description": "host projects a moon chunk with its tractor phase", "kind": "UpsertMoonChunk", "chunkId": "1040000000003", "solarSystemId": 30000001,
      "name": "Moon chunk", "typeId": 46030, "groupId": 1940, "categoryId": 25, "ownerId": "98000001", "graphicId": 12345,
      "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "radius": 10000.0,
      "sourceStructureId": "1040000000001", "moduleId": "1040000000002", "moduleTypeId": 45009, "moonId": "40000004",

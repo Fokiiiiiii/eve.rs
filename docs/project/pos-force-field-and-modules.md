@@ -86,8 +86,8 @@ Client and EveJS facts, read from `/home/user/eve-logic` (codebase-memory `get_c
 
 Implemented:
 
-- Rust (`crates/eve-space/src/targeting/battery.rs`, `battery_fire`): a battery has `firing`, a target it locks. A start needs the battery online, a holder, and a locked target (`TARGET_NOT_LOCKED`); a second target while one fires is `MODULE_ALREADY_ACTIVE`; a stop is always accepted. Firing ends with its lock, with a holder change, and when the battery goes offline. Messages `BatteryFire` (190) and `BatteryFired` (191) are in `link/kind.rs`, `link/mod.rs`, `link/payload.rs`, `link/decode_message.rs`, `scene/mod.rs` and `sim/dispatch.rs`. `PROTOCOL_VERSION` is 104. Kinds 180 to 185 (the force field) are in protocol 104 as well.
-- C#: `SimCodec` (`ProtocolVersion` 104), `SimMessages` (`SimBatteryFire`, `SimBatteryFired`), `ISimulation.BatteryFireAsync` and `SimClient.BatteryFireAsync`.
+- Rust (`crates/eve-space/src/targeting/battery.rs`, `battery_fire`): a battery has `firing`, a target it locks. A start needs the battery online, a holder, and a locked target (`TARGET_NOT_LOCKED`); a second target while one fires is `MODULE_ALREADY_ACTIVE`; a stop is always accepted. Firing ends with its lock, with a holder change, and when the battery goes offline. Messages `BatteryFire` (190) and `BatteryFired` (191) are in `link/kind.rs`, `link/mod.rs`, `link/payload.rs`, `link/decode_message.rs`, `scene/mod.rs` and `sim/dispatch.rs`. `PROTOCOL_VERSION` is 106. Kinds 180 to 185 (the force field) are in protocol 104 as well.
+- C#: `SimCodec` (`ProtocolVersion` 106), `SimMessages` (`SimBatteryFire`, `SimBatteryFired`), `ISimulation.BatteryFireAsync` and `SimClient.BatteryFireAsync`.
 - Host: `DogmaIMService.Modules.cs` sends `Activate` and `Deactivate` on a battery's item id to the space before the ship module path (`BatteryFireOrderAsync`, `DogmaIMService.Targeting.cs`). `SpaceContainers.Batteries.cs` `BatteryFireAsync` returns null for an item that is not a player-controlled battery, so ship modules are unchanged. For a battery it refuses a pilot without the grant (`NO_CONTROL_GRANT`, which the client sees as "You must assume control of this starbase battery before operating it."), refuses an effect that is not the type's offensive effect (`EFFECT_INVALID`, checked by `DogmaStatic.OffensiveEffectNameAsync` from SDE `typeDogma` / `dogmaEffects.isOffensive`), refuses an offline battery (`BATTERY_OFFLINE`), and otherwise places the battery with its holder and asks the simulation. Holder and online state are read from PostgreSQL (`starbase_battery_control`, tower state) on every call.
 
 Verification (2026-11-18):
@@ -279,9 +279,61 @@ Not verified and not done:
 - Standings admission remains a documented gap (slice 2).
 - No graphical client run.
 
+### POS force field password re-match, slice 5 (2026-11-19)
+
+Scope: a tower's saved password changes while pilots already hold a ship password. Client fact (V24.01, `eve-logic` `playerOwned.py:182-191`, `EnterShipPassword`, read with codebase-memory `get_code_snippet`): the client sends the plaintext ship password only from its prompt, so the Host can never be sent it again. The digest is therefore the only credential kept, as before.
+
+EveJS fact (`/home/user/evejs-261108.1/server/src/services/starbase/starbaseAccessRuntime.js:197-263`, read with the Read tool): the credential keeps `sha256(password)` and the match is `scrypt(hex(digest), salt)` against the tower's saved hash, so a new saved hash is checked again from the same digest. The Host's `StarbasePasswordHash` (`dotnet/src/Eve.Services.Space/StarbasePasswordHash.cs`) uses the same scheme (`scrypt` N=16384, r=8, p=1, 32 bytes, with the lowercase hex digest as the input), so no plaintext is needed.
+
+Implemented:
+
+- `StarbasePasswordHash.MatchesDigestAsync` and `DeriveFromDigestAsync` take the raw SHA-256 digest. The password overloads delegate to them, so stored hashes are unchanged.
+- `SpaceSessions.ShipPasswords.cs`: `MatchShipPasswordAsync` is the one per-tower match, and every tower's answer is returned. `SetShipPasswordAsync` uses it.
+- `RematchShipPasswordsAsync(systemId)` runs for each pilot in the system that holds a credential for its current ship. It matches the kept digest again and sends `SetShipForceFieldPassword` for each tower. The harmonic follows the simulation's answer (slice 6). A pilot whose credential changed meanwhile is skipped.
+- `SpaceContainers.SetTowerPasswordAsync` calls it after the commit when the saved hash changed (a password of `false` does not).
+
+Verified (PostgreSQL `eve_p6`, Release, warnings as errors):
+
+- `ControlTowerHostTests.Tower_password_change_matches_a_pilot_holding_a_ship_password_again_from_its_kept_digest`: 1 passed, 0 failed, 0 skipped. Set "field-secret" (harmonic = tower, simulation told a match), change the tower to another password (harmonic -1, simulation told a refusal), set it back (harmonic = tower again). The posMgr wire carries every tower change.
+- `ControlTowerHostTests` class: 21 passed, 0 failed, 0 skipped.
+- `SetShipPasswordHostTests`: 1 passed, 0 failed, 0 skipped (the existing route test, unchanged assertions).
+- Release build of `Eve.Services.Space.Tests` (with its project graph) with `TreatWarningsAsErrors`: 0 warnings, 0 errors.
+
+Slice 6 (below) makes the simulation the only source of the harmonic.
+
+### POS force field harmonic, one source, slice 6 (2026-11-19)
+
+Source of truth: the simulation. `Scene::force_field_harmonics` holds each pilot's harmonic (the tower of the admitted field it is inside, else none). The settle path decides it where the boundary runs, and `refresh_force_field_harmonic` and `refresh_all_force_field_harmonics` recompute it without a move when an input changes: a ship password (kind 185), a tower's access (kind 184), or a field placed or removed.
+
+Both paths read that one value. The clients are told `SetBallHarmonic` as before (`publish_force_field`). The Host writes the ship's slim `harmonic` only from the simulation's report `ShipForceFieldHarmonic` (kind 186, simulation to host, protocol 105), in the order the simulation tells them (one serial chain, `SpaceSessions.ShipPasswords.cs`). The Host chooses no harmonic any more: `SetShipPassword` and the re-match send only the per-tower matches.
+
+Behaviour change: before, the Host set the slim harmonic at password time whether or not the ship was inside a field, and it chose the first online match itself. Both are removed. The harmonic now follows the field the ship is inside, as the scene has modelled it since slice 2.
+
+Verified:
+
+- `cargo test -p eve-space --lib`: 1093 passed, 0 failed, 0 skipped. New: scene `a_password_change_inside_the_field_takes_effect_at_once_and_the_host_is_told` and `a_ship_admitted_inside_that_leaves_the_field_loses_its_harmonic_and_the_host_is_told`; sim `a_password_through_the_simulation_tells_the_host_the_pilot_harmonic` and `a_field_going_up_or_down_around_an_admitted_pilot_changes_its_harmonic_at_once`; link `ship_force_field_harmonic_frame_roundtrips_and_refuses_a_harmonic_that_is_not_a_tower_or_none`. The pinned `PROTOCOL_VERSION` assertion in `sim/tests.rs` moves to 105.
+- `cargo clippy -p eve-space --all-targets -- -D warnings`: clean. `cargo fmt --all` applied.
+- Host, `ControlTowerHostTests`: 21 passed, 0 failed, 0 skipped. `Tower_password_change_rematches_a_pilot_and_the_ship_harmonic_follows_the_simulation_answer` checks that the slim harmonic is written once per simulation answer, in order, and that the Host writes nothing before the first answer. `SetShipPasswordHostTests`: 1 passed, 0 failed, 0 skipped (the same setup; the Host waits for the simulation's answer).
+- `Eve.Space.Tests`: `ForceFieldCodecTests` round-trips kind 186 and refuses a harmonic of 0 or below -1.
+- Release builds with warnings as errors: `Eve.Services.Space.Tests` (with `Eve.Space`, `Eve.Services.Space`, `Eve.Host`) and `Eve.Space.Tests`: 0 warnings, 0 errors.
+
+Known failure, pre-existing, not fixed here: `SimCodecTests.The_fixtures_cover_every_message_kind` fails. Its expected kind list (added in `59246fed8`, extended here with `ShipForceFieldHarmonic`) names the force-field kinds 180 to 186, but `oracle/fixtures/simlink/messages.json` (version 102) was last regenerated at `76d433e22` and has none of them. The generator source (`tools/dev/gen-simlink-fixtures.py`) is updated for protocol 105, kind 186 and the Hello version, but the generator was not run (the orchestrator regenerates it), and the golden file was not edited by hand. Until it is regenerated this test fails. `Eve.Space.Tests`: 585 passed, 1 failed (that test).
+
+## POS force field client notification, slice 7 (2026-11-19): not found
+
+Search of the V24.01 client (`/home/user/eve-logic`, codebase-memory `search_code` and `get_code_snippet`) for the force field harmonic and the starbase state:
+
+- A tower's online and offline state reaches the client as the slim `posState` and `posTimestamp`. `PlayerOwned.StalledOnlineEvent` (`playerOwned.py:73-89`) reads `item.posState`, then calls `sm.ScatterEvent('OnStructureFullyOnline', itemID)` and `OnSpecialFX` with `effects.StructureOnlined`. Both are client-local scatters, not wire events. The Host already writes `posState` on every online and offline transition: `SynchronizeControlTowerSlimStateAsync` (`SpaceContainers.ControlTowers.cs:603-622`) through `SetControlTowerSlimState` (`:907-911`).
+- The force field's own client code, `forceField.ForceField.Assemble` (`environment/spaceObject/forceField.py:11-23`), reads only `forcefieldStartTime` from the slim item (written since slice 3). The searches for force-field, harmonic and forcefield names found no force-field-specific event, effect or scatter: only `CompareShipStructureHarmonic`, `EnterShipPassword`, `EnterTowerPassword`, `EnterForceFieldPassword`, `OfferSetNewPasswordForForceField` and the moon-mining `SaveForcefield` UI.
+- No offline effect exists: there is no `effects.StructureOffline` name in the client.
+- `StructureBrowserController.OnStructureStateChanged` (`structureBrowserController.py:102-108`) updates only structures in its own dictionary, keyed by `structureID`. A POS tower is not in that dictionary, so the client ignores it.
+- eve.rs sends `OnSpecialFX` only for tether effects (`SpaceSessions.Tether.cs:250`). The client's `Park.OnSpecialFX` (`michelle.py:1552`) forwards that to a local scatter.
+
+Conclusion: the V24.01 client has no wire event for a force field going down or coming back. The field is seen as its ball being removed from, or added to, the destiny stream (`PlaceForceField` and `RemoveForceField`), and its start animation follows `forcefieldStartTime`. The online and offline notification the client does consume, the slim `posState`, is already sent on every transition. No Host notification was added, and no Host test was written for an event that does not exist. Still unverified: what a pilot sees on a graphical client when the field goes down or comes back.
+
 ## Open items
 
-- **POS force field and password admission:** the Host now places and removes an online tower's field and sends its access and ship-password state (slice 4, migration 0034). Still open: the client-visible force-field presentation is not verified on the graphical client; a tower's password change does not re-match pilots already holding a credential; standings admission is not implemented; the simulation's per-pilot harmonic and the ship's `harmonic` slim field are separate paths.
+- **POS force field and password admission:** the Host now places and removes an online tower's field and sends its access and ship-password state (slice 4, migration 0034). A tower's password change re-matches pilots holding a credential from the kept digest (slice 5). Still open: the client-visible force-field presentation is not verified on the graphical client; standings admission is not implemented; the harmonic is one source (slice 6), and a field going down or up has no V24.01 client event (slice 7, not found; the tower's `posState` is already sent).
 - **Starbase OBO target calls:** `AddTargetOBO` and `RemoveTargetOBO` remain unimplemented. The battery control grant (`AssumeStructureControl` / `RelinquishStructureControl`) now exists (see POS battery control grant below), but the DogmaLM bound object and the battery's target lock state in the Rust scene do not. Registering the two RPC names without them would not implement the client flow.
 - **Sentry targeting:** the stored policy drives a battery with no holder in the scene (protocol 106, the sentry sections above). Open: the status-drop receipt, damage and cycle, and re-sending the facts when a standing, security status or war changes between triggers.
 - **Other POS inventory/use consumers:** silo `viewput`/`viewputtake` is enforced. Ship-maintenance, reprocessing/compression arrays and jump-bridge `use` behavior remain incomplete.

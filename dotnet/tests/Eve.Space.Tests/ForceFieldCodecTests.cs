@@ -47,6 +47,14 @@ public sealed class ForceFieldCodecTests
         var password = new SimShipForceFieldPassword(1_790_646_377_000_015, 1_050_000_099, 30_000_001, true);
         Assert.Equal(password, SimCodec.Decode(SimCodec.Encode(password).AsMemory(4)));
         Assert.Equal((byte)185, SimCodec.Encode(password)[4]);
+
+        // the simulation's harmonic report: the tower the ship is inside, or -1 for none (protocol 105, kind 186)
+        var harmonic = new SimShipForceFieldHarmonic(1_790_646_377_000_015, 1_790_000_001, 1_050_000_099);
+        Assert.Equal(harmonic, SimCodec.Decode(SimCodec.Encode(harmonic).AsMemory(4)));
+        Assert.Equal((byte)186, SimCodec.Encode(harmonic)[4]);
+        var none = new SimShipForceFieldHarmonic(1_790_646_377_000_015, 1_790_000_001, -1);
+        Assert.Equal(none, SimCodec.Decode(SimCodec.Encode(none).AsMemory(4)));
+        Assert.Throws<SimLinkException>(() => SimCodec.Encode(new SimShipForceFieldHarmonic(1, 1, 0)));
     }
 
     [Fact]

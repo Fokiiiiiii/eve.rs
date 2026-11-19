@@ -1857,6 +1857,12 @@ pub enum Message {
         lease_ms: u64,
         candidates: Vec<TetherCandidate>,
     },
+    /// The simulation's harmonic for a pilot's ship changed: the tower of the admitted field it is inside, or -1 (protocol 105).
+    ShipForceFieldHarmonic {
+        session_id: u64,
+        ship_id: i64,
+        harmonic: i64,
+    },
     /// A simulation-owned tether transition (zero structure means off).
     TetherChanged {
         session_id: u64,
@@ -2062,6 +2068,7 @@ impl Message {
             Self::SetDisruptorActive { .. } => kind::SET_DISRUPTOR_ACTIVE,
             Self::TetherPolicy { .. } => kind::TETHER_POLICY,
             Self::TetherChanged { .. } => kind::TETHER_CHANGED,
+            Self::ShipForceFieldHarmonic { .. } => kind::SHIP_FORCE_FIELD_HARMONIC,
             Self::SetAnalysisBeaconState { .. } => kind::SET_ANALYSIS_BEACON_STATE,
             Self::SetSlimField { .. } => kind::SET_SLIM_FIELD,
             Self::PlaceAccelerationGate(_) => kind::PLACE_ACCELERATION_GATE,

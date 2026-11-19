@@ -1680,6 +1680,16 @@ public static partial class SimCodec
                     message = new SimTetherPolicy(session, blocked, lease, candidates);
                     break;
                 }
+            case Kind.ShipForceFieldHarmonic:
+                {
+                    var session = r.U64();
+                    var ship = r.I64();
+                    var harmonic = r.I64();
+                    if (ship <= 0 || harmonic == 0 || harmonic < -1)
+                        throw new SimLinkException(SimLinkError.BadValue, "ship force field harmonic");
+                    message = new SimShipForceFieldHarmonic(session, ship, harmonic);
+                    break;
+                }
             case Kind.TetherChanged:
                 {
                     var session = r.U64();

@@ -1,7 +1,7 @@
 use super::*;
 use crate::deployable::Role;
 use crate::link::ForceFieldPlacement;
-use crate::scene::tests::{NOON, SESSION, STATION, system};
+use crate::scene::tests::{NOON, SESSION, STATION, spec, system};
 
 const FIELD: i64 = 1_050_000_100;
 const OTHER_FIELD: i64 = 1_050_000_101;
@@ -125,6 +125,78 @@ fn force_field_access_and_a_password_are_kept_in_the_scene_without_an_answer() {
     let scene = &sim.scenes[&SceneKey::solar_system(SYSTEM)];
     assert_eq!(scene.force_field_access.get(&TOWER).map(|access| access.corporation_id), Some(98_000_001));
     assert!(scene.force_field_passwords.contains(&(SESSION, TOWER)));
+}
+
+/// A password set through the simulation for a pilot in space takes effect there, and the answer tells the host the pilot's harmonic (protocol 105):
+/// the tower while the ship is inside the admitted field, and -1 once the password no longer matches.
+#[test]
+fn a_password_through_the_simulation_tells_the_host_the_pilot_harmonic() {
+    let mut sim = new_sim();
+    sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    let pilot = SESSION + 1;
+    sim.scenes
+        .get_mut(&SceneKey::solar_system(SYSTEM))
+        .unwrap()
+        .enter_in_space(pilot, spec(), [-50.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON)
+        .unwrap();
+    let ship_id = spec().ship_id;
+    let password = |matched| Message::ShipForceFieldPassword {
+        session_id: pilot,
+        tower_id: TOWER,
+        solar_system_id: SYSTEM,
+        matched,
+    };
+
+    let admitted = sim.handle(password(true), NOON).unwrap();
+    assert!(
+        admitted.contains(&Message::ShipForceFieldHarmonic { session_id: pilot, ship_id, harmonic: TOWER }),
+        "the matching password gives the ship the tower's harmonic: {admitted:?}"
+    );
+    let refused = sim.handle(password(false), NOON).unwrap();
+    assert!(
+        refused.contains(&Message::ShipForceFieldHarmonic { session_id: pilot, ship_id, harmonic: -1 }),
+        "the password that no longer matches takes the harmonic away: {refused:?}"
+    );
+}
+
+/// A field that goes up around a pilot already admitted inside it gives the pilot the tower's harmonic at once, and a field that goes down takes it away;
+/// the host is told each change, with no move of the ship.
+#[test]
+fn a_field_going_up_or_down_around_an_admitted_pilot_changes_its_harmonic_at_once() {
+    let mut sim = new_sim();
+    let pilot = SESSION + 1;
+    let ship_id = spec().ship_id;
+    sim.scenes
+        .get_mut(&SceneKey::solar_system(SYSTEM))
+        .unwrap()
+        .enter_in_space(pilot, spec(), [-50.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON)
+        .unwrap();
+    // admitted by its password before any field is in space: no harmonic yet
+    let password = Message::ShipForceFieldPassword {
+        session_id: pilot,
+        tower_id: TOWER,
+        solar_system_id: SYSTEM,
+        matched: true,
+    };
+    assert!(
+        !sim.handle(password, NOON)
+            .unwrap()
+            .iter()
+            .any(|m| matches!(m, Message::ShipForceFieldHarmonic { .. }))
+    );
+
+    let placed =
+        sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    assert!(
+        placed.contains(&Message::ShipForceFieldHarmonic { session_id: pilot, ship_id, harmonic: TOWER }),
+        "the field going up gives the admitted pilot its harmonic: {placed:?}"
+    );
+    let removed =
+        sim.handle(Message::RemoveForceField { tower_id: TOWER, solar_system_id: SYSTEM }, NOON).unwrap();
+    assert!(
+        removed.contains(&Message::ShipForceFieldHarmonic { session_id: pilot, ship_id, harmonic: -1 }),
+        "the field going down takes the harmonic away: {removed:?}"
+    );
 }
 
 /// A tower with no field in the scene cannot have one removed, and a system the universe does not know refuses a placement.

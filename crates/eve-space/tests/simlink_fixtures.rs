@@ -2314,6 +2314,11 @@ fn message_of(case: &Value) -> Message {
             solar_system_id: number("solarSystemId") as i32,
             matched: case["matched"].as_bool().unwrap(),
         },
+        "ShipForceFieldHarmonic" => Message::ShipForceFieldHarmonic {
+            session_id: session_id(),
+            ship_id: wide(case, "shipId"),
+            harmonic: wide(case, "harmonic"),
+        },
         "SentryPolicy" => Message::SentryPolicy {
             tower_id: wide(case, "towerId"),
             solar_system_id: number("solarSystemId") as i32,

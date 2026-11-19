@@ -106,6 +106,29 @@ fn force_field_access_and_password_frames_roundtrip_and_have_their_kinds() {
 }
 
 #[test]
+fn ship_force_field_harmonic_frame_roundtrips_and_refuses_a_harmonic_that_is_not_a_tower_or_none() {
+    assert_eq!(kind::SHIP_FORCE_FIELD_HARMONIC, 186);
+    let report = |harmonic| Message::ShipForceFieldHarmonic {
+        session_id: 1_790_646_377_000_015,
+        ship_id: 1_790_000_001,
+        harmonic,
+    };
+    let frame = report(1_050_000_099).encode();
+    assert_eq!(frame[4], kind::SHIP_FORCE_FIELD_HARMONIC);
+    let decoded = Message::decode(&frame[4..]).unwrap();
+    assert_eq!(decoded, report(1_050_000_099));
+    assert_eq!(decoded.encode(), frame);
+
+    // -1 is the only negative harmonic; zero and other negatives are not a tower
+    let none = report(-1).encode();
+    assert_eq!(Message::decode(&none[4..]).unwrap(), report(-1));
+    for bad in [0, -2] {
+        let frame = report(bad).encode();
+        assert!(Message::decode(&frame[4..]).is_err(), "harmonic {bad} is refused");
+    }
+}
+
+#[test]
 fn force_field_flags_that_are_not_zero_or_one_are_refused() {
     let mut bad_access = access().encode();
     let last = bad_access.len() - 1;

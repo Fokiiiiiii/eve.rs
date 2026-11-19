@@ -8,7 +8,7 @@ namespace Eve.Services.Space.Tests;
 public sealed class SetShipPasswordHostTests
 {
     [PgFact]
-    public async Task SetShipPassword_uses_the_registered_ship_route_and_updates_the_active_ship_harmonic()
+    public async Task SetShipPassword_uses_the_registered_ship_route_and_the_simulation_answer_sets_the_ship_harmonic()
     {
         await using var rig = await Rig.CreateAsync();
         rig.UseShipInventoryService();
@@ -41,27 +41,36 @@ public sealed class SetShipPasswordHostTests
                 $"{{\"passwordSalt\":\"{salt}\",\"passwordHash\":\"{hash}\"}}"));
             await transaction.CommitAsync();
         }
-
-        Assert.Same(PyNone.Instance, await rig.RegisteredCallAsync(session, bound, "SetShipPassword", new PyStr("field-secret")));
-
-        Assert.Equal(new SimSetSlimField(shipId, "harmonic", new SimSlimInt(towerId)),
-            Assert.Single(rig.Sim.Heard.OfType<SimSetSlimField>()));
-        // the simulation is told the same match the one harmonic write came from: the tower matches the password
         var sessionId = (ulong)session.SessionId;
+        IEnumerable<SimSetSlimField> HarmonicWrites() =>
+            rig.Sim.Heard.OfType<SimSetSlimField>().Where(field => field.FieldName == "harmonic");
+
+        // the Host writes no harmonic itself: the simulation is told the match, and its answer is what the slim field follows
+        Assert.Same(PyNone.Instance, await rig.RegisteredCallAsync(session, bound, "SetShipPassword", new PyStr("field-secret")));
         Assert.Equal(new SimShipForceFieldPassword(sessionId, towerId, systemId, true),
             Assert.Single(rig.Sim.Heard.OfType<SimShipForceFieldPassword>()));
+        await rig.Space.QuiesceAsync();
+        Assert.Empty(HarmonicWrites());
+        rig.Sim.Report(new SimShipForceFieldHarmonic(sessionId, shipId, towerId));
+        await rig.Space.QuiesceAsync();
+        Assert.Equal(new SimSetSlimField(shipId, "harmonic", new SimSlimInt(towerId)), Assert.Single(HarmonicWrites()));
+
+        // the wrong password is told to the simulation as a refused match, and the simulation's answer of none is what the slim field then holds
         Assert.Same(PyNone.Instance, await rig.RegisteredCallAsync(session, bound, "SetShipPassword", new PyStr("not-the-tower-password")));
-        Assert.Equal(new SimSetSlimField(shipId, "harmonic", new SimSlimInt(-1)), rig.Sim.Heard.OfType<SimSetSlimField>().Last());
-        // one harmonic write per call (two calls, two writes), and the wrong password is told to the simulation as a refused match
-        Assert.Equal(2, rig.Sim.Heard.OfType<SimSetSlimField>().Count(field => field.FieldName == "harmonic"));
         Assert.Equal(new SimShipForceFieldPassword(sessionId, towerId, systemId, false), rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Last());
         Assert.Equal(2, rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Count());
-        var beforeInvalid = rig.Sim.Heard.OfType<SimSetSlimField>().Count();
+        rig.Sim.Report(new SimShipForceFieldHarmonic(sessionId, shipId, -1));
+        await rig.Space.QuiesceAsync();
+        Assert.Equal(new SimSetSlimField(shipId, "harmonic", new SimSlimInt(-1)), HarmonicWrites().Last());
+        Assert.Equal(2, HarmonicWrites().Count());
+
+        // an invalid password is refused before anything is sent to the simulation or written
         var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.RegisteredCallAsync(
             session, bound, "SetShipPassword", new PyStr(new string('x', 51))));
 
         Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
-        Assert.Equal(beforeInvalid, rig.Sim.Heard.OfType<SimSetSlimField>().Count());
+        await rig.Space.QuiesceAsync();
+        Assert.Equal(2, HarmonicWrites().Count());
         Assert.Equal(2, rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Count());
     }
 }

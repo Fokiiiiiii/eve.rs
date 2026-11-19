@@ -270,6 +270,53 @@ fn a_pilot_that_leaves_takes_its_password_and_harmonic_with_it() {
 }
 
 /// A stopped ship is told its position and its velocity, and nothing about its harmonic, since it has none to show.
+/// Whether the host was told the pilot's ship harmonic as `harmonic` (protocol 105), in the scene's output of this move.
+fn told_harmonic(outs: &[Out], harmonic: i64) -> bool {
+    outs.iter().any(|out| {
+        matches!(out, Out::ShipForceFieldHarmonic { session, ship_id, harmonic: told }
+            if *session == SESSION && *ship_id == spec().ship_id && *told == harmonic)
+    })
+}
+
+/// A password set or cleared while the pilot is inside the field takes effect at once, without a move: the harmonic follows and the host is told each one.
+#[test]
+fn a_password_change_inside_the_field_takes_effect_at_once_and_the_host_is_told() {
+    let mut scene = field_scene();
+    // inside the field, which does not admit the pilot yet: no harmonic
+    scene.pilots.get_mut(&SESSION).unwrap().ship.position = point(-50.0);
+    scene.refresh_force_field_harmonic(SESSION, NOON);
+    assert_eq!(harmonic(&scene, SESSION), NO_HARMONIC);
+
+    scene.set_force_field_password(SESSION, TOWER, true);
+    let told = scene.refresh_force_field_harmonic(SESSION, NOON);
+    assert_eq!(harmonic(&scene, SESSION), TOWER);
+    assert!(told_harmonic(&told, TOWER), "the host is told the admitted harmonic");
+
+    scene.set_force_field_password(SESSION, TOWER, false);
+    let told = scene.refresh_force_field_harmonic(SESSION, NOON);
+    assert_eq!(harmonic(&scene, SESSION), NO_HARMONIC);
+    assert!(told_harmonic(&told, NO_HARMONIC), "the host is told the harmonic is gone");
+}
+
+/// A ship admitted inside the field that moves out of it loses its harmonic on that move, and the host is told so.
+#[test]
+fn a_ship_admitted_inside_that_leaves_the_field_loses_its_harmonic_and_the_host_is_told() {
+    let mut scene = field_scene();
+    scene.set_force_field_password(SESSION, TOWER, true);
+    scene.pilots.get_mut(&SESSION).unwrap().ship.position = point(-50.0);
+    scene.refresh_force_field_harmonic(SESSION, NOON);
+    assert_eq!(harmonic(&scene, SESSION), TOWER);
+
+    let names = move_and_tell(&mut scene, -50.0, -150.0);
+    assert_eq!(harmonic(&scene, SESSION), NO_HARMONIC, "outside the field it has no harmonic");
+    assert_eq!(
+        names,
+        vec!["SetBallHarmonic".to_string()],
+        "the clients are told the harmonic, and no correction"
+    );
+    assert!(told_harmonic(&scene.backlog, NO_HARMONIC));
+}
+
 #[test]
 fn a_stopped_ship_is_told_its_position_and_velocity_but_no_harmonic() {
     let mut scene = field_scene();

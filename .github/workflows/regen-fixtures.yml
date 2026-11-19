@@ -1,15 +1,14 @@
 name: regen-fixtures
 
 on:
-  workflow_dispatch:
-    inputs:
-      target:
-        description: 'Branch whose generated fixtures and project map are regenerated'
-        required: true
-        type: string
+  push:
+    branches: [tmp-regen]
 
 permissions:
   contents: write
+
+env:
+  TARGET: haiku1
 
 jobs:
   regen:
@@ -18,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.target }}
+          ref: haiku1
           fetch-depth: 0
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -29,8 +28,6 @@ jobs:
           python3 tools/dev/gen-hostlink-fixtures.py
           python3 tools/dev/gen_project_map.py
       - name: Commit and push the result
-        env:
-          TARGET: ${{ inputs.target }}
         run: |
           git config user.name Fokiiiiiii
           git config user.email contact@foki.sh

@@ -107,6 +107,8 @@ Gaps in slice 1 (not verified):
 - `oracle/fixtures/simlink/messages.json` was NOT regenerated at that slice (history). `tools/dev/gen-simlink-fixtures.py` now has kinds 190 and 191, their frame writers, valid and invalid cases, and version 104. Running the script was refused by the command policy hook (both the relative and the absolute path), so the shared golden frames do not cover the fire kinds, and the file still says 102. The Rust and C# fixture tests pass against the old file.
 - Every `Activate` on a ship module now makes one extra PostgreSQL read (`BatteryFireAsync` → `_deployed.GetAsync`) before the module path. This is not measured.
 
+- Stop rule (2026-11-19, R-04 fix, `docs/project/review-pos-sentry.md`): a stop is always accepted. The scene clears the fire of a battery that is absent, offline or unheld and answers with no reason; the Host sends a stop without a placement, so a stop from the holder or on an unheld battery reaches the simulation, and another pilot's stop of a held battery is refused with `NO_CONTROL_GRANT`. Tests: `a_stop_is_always_accepted_for_an_offline_unheld_or_absent_battery` (Rust) and `Battery_fire_stop_is_accepted_for_an_offline_or_unheld_battery_and_refused_for_another_pilots_held_one` (Host).
+
 ### Sentry policy: slice 1, scene and wire (2026-11-19, protocol 106)
 
 Verified from the client and EveJS (read this session):

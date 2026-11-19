@@ -1824,5 +1824,31 @@ public class ControlTowerHostTests
         Assert.True(left.Length > before, "the scene was not told that the pilot left the battery");
         Assert.Equal((fixture.Battery, 0UL, true), (left[^1].BatteryId, left[^1].HolderSession, left[^1].Online));
     }
+
+    [PgFact]
+    public async Task Battery_order_is_refused_once_its_holder_is_in_another_system_than_its_battery()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        const long OtherSystem = 30000013;
+        fixture.Holder.Session.Set("solarsystemid", new PyInt(OtherSystem));
+        fixture.Holder.Session.Set("solarsystemid2", new PyInt(OtherSystem));
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        Assert.Equal("DeniedShipChanged", refused.Error.UserErrorMessage);
+        Assert.Empty(rig.Sim.Heard.OfType<SimBatteryTarget>());
+    }
+
+    [PgFact]
+    public async Task Battery_order_is_refused_once_its_holder_has_left_the_owning_corporation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        fixture.Holder.Session.Set("corpid", new PyInt(987654));
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        Assert.Equal("DeniedShipChanged", refused.Error.UserErrorMessage);
+        Assert.Empty(rig.Sim.Heard.OfType<SimBatteryTarget>());
+    }
 }
 

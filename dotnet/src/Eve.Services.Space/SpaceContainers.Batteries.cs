@@ -37,6 +37,21 @@ public sealed partial class SpaceContainers
     };
 
     /// <summary>
+    /// Whether the holder's session is still where a battery's grant is kept: in space, in the system of the battery, and in the corporation that owns it.
+    /// The grant is checked when it is assumed (as a control tower's access is); an order checks it again, so a pilot that has moved out of the system or
+    /// left the owning corporation gives no order.
+    /// </summary>
+    private bool BatteryOperatorInPlace(ClientSession session, DeployedRecord battery)
+    {
+        var corporationId = session.GetInt("corpid") ?? session.GetInt("corporationid") ?? 0;
+        var systemId = session.GetInt("solarsystemid2") ?? session.GetInt("solarsystemid") ?? 0;
+        return corporationId > 0
+            && battery.CorporationId == corporationId && battery.OwnerId == corporationId
+            && systemId == battery.SolarSystemId
+            && _space.IsInSpace(session);
+    }
+
+    /// <summary>
     /// Carries out an order of a battery's holder: the battery must be a player-controlled battery whose control grant the pilot holds, it must be
     /// online, and its numbers must be in the type's dogma. The battery is placed (or updated) in the scene with its holder, and then the order is asked of
     /// the simulation. An offline battery is placed offline, which releases its locks there, and is then refused.
@@ -65,7 +80,7 @@ public sealed partial class SpaceContainers
 
         await using var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
         var holder = await _deployed.BatteryControllerAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
-        if (holder != characterId)
+        if (holder != characterId || !BatteryOperatorInPlace(session, battery))
         {
             return TargetingResult.Refusal("NO_CONTROL_GRANT");
         }

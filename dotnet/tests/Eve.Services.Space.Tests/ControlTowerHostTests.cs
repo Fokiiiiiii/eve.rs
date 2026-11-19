@@ -2101,6 +2101,27 @@ public class ControlTowerHostTests
         // the password saved last is the last word: the pilot who holds the old one is refused, and the simulation is not told a stale match
         Assert.Equal(new SimShipForceFieldPassword(sessionId, tower, systemId, false), rig.Sim.Heard.OfType<SimShipForceFieldPassword>().Last());
     }
+
+    [PgFact]
+    public async Task A_tower_whose_offline_sync_could_not_take_its_field_out_of_the_simulation_has_it_taken_out_when_its_unanchor_completes()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, tower) = await OnlineTowerAsync(rig);
+
+        // the offline sync takes the item out of the database, and the simulation refuses to take its field out: the field stays in its scene
+        rig.Sim.ForceFieldRemovalReason = "SYSTEM_UNKNOWN";
+        await Assert.ThrowsAsync<InvalidOperationException>(() => rig.Space.DeactivateAsync(session, tower, "onlineForStructures", CancellationToken.None));
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+
+        // the tower is unanchored, and its unanchor completes once the simulation takes removals again: the field goes with the tower
+        rig.Sim.ForceFieldRemovalReason = "";
+        await rig.Containers.UnanchorControlTowerAsync(session, tower);
+        rig.Sim.Heard.Clear();
+        await rig.Containers.CompleteControlTowerUnanchorAsync(tower);
+        Assert.Equal(new SimRemoveForceField(tower, (int)LowSecSystem), Assert.Single(rig.Sim.Heard.OfType<SimRemoveForceField>()));
+        Assert.Null(await rig.Deployed.GetAsync(tower));
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+    }
 }
 
 

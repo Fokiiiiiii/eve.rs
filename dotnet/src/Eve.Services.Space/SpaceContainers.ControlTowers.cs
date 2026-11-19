@@ -581,6 +581,42 @@ public sealed partial class SpaceContainers
         }
     }
 
+    /// <summary>
+    /// Takes a tower's force field out of the database and out of its system's scene, whether or not either still holds it: a tower that is unanchored may have
+    /// gone offline while the simulation refused its removal, and nothing reconciles the field once the record is forgotten. A field the simulation does not have
+    /// is no error; a refusal or an unavailable simulation is logged, as the removal of the hull is.
+    /// </summary>
+    private async Task TakeOutForceFieldAsync(long towerId, int solarSystemId, CancellationToken cancellationToken)
+    {
+        if (_source is null)
+            return;
+        var gate = _forceFieldGates.GetOrAdd(towerId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using (var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
+            await using (var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
+            {
+                await RemoveForceFieldInTransactionAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false);
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            try
+            {
+                var answer = await _sim.RemoveForceFieldAsync(new SimRemoveForceField(towerId, solarSystemId), cancellationToken).ConfigureAwait(false);
+                if (answer.Reason.Length > 0 && answer.Reason != ForceFieldNotInSpace)
+                    _log?.Invoke($"the simulation did not take the force field of control tower {towerId} out: {answer.Reason}");
+            }
+            catch (SimUnavailableException error)
+            {
+                _log?.Invoke($"the force field of control tower {towerId} was not taken out: {error.Message}");
+            }
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     /// <summary>Writes a control tower's force field item and its space row (creating the item once), with the SDE's shield radius.</summary>
     private async Task<SimPlaceForceField> EnsureForceFieldInTransactionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
         DeployedRecord tower, CancellationToken cancellationToken)
@@ -1081,6 +1117,8 @@ public sealed partial class SpaceContainers
         {
             return;
         }
+        // the field goes with the tower, whether or not the offline sync managed to take it out
+        await TakeOutForceFieldAsync(towerId, record.SolarSystemId, cancellationToken);
         _sim.RemoveDeployed(towerId);
         if (await _items.GetAsync(towerId, cancellationToken) is null)
         {

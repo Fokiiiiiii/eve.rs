@@ -161,6 +161,8 @@ Rejected candidates are listed at the end, with reasons.
 
 ## F8 (Low-Medium, partially confirmed): unanchor completion can leave a field and an orphan item
 
+**Outcome (fixed, the item half rejected):** the review's proposed check, that no `ForceField` item remains after the unanchor, passes today and does not show the defect. Traced: the offline reconcile deletes the item in the same transaction that commits the removal, so a failed send after the commit leaves no item. What survives is the field in the simulation, because `CompleteControlTowerUnanchorAsync` only called `RemoveDeployed` (the hull). `ControlTowerHostTests.A_tower_whose_offline_sync_could_not_take_its_field_out_of_the_simulation_has_it_taken_out_when_its_unanchor_completes` failed first (no `SimRemoveForceField` after completion). The completion now takes the tower's field out of the database and the simulation before it removes the hull (`TakeOutForceFieldAsync`, under the tower's gate). A refusal or an unavailable simulation is logged, as the hull removal is, so the unanchor still completes. Verified: `ControlTowerHostTests` 28 of 28 and the `Unanchor` filter 11 of 11 passed.
+
 **Files**
 - `dotnet/src/Eve.Services.Space/SpaceContainers.ControlTowers.cs:1048-1058`: `CompleteControlTowerUnanchorAsync` calls `_sim.RemoveDeployed(towerId)` (line 1056), which removes only the hull. It never calls `RemoveForceField`, and it deletes the record.
 - Unanchor requires an offline tower (`UnanchorControlTowerAsync`, about 1004-1030, `state != TowerOffline` refuses). The offline sync removes the field first, so the normal path is clean. That is why this is only partially confirmed.

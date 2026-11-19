@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 103;
+    public const ushort ProtocolVersion = 105;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -1660,6 +1660,16 @@ public static partial class SimCodec
                         candidates[index] = new(structure, range);
                     }
                     message = new SimTetherPolicy(session, blocked, lease, candidates);
+                    break;
+                }
+            case Kind.ShipForceFieldHarmonic:
+                {
+                    var session = r.U64();
+                    var ship = r.I64();
+                    var harmonic = r.I64();
+                    if (ship <= 0 || harmonic == 0 || harmonic < -1)
+                        throw new SimLinkException(SimLinkError.BadValue, "ship force field harmonic");
+                    message = new SimShipForceFieldHarmonic(session, ship, harmonic);
                     break;
                 }
             case Kind.TetherChanged:

@@ -47,6 +47,8 @@ pub const FORCE_FIELD_REMOVED: u8 = 183;
 pub const SET_FORCE_FIELD_ACCESS: u8 = 184;
 /// The host says whether a pilot's ship password matches a tower's (protocol 103). No answer.
 pub const SHIP_FORCE_FIELD_PASSWORD: u8 = 185;
+/// The simulation says a pilot's ship harmonic changed: the tower of the admitted field it is inside, or -1 (simulation to host, protocol 105).
+pub const SHIP_FORCE_FIELD_HARMONIC: u8 = 186;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

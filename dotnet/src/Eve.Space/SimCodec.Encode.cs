@@ -1735,6 +1735,14 @@ private static void WriteStructureDamageCorrelation(
                     w.F64(candidate.Range);
                 }
                 break;
+            case SimShipForceFieldHarmonic m:
+                if (m.ShipId <= 0 || m.Harmonic == 0 || m.Harmonic < -1)
+                    throw new SimLinkException(SimLinkError.BadValue, "ship force field harmonic");
+                w.U8(Kind.ShipForceFieldHarmonic);
+                w.U64(m.SessionId);
+                w.I64(m.ShipId);
+                w.I64(m.Harmonic);
+                break;
             case SimTetherChanged m:
                 if (m.PreviousStructureId < 0 || m.StructureId < 0 || (m.StructureId == 0 && m.Repairing))
                     throw new SimLinkException(SimLinkError.BadValue, "tether state");

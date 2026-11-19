@@ -49,6 +49,8 @@ public static partial class SimCodec
         public const byte SetForceFieldAccess = 184;
         /// <summary>Protocol 103: the host says whether a pilot's ship password matches a tower's. No answer.</summary>
         public const byte ShipForceFieldPassword = 185;
+        /// <summary>The simulation says a pilot's ship harmonic changed: the admitted tower it is inside, or -1 (protocol 105).</summary>
+        public const byte ShipForceFieldHarmonic = 186;
         public const byte EnsureTournamentBeacon = 128;
         public const byte EnsureTournamentBeaconReply = 129;
         public const byte RemoveTournamentBeacon = 130;

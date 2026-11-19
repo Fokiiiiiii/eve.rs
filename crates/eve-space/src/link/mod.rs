@@ -52,7 +52,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 103;
+pub const PROTOCOL_VERSION: u16 = 105;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -1808,6 +1808,12 @@ pub enum Message {
         lease_ms: u64,
         candidates: Vec<TetherCandidate>,
     },
+    /// The simulation's harmonic for a pilot's ship changed: the tower of the admitted field it is inside, or -1 (protocol 105).
+    ShipForceFieldHarmonic {
+        session_id: u64,
+        ship_id: i64,
+        harmonic: i64,
+    },
     /// A simulation-owned tether transition (zero structure means off).
     TetherChanged {
         session_id: u64,
@@ -2008,6 +2014,7 @@ impl Message {
             Self::SetDisruptorActive { .. } => kind::SET_DISRUPTOR_ACTIVE,
             Self::TetherPolicy { .. } => kind::TETHER_POLICY,
             Self::TetherChanged { .. } => kind::TETHER_CHANGED,
+            Self::ShipForceFieldHarmonic { .. } => kind::SHIP_FORCE_FIELD_HARMONIC,
             Self::SetAnalysisBeaconState { .. } => kind::SET_ANALYSIS_BEACON_STATE,
             Self::SetSlimField { .. } => kind::SET_SLIM_FIELD,
             Self::PlaceAccelerationGate(_) => kind::PLACE_ACCELERATION_GATE,

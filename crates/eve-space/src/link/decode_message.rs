@@ -2747,6 +2747,15 @@ impl Message {
                 }
                 Message::TetherChanged { session_id, previous_structure_id, structure_id, repairing }
             }
+            kind::SHIP_FORCE_FIELD_HARMONIC => {
+                let session_id = r.u64()?;
+                let ship_id = r.i64()?;
+                let harmonic = r.i64()?;
+                if ship_id <= 0 || harmonic == 0 || harmonic < -1 {
+                    return Err(DecodeError::BadValue("ship force field harmonic"));
+                }
+                Message::ShipForceFieldHarmonic { session_id, ship_id, harmonic }
+            }
             kind::DESTROY => Message::Destroy { ship_id: r.i64()?, credit: read_credit(&mut r)? },
             kind::PLACE_FORCE_FIELD => {
                 let field_id = r.i64()?;

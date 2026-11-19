@@ -1283,6 +1283,9 @@ public sealed record SimSetForceFieldAccess(long TowerId, int SolarSystemId, int
 /// <summary>The host says whether a pilot's ship password matches a tower's (protocol 103): a matching ship is admitted by the tower's field. No answer.</summary>
 public sealed record SimShipForceFieldPassword(ulong SessionId, long TowerId, int SolarSystemId, bool Matched) : SimMessage;
 
+/// <summary>The simulation's harmonic for a pilot's ship changed: the tower of the admitted field it is inside, or -1 (simulation to host, protocol 105).</summary>
+public sealed record SimShipForceFieldHarmonic(ulong SessionId, long ShipId, long Harmonic) : SimMessage;
+
 /// <summary>A can the host asked for is in space: where it lies and how it faces.</summary>
 public sealed record SimContainerPlaced(ulong SessionId, long ContainerId, IReadOnlyList<double> Position, IReadOnlyList<double> Direction) : SimMessage;
 

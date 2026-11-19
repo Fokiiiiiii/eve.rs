@@ -189,8 +189,8 @@ EveJS fact (`/home/user/evejs-261108.1/server/src/services/starbase/starbaseAcce
 Implemented:
 
 - `StarbasePasswordHash.MatchesDigestAsync` and `DeriveFromDigestAsync` take the raw SHA-256 digest. The password overloads delegate to them, so stored hashes are unchanged.
-- `SpaceSessions.ShipPasswords.cs`: `MatchShipPasswordAsync` is the one per-tower match (the first online match is the harmonic, and every tower's answer is returned). `SetShipPasswordAsync` uses it, unchanged in effect.
-- `RematchShipPasswordsAsync(systemId)` runs for each pilot in the system that holds a credential for its current ship. It matches the kept digest again, writes the harmonic slim field, and sends `SetShipForceFieldPassword` for each tower. A pilot whose credential changed meanwhile is skipped.
+- `SpaceSessions.ShipPasswords.cs`: `MatchShipPasswordAsync` is the one per-tower match, and every tower's answer is returned. `SetShipPasswordAsync` uses it.
+- `RematchShipPasswordsAsync(systemId)` runs for each pilot in the system that holds a credential for its current ship. It matches the kept digest again and sends `SetShipForceFieldPassword` for each tower. The harmonic follows the simulation's answer (slice 6). A pilot whose credential changed meanwhile is skipped.
 - `SpaceContainers.SetTowerPasswordAsync` calls it after the commit when the saved hash changed (a password of `false` does not).
 
 Verified (PostgreSQL `eve_p6`, Release, warnings as errors):
@@ -200,11 +200,29 @@ Verified (PostgreSQL `eve_p6`, Release, warnings as errors):
 - `SetShipPasswordHostTests`: 1 passed, 0 failed, 0 skipped (the existing route test, unchanged assertions).
 - Release build of `Eve.Services.Space.Tests` (with its project graph) with `TreatWarningsAsErrors`: 0 warnings, 0 errors.
 
-Not done: the harmonic is still written by the Host from its own match, and the simulation's per-pilot harmonic is a separate path; this is slice 6 (unification, below). No graphical client run.
+Slice 6 (below) makes the simulation the only source of the harmonic.
+
+### POS force field harmonic, one source, slice 6 (2026-11-19)
+
+Source of truth: the simulation. `Scene::force_field_harmonics` holds each pilot's harmonic (the tower of the admitted field it is inside, else none). The settle path decides it where the boundary runs, and `refresh_force_field_harmonic` and `refresh_all_force_field_harmonics` recompute it without a move when an input changes: a ship password (kind 185), a tower's access (kind 184), or a field placed or removed.
+
+Both paths read that one value. The clients are told `SetBallHarmonic` as before (`publish_force_field`). The Host writes the ship's slim `harmonic` only from the simulation's report `ShipForceFieldHarmonic` (kind 186, simulation to host, protocol 105), in the order the simulation tells them (one serial chain, `SpaceSessions.ShipPasswords.cs`). The Host chooses no harmonic any more: `SetShipPassword` and the re-match send only the per-tower matches.
+
+Behaviour change: before, the Host set the slim harmonic at password time whether or not the ship was inside a field, and it chose the first online match itself. Both are removed. The harmonic now follows the field the ship is inside, as the scene has modelled it since slice 2.
+
+Verified:
+
+- `cargo test -p eve-space --lib`: 1093 passed, 0 failed, 0 skipped. New: scene `a_password_change_inside_the_field_takes_effect_at_once_and_the_host_is_told` and `a_ship_admitted_inside_that_leaves_the_field_loses_its_harmonic_and_the_host_is_told`; sim `a_password_through_the_simulation_tells_the_host_the_pilot_harmonic` and `a_field_going_up_or_down_around_an_admitted_pilot_changes_its_harmonic_at_once`; link `ship_force_field_harmonic_frame_roundtrips_and_refuses_a_harmonic_that_is_not_a_tower_or_none`. The pinned `PROTOCOL_VERSION` assertion in `sim/tests.rs` moves to 105.
+- `cargo clippy -p eve-space --all-targets -- -D warnings`: clean. `cargo fmt --all` applied.
+- Host, `ControlTowerHostTests`: 21 passed, 0 failed, 0 skipped. `Tower_password_change_rematches_a_pilot_and_the_ship_harmonic_follows_the_simulation_answer` checks that the slim harmonic is written once per simulation answer, in order, and that the Host writes nothing before the first answer. `SetShipPasswordHostTests`: 1 passed, 0 failed, 0 skipped (the same setup; the Host waits for the simulation's answer).
+- `Eve.Space.Tests`: `ForceFieldCodecTests` round-trips kind 186 and refuses a harmonic of 0 or below -1.
+- Release builds with warnings as errors: `Eve.Services.Space.Tests` (with `Eve.Space`, `Eve.Services.Space`, `Eve.Host`) and `Eve.Space.Tests`: 0 warnings, 0 errors.
+
+Known failure, pre-existing, not fixed here: `SimCodecTests.The_fixtures_cover_every_message_kind` fails. Its expected kind list (added in `59246fed8`, extended here with `ShipForceFieldHarmonic`) names the force-field kinds 180 to 186, but `oracle/fixtures/simlink/messages.json` (version 102) was last regenerated at `76d433e22` and has none of them. The generator source (`tools/dev/gen-simlink-fixtures.py`) is updated for protocol 105, kind 186 and the Hello version, but the generator was not run (the orchestrator regenerates it), and the golden file was not edited by hand. Until it is regenerated this test fails. `Eve.Space.Tests`: 585 passed, 1 failed (that test).
 
 ## Open items
 
-- **POS force field and password admission:** the Host now places and removes an online tower's field and sends its access and ship-password state (slice 4, migration 0034). A tower's password change re-matches pilots holding a credential from the kept digest (slice 5). Still open: the client-visible force-field presentation is not verified on the graphical client; standings admission is not implemented; the simulation's per-pilot harmonic and the ship's `harmonic` slim field are separate paths.
+- **POS force field and password admission:** the Host now places and removes an online tower's field and sends its access and ship-password state (slice 4, migration 0034). A tower's password change re-matches pilots holding a credential from the kept digest (slice 5). Still open: the client-visible force-field presentation is not verified on the graphical client; standings admission is not implemented; the harmonic is one source (slice 6).
 - **Starbase OBO target calls:** `AddTargetOBO` and `RemoveTargetOBO` remain unimplemented. The battery control grant (`AssumeStructureControl` / `RelinquishStructureControl`) now exists (see POS battery control grant below), but the DogmaLM bound object and the battery's target lock state in the Rust scene do not. Registering the two RPC names without them would not implement the client flow.
 - **Sentry targeting:** sentry settings persist and round-trip, but no associated battery targeting/defense controller consumes the policy.
 - **Other POS inventory/use consumers:** silo `viewput`/`viewputtake` is enforced. Ship-maintenance, reprocessing/compression arrays and jump-bridge `use` behavior remain incomplete.

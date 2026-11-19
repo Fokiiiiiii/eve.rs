@@ -341,6 +341,8 @@ pub enum Out {
     StructureDamaged { structure_id: i64, depleted: Option<crate::health::Layer>, over_threshold: bool },
     /// A tether transition; the host owns its client FX and access policy (protocol 62).
     TetherChanged { session: SessionId, previous_structure_id: i64, structure_id: i64, repairing: bool },
+    /// A pilot's ship harmonic changed in the simulation; the host keeps the ship's slim harmonic in step with it (protocol 105).
+    ShipForceFieldHarmonic { session: SessionId, ship_id: i64, harmonic: i64 },
     /// A command the scene cannot do.
     Refused { session: SessionId, command: u8, reason: &'static str },
     /// The answer to a targeting order: whether a lock is going, and the ships and bodies locked (or, to `GetTargeters`, the ships that lock this one).
@@ -500,6 +502,7 @@ impl Out {
             | Out::Destroyed { session, .. }
             | Out::Condition { session, .. }
             | Out::TetherChanged { session, .. }
+            | Out::ShipForceFieldHarmonic { session, .. }
             | Out::Refused { session, .. }
             | Out::Targets { session, .. }
             | Out::ChargeSpent { session, .. }

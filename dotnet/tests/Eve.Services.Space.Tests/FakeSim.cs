@@ -266,10 +266,15 @@ internal sealed class FakeSim : ISimulation
     /// <summary>The scene's scripted answers to battery orders, taken in order; with none left an order is accepted with nothing held.</summary>
     public Queue<SimBatteryTargets> BatteryTargetAnswers { get; } = new();
 
-    public Task<SimBatteryPlaced> PlaceBatteryAsync(SimPlaceBattery request, CancellationToken cancellationToken = default)
+    /// <summary>A hook a test sets to hold a battery placement in the scene: the placement is answered only after the hook returns.</summary>
+    public Func<SimPlaceBattery, Task>? PlaceBatteryHook { get; set; }
+
+    public async Task<SimBatteryPlaced> PlaceBatteryAsync(SimPlaceBattery request, CancellationToken cancellationToken = default)
     {
         Heard.Enqueue(request);
-        return Task.FromResult(new SimBatteryPlaced(request.BatteryId, BatteryPlacementReason));
+        if (PlaceBatteryHook is { } hook)
+            await hook(request);
+        return new SimBatteryPlaced(request.BatteryId, BatteryPlacementReason);
     }
 
     public Task<SimBatteryTargets> BatteryTargetAsync(SimBatteryTarget request, CancellationToken cancellationToken = default)

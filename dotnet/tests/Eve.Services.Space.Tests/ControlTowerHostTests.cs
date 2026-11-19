@@ -366,6 +366,58 @@ public class ControlTowerHostTests
         Assert.Equal((0UL, true), (placed.HolderSession, placed.Online));
     }
 
+    [PgFact]
+    public async Task A_relinquish_made_while_the_holders_lock_order_is_in_the_scene_takes_the_lock_back_and_refuses_the_order()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        rig.Sim.Heard.Clear();
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "", true, []));
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        // a second wire of the same pilot: the holder's first wire answers its order only when the scene does, so the relinquish goes over this one
+        await using var relinquishing = await PosMgrHostWire.StartAsync(posMgr, fixture.Session, () => rig.Now);
+
+        // the scene holds the holder's placement of the battery (made under the battery's gate) until the test lets it go
+        var placementHeld = new TaskCompletionSource();
+        var letPlacementGo = new TaskCompletionSource();
+        var holder = (ulong)fixture.Session.SessionId;
+        rig.Sim.PlaceBatteryHook = async request =>
+        {
+            if (request.HolderSession == holder)
+            {
+                placementHeld.TrySetResult();
+                await letPlacementGo.Task;
+            }
+        };
+        var order = fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO", new PyLong(fixture.Battery), new PyLong(fixture.Target));
+        await placementHeld.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // the holder relinquishes while its order waits: the grant goes in the database, and the battery's clear waits for the battery's gate
+        var relinquish = relinquishing.CallAsync("RelinquishStructureControl", new PyLong(fixture.Battery));
+        var grantGone = false;
+        for (var attempt = 0; attempt < 500 && !grantGone; attempt++)
+        {
+            grantGone = await HeldByAsync(rig, fixture.Battery) is null;
+            if (!grantGone)
+                await Task.Delay(10);
+        }
+        letPlacementGo.SetResult();
+        Assert.True(grantGone, "the relinquish did not release the grant while the order waited");
+
+        // the order's pilot no longer holds the grant when the scene answers: its lock is taken back and the order is refused
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => order);
+        Assert.Equal("DeniedShipChanged", refused.Error.UserErrorMessage);
+        Assert.IsType<PyNone>(await relinquish);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        Assert.Equal(
+            new[] { (fixture.Battery, (byte)1, fixture.Target), (fixture.Battery, (byte)2, fixture.Target) },
+            rig.Sim.Heard.OfType<SimBatteryTarget>().Select(target => (target.BatteryId, target.Order, target.Target)));
+        var last = rig.Sim.Heard.OfType<SimPlaceBattery>().Last();
+        Assert.Equal((0UL, true), (last.HolderSession, last.Online));
+    }
+
     /// <summary>The pilot holding a POS battery's control grant, read from PostgreSQL.</summary>
     private static async Task<long?> HeldByAsync(Rig rig, long battery)
     {

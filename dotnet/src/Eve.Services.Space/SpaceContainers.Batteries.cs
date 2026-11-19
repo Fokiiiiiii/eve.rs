@@ -111,6 +111,22 @@ public sealed partial class SpaceContainers
             var reply = await _sim.BatteryTargetAsync(
                 new SimBatteryTarget(SimClient.NextRequestId(), batteryId, battery.SolarSystemId, (byte)code, target),
                 cancellationToken).ConfigureAwait(false);
+            // The grant is checked again once the scene has answered. A relinquish can run after the holder check above, so this order may be for a pilot that
+            // no longer holds the grant: its lock is taken back and the battery is placed with no holder. A new holder's order places the battery with that holder.
+            if (await _deployed.BatteryControllerAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false) != characterId)
+            {
+                if (reply.Reason.Length == 0)
+                {
+                    await _sim.BatteryTargetAsync(
+                        new SimBatteryTarget(SimClient.NextRequestId(), batteryId, battery.SolarSystemId, (byte)BatteryOrderCode(TargetingOrder.Remove), target),
+                        cancellationToken).ConfigureAwait(false);
+                }
+                await _sim.PlaceBatteryAsync(
+                    new SimPlaceBattery(batteryId, battery.SolarSystemId, battery.TypeId, battery.GroupId, battery.Name, 0,
+                        battery.Position, battery.Radius, numbers.ScanResolution, numbers.MaxTargetRange, numbers.MaxLockedTargets, online),
+                    cancellationToken).ConfigureAwait(false);
+                return TargetingResult.Refusal("NO_CONTROL_GRANT");
+            }
             return reply.Reason.Length > 0
                 ? TargetingResult.Refusal(reply.Reason)
                 : new TargetingResult(true, reply.Pending, reply.Targets);

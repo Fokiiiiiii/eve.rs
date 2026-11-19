@@ -168,6 +168,18 @@ fn approach_step(body: &mut Kinematics, standoff: f64, target: Target, seconds: 
 }
 
 fn orbit_step(body: &mut Kinematics, distance: f64, target: Target, seconds: f64) {
+    let wanted = orbit_wanted(body, distance, target);
+    let speed = cruise(body);
+    let Some(direction) = unit(wanted) else {
+        integrate(body, body.direction, 0.0, seconds);
+        return;
+    };
+    body.direction = direction;
+    integrate(body, direction, length(wanted).min(speed), seconds);
+}
+
+/// The velocity an orbiting body steers for from where it stands: a tangent at its speed, a pull that holds its distance, and the target's own velocity.
+fn orbit_wanted(body: &Kinematics, distance: f64, target: Target) -> Vec3 {
     let radius = distance + body.radius + target.radius;
     let away = sub(body.position, target.position);
     let outward = unit(away).unwrap_or(Vec3::new(1.0, 0.0, 0.0));
@@ -178,13 +190,16 @@ fn orbit_step(body: &mut Kinematics, distance: f64, target: Target, seconds: f64
     let speed = cruise(body);
     let radial_error = radius - length(away);
     let pull = scale(outward, radial_error.clamp(-speed, speed));
-    let wanted = add(add(scale(tangent, speed), pull), target.velocity);
-    let Some(direction) = unit(wanted) else {
-        integrate(body, body.direction, 0.0, seconds);
-        return;
-    };
-    body.direction = direction;
-    integrate(body, direction, length(wanted).min(speed), seconds);
+    add(add(scale(tangent, speed), pull), target.velocity)
+}
+
+/// The direction an orbiting ship steers in when it stands at `at`: the thrust [`orbit_step`] applies there. EVE.js sets an orbit's target point along
+/// it (its position plus this direction, far off), so the boundary reads it to tell whether the orbit pulls the ship back into a field. None when there is
+/// no thrust.
+pub(crate) fn orbit_direction(ship: &Ship, at: Vec3, distance: f64, target: Target) -> Option<Vec3> {
+    let mut body = Kinematics::of_ship(ship);
+    body.position = at;
+    unit(orbit_wanted(&body, distance, target))
 }
 
 /// and the target then are the same time apart).

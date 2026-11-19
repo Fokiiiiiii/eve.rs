@@ -233,6 +233,54 @@ fn an_order_that_pulls_the_ship_back_in_is_cancelled_and_an_outward_one_stays() 
     assert_eq!(outward.pilots[&SESSION].ship.course, Course::GotoPoint { point: point(-1_000.0) });
 }
 
+/// The pilot that a follow or an orbit of the first pilot is set on: a second ship in the scene at `x` on the axis.
+const TARGET_PILOT: SessionId = 8;
+const TARGET_SHIP: i64 = 9_988_400_001_940;
+
+fn target_pilot(scene: &mut Scene, x: f64) -> i64 {
+    let spec = crate::ship::ShipSpec { ship_id: TARGET_SHIP, ..spec() };
+    scene.enter_in_space(TARGET_PILOT, spec, [x, 0.0, 0.0], [1.0, 0.0, 0.0], NOON).unwrap();
+    TARGET_SHIP
+}
+
+#[test]
+fn a_follow_whose_target_lies_outward_from_the_field_is_not_cancelled() {
+    let mut scene = field_scene();
+    let target = target_pilot(&mut scene, -1_000.0);
+    scene.pilots.get_mut(&SESSION).unwrap().ship.course = Course::Follow { target, range: 0.0 };
+    assert!(move_pilot(&mut scene, -500.0, -50.0));
+    assert_eq!(scene.pilots[&SESSION].ship.course, Course::Follow { target, range: 0.0 });
+}
+
+#[test]
+fn a_follow_whose_target_pulls_the_ship_back_into_the_field_is_cancelled() {
+    let mut scene = field_scene();
+    let target = target_pilot(&mut scene, 1_000.0);
+    scene.pilots.get_mut(&SESSION).unwrap().ship.course = Course::Follow { target, range: 0.0 };
+    assert!(move_pilot(&mut scene, -500.0, -50.0));
+    assert_eq!(scene.pilots[&SESSION].ship.course, Course::Stop);
+}
+
+#[test]
+fn an_orbit_that_pulls_the_ship_out_of_the_field_is_not_cancelled() {
+    let mut scene = field_scene();
+    scene.pilots.get_mut(&SESSION).unwrap().ship.speed_fraction = 1.0;
+    let target = target_pilot(&mut scene, 1_000.0);
+    scene.pilots.get_mut(&SESSION).unwrap().ship.course = Course::Orbit { target, distance: 5_000.0 };
+    assert!(move_pilot(&mut scene, -500.0, -50.0));
+    assert_eq!(scene.pilots[&SESSION].ship.course, Course::Orbit { target, distance: 5_000.0 });
+}
+
+#[test]
+fn an_orbit_that_pulls_the_ship_back_into_the_field_is_cancelled() {
+    let mut scene = field_scene();
+    scene.pilots.get_mut(&SESSION).unwrap().ship.speed_fraction = 1.0;
+    let target = target_pilot(&mut scene, -1_000.0);
+    scene.pilots.get_mut(&SESSION).unwrap().ship.course = Course::Orbit { target, distance: 5_000.0 };
+    assert!(move_pilot(&mut scene, -500.0, -50.0));
+    assert_eq!(scene.pilots[&SESSION].ship.course, Course::Stop);
+}
+
 #[test]
 fn a_ship_stranded_inside_is_pushed_out_at_the_repulsion_speed() {
     let mut scene = field_scene();

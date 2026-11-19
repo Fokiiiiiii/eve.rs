@@ -10,6 +10,7 @@
 use eve_destiny::Vec3;
 
 use crate::deployable::Role;
+use crate::motion::orbit_direction;
 use crate::payload;
 use crate::scene::{Out, Scene, SessionId};
 use crate::ship::Course;
@@ -175,6 +176,7 @@ impl Scene {
         }
         let ship = &pilot.ship;
         let end = ship.position;
+        let course_target = self.course_target_of(session);
         let (corporation_id, alliance_id) = (ship.spec.corporation_id, ship.spec.alliance_id);
         let ship_radius = ship.spec.radius.max(0.0);
         let heading = if is_finite(ship.direction) { ship.direction } else { Vec3::new(1.0, 0.0, 0.0) };
@@ -244,12 +246,32 @@ impl Scene {
         };
         let impulse = (outward_speed - radial_speed).max(0.0);
         ship.velocity = plus_scaled(velocity, normal, impulse);
-        // Only an order that pulls the ship back into the field is cancelled; outward orders and sideways motion stay.
+        // Only an order that pulls the ship back into the field is cancelled; outward orders and sideways motion stay. EVE.js judges a follow and an
+        // orbit by their target point (`starbaseForceFieldBoundary.js` reads `ship.targetPoint`): a follow's is the standoff on the ring of its range
+        // about its target, an orbit's is the far point along its thrust. Both are taken where the ship started the move, as `evolve.js` sets them
+        // before the move. With no target the order is cancelled, as before.
         let pulls_back = match ship.course {
             Course::Stop => false,
             Course::GotoPoint { point } => dot(minus(point, ship.position), normal) <= 0.0,
             Course::Goto => dot(ship.direction, normal) <= 0.0,
-            Course::Follow { .. } | Course::Orbit { .. } | Course::Warp { .. } => true,
+            Course::Follow { range, .. } => match course_target {
+                Some(target) => {
+                    let standoff = outside_point(
+                        target.position,
+                        range.max(0.0) + ship_radius + target.radius,
+                        minus(from, target.position),
+                        Vec3::new(1.0, 0.0, 0.0),
+                    );
+                    dot(minus(standoff, ship.position), normal) <= 0.0
+                }
+                None => true,
+            },
+            Course::Orbit { distance, .. } => match course_target {
+                Some(target) => orbit_direction(ship, from, distance, target)
+                    .is_none_or(|thrust| dot(thrust, normal) <= 0.0),
+                None => true,
+            },
+            Course::Warp { .. } => true,
         };
         if pulls_back {
             ship.course = Course::Stop;

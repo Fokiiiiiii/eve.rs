@@ -23,29 +23,12 @@ impl Scene {
         };
         let followed =
             course_target.and_then(|target| self.session_of(target).filter(|other| *other != session));
-        let mut ship_target = None;
         if let Some(other) = followed {
             if depth < MAX_FOLLOW_CHAIN {
                 self.settle_pilot_after(other, now, depth + 1);
             }
-            ship_target = self.target_of_ship(other);
-        } else if let Some(wreck) = course_target.and_then(|target| self.wrecks.get(&target)) {
-            // a wreck or a can does not move
-            ship_target = Some(Target::at_rest(wreck.position, wreck.radius));
-        } else if let Some(asteroid) = course_target.and_then(|target| self.asteroids.get(&target)) {
-            // mineable rocks are stationary targets in this scene.
-            ship_target = Some(Target::at_rest(asteroid.position, asteroid.radius));
-        } else if let Some(deployable) =
-            course_target.and_then(|target| self.deployables.get(&target)).filter(|deployable| {
-                !matches!(
-                    &deployable.role,
-                    crate::deployable::Role::DeadspacePocket | crate::deployable::Role::JumpBridge { .. }
-                )
-            })
-        {
-            // client-visible deployables (including a control tower hull) are stationary targets.
-            ship_target = Some(Target::at_rest(deployable.position, deployable.spec.radius));
         }
+        let ship_target = self.course_target_of(session);
         let Some(pilot) = self.pilots.get_mut(&session) else { return };
         let from = pilot.settled_at;
         let was_warping = pilot.flight.is_some();
@@ -64,6 +47,36 @@ impl Scene {
             let told = self.tell(session, milestone);
             self.backlog.extend(told);
         }
+    }
+
+    /// The target a ship's Follow or Orbit course is set on, as the scene holds it now: a ship (where it is once it has moved), a wreck, an asteroid, or
+    /// a client-visible deployable. None when the course has no such target, or the scene does not hold it (a body is not one of these).
+    pub(crate) fn course_target_of(&self, session: SessionId) -> Option<Target> {
+        let target = match self.pilots.get(&session).map(|pilot| pilot.ship.course) {
+            Some(Course::Follow { target, .. } | Course::Orbit { target, .. }) if self.system.body(target).is_none() => target,
+            _ => return None,
+        };
+        if let Some(other) = self.session_of(target).filter(|other| *other != session) {
+            return self.target_of_ship(other);
+        }
+        if let Some(wreck) = self.wrecks.get(&target) {
+            // a wreck or a can does not move
+            return Some(Target::at_rest(wreck.position, wreck.radius));
+        }
+        if let Some(asteroid) = self.asteroids.get(&target) {
+            // mineable rocks are stationary targets in this scene.
+            return Some(Target::at_rest(asteroid.position, asteroid.radius));
+        }
+        self.deployables
+            .get(&target)
+            .filter(|deployable| {
+                !matches!(
+                    &deployable.role,
+                    crate::deployable::Role::DeadspacePocket | crate::deployable::Role::JumpBridge { .. }
+                )
+            })
+            // client-visible deployables (including a control tower hull) are stationary targets.
+            .map(|deployable| Target::at_rest(deployable.position, deployable.spec.radius))
     }
 
     pub(crate) fn settle_all(&mut self, now: i64) {

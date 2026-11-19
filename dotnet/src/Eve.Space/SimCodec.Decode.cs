@@ -245,6 +245,15 @@ public static partial class SimCodec
         _ => throw new SimLinkException(SimLinkError.BadValue, $"bad {what}"),
     };
 
+    /// <summary>A flag, then a number that is always written: the number counts only when the flag is set, and must be finite then (protocol 106).</summary>
+    private static double? ReadOptionalFinite(ref Reader r, string what)
+    {
+        var present = ReadFlag(ref r, what);
+        var value = r.F64();
+        if (present && !double.IsFinite(value)) throw new SimLinkException(SimLinkError.BadValue, $"bad {what}");
+        return present ? value : null;
+    }
+
     private static double[]? ReadOptionalVector(ref Reader r) => r.U8() switch
     {
         0 => null,

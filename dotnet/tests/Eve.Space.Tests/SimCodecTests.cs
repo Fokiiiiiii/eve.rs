@@ -755,9 +755,9 @@ public class SimCodecTests
             "BatteryFire" => new SimBatteryFire((ulong)Wide(c, "requestId"), Wide(c, "batteryId"), (int)c["solarSystemId"]!, (bool)c["on"]!, Wide(c, "target")),
             "BatteryFired" => new SimBatteryFired((ulong)Wide(c, "requestId"), Wide(c, "batteryId"), (string)c["reason"]!, (bool)c["active"]!, Wide(c, "target")),
             "SentryPolicy" => new SimSentryPolicy(Wide(c, "towerId"), (int)c["solarSystemId"]!, (bool)c["online"]!, OptionalNumber(c["standing"]),
-                OptionalNumber(c["securityStatus"]), (bool)c["war"]!, (bool)c["highSecurity"]!, Wide(c, "ownerCorporationId"), Wide(c, "ownerAllianceId")),
+                OptionalNumber(c["securityStatus"]), (bool)c["war"]!, (bool)c["highSecurity"]!, (long)c["ownerCorporationId"]!, (long)c["ownerAllianceId"]!),
             "SentryBattery" => new SimSentryBattery(Wide(c, "batteryId"), (int)c["solarSystemId"]!, Wide(c, "towerId")),
-            "SentryPilot" => new SimSentryPilot(Wide(c, "towerId"), (int)c["solarSystemId"]!, Wide(c, "shipId"), Wide(c, "corporationId"), Wide(c, "allianceId"),
+            "SentryPilot" => new SimSentryPilot(Wide(c, "towerId"), (int)c["solarSystemId"]!, Wide(c, "shipId"), (long)c["corporationId"]!, (long)c["allianceId"]!,
                 OptionalNumber(c["securityStatus"]), (double)c["standing"]!, (bool)c["atWar"]!),
             var other => throw new InvalidOperationException(other),
         };

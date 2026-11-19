@@ -1429,6 +1429,41 @@ public static partial class SimCodec
                     message = new SimBatteryFired(request, battery, reason, active, r.I64());
                     break;
                 }
+            case Kind.SentryPolicy:
+                {
+                    var tower = r.I64();
+                    var solarSystem = r.I32();
+                    var online = ReadFlag(ref r, "sentry online");
+                    var standing = ReadOptionalFinite(ref r, "sentry standing");
+                    var securityStatus = ReadOptionalFinite(ref r, "sentry security status");
+                    var war = ReadFlag(ref r, "sentry war");
+                    var highSecurity = ReadFlag(ref r, "sentry high security");
+                    var ownerCorporation = r.I64();
+                    var ownerAlliance = r.I64();
+                    message = new SimSentryPolicy(tower, solarSystem, online, standing, securityStatus, war, highSecurity, ownerCorporation, ownerAlliance);
+                    break;
+                }
+            case Kind.SentryBattery:
+                {
+                    var battery = r.I64();
+                    var solarSystem = r.I32();
+                    message = new SimSentryBattery(battery, solarSystem, r.I64());
+                    break;
+                }
+            case Kind.SentryPilot:
+                {
+                    var tower = r.I64();
+                    var solarSystem = r.I32();
+                    var ship = r.I64();
+                    var corporation = r.I64();
+                    var alliance = r.I64();
+                    var securityStatus = ReadOptionalFinite(ref r, "sentry pilot security status");
+                    var standing = r.F64();
+                    if (!double.IsFinite(standing)) throw new SimLinkException(SimLinkError.BadValue, "bad sentry pilot standing");
+                    var atWar = ReadFlag(ref r, "sentry pilot war");
+                    message = new SimSentryPilot(tower, solarSystem, ship, corporation, alliance, securityStatus, standing, atWar);
+                    break;
+                }
             case Kind.BatteryTargets:
                 {
                     var request = r.U64();

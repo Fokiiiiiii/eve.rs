@@ -1785,9 +1785,10 @@ public class ControlTowerHostTests
     private const int ForceFieldType = 16_103, ForceFieldGroup = 411;
 
     /// <summary>An online control tower at a moon of <see cref="LowSecSystem"/>, with the pilot that manages it (the fuel test's path).</summary>
-    private static async Task<(ClientSession Session, long Tower)> OnlineTowerAsync(Rig rig)
+    private static async Task<(ClientSession Session, long Tower)> OnlineTowerAsync(Rig rig, long allianceId = 0)
     {
         var (session, items) = await PilotWithItemsAsync(rig, [ControlTower], LowSecSystem);
+        if (allianceId > 0) session.Set("allianceid", new PyLong(allianceId));
         var tower = items[0];
         var owner = session.GetInt("corpid") ?? 0;
         await FuelAsync(rig, tower, HeliumFuelBlock, 39, owner);
@@ -2156,6 +2157,37 @@ public class ControlTowerHostTests
         Assert.Equal(new SimRemoveForceField(tower, (int)LowSecSystem), Assert.Single(rig.Sim.Heard.OfType<SimRemoveForceField>()));
         Assert.Null(await rig.Deployed.GetAsync(tower));
         Assert.Empty(await ForceFieldItemsAsync(rig));
+    }
+
+    [PgFact]
+    public async Task A_tower_admits_its_owner_alliance_by_the_live_membership_of_the_owner_corporation_and_takes_it_away_when_the_corporation_leaves()
+    {
+        const long allianceId = 990000777;
+        await using var rig = await Rig.CreateAsync();
+        var (session, tower) = await OnlineTowerAsync(rig, allianceId);
+        var record = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(tower));
+        Assert.Equal((int)allianceId, record.AllianceId);
+
+        // the owner corporation is in the alliance now (EVE.js getTowerAllianceID resolves it live, not from the record)
+        var inAlliance = true;
+        rig.Containers.AllianceOfCorporationAsync = (corporation, token) =>
+            Task.FromResult(inAlliance && corporation == record.CorporationId ? allianceId : 0L);
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var holder = await PosMgrHostWire.StartAsync(posMgr, session, () => rig.Now);
+
+        rig.Sim.Heard.Clear();
+        Assert.IsType<PyNone>(await holder.CallAsync("SetTowerPassword", new PyLong(tower), new PyStr("field-secret"), PyBool.True, PyBool.True));
+        Assert.Equal(new SimSetForceFieldAccess(tower, (int)LowSecSystem, (int)record.CorporationId, (int)allianceId, true, true),
+            Assert.Single(rig.Sim.Heard.OfType<SimSetForceFieldAccess>()));
+
+        // the owner corporation leaves the alliance while the record still names it: the next sync gives the simulation the admission without the alliance
+        inAlliance = false;
+        rig.Sim.Heard.Clear();
+        await rig.Containers.SynchronizeControlTowerSlimStateAsync(tower);
+        Assert.Equal(new SimSetForceFieldAccess(tower, (int)LowSecSystem, (int)record.CorporationId, 0, true, true),
+            Assert.Single(rig.Sim.Heard.OfType<SimSetForceFieldAccess>()));
     }
 }
 

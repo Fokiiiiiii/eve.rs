@@ -157,6 +157,8 @@ Rejected candidates are listed at the end, with reasons.
 
 ## F7 (Low-Medium, confirmed): alliance admission reads the record, not live membership
 
+**Outcome (fixed, one gap noted):** `ControlTowerHostTests.A_tower_admits_its_owner_alliance_by_the_live_membership_of_the_owner_corporation_and_takes_it_away_when_the_corporation_leaves` failed first (the sync after the owner corporation left its alliance sent nothing; the record still named the alliance). Fix: `SpaceContainers.AllianceOfCorporationAsync` resolves the owner corporation's live alliance the way EVE.js `getTowerAllianceID` does (the corporation is not deleted, its alliance is not deleted, and the alliance still lists the corporation); the host wires it in `SpaceComposition` from the corporation store. The password save, the restore and the sync all send that live value. A sync re-sends the admission when the live value differs from the one last given to the simulation (`RefreshForceFieldAccessAsync`). Verified: `ControlTowerHostTests` 31 of 31 passed. Gap: no event from the alliance registry reaches the containers, so a membership change is taken up at the tower's next sync (the online control tower job runs it periodically), not at the moment it happens. When the hook is not set (a rig without the corporation store) the record's alliance is used, as before.
+
 **Files**
 - `dotnet/src/Eve.Services.Space/SpaceContainers.PosMgr.cs:185-186` sends `updated.AllianceId`, the tower record's alliance.
 - EVE.js resolves the alliance live: `starbaseAccessRuntime.js:155-160` (`getTowerAllianceID` requires the owner corporation to be in the alliance and the alliance to be non-deleted) and `:162-171` (`getForceFieldAccess` takes it on every call).

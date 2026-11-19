@@ -717,6 +717,7 @@ public sealed partial class SpaceContainers
         }
 
         await OfflineBatteriesAsync(towerId, cancellationToken).ConfigureAwait(false);
+        await RefreshForceFieldAccessAsync(towerId, cancellationToken).ConfigureAwait(false);
         await ReconcileForceFieldAsync(towerId, cancellationToken).ConfigureAwait(false);
     }
 

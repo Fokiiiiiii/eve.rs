@@ -445,6 +445,9 @@ public sealed partial class SpaceContainers
     /// <summary>Fleet membership is wired after fleet persistence is composed; a missing reader fails closed for non-owner users.</summary>
     public Func<long, CancellationToken, Task<long?>>? FleetIdForCharacterAsync { get; set; }
 
+    /// <summary>The live alliance of a corporation, as EVE.js resolves a tower owner's alliance: its alliance while it is in one that is not deleted, else 0. Set by the host from the corporation store. Null in a rig without one: the alliance the tower record saved is then taken.</summary>
+    public Func<long, CancellationToken, Task<long>>? AllianceOfCorporationAsync { get; set; }
+
     private static MachoWrappedException MaintenanceBayRefuse(string message) =>
         MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr(message)));
 }

@@ -183,7 +183,9 @@ public sealed partial class SpaceContainers
         if (passwordHash is not null)
             await _space.RematchShipPasswordsAsync(updated.SolarSystemId, call.Cancellation).ConfigureAwait(false);
         // the simulation admits by the access the tower now saves (after the commit, so a refused change is never told)
-        _sim.SetForceFieldAccess(new SimSetForceFieldAccess(towerId, updated.SolarSystemId, updated.CorporationId, updated.AllianceId,
+        var liveAlliance = await LiveAllianceAsync(updated, call.Cancellation).ConfigureAwait(false);
+        _forceFieldAccessAlliances[towerId] = liveAlliance;
+        _sim.SetForceFieldAccess(new SimSetForceFieldAccess(towerId, updated.SolarSystemId, updated.CorporationId, liveAlliance,
             access.Corporation, access.Alliance));
         return PyNone.Instance;
     }
@@ -199,9 +201,34 @@ public sealed partial class SpaceContainers
         var raw = await _deployed.TowerConfigurationAsync(tower.DeployableId, cancellationToken).ConfigureAwait(false);
         var configuration = Normalize(raw is null ? new PosMgrTowerConfiguration() :
             JsonSerializer.Deserialize<PosMgrTowerConfiguration>(raw, PosMgrJson) ?? new PosMgrTowerConfiguration());
-        _sim.SetForceFieldAccess(new SimSetForceFieldAccess(tower.DeployableId, tower.SolarSystemId, tower.CorporationId, tower.AllianceId,
+        var alliance = await LiveAllianceAsync(tower, cancellationToken).ConfigureAwait(false);
+        _forceFieldAccessAlliances[tower.DeployableId] = alliance;
+        _sim.SetForceFieldAccess(new SimSetForceFieldAccess(tower.DeployableId, tower.SolarSystemId, tower.CorporationId, alliance,
             configuration.AllowCorp, configuration.AllowAlliance));
     }
+
+    /// <summary>The alliance a tower's owner corporation admits by now: the live one when the host resolves it (EVE.js <c>getTowerAllianceID</c>), else the one the record saved.</summary>
+    private async Task<int> LiveAllianceAsync(DeployedRecord tower, CancellationToken cancellationToken)
+    {
+        if (AllianceOfCorporationAsync is null)
+            return tower.AllianceId;
+        return (int)await AllianceOfCorporationAsync(tower.CorporationId, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Gives the simulation a tower's admission again when its owner corporation's live alliance is not the one it was last given. No message carries a membership change, so the next sync of the tower takes it up.</summary>
+    private async Task RefreshForceFieldAccessAsync(long towerId, CancellationToken cancellationToken)
+    {
+        // a tower whose access the simulation was never given has nothing to correct: its first access is sent when it is saved or restored
+        if (!_forceFieldAccessAlliances.TryGetValue(towerId, out var given))
+            return;
+        if (_deployed is null || await _deployed.GetAsync(towerId, cancellationToken).ConfigureAwait(false) is not { Kind: ControlTowerKind } tower)
+            return;
+        if (await LiveAllianceAsync(tower, cancellationToken).ConfigureAwait(false) != given)
+            await SendSavedForceFieldAccessAsync(tower, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>The alliance each tower's force field admission was last given to the simulation, by tower.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, int> _forceFieldAccessAlliances = new();
 
     private async Task<PyValue> GetStarbasePermissionsAsync(ServiceCall call)
     {

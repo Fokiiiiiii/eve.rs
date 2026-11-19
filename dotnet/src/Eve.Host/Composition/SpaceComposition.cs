@@ -500,6 +500,18 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.DeployedRecords = deployedStore;
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: deployedStore, scheduler: foundations.Scheduler, source: source);
             spaceContainers.CharacterSessions = characterSessions;
+            // a tower owner's alliance admission is the live one, resolved as EVE.js getTowerAllianceID does: the owner corporation is in a living alliance that still lists it
+            spaceContainers.AllianceOfCorporationAsync = async (corporationId, token) =>
+            {
+                var corporation = await corporations.GetAsync(corporationId, token);
+                if (corporation is null || corporation.Deleted || corporation.AllianceId is not { } allianceId || allianceId <= 0)
+                    return 0;
+                var alliance = await corporations.AllianceAsync(allianceId, token);
+                if (alliance is null || alliance.Deleted)
+                    return 0;
+                var members = await corporations.AllianceMembersAsync(allianceId, token);
+                return members.Any(member => member.CorporationId == corporationId) ? allianceId : 0;
+            };
             new Eve.Services.Space.ControlTowerFuelNotifications(characterSessions, dogma).Subscribe(foundations.Events);
 
             // Tournament beacons are durable deployed items; restore them when their system scene opens.

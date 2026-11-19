@@ -180,9 +180,31 @@ Not verified and not done:
 - Standings admission remains a documented gap (slice 2).
 - No graphical client run.
 
+### POS force field password re-match, slice 5 (2026-11-19)
+
+Scope: a tower's saved password changes while pilots already hold a ship password. Client fact (V24.01, `eve-logic` `playerOwned.py:182-191`, `EnterShipPassword`, read with codebase-memory `get_code_snippet`): the client sends the plaintext ship password only from its prompt, so the Host can never be sent it again. The digest is therefore the only credential kept, as before.
+
+EveJS fact (`/home/user/evejs-261108.1/server/src/services/starbase/starbaseAccessRuntime.js:197-263`, read with the Read tool): the credential keeps `sha256(password)` and the match is `scrypt(hex(digest), salt)` against the tower's saved hash, so a new saved hash is checked again from the same digest. The Host's `StarbasePasswordHash` (`dotnet/src/Eve.Services.Space/StarbasePasswordHash.cs`) uses the same scheme (`scrypt` N=16384, r=8, p=1, 32 bytes, with the lowercase hex digest as the input), so no plaintext is needed.
+
+Implemented:
+
+- `StarbasePasswordHash.MatchesDigestAsync` and `DeriveFromDigestAsync` take the raw SHA-256 digest. The password overloads delegate to them, so stored hashes are unchanged.
+- `SpaceSessions.ShipPasswords.cs`: `MatchShipPasswordAsync` is the one per-tower match (the first online match is the harmonic, and every tower's answer is returned). `SetShipPasswordAsync` uses it, unchanged in effect.
+- `RematchShipPasswordsAsync(systemId)` runs for each pilot in the system that holds a credential for its current ship. It matches the kept digest again, writes the harmonic slim field, and sends `SetShipForceFieldPassword` for each tower. A pilot whose credential changed meanwhile is skipped.
+- `SpaceContainers.SetTowerPasswordAsync` calls it after the commit when the saved hash changed (a password of `false` does not).
+
+Verified (PostgreSQL `eve_p6`, Release, warnings as errors):
+
+- `ControlTowerHostTests.Tower_password_change_matches_a_pilot_holding_a_ship_password_again_from_its_kept_digest`: 1 passed, 0 failed, 0 skipped. Set "field-secret" (harmonic = tower, simulation told a match), change the tower to another password (harmonic -1, simulation told a refusal), set it back (harmonic = tower again). The posMgr wire carries every tower change.
+- `ControlTowerHostTests` class: 21 passed, 0 failed, 0 skipped.
+- `SetShipPasswordHostTests`: 1 passed, 0 failed, 0 skipped (the existing route test, unchanged assertions).
+- Release build of `Eve.Services.Space.Tests` (with its project graph) with `TreatWarningsAsErrors`: 0 warnings, 0 errors.
+
+Not done: the harmonic is still written by the Host from its own match, and the simulation's per-pilot harmonic is a separate path; this is slice 6 (unification, below). No graphical client run.
+
 ## Open items
 
-- **POS force field and password admission:** the Host now places and removes an online tower's field and sends its access and ship-password state (slice 4, migration 0034). Still open: the client-visible force-field presentation is not verified on the graphical client; a tower's password change does not re-match pilots already holding a credential; standings admission is not implemented; the simulation's per-pilot harmonic and the ship's `harmonic` slim field are separate paths.
+- **POS force field and password admission:** the Host now places and removes an online tower's field and sends its access and ship-password state (slice 4, migration 0034). A tower's password change re-matches pilots holding a credential from the kept digest (slice 5). Still open: the client-visible force-field presentation is not verified on the graphical client; standings admission is not implemented; the simulation's per-pilot harmonic and the ship's `harmonic` slim field are separate paths.
 - **Starbase OBO target calls:** `AddTargetOBO` and `RemoveTargetOBO` remain unimplemented. The battery control grant (`AssumeStructureControl` / `RelinquishStructureControl`) now exists (see POS battery control grant below), but the DogmaLM bound object and the battery's target lock state in the Rust scene do not. Registering the two RPC names without them would not implement the client flow.
 - **Sentry targeting:** sentry settings persist and round-trip, but no associated battery targeting/defense controller consumes the policy.
 - **Other POS inventory/use consumers:** silo `viewput`/`viewputtake` is enforced. Ship-maintenance, reprocessing/compression arrays and jump-bridge `use` behavior remain incomplete.

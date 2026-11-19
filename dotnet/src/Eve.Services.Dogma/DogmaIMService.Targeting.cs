@@ -152,4 +152,33 @@ public sealed partial class DogmaIMService
         "TARGET_INVULNERABLE" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You cannot lock that target while it is still invulnerable after undocking."))),
         _ => MachoErrors.ThrowUserError("DeniedTargetingAttemptFailed", ("target", new PyInt(0))),
     };
+
+    /// <summary>
+    /// A POS battery's fire, when the item is a player-controlled battery: the reference's DogmaLM takes it, not the ship's modules. False means the item
+    /// is not a battery and the module path handles it; a refusal is raised as the client's error.
+    /// </summary>
+    private async ValueTask<bool> BatteryFireOrderAsync(ServiceCall call, long batteryId, string effect, bool on, long target)
+    {
+        if (BoundContextOf(call) is null || space is null || batteryId <= 0)
+        {
+            return false;
+        }
+        var result = await space.BatteryFireAsync(call.Session, batteryId, on, effect, target, call.Cancellation);
+        if (result is null)
+        {
+            return false;
+        }
+        return result.Ok ? true : throw BatteryFireError(result);
+    }
+
+    /// <summary>The client's error for a battery fire the space refused, with the reference's wording for the control and state checks.</summary>
+    private static MachoWrappedException BatteryFireError(TargetingResult refusal) => refusal.Reason switch
+    {
+        "NO_CONTROL_GRANT" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("You must assume control of this starbase battery before operating it."))),
+        "BATTERY_NOT_IN_SPACE" => MachoErrors.ThrowUserError("DeniedShipChanged"),
+        "EFFECT_INVALID" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("That effect cannot be activated on this starbase battery."))),
+        "BATTERY_OFFLINE" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The starbase battery must be online before you can control it."))),
+        "TARGET_NOT_LOCKED" => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The starbase battery must lock that target before firing."))),
+        _ => MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The starbase battery cannot perform that operation in its current state."))),
+    };
 }

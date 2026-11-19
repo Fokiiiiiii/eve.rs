@@ -500,6 +500,34 @@ internal sealed partial class CharacterServicesComposition
             spaceSessions.DeployedRecords = deployedStore;
             spaceContainers = new SpaceContainers(sim, ships, items, new PgSpaceItemStore(source, spaceSchema), new PgWorkCycleLedger(source, spaceSchema), new Eve.Services.Space.EventBusFacts(foundations.Events), dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: cans: {message}"), deployed: deployedStore, scheduler: foundations.Scheduler, source: source);
             spaceContainers.CharacterSessions = characterSessions;
+            // the sentry's facts about a pilot: the same affiliation, security, war and contact sources the weapon rules read
+            spaceContainers.SentryPilotFactsOf = async (request, token) =>
+            {
+                var affiliation = await AffiliationOfAsync(request.CharacterId, token);
+                if (affiliation.Corporation is not { } corporationId)
+                    return null;
+                var allianceId = affiliation.Alliance ?? 0;
+                var standings = new Dictionary<long, double>();
+                if (request.UseAllianceStandings && request.OwnerAllianceId > 0)
+                    foreach (var contact in await corporations.AllianceContactsAsync(request.OwnerAllianceId, token))
+                        standings[contact.ContactId] = contact.RelationshipId;
+                else
+                    foreach (var contact in await corporations.CorporationContactsAsync(request.OwnerCorporationId, token))
+                        standings[contact.ContactId] = contact.RelationshipId;
+                // a pilot entry overrides its corporation, then its alliance; a pilot with no contact is at 0 (starbaseAccessRuntime, EveJS)
+                var standing = 0.0;
+                foreach (var identity in new[] { request.CharacterId, corporationId, allianceId })
+                {
+                    if (identity > 0 && standings.TryGetValue(identity, out var relationship))
+                    {
+                        standing = relationship;
+                        break;
+                    }
+                }
+                var securityStatus = await securityStatusOf(request.CharacterId, token);
+                var war = await weaponSafetyReadModel.ReadStructureAsync(request.OwnerCorporationId, request.CharacterId, token);
+                return new Eve.Services.Space.SpaceContainers.SentryPilotFacts(corporationId, allianceId, securityStatus, standing, war.ActiveWar);
+            };
             new Eve.Services.Space.ControlTowerFuelNotifications(characterSessions, dogma).Subscribe(foundations.Events);
 
             // Tournament beacons are durable deployed items; restore them when their system scene opens.

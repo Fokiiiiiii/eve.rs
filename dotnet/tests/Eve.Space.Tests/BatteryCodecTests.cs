@@ -40,6 +40,29 @@ public sealed class BatteryCodecTests
     }
 
     [Fact]
+    public void Battery_fire_and_its_answer_roundtrip_over_the_sim_link()
+    {
+        var fire = new SimBatteryFire(73, 1_050_000_001, 30_000_001, true, 1_790_646_377_000_016);
+        Assert.Equal(fire, SimCodec.Decode(SimCodec.Encode(fire).AsMemory(4)));
+        var stop = new SimBatteryFire(74, 1_050_000_001, 30_000_001, false, 0);
+        Assert.Equal(stop, SimCodec.Decode(SimCodec.Encode(stop).AsMemory(4)));
+
+        var accepted = new SimBatteryFired(73, 1_050_000_001, string.Empty, true, 1_790_646_377_000_016);
+        Assert.Equal(accepted, SimCodec.Decode(SimCodec.Encode(accepted).AsMemory(4)));
+        var refused = new SimBatteryFired(74, 1_050_000_001, "TARGET_NOT_LOCKED", false, 0);
+        Assert.Equal(refused, SimCodec.Decode(SimCodec.Encode(refused).AsMemory(4)));
+    }
+
+    [Fact]
+    public void Battery_fire_refuses_a_flag_that_is_not_a_boolean()
+    {
+        var frame = SimCodec.Encode(new SimBatteryFire(73, 1_050_000_001, 30_000_001, true, 1_790_646_377_000_016));
+        // the on flag follows the kind (1), request (8), battery (8) and system (4) after the 4-byte length: index 4 + 1 + 8 + 8 + 4
+        frame[4 + 21] = 2;
+        Assert.Throws<SimLinkException>(() => SimCodec.Decode(frame.AsMemory(4)));
+    }
+
+    [Fact]
     public void Battery_encoder_refuses_orders_and_numbers_the_simulation_cannot_read()
     {
         Assert.Throws<ArgumentException>(() => SimCodec.Encode(new SimBatteryTarget(71, 1_050_000_001, 30_000_001, 0, 1)));

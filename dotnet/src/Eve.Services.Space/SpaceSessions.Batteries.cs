@@ -8,6 +8,9 @@ public sealed partial class SpaceSessions
     /// </summary>
     public Func<ClientSession, long, TargetingOrder, long, CancellationToken, Task<TargetingResult>>? BatteryTargetingHandler { get; set; }
 
+    /// <summary>Carries out a POS battery's fire (protocol 104); null when the item is not a player-controlled battery.</summary>
+    public Func<ClientSession, long, bool, string, long, CancellationToken, Task<TargetingResult?>>? BatteryFireHandler { get; set; }
+
     /// <inheritdoc />
     public async Task<TargetingResult?> BatteryOrderAsync(ClientSession session, long batteryId, TargetingOrder order, long target, CancellationToken cancellationToken)
     {
@@ -16,5 +19,15 @@ public sealed partial class SpaceSessions
             return null;
         }
         return await handler(session, batteryId, order, target, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
+    public async Task<TargetingResult?> BatteryFireAsync(ClientSession session, long batteryId, bool on, string effectName, long target, CancellationToken cancellationToken)
+    {
+        if (BatteryFireHandler is not { } handler)
+        {
+            return null;
+        }
+        return await handler(session, batteryId, on, effectName, target, cancellationToken).ConfigureAwait(false);
     }
 }

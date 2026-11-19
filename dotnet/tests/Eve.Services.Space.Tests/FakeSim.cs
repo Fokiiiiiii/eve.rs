@@ -286,6 +286,18 @@ internal sealed class FakeSim : ISimulation
         return Task.FromResult(answer with { RequestId = request.RequestId, BatteryId = request.BatteryId });
     }
 
+    /// <summary>Answers to fire orders, dequeued in order; with none queued an order is accepted (the simulation's own rules are tested in eve-space).</summary>
+    public Queue<SimBatteryFired> BatteryFireAnswers { get; } = new();
+
+    public Task<SimBatteryFired> BatteryFireAsync(SimBatteryFire request, CancellationToken cancellationToken = default)
+    {
+        Heard.Enqueue(request);
+        var answer = BatteryFireAnswers.Count > 0
+            ? BatteryFireAnswers.Dequeue()
+            : new SimBatteryFired(request.RequestId, request.BatteryId, "", request.On, request.On ? request.Target : 0);
+        return Task.FromResult(answer with { RequestId = request.RequestId, BatteryId = request.BatteryId });
+    }
+
     public void PlaceAsteroid(SimPlaceAsteroid asteroid) => Heard.Enqueue(asteroid);
 
     public void DroneWorkResult(SimDroneWorkResult result) => Heard.Enqueue(result);
@@ -434,6 +446,31 @@ internal sealed class FakeSim : ISimulation
 
     public void PlaceObservatory(SimPlaceObservatory observatory) => Heard.Enqueue(observatory);
     public void PlaceControlTower(SimPlaceControlTower tower) => Heard.Enqueue(tower);
+
+    /// <summary>What a force field placement is answered with: empty (in the scene) or a reason.</summary>
+    public string ForceFieldPlacementReason { get; set; } = "";
+
+    /// <summary>What a force field removal is answered with: empty (taken out) or a reason.</summary>
+    public string ForceFieldRemovalReason { get; set; } = "";
+
+    public Task<SimForceFieldPlaced> PlaceForceFieldAsync(SimPlaceForceField field, CancellationToken cancellationToken = default)
+    {
+        Heard.Enqueue(field);
+        return Task.FromResult(new SimForceFieldPlaced(field.FieldId, ForceFieldPlacementReason));
+    }
+
+    public Task<SimForceFieldRemoved> RemoveForceFieldAsync(SimRemoveForceField removal, CancellationToken cancellationToken = default)
+    {
+        Heard.Enqueue(removal);
+        return Task.FromResult(new SimForceFieldRemoved(removal.TowerId, ForceFieldRemovalReason));
+    }
+
+    public void SetForceFieldAccess(SimSetForceFieldAccess access) => Heard.Enqueue(access);
+
+    public void SetShipForceFieldPassword(SimShipForceFieldPassword password) => Heard.Enqueue(password);
+    public void SetSentryPolicy(SimSentryPolicy policy) => Heard.Enqueue(policy);
+    public void SetSentryBattery(SimSentryBattery battery) => Heard.Enqueue(battery);
+    public void SetSentryPilot(SimSentryPilot pilot) => Heard.Enqueue(pilot);
     public void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket) => Heard.Enqueue(pocket);
     public Task<bool> PlaceDeadspacePocketAsync(SimPlaceDeadspacePocket pocket, CancellationToken cancellationToken = default)
     {

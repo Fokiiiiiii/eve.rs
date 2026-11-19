@@ -35,6 +35,32 @@ pub const BATTERY_PLACED: u8 = 169;
 pub const BATTERY_TARGET: u8 = 170;
 /// The answer to `BATTERY_TARGET`: pending flag and the targets the battery holds.
 pub const BATTERY_TARGETS: u8 = 171;
+/// Starts (`on`) or stops a battery's fire at a target it holds (protocol 104). Answered by `BATTERY_FIRED` under the request id.
+pub const BATTERY_FIRE: u8 = 190;
+/// The answer to `BATTERY_FIRE`: `reason` is empty when accepted, `active` says the battery fires, `target` is what it fires at (0 for none).
+pub const BATTERY_FIRED: u8 = 191;
+/// The host puts an online POS control tower's force field in its system's scene (protocol 104). Answered by `FORCE_FIELD_PLACED`.
+pub const PLACE_FORCE_FIELD: u8 = 180;
+/// The answer to `PLACE_FORCE_FIELD`: an empty reason means the field is in the scene.
+pub const FORCE_FIELD_PLACED: u8 = 181;
+/// The host takes a tower's force field out of its system's scene (the tower went offline or ran out of fuel). Answered by `FORCE_FIELD_REMOVED`.
+pub const REMOVE_FORCE_FIELD: u8 = 182;
+/// The answer to `REMOVE_FORCE_FIELD`: an empty reason means the field was taken out.
+pub const FORCE_FIELD_REMOVED: u8 = 183;
+/// The host sets who a tower's force field admits by corporation and alliance (protocol 104). No answer.
+pub const SET_FORCE_FIELD_ACCESS: u8 = 184;
+/// The host says whether a pilot's ship password matches a tower's (protocol 104). No answer.
+pub const SHIP_FORCE_FIELD_PASSWORD: u8 = 185;
+/// The host sets a tower's sentry policy in its system's scene (protocol 106): its stored standing and security-status thresholds (each
+/// optional), the war flag, the high-security gate and the tower owner. `online` is false when the tower is offline or out of fuel. No answer.
+pub const SENTRY_POLICY: u8 = 192;
+/// The host binds a battery to a tower's sentry policy; a tower id of 0 unbinds it (protocol 106). No answer.
+pub const SENTRY_BATTERY: u8 = 193;
+/// What the host knows of a pilot's ship toward a tower's policy (protocol 106): corporation, alliance, security status (optional), the owner's
+/// standing and war. A ship id of 0 forgets every pilot of the tower. No answer.
+pub const SENTRY_PILOT: u8 = 194;
+/// The simulation says a pilot's ship harmonic changed: the tower of the admitted field it is inside, or -1 (simulation to host, protocol 105).
+pub const SHIP_FORCE_FIELD_HARMONIC: u8 = 186;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;
 pub const REGISTER_TOURNAMENT_CUTOFF_REPLY: u8 = 143;
 pub const READ_TOURNAMENT_CUTOFF: u8 = 144;

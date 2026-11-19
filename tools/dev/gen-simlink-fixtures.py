@@ -32,7 +32,11 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "EnsureAbyssalSceneObject": 114, "EnsureAbyssalSceneObjectReply": 115, "EnsureAbyssalRewardCache": 116, "EnsureAbyssalRewardCacheReply": 117,
          "EnsureAbyssalLootContainer": 118, "EnsureAbyssalLootContainerReply": 119, "EnsureAbyssalEnvironmentObject": 120, "EnsureAbyssalEnvironmentObjectReply": 121,
          "AbyssalFieldMembership": 122, "RefreshAbyssalNpc": 123, "RefreshAbyssalNpcReply": 124, "ServiceNotify": 125, "GetSceneBody": 126, "GetSceneBodyReply": 127, "EnsureTournamentBeacon": 128, "EnsureTournamentBeaconReply": 129, "RemoveTournamentBeacon": 130, "RemoveTournamentBeaconReply": 131, "QueryTournamentWreck": 132, "QueryTournamentWreckReply": 133, "RemoveTournamentWreck": 134, "RemoveTournamentWreckReply": 135, "MovePublicParticipant": 136, "MovePublicParticipantReply": 137, "EnterPublicParticipant": 138, "EnterPublicParticipantReply": 139, "RegisterTournamentCutoff": 142, "RegisterTournamentCutoffReply": 143, "ReadTournamentCutoff": 144, "ReadTournamentCutoffReply": 145, "ReleaseTournamentCutoff": 146, "ReleaseTournamentCutoffReply": 147, "RegisterTournamentMetrics": 148, "RegisterTournamentMetricsReply": 149, "ReadTournamentMetrics": 150, "ReadTournamentMetricsReply": 151, "ReleaseTournamentMetrics": 152, "ReleaseTournamentMetricsReply": 153, "RemoveUnpilotedShip": 156, "RemoveUnpilotedShipReply": 157, "UpsertMoonChunk": 158, "RemoveMoonChunk": 159, "SetStructureMoonMiningState": 160, "SmartbombHit": 164, "WarpExited": 165, "GetDeploymentBalls": 166, "GetDeploymentBallsReply": 167,
-         "PlaceBattery": 168, "BatteryPlaced": 169, "BatteryTarget": 170, "BatteryTargets": 171}
+         "PlaceBattery": 168, "BatteryPlaced": 169, "BatteryTarget": 170, "BatteryTargets": 171,
+         "PlaceForceField": 180, "ForceFieldPlaced": 181, "RemoveForceField": 182, "ForceFieldRemoved": 183,
+         "SetForceFieldAccess": 184, "ShipForceFieldPassword": 185, "ShipForceFieldHarmonic": 186,
+         "BatteryFire": 190, "BatteryFired": 191,
+          "SentryPolicy": 192, "SentryBattery": 193, "SentryPilot": 194}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -526,9 +530,45 @@ def build(m):
         return frame(k, body + bytes([1 if m["online"] else 0]))
     if k == "BatteryPlaced":
         return frame(k, i64(m["batteryId"]) + s(m["reason"]))
+    if k == "BatteryFire":
+        return frame(k, u64(m["requestId"]) + i64(m["batteryId"]) + struct.pack("<i", m["solarSystemId"])
+                     + bytes([int(m["on"])]) + i64(m["target"]))
+    if k == "BatteryFired":
+        return frame(k, u64(m["requestId"]) + i64(m["batteryId"]) + s(m["reason"])
+                     + bytes([int(m["active"])]) + i64(m["target"]))
     if k == "BatteryTarget":
         return frame(k, u64(m["requestId"]) + i64(m["batteryId"]) + struct.pack("<i", m["solarSystemId"])
                      + bytes([m["order"]]) + i64(m["target"]))
+    if k == "SetForceFieldAccess":
+        return frame(k, i64(m["towerId"]) + struct.pack("<iii", m["solarSystemId"], m["corporationId"], m["allianceId"])
+                     + bytes([1 if m["allowCorporation"] else 0, 1 if m["allowAlliance"] else 0]))
+    if k == "SentryPolicy":  # protocol 106: a tower's stored thresholds (each optional: a flag, then the number), the war flag, the high-security gate and the owner
+        def optional_number(value):
+            return bytes([1 if value is not None else 0]) + struct.pack("<d", value if value is not None else 0.0)
+        return frame(k, i64(m["towerId"]) + struct.pack("<i", m["solarSystemId"]) + bytes([1 if m["online"] else 0])
+                     + optional_number(m["standing"]) + optional_number(m["securityStatus"])
+                     + bytes([1 if m["war"] else 0, 1 if m["highSecurity"] else 0])
+                     + i64(m["ownerCorporationId"]) + i64(m["ownerAllianceId"]))
+    if k == "SentryBattery":  # protocol 106: a battery bound to a tower's policy (tower 0 unbinds it)
+        return frame(k, i64(m["batteryId"]) + struct.pack("<i", m["solarSystemId"]) + i64(m["towerId"]))
+    if k == "SentryPilot":  # protocol 106: what the host knows of a pilot's ship toward a tower (ship 0 forgets the tower's pilots)
+        return frame(k, i64(m["towerId"]) + struct.pack("<i", m["solarSystemId"]) + i64(m["shipId"])
+                     + i64(m["corporationId"]) + i64(m["allianceId"])
+                     + bytes([1 if m["securityStatus"] is not None else 0]) + struct.pack("<d", m["securityStatus"] if m["securityStatus"] is not None else 0.0)
+                     + struct.pack("<d", m["standing"]) + bytes([1 if m["atWar"] else 0]))
+    if k == "ShipForceFieldHarmonic":
+        return frame(k, u64(m["sessionId"]) + i64(m["shipId"]) + i64(m["harmonic"]))
+    if k == "ShipForceFieldPassword":
+        return frame(k, u64(m["sessionId"]) + i64(m["towerId"]) + struct.pack("<i", m["solarSystemId"]) + bytes([1 if m["matched"] else 0]))
+    if k == "PlaceForceField":
+        body = i64(m["fieldId"]) + i64(m["towerId"]) + struct.pack("<iii", m["solarSystemId"], m["typeId"], m["groupId"]) + s(m["displayName"])
+        return frame(k, body + struct.pack("<3dd", *m["position"], m["radius"]))
+    if k == "ForceFieldPlaced":
+        return frame(k, i64(m["fieldId"]) + s(m["reason"]))
+    if k == "RemoveForceField":
+        return frame(k, i64(m["towerId"]) + struct.pack("<i", m["solarSystemId"]))
+    if k == "ForceFieldRemoved":
+        return frame(k, i64(m["towerId"]) + s(m["reason"]))
     if k == "BatteryTargets":
         targets = m["targets"]
         body = u64(m["requestId"]) + i64(m["batteryId"]) + s(m["reason"]) + bytes([1 if m["pending"] else 0])
@@ -883,8 +923,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 102},
-    {"name": "hello ack", "kind": "HelloAck", "version": 102, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 106},
+    {"name": "hello ack", "kind": "HelloAck", "version": 106, "pollHz": 4},
     {"name": "active Crimewatch flag", "kind": "CrimewatchFlagActive", "sessionId": "1001",
      "isCriminal": True, "expiresAtUnixMs": "1800000000000"},
     {"name": "Empire sentry offense", "kind": "EmpireSentryOffense", "sessionId": "1001"},
@@ -1001,6 +1041,36 @@ valid = [
      "reason": "", "pending": True, "targets": ["1790646377000015"]},
     {"name": "battery target refused out of range", "kind": "BatteryTargets", "requestId": "71", "batteryId": "1050000001",
      "reason": "TARGET_OUT_OF_RANGE", "pending": False, "targets": []},
+    {"name": "start a battery's fire at a held target", "kind": "BatteryFire", "requestId": "72", "batteryId": "1050000001",
+     "solarSystemId": 30000142, "on": True, "target": "1790646377000016"},
+    {"name": "stop a battery's fire", "kind": "BatteryFire", "requestId": "73", "batteryId": "1050000001",
+     "solarSystemId": 30000142, "on": False, "target": "0"},
+    {"name": "battery fire accepted", "kind": "BatteryFired", "requestId": "72", "batteryId": "1050000001",
+     "reason": "", "active": True, "target": "1790646377000016"},
+    {"name": "battery fire refused for a target not locked", "kind": "BatteryFired", "requestId": "74", "batteryId": "1050000001",
+     "reason": "TARGET_NOT_LOCKED", "active": False, "target": "0"},
+    {"name": "place a force field for an online tower (protocol 104)", "kind": "PlaceForceField", "fieldId": "1050000100", "towerId": "1050000099",
+     "solarSystemId": 30000142, "typeId": 16000, "groupId": 411, "displayName": "Force Field", "position": [1.0, 2.0, 3.0], "radius": 1000.0},
+    {"name": "force field placed", "kind": "ForceFieldPlaced", "fieldId": "1050000100", "reason": ""},
+    {"name": "force field placement refused for a radius of zero", "kind": "ForceFieldPlaced", "fieldId": "1050000100", "reason": "FORCE_FIELD_RADIUS_INVALID"},
+    {"name": "remove the force field of a tower", "kind": "RemoveForceField", "towerId": "1050000099", "solarSystemId": 30000142},
+    {"name": "force field taken out", "kind": "ForceFieldRemoved", "towerId": "1050000099", "reason": ""},
+    {"name": "force field removal refused for a tower with no field", "kind": "ForceFieldRemoved", "towerId": "1050000099", "reason": "FORCE_FIELD_NOT_IN_SPACE"},
+    {"name": "set who a tower's force field admits by corporation and alliance (protocol 104)", "kind": "SetForceFieldAccess", "towerId": "1050000099",
+     "solarSystemId": 30000142, "corporationId": 98000001, "allianceId": 97000001, "allowCorporation": True, "allowAlliance": False},
+    {"name": "the simulation's harmonic for a pilot's ship is the tower it is inside (protocol 105)", "kind": "ShipForceFieldHarmonic", "sessionId": "1790646377000015",
+     "shipId": "1790000001", "harmonic": 1050000099},
+    {"name": "a pilot's ship password matches a tower (protocol 104)", "kind": "ShipForceFieldPassword", "sessionId": "1790646377000015",
+     "towerId": "1050000099", "solarSystemId": 30000142, "matched": True},
+    {"name": "a tower's sentry policy: standing below -2.5, war on, the owner's corporation and alliance (protocol 106)", "kind": "SentryPolicy", "towerId": "1050000099",
+     "solarSystemId": 30000142, "online": True, "standing": -2.5, "securityStatus": None, "war": True, "highSecurity": False,
+     "ownerCorporationId": 98000001, "ownerAllianceId": 97000001},
+    {"name": "a battery bound to its tower's sentry policy (protocol 106)", "kind": "SentryBattery", "batteryId": "1050000001", "solarSystemId": 30000142, "towerId": "1050000099"},
+    {"name": "a battery unbound from its sentry policy (protocol 106)", "kind": "SentryBattery", "batteryId": "1050000001", "solarSystemId": 30000142, "towerId": "0"},
+    {"name": "a pilot's facts toward a tower's sentry policy (protocol 106)", "kind": "SentryPilot", "towerId": "1050000099", "solarSystemId": 30000142,
+     "shipId": "9988400001940", "corporationId": 98000002, "allianceId": 0, "securityStatus": -4.9, "standing": 0.0, "atWar": False},
+    {"name": "forget every pilot a tower's sentry policy knows (protocol 106)", "kind": "SentryPilot", "towerId": "1050000099", "solarSystemId": 30000142,
+     "shipId": "0", "corporationId": 0, "allianceId": 0, "securityStatus": None, "standing": 0.0, "atWar": False},
     {"name": "read a public-system source ship pose", "kind": "GetAbyssalParticipantPose", "requestId": "50",
      "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "shipId": "9988400001940"},
     {"name": "public-system source ship pose receipt", "kind": "GetAbyssalParticipantPoseReply", "requestId": "50",
@@ -1569,7 +1639,7 @@ valid = [
      "status": {"state": 110, "upkeepState": 3, "timer": [132000000000000000, 132000860000000000, None], "unanchoring": None, "repairing": None}},
     {"name": "customs office of a planet put in orbit by the host (protocol 67)", "kind": "PlaceStructure", "structureId": "1200000040486618", "solarSystemId": 30100032, "typeName": "Customs Office", "typeId": 2233, "groupId": 1025, "planetId": 40486618, "modules": [], "closestMoonId": "0", "position": [311989835983.1308, -13069154020.916222, 156646308895.76187], "radius": 8000.0, "ownerId": "1000125", "corporationId": 0, "allianceId": 0, "vitals": {"shieldCapacity": 0.0, "armorHp": 0.0, "structureHp": 0.0, "resonances": {"shield": [1.0, 1.0, 1.0, 1.0], "armor": [1.0, 1.0, 1.0, 1.0], "structure": [1.0, 1.0, 1.0, 1.0]}}, "shieldRechargeMs": 0.0, "perSecond": [0.0, 0.0, 0.0], "repairPause": [0.0, 0.0, 0.0], "status": {"state": 110, "upkeepState": 3, "timer": None, "unanchoring": None, "repairing": None}},
     {"name": "host updates the refinery moon and fitted drill modules", "kind": "SetStructureMoonMiningState", "solarSystemId": 30000001, "structureId": "1040000000001", "closestMoonId": "40000004", "modules": [{"itemId": "1040000000002", "typeId": 45009, "flagId": 164}]},
-    {"name": "host projects a moon chunk with its tractor phase", "kind": "UpsertMoonChunk", "chunkId": "1040000000003", "solarSystemId": 30000001,
+    {"description": "host projects a moon chunk with its tractor phase", "kind": "UpsertMoonChunk", "chunkId": "1040000000003", "solarSystemId": 30000001,
      "name": "Moon chunk", "typeId": 46030, "groupId": 1940, "categoryId": 25, "ownerId": "98000001", "graphicId": 12345,
      "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0], "radius": 10000.0,
      "sourceStructureId": "1040000000001", "moduleId": "1040000000002", "moduleTypeId": 45009, "moonId": "40000004",
@@ -2212,10 +2282,17 @@ invalid.append({"name": "negative crystal damage", "reason": "bad-value",
 
 for label, changes in [("order zero", {"order": 0}), ("order five", {"order": 5})]:
     invalid.append({"name": "battery target " + label, "reason": "bad-value", "hex": build(dict(named("lock a target with a battery"), **changes)).hex()})
+invalid.append({"name": "battery fire flag not a boolean", "reason": "bad-value",
+                "hex": build(dict(named("start a battery's fire at a held target"), on=2)).hex()})
 invalid.append({"name": "battery radius not finite", "reason": "bad-value",
                 "hex": build(dict(named("place a battery online with its holder"), radius=float("nan"))).hex()})
 invalid.append({"name": "battery position not finite", "reason": "bad-value",
                 "hex": build(dict(named("place a battery online with its holder"), position=[float("nan"), 2.0, 3.0])).hex()})
+
+invalid.append({"name": "force field radius not finite", "reason": "bad-value",
+                "hex": build(dict(named("place a force field for an online tower (protocol 104)"), radius=float("nan"))).hex()})
+invalid.append({"name": "force field position not finite", "reason": "bad-value",
+                "hex": build(dict(named("place a force field for an online tower (protocol 104)"), position=[float("inf"), 2.0, 3.0])).hex()})
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, "w", encoding="utf-8") as f:

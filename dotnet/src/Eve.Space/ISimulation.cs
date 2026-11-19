@@ -135,6 +135,10 @@ public interface ISimulation
     Task<SimBatteryTargets> BatteryTargetAsync(SimBatteryTarget request, CancellationToken cancellationToken = default) =>
         Task.FromException<SimBatteryTargets>(new NotSupportedException("POS battery targeting is unavailable."));
 
+    /// <summary>Starts or stops a POS battery's fire at a target it holds (protocol 104).</summary>
+    Task<SimBatteryFired> BatteryFireAsync(SimBatteryFire request, CancellationToken cancellationToken = default) =>
+        Task.FromException<SimBatteryFired>(new NotSupportedException("POS battery fire is unavailable."));
+
     /// <summary>Reads the authoritative pose of a resident ship from its expected private scene.</summary>
     Task<SimGetAbyssalParticipantPoseReply> GetAbyssalParticipantPoseAsync(
         SimGetAbyssalParticipantPose request, CancellationToken cancellationToken = default);
@@ -307,6 +311,22 @@ public interface ISimulation
     /// <summary>Puts a Mobile Observatory in space where its pilot dropped it, anchored or not (protocol 72).</summary>
     void PlaceObservatory(SimPlaceObservatory observatory);
     void PlaceControlTower(SimPlaceControlTower tower);
+
+    /// <summary>Puts an online POS control tower's force field in its system's scene (protocol 104). Answered by the field's id.</summary>
+    Task<SimForceFieldPlaced> PlaceForceFieldAsync(SimPlaceForceField field, CancellationToken cancellationToken = default);
+    /// <summary>Takes a POS control tower's force field out of its system's scene (protocol 104). Answered by the tower's id.</summary>
+    Task<SimForceFieldRemoved> RemoveForceFieldAsync(SimRemoveForceField removal, CancellationToken cancellationToken = default);
+    /// <summary>Sets who a POS control tower's force field admits by corporation and alliance (protocol 104). No answer.</summary>
+    void SetForceFieldAccess(SimSetForceFieldAccess access);
+    /// <summary>Says whether a pilot's ship password matches a POS control tower's (protocol 104). No answer.</summary>
+    void SetShipForceFieldPassword(SimShipForceFieldPassword password);
+    /// <summary>Sets a POS control tower's sentry policy in its system's scene (protocol 106). No answer.</summary>
+    void SetSentryPolicy(SimSentryPolicy policy);
+    /// <summary>Binds a POS battery to a tower's sentry policy; tower 0 unbinds it (protocol 106). No answer.</summary>
+    void SetSentryBattery(SimSentryBattery battery);
+    /// <summary>Says what the host knows of a pilot's ship toward a tower's sentry policy (protocol 106). No answer.</summary>
+    void SetSentryPilot(SimSentryPilot pilot);
+
 
     /// <summary>Puts a deadspace pocket of a dungeon in its system's scene at its origin (protocol 74).</summary>
     void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket);

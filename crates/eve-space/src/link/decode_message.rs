@@ -194,6 +194,16 @@ fn read_flag(reader: &mut Reader, what: &'static str) -> Result<bool, DecodeErro
 
 /// A structure's health: its shield, armor and hull points, the resonances of each layer (shield, armor, hull; four kinds each), the shield's recharge
 /// in milliseconds, the limit each layer takes in a second and the repair pause of each layer.
+/// A flag, then a finite number that is only meaningful when the flag is set (protocol 106's optional thresholds).
+fn read_optional_f64(reader: &mut Reader, what: &'static str) -> Result<Option<f64>, DecodeError> {
+    let present = read_flag(reader, what)?;
+    let value = reader.f64()?;
+    if present && !value.is_finite() {
+        return Err(DecodeError::BadValue(what));
+    }
+    Ok(present.then_some(value))
+}
+
 fn read_structure_health(reader: &mut Reader) -> Result<(Vitals, f64, StructureLimits), DecodeError> {
     let mut point = || -> Result<f64, DecodeError> {
         let value = reader.f64()?;
@@ -2747,7 +2757,130 @@ impl Message {
                 }
                 Message::TetherChanged { session_id, previous_structure_id, structure_id, repairing }
             }
+            kind::SHIP_FORCE_FIELD_HARMONIC => {
+                let session_id = r.u64()?;
+                let ship_id = r.i64()?;
+                let harmonic = r.i64()?;
+                if ship_id <= 0 || harmonic == 0 || harmonic < -1 {
+                    return Err(DecodeError::BadValue("ship force field harmonic"));
+                }
+                Message::ShipForceFieldHarmonic { session_id, ship_id, harmonic }
+            }
             kind::DESTROY => Message::Destroy { ship_id: r.i64()?, credit: read_credit(&mut r)? },
+            kind::PLACE_FORCE_FIELD => {
+                let field_id = r.i64()?;
+                let tower_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let type_id = r.i32()?;
+                let group_id = r.i32()?;
+                let display_name = r.text()?;
+                let position = read_vector(&mut r)?;
+                let radius = r.f64()?;
+                if !radius.is_finite() || position.iter().any(|value| !value.is_finite()) {
+                    return Err(DecodeError::BadValue("force field"));
+                }
+                Message::PlaceForceField(Box::new(ForceFieldPlacement {
+                    field_id,
+                    tower_id,
+                    solar_system_id,
+                    type_id,
+                    group_id,
+                    display_name,
+                    position,
+                    radius,
+                }))
+            }
+            kind::FORCE_FIELD_PLACED => Message::ForceFieldPlaced { field_id: r.i64()?, reason: r.text()? },
+            kind::REMOVE_FORCE_FIELD => {
+                Message::RemoveForceField { tower_id: r.i64()?, solar_system_id: r.i32()? }
+            }
+            kind::FORCE_FIELD_REMOVED => Message::ForceFieldRemoved { tower_id: r.i64()?, reason: r.text()? },
+            kind::SET_FORCE_FIELD_ACCESS => {
+                let tower_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let corporation_id = r.i32()?;
+                let alliance_id = r.i32()?;
+                let allow_corporation = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("allow corporation")),
+                };
+                let allow_alliance = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("allow alliance")),
+                };
+                Message::SetForceFieldAccess {
+                    tower_id,
+                    solar_system_id,
+                    corporation_id,
+                    alliance_id,
+                    allow_corporation,
+                    allow_alliance,
+                }
+            }
+            kind::SENTRY_POLICY => {
+                let tower_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let online = read_flag(&mut r, "sentry online")?;
+                let standing = read_optional_f64(&mut r, "sentry standing")?;
+                let security_status = read_optional_f64(&mut r, "sentry security status")?;
+                let war = read_flag(&mut r, "sentry war")?;
+                let high_security = read_flag(&mut r, "sentry high security")?;
+                let owner_corporation_id = r.i64()?;
+                let owner_alliance_id = r.i64()?;
+                Message::SentryPolicy {
+                    tower_id,
+                    solar_system_id,
+                    online,
+                    standing,
+                    security_status,
+                    war,
+                    high_security,
+                    owner_corporation_id,
+                    owner_alliance_id,
+                }
+            }
+            kind::SENTRY_BATTERY => {
+                let battery_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let tower_id = r.i64()?;
+                Message::SentryBattery { battery_id, solar_system_id, tower_id }
+            }
+            kind::SENTRY_PILOT => {
+                let tower_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let ship_id = r.i64()?;
+                let corporation_id = r.i64()?;
+                let alliance_id = r.i64()?;
+                let security_status = read_optional_f64(&mut r, "sentry pilot security status")?;
+                let standing = r.f64()?;
+                if !standing.is_finite() {
+                    return Err(DecodeError::BadValue("sentry pilot standing"));
+                }
+                let at_war = read_flag(&mut r, "sentry pilot war")?;
+                Message::SentryPilot {
+                    tower_id,
+                    solar_system_id,
+                    ship_id,
+                    corporation_id,
+                    alliance_id,
+                    security_status,
+                    standing,
+                    at_war,
+                }
+            }
+            kind::SHIP_FORCE_FIELD_PASSWORD => {
+                let session_id = r.u64()?;
+                let tower_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let matched = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("matched")),
+                };
+                Message::ShipForceFieldPassword { session_id, tower_id, solar_system_id, matched }
+            }
             kind::PLACE_BATTERY => {
                 let battery_id = r.i64()?;
                 let solar_system_id = r.i32()?;
@@ -2796,6 +2929,28 @@ impl Message {
                     return Err(DecodeError::BadValue("battery order"));
                 }
                 Message::BatteryTarget { request_id, battery_id, solar_system_id, order, target: r.i64()? }
+            }
+            kind::BATTERY_FIRE => {
+                let request_id = r.u64()?;
+                let battery_id = r.i64()?;
+                let solar_system_id = r.i32()?;
+                let on = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("battery fire")),
+                };
+                Message::BatteryFire { request_id, battery_id, solar_system_id, on, target: r.i64()? }
+            }
+            kind::BATTERY_FIRED => {
+                let request_id = r.u64()?;
+                let battery_id = r.i64()?;
+                let reason = r.text()?;
+                let active = match r.u8()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(DecodeError::BadValue("battery active")),
+                };
+                Message::BatteryFired { request_id, battery_id, reason, active, target: r.i64()? }
             }
             kind::BATTERY_TARGETS => {
                 let request_id = r.u64()?;

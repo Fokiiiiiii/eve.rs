@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 102,
-   "hex": "03000000016600"
+   "version": 106,
+   "hex": "03000000016a00"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 102,
+   "version": 106,
    "pollHz": 4,
-   "hex": "0700000002660004000000"
+   "hex": "07000000026a0004000000"
   },
   {
    "name": "active Crimewatch flag",
@@ -816,6 +816,182 @@
    "pending": false,
    "targets": [],
    "hex": "2b000000ab470000000000000081ba953e0000000013005441524745545f4f55545f4f465f52414e47450000000000"
+  },
+  {
+   "name": "start a battery's fire at a held target",
+   "kind": "BatteryFire",
+   "requestId": "72",
+   "batteryId": "1050000001",
+   "solarSystemId": 30000142,
+   "on": true,
+   "target": "1790646377000016",
+   "hex": "1e000000be480000000000000081ba953e000000000ec4c90101502c3859955c0600"
+  },
+  {
+   "name": "stop a battery's fire",
+   "kind": "BatteryFire",
+   "requestId": "73",
+   "batteryId": "1050000001",
+   "solarSystemId": 30000142,
+   "on": false,
+   "target": "0",
+   "hex": "1e000000be490000000000000081ba953e000000000ec4c901000000000000000000"
+  },
+  {
+   "name": "battery fire accepted",
+   "kind": "BatteryFired",
+   "requestId": "72",
+   "batteryId": "1050000001",
+   "reason": "",
+   "active": true,
+   "target": "1790646377000016",
+   "hex": "1c000000bf480000000000000081ba953e00000000000001502c3859955c0600"
+  },
+  {
+   "name": "battery fire refused for a target not locked",
+   "kind": "BatteryFired",
+   "requestId": "74",
+   "batteryId": "1050000001",
+   "reason": "TARGET_NOT_LOCKED",
+   "active": false,
+   "target": "0",
+   "hex": "2d000000bf4a0000000000000081ba953e0000000011005441524745545f4e4f545f4c4f434b4544000000000000000000"
+  },
+  {
+   "name": "place a force field for an online tower (protocol 104)",
+   "kind": "PlaceForceField",
+   "fieldId": "1050000100",
+   "towerId": "1050000099",
+   "solarSystemId": 30000142,
+   "typeId": 16000,
+   "groupId": 411,
+   "displayName": "Force Field",
+   "position": [
+    1.0,
+    2.0,
+    3.0
+   ],
+   "radius": 1000.0,
+   "hex": "4a000000b4e4ba953e00000000e3ba953e000000000ec4c901803e00009b0100000b00466f726365204669656c64000000000000f03f000000000000004000000000000008400000000000408f40"
+  },
+  {
+   "name": "force field placed",
+   "kind": "ForceFieldPlaced",
+   "fieldId": "1050000100",
+   "reason": "",
+   "hex": "0b000000b5e4ba953e000000000000"
+  },
+  {
+   "name": "force field placement refused for a radius of zero",
+   "kind": "ForceFieldPlaced",
+   "fieldId": "1050000100",
+   "reason": "FORCE_FIELD_RADIUS_INVALID",
+   "hex": "25000000b5e4ba953e000000001a00464f5243455f4649454c445f5241444955535f494e56414c4944"
+  },
+  {
+   "name": "remove the force field of a tower",
+   "kind": "RemoveForceField",
+   "towerId": "1050000099",
+   "solarSystemId": 30000142,
+   "hex": "0d000000b6e3ba953e000000000ec4c901"
+  },
+  {
+   "name": "force field taken out",
+   "kind": "ForceFieldRemoved",
+   "towerId": "1050000099",
+   "reason": "",
+   "hex": "0b000000b7e3ba953e000000000000"
+  },
+  {
+   "name": "force field removal refused for a tower with no field",
+   "kind": "ForceFieldRemoved",
+   "towerId": "1050000099",
+   "reason": "FORCE_FIELD_NOT_IN_SPACE",
+   "hex": "23000000b7e3ba953e000000001800464f5243455f4649454c445f4e4f545f494e5f5350414345"
+  },
+  {
+   "name": "set who a tower's force field admits by corporation and alliance (protocol 104)",
+   "kind": "SetForceFieldAccess",
+   "towerId": "1050000099",
+   "solarSystemId": 30000142,
+   "corporationId": 98000001,
+   "allianceId": 97000001,
+   "allowCorporation": true,
+   "allowAlliance": false,
+   "hex": "17000000b8e3ba953e000000000ec4c901815cd705411ac8050100"
+  },
+  {
+   "name": "the simulation's harmonic for a pilot's ship is the tower it is inside (protocol 105)",
+   "kind": "ShipForceFieldHarmonic",
+   "sessionId": "1790646377000015",
+   "shipId": "1790000001",
+   "harmonic": 1050000099,
+   "hex": "19000000ba4f2c3859955c0600813bb16a00000000e3ba953e00000000"
+  },
+  {
+   "name": "a pilot's ship password matches a tower (protocol 104)",
+   "kind": "ShipForceFieldPassword",
+   "sessionId": "1790646377000015",
+   "towerId": "1050000099",
+   "solarSystemId": 30000142,
+   "matched": true,
+   "hex": "16000000b94f2c3859955c0600e3ba953e000000000ec4c90101"
+  },
+  {
+   "name": "a tower's sentry policy: standing below -2.5, war on, the owner's corporation and alliance (protocol 106)",
+   "kind": "SentryPolicy",
+   "towerId": "1050000099",
+   "solarSystemId": 30000142,
+   "online": true,
+   "standing": -2.5,
+   "securityStatus": null,
+   "war": true,
+   "highSecurity": false,
+   "ownerCorporationId": 98000001,
+   "ownerAllianceId": 97000001,
+   "hex": "32000000c0e3ba953e000000000ec4c901010100000000000004c00000000000000000000100815cd70500000000411ac80500000000"
+  },
+  {
+   "name": "a battery bound to its tower's sentry policy (protocol 106)",
+   "kind": "SentryBattery",
+   "batteryId": "1050000001",
+   "solarSystemId": 30000142,
+   "towerId": "1050000099",
+   "hex": "15000000c181ba953e000000000ec4c901e3ba953e00000000"
+  },
+  {
+   "name": "a battery unbound from its sentry policy (protocol 106)",
+   "kind": "SentryBattery",
+   "batteryId": "1050000001",
+   "solarSystemId": 30000142,
+   "towerId": "0",
+   "hex": "15000000c181ba953e000000000ec4c9010000000000000000"
+  },
+  {
+   "name": "a pilot's facts toward a tower's sentry policy (protocol 106)",
+   "kind": "SentryPilot",
+   "towerId": "1050000099",
+   "solarSystemId": 30000142,
+   "shipId": "9988400001940",
+   "corporationId": 98000002,
+   "allianceId": 0,
+   "securityStatus": -4.9,
+   "standing": 0.0,
+   "atWar": false,
+   "hex": "37000000c2e3ba953e000000000ec4c90194b3089b15090000825cd705000000000000000000000000019a999999999913c0000000000000000000"
+  },
+  {
+   "name": "forget every pilot a tower's sentry policy knows (protocol 106)",
+   "kind": "SentryPilot",
+   "towerId": "1050000099",
+   "solarSystemId": 30000142,
+   "shipId": "0",
+   "corporationId": 0,
+   "allianceId": 0,
+   "securityStatus": null,
+   "standing": 0.0,
+   "atWar": false,
+   "hex": "37000000c2e3ba953e000000000ec4c901000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
   },
   {
    "name": "read a public-system source ship pose",
@@ -5278,10 +5454,11 @@
    "hex": "29000000a081c3c90101a0d424f2000000045a6202000000000100000002a0d424f2000000d1af0000a4000000"
   },
   {
-   "name": "Moon chunk",
+   "description": "host projects a moon chunk with its tractor phase",
    "kind": "UpsertMoonChunk",
    "chunkId": "1040000000003",
    "solarSystemId": 30000001,
+   "name": "Moon chunk",
    "typeId": 46030,
    "groupId": 1940,
    "categoryId": 25,
@@ -8470,6 +8647,11 @@
    "hex": "1e000000aa460000000000000081ba953e000000000ec4c90105502c3859955c0600"
   },
   {
+   "name": "battery fire flag not a boolean",
+   "reason": "bad-value",
+   "hex": "1e000000be480000000000000081ba953e000000000ec4c90102502c3859955c0600"
+  },
+  {
    "name": "battery radius not finite",
    "reason": "bad-value",
    "hex": "5b000000a881ba953e000000000ec4c901f7400000e80300000700426174746572794f2c3859955c0600000000000000f03f00000000000000400000000000000840000000000000f87f000000000000794000000000006ae8400200000001"
@@ -8478,6 +8660,16 @@
    "name": "battery position not finite",
    "reason": "bad-value",
    "hex": "5b000000a881ba953e000000000ec4c901f7400000e80300000700426174746572794f2c3859955c0600000000000000f87f000000000000004000000000000008400000000000004e40000000000000794000000000006ae8400200000001"
+  },
+  {
+   "name": "force field radius not finite",
+   "reason": "bad-value",
+   "hex": "4a000000b4e4ba953e00000000e3ba953e000000000ec4c901803e00009b0100000b00466f726365204669656c64000000000000f03f00000000000000400000000000000840000000000000f87f"
+  },
+  {
+   "name": "force field position not finite",
+   "reason": "bad-value",
+   "hex": "4a000000b4e4ba953e00000000e3ba953e000000000ec4c901803e00009b0100000b00466f726365204669656c64000000000000f07f000000000000004000000000000008400000000000408f40"
   }
  ]
 }

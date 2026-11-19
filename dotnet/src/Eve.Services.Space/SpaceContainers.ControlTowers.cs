@@ -506,6 +506,100 @@ public sealed partial class SpaceContainers
     public void PublishStarbaseModuleOnlineState(long moduleId, bool online) =>
         SetControlTowerSlimState(moduleId, online ? StructureOnline : StructureAnchored, null);
 
+    /// <summary>The SDE type of a POS control tower's force field (the Force Field, group 411).</summary>
+    private const int ForceFieldTypeId = 16_103;
+
+    /// <summary>The simulation's answer to a removal when no field of the tower is in its scene: the field is gone already.</summary>
+    private const string ForceFieldNotInSpace = "FORCE_FIELD_NOT_IN_SPACE";
+
+    /// <summary>
+    /// Makes a control tower's force field agree with its state: an online tower has one field item and one field in its system's scene, and any other state has
+    /// neither. The item is written in one transaction and the simulation is told after its commit. A repeat sync keeps the item and sends the same placement,
+    /// which the simulation takes as unchanged. A refused placement, or a removal the simulation refuses for another reason, is an error.
+    /// </summary>
+    private async Task ReconcileForceFieldAsync(long towerId, CancellationToken cancellationToken)
+    {
+        if (_deployed is null || _source is null)
+            return;
+        SimPlaceForceField? placement = null;
+        SimRemoveForceField? removal = null;
+        await using (var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
+        await using (var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false) is not { Kind: ControlTowerKind } tower)
+                return;
+            var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false);
+            if (state == TowerOnline && tower.ActivateAtMs != NeverAnchored && tower.ActivateAtMs <= _nowUnixMs())
+            {
+                placement = await EnsureForceFieldInTransactionAsync(connection, transaction, tower, cancellationToken).ConfigureAwait(false);
+            }
+            else if (await RemoveForceFieldInTransactionAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false) is { } removed)
+            {
+                removal = new SimRemoveForceField(towerId, removed.SolarSystemId);
+            }
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        if (placement is not null)
+        {
+            var answer = await _sim.PlaceForceFieldAsync(placement, cancellationToken).ConfigureAwait(false);
+            if (answer.Reason.Length > 0)
+                throw new InvalidOperationException($"The simulation did not place force field {placement.FieldId} of control tower {towerId}: {answer.Reason}");
+        }
+        if (removal is not null)
+        {
+            var answer = await _sim.RemoveForceFieldAsync(removal, cancellationToken).ConfigureAwait(false);
+            if (answer.Reason.Length > 0 && answer.Reason != ForceFieldNotInSpace)
+                throw new InvalidOperationException($"The simulation did not remove the force field of control tower {towerId}: {answer.Reason}");
+        }
+    }
+
+    /// <summary>Writes a control tower's force field item and its space row (creating the item once), with the SDE's shield radius.</summary>
+    private async Task<SimPlaceForceField> EnsureForceFieldInTransactionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        DeployedRecord tower, CancellationToken cancellationToken)
+    {
+        await _statics.EnsureTypesAsync([ForceFieldTypeId, tower.TypeId], cancellationToken).ConfigureAwait(false);
+        var fieldType = _statics.Type(ForceFieldTypeId)
+            ?? throw new InvalidOperationException($"SDE type {ForceFieldTypeId} for a control tower's force field is missing.");
+        var towerType = _statics.Type(tower.TypeId)
+            ?? throw new InvalidOperationException($"SDE type {tower.TypeId} for control tower {tower.DeployableId} is missing.");
+        var shieldRadiusId = _statics.AttributeId("shieldRadius")
+            ?? throw new InvalidOperationException("The pinned SDE has no shieldRadius dogma attribute.");
+        var radius = towerType.Attributes.GetValueOrDefault(shieldRadiusId);
+        if (!double.IsFinite(radius) || radius <= 0)
+            throw new InvalidOperationException($"SDE shieldRadius of control tower type {tower.TypeId} is not positive.");
+
+        var existing = await _spaceItems.ForceFieldAsync(connection, transaction, tower.DeployableId, cancellationToken).ConfigureAwait(false);
+        long itemId;
+        if (existing is null)
+        {
+            itemId = await _items.CreateAsync(connection, transaction,
+                new Eve.Inventory.NewItem(ForceFieldTypeId, tower.OwnerId, tower.SolarSystemId, CharacterShips.InSpaceFlag, 1, true), cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            itemId = existing.ItemId;
+            if (await _items.LockAndGetAsync(connection, transaction, itemId, cancellationToken).ConfigureAwait(false) is null)
+                throw new InvalidDataException($"force field item {itemId} of control tower {tower.DeployableId} has no inventory row");
+        }
+        var position = tower.Position.ToArray();
+        await _spaceItems.SaveAsync(connection, transaction, new SpaceItem(itemId, tower.SolarSystemId, position, [1d, 0d, 0d], radius,
+            fieldType.GroupId, tower.DeployableId, 0, tower.CorporationId, tower.AllianceId, 0, long.MaxValue, Kind: SpaceItemKind.ForceField), cancellationToken).ConfigureAwait(false);
+        return new SimPlaceForceField(itemId, tower.DeployableId, tower.SolarSystemId, ForceFieldTypeId, fieldType.GroupId, fieldType.Name, position, radius);
+    }
+
+    /// <summary>Deletes a control tower's force field item and its space row. Returns the removed row, or null when the tower has no field.</summary>
+    private async Task<SpaceItem?> RemoveForceFieldInTransactionAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, long towerId,
+        CancellationToken cancellationToken)
+    {
+        var existing = await _spaceItems.ForceFieldAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false);
+        if (existing is null)
+            return null;
+        await _items.DeleteAsync(connection, transaction, existing.ItemId, cancellationToken).ConfigureAwait(false);
+        await _spaceItems.RemoveAsync(connection, transaction, existing.ItemId, cancellationToken).ConfigureAwait(false);
+        return existing;
+    }
+
     /// <summary>Publishes persisted tower and module state after their database transaction commits.</summary>
     public async Task SynchronizeControlTowerSlimStateAsync(long towerId, CancellationToken cancellationToken = default)
     {
@@ -536,6 +630,8 @@ public sealed partial class SpaceContainers
         }
 
         await OfflineBatteriesAsync(towerId, cancellationToken).ConfigureAwait(false);
+        await ReconcileForceFieldAsync(towerId, cancellationToken).ConfigureAwait(false);
+        await ReconcileSentryAsync(towerId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Turns every associated online or onlining module off in the tower's state transaction.</summary>

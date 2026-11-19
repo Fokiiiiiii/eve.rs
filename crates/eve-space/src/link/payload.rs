@@ -1027,6 +1027,97 @@ impl Message {
                 out.extend_from_slice(&to_system.to_le_bytes());
                 out.extend_from_slice(&to_gate.to_le_bytes());
             }
+            Self::PlaceForceField(field) => {
+                out.extend_from_slice(&field.field_id.to_le_bytes());
+                out.extend_from_slice(&field.tower_id.to_le_bytes());
+                out.extend_from_slice(&field.solar_system_id.to_le_bytes());
+                out.extend_from_slice(&field.type_id.to_le_bytes());
+                out.extend_from_slice(&field.group_id.to_le_bytes());
+                put_text(&mut out, &field.display_name);
+                put_vector(&mut out, &field.position);
+                out.extend_from_slice(&field.radius.to_le_bytes());
+            }
+            Self::ForceFieldPlaced { field_id, reason } => {
+                out.extend_from_slice(&field_id.to_le_bytes());
+                put_text(&mut out, reason);
+            }
+            Self::SetForceFieldAccess {
+                tower_id,
+                solar_system_id,
+                corporation_id,
+                alliance_id,
+                allow_corporation,
+                allow_alliance,
+            } => {
+                out.extend_from_slice(&tower_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&corporation_id.to_le_bytes());
+                out.extend_from_slice(&alliance_id.to_le_bytes());
+                out.push(u8::from(*allow_corporation));
+                out.push(u8::from(*allow_alliance));
+            }
+            Self::SentryPolicy {
+                tower_id,
+                solar_system_id,
+                online,
+                standing,
+                security_status,
+                war,
+                high_security,
+                owner_corporation_id,
+                owner_alliance_id,
+            } => {
+                out.extend_from_slice(&tower_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.push(u8::from(*online));
+                out.push(u8::from(standing.is_some()));
+                out.extend_from_slice(&standing.unwrap_or(0.0).to_le_bytes());
+                out.push(u8::from(security_status.is_some()));
+                out.extend_from_slice(&security_status.unwrap_or(0.0).to_le_bytes());
+                out.push(u8::from(*war));
+                out.push(u8::from(*high_security));
+                out.extend_from_slice(&owner_corporation_id.to_le_bytes());
+                out.extend_from_slice(&owner_alliance_id.to_le_bytes());
+            }
+            Self::SentryBattery { battery_id, solar_system_id, tower_id } => {
+                out.extend_from_slice(&battery_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&tower_id.to_le_bytes());
+            }
+            Self::SentryPilot {
+                tower_id,
+                solar_system_id,
+                ship_id,
+                corporation_id,
+                alliance_id,
+                security_status,
+                standing,
+                at_war,
+            } => {
+                out.extend_from_slice(&tower_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&corporation_id.to_le_bytes());
+                out.extend_from_slice(&alliance_id.to_le_bytes());
+                out.push(u8::from(security_status.is_some()));
+                out.extend_from_slice(&security_status.unwrap_or(0.0).to_le_bytes());
+                out.extend_from_slice(&standing.to_le_bytes());
+                out.push(u8::from(*at_war));
+            }
+            Self::ShipForceFieldPassword { session_id, tower_id, solar_system_id, matched } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&tower_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.push(u8::from(*matched));
+            }
+            Self::RemoveForceField { tower_id, solar_system_id } => {
+                out.extend_from_slice(&tower_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+            }
+            Self::ForceFieldRemoved { tower_id, reason } => {
+                out.extend_from_slice(&tower_id.to_le_bytes());
+                put_text(&mut out, reason);
+            }
             Self::PlaceBattery(battery) => {
                 out.extend_from_slice(&battery.battery_id.to_le_bytes());
                 out.extend_from_slice(&battery.solar_system_id.to_le_bytes());
@@ -1050,6 +1141,20 @@ impl Message {
                 out.extend_from_slice(&battery_id.to_le_bytes());
                 out.extend_from_slice(&solar_system_id.to_le_bytes());
                 out.push(*order);
+                out.extend_from_slice(&target.to_le_bytes());
+            }
+            Self::BatteryFire { request_id, battery_id, solar_system_id, on, target } => {
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&battery_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.push(u8::from(*on));
+                out.extend_from_slice(&target.to_le_bytes());
+            }
+            Self::BatteryFired { request_id, battery_id, reason, active, target } => {
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&battery_id.to_le_bytes());
+                put_text(&mut out, reason);
+                out.push(u8::from(*active));
                 out.extend_from_slice(&target.to_le_bytes());
             }
             Self::BatteryTargets { request_id, battery_id, reason, pending, targets } => {
@@ -1996,6 +2101,11 @@ impl Message {
                     out.extend_from_slice(&(candidate.structure_id as u64).to_le_bytes());
                     out.extend_from_slice(&candidate.range.to_le_bytes());
                 }
+            }
+            Self::ShipForceFieldHarmonic { session_id, ship_id, harmonic } => {
+                out.extend_from_slice(&session_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                out.extend_from_slice(&harmonic.to_le_bytes());
             }
             Self::TetherChanged { session_id, previous_structure_id, structure_id, repairing } => {
                 out.extend_from_slice(&session_id.to_le_bytes());

@@ -34,6 +34,10 @@ public sealed partial class DogmaIMService
         {
             return new PyInt(1);
         }
+        if (await BatteryFireOrderAsync(call, itemId, effect, true, target))
+        {
+            return new PyInt(1);
+        }
         await ModuleOrderAsync(call, m => m.ActivateAsync(call.Session, itemId, effect, target, repeat, call.Cancellation), starting: true);
         return new PyInt(1);
     }
@@ -44,6 +48,10 @@ public sealed partial class DogmaIMService
     {
         var module = IdOf(call.Arg(0)) ?? 0;
         var effect = JsSemantics.StringValue(call.Arg(1)) ?? "";
+        if (await BatteryFireOrderAsync(call, module, effect, false, 0))
+        {
+            return new PyInt(1);
+        }
         await ModuleOrderAsync(call, m => m.DeactivateAsync(call.Session, module, effect, call.Cancellation), starting: false);
         return new PyInt(1);
     }

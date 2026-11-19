@@ -37,6 +37,30 @@ public static partial class SimCodec
         public const byte BatteryPlaced = 169;
         public const byte BatteryTarget = 170;
         public const byte BatteryTargets = 171;
+        /// <summary>Starts or stops a battery's fire at a target it holds (protocol 104).</summary>
+        public const byte BatteryFire = 190;
+        /// <summary>The answer to <see cref="BatteryFire"/> (protocol 104).</summary>
+        public const byte BatteryFired = 191;
+        /// <summary>Protocol 103: the host puts an online POS control tower's force field in its system's scene.</summary>
+        public const byte PlaceForceField = 180;
+        /// <summary>The answer to <see cref="PlaceForceField"/>: an empty reason means the field is in the scene.</summary>
+        public const byte ForceFieldPlaced = 181;
+        /// <summary>The host takes a tower's force field out of its system's scene.</summary>
+        public const byte RemoveForceField = 182;
+        /// <summary>The answer to <see cref="RemoveForceField"/>: an empty reason means the field was taken out.</summary>
+        public const byte ForceFieldRemoved = 183;
+        /// <summary>Protocol 103: the host sets who a tower's force field admits by corporation and alliance. No answer.</summary>
+        public const byte SetForceFieldAccess = 184;
+        /// <summary>Protocol 103: the host says whether a pilot's ship password matches a tower's. No answer.</summary>
+        public const byte ShipForceFieldPassword = 185;
+        /// <summary>Protocol 106: the host sets a tower's sentry policy (thresholds, war, high-security gate, owner). No answer.</summary>
+        public const byte SentryPolicy = 192;
+        /// <summary>Protocol 106: the host binds a battery to a tower's sentry policy (tower 0 unbinds it). No answer.</summary>
+        public const byte SentryBattery = 193;
+        /// <summary>Protocol 106: what the host knows of a pilot's ship toward a tower's policy (ship 0 forgets the tower's pilots). No answer.</summary>
+        public const byte SentryPilot = 194;
+        /// <summary>The simulation says a pilot's ship harmonic changed: the admitted tower it is inside, or -1 (protocol 105).</summary>
+        public const byte ShipForceFieldHarmonic = 186;
         public const byte EnsureTournamentBeacon = 128;
         public const byte EnsureTournamentBeaconReply = 129;
         public const byte RemoveTournamentBeacon = 130;
@@ -204,6 +228,10 @@ public const byte UpdateEffect = 61;
     private static bool ValidBatteryPlacement(IReadOnlyList<double> position, double radius, double scanResolution, double maxTargetRange) =>
         position.Count == 3 && position.All(double.IsFinite) && double.IsFinite(radius) && double.IsFinite(scanResolution) &&
         double.IsFinite(maxTargetRange);
+
+    /// <summary>What a force field placement carries that the link can read: finite numbers only (protocol 104; the simulation refuses a radius it cannot use).</summary>
+    private static bool ValidForceFieldPlacement(IReadOnlyList<double> position, double radius) =>
+        position.Count == 3 && position.All(double.IsFinite) && double.IsFinite(radius);
 
     private static bool ValidDeploymentBalls(IReadOnlyList<SimDeploymentBall> balls) =>
         balls is not null && balls.Count <= 8192 && balls.All(ball => ball.ItemId > 0 && ball.TypeId > 0 && IsVector(ball.Position) &&

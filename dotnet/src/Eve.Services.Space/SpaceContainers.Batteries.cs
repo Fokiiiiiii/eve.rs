@@ -181,6 +181,90 @@ public sealed partial class SpaceContainers
     }
 
     /// <summary>
+    /// Starts or stops a POS battery's fire (protocol 104) for the pilot that holds its control grant. A battery that is not player-controlled is not a
+    /// battery order (null), so the dogma service handles the item as a ship module. A pilot without the grant is refused; the effect must be the battery
+    /// type's own offensive effect; the battery must be online; a start needs a target (the simulation checks that the battery holds it). The simulation
+    /// records only that the battery is set to fire: no damage, cycle, capacitor or charge is run for it yet.
+    /// </summary>
+    private async Task<TargetingResult?> BatteryFireAsync(ClientSession session, long batteryId, bool on, string effectName, long target, CancellationToken cancellationToken)
+    {
+        if (_deployed is null || _source is null || batteryId <= 0)
+        {
+            return null;
+        }
+        var characterId = session.CharacterId ?? 0;
+        if (characterId <= 0)
+        {
+            return TargetingResult.Refusal("NO_CONTROL_GRANT");
+        }
+        var battery = await _deployed.GetAsync(batteryId, cancellationToken).ConfigureAwait(false);
+        if (battery is not { Kind: StarbaseModuleKind })
+        {
+            return null;
+        }
+        await _statics.EnsureTypesAsync([battery.TypeId], cancellationToken).ConfigureAwait(false);
+        if (!IsPlayerControlledBattery(battery.TypeId))
+        {
+            return null;
+        }
+        if (BatteryNumbersOf(battery.TypeId) is not { } numbers)
+        {
+            return TargetingResult.Refusal("BATTERY_NUMBERS_MISSING");
+        }
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+        var holder = await _deployed.BatteryControllerAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
+        if (holder != characterId)
+        {
+            return TargetingResult.Refusal("NO_CONTROL_GRANT");
+        }
+        var offensive = await _statics.OffensiveEffectNameAsync(battery.TypeId, cancellationToken).ConfigureAwait(false);
+        if (offensive is null || !string.Equals(offensive, effectName, StringComparison.OrdinalIgnoreCase))
+        {
+            return TargetingResult.Refusal("EFFECT_INVALID");
+        }
+        var state = await _deployed.TowerStateAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
+        var online = state is TowerOnline or TowerOnlining;
+
+        var gate = _batteryGates.GetOrAdd(batteryId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var placed = await _sim.PlaceBatteryAsync(
+                new SimPlaceBattery(batteryId, battery.SolarSystemId, battery.TypeId, battery.GroupId, battery.Name, (ulong)session.SessionId,
+                    battery.Position, battery.Radius, numbers.ScanResolution, numbers.MaxTargetRange, numbers.MaxLockedTargets, online),
+                cancellationToken).ConfigureAwait(false);
+            if (placed.Reason.Length > 0)
+            {
+                return TargetingResult.Refusal(placed.Reason);
+            }
+            if (!online)
+            {
+                return TargetingResult.Refusal("BATTERY_OFFLINE");
+            }
+            if (on && target <= 0)
+            {
+                return TargetingResult.Refusal("TARGET_NOT_LOCKED");
+            }
+            var reply = await _sim.BatteryFireAsync(
+                new SimBatteryFire(SimClient.NextRequestId(), batteryId, battery.SolarSystemId, on, on ? target : 0),
+                cancellationToken).ConfigureAwait(false);
+            return reply.Reason.Length > 0
+                ? TargetingResult.Refusal(reply.Reason)
+                : new TargetingResult(true, false, Array.Empty<long>());
+        }
+        catch (SimUnavailableException error)
+        {
+            _log?.Invoke($"battery {batteryId} fire: {error.Message}");
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Space is not available right now. Try again in a moment.")));
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    /// <summary>
     /// Puts the tower's batteries that are not online offline in the simulation, outside an order (the tower's fuel ran out, it went offline, or it was
     /// unanchored): the simulation lets go of their locks and tells the former holder <c>clear</c>. No holder is sent, so the grant stays with the host. Runs
     /// after the tower's state has committed. A simulation that is unavailable is logged; its locks then wait for its next placement of the battery.

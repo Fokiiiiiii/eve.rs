@@ -122,6 +122,8 @@ public sealed partial class SpaceContainers
             if (useAlliance && record.AllianceId <= 0) throw MachoErrors.ThrowUserError("STARBASE_ALLIANCE_REQUIRED");
             return config with { Sentry = new SentrySettings(standing, security, statusDrop, war, useAlliance) };
         }).ConfigureAwait(false);
+        // the sentry is published after the commit, so a refused change is never sent
+        await ReconcileSentryAsync(id, call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
     }
 
@@ -162,19 +164,29 @@ public sealed partial class SpaceContainers
             call.Arg(3) is not PyNone && allowAlliance is null)
             throw SettingsInvalid();
 
-        await UpdateTowerConfigurationAsync(call, ReadPositiveId(call.Arg(0)), (record, configuration) =>
+        var towerId = ReadPositiveId(call.Arg(0));
+        var access = (Corporation: false, Alliance: false);
+        var updated = await UpdateTowerConfigurationAsync(call, towerId, (record, configuration) =>
         {
+            var nextAllowCorp = allowCorp ?? configuration.AllowCorp;
             var nextAllowAlliance = allowAlliance ?? configuration.AllowAlliance;
             if (allowAlliance is true && record.AllianceId <= 0)
                 throw MachoErrors.ThrowUserError("STARBASE_ALLIANCE_REQUIRED");
+            access = (nextAllowCorp, nextAllowAlliance);
             return configuration with
             {
-                AllowCorp = allowCorp ?? configuration.AllowCorp,
+                AllowCorp = nextAllowCorp,
                 AllowAlliance = nextAllowAlliance,
                 PasswordSalt = passwordSalt ?? configuration.PasswordSalt,
                 PasswordHash = passwordHash ?? configuration.PasswordHash,
             };
         }).ConfigureAwait(false);
+        // a changed password is matched again for the pilots holding a ship password here (after the commit, so a refused change matches nothing)
+        if (passwordHash is not null)
+            await _space.RematchShipPasswordsAsync(updated.SolarSystemId, call.Cancellation).ConfigureAwait(false);
+        // the simulation admits by the access the tower now saves (after the commit, so a refused change is never told)
+        _sim.SetForceFieldAccess(new SimSetForceFieldAccess(towerId, updated.SolarSystemId, updated.CorporationId, updated.AllianceId,
+            access.Corporation, access.Alliance));
         return PyNone.Instance;
     }
 

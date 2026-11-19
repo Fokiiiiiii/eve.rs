@@ -126,6 +126,9 @@ public sealed partial class SpaceContainers
                     await RestoreControlTowerSlimStateAsync(record, CancellationToken.None);
                     if (record.Kind == StarbaseModuleKind)
                         await RestoreBatteryHolderlessAsync(record.DeployableId, CancellationToken.None);
+                    // a restarted simulation has no force field: an online tower's field is put back, and a field a stale record still holds is taken out
+                    if (record.Kind == ControlTowerKind)
+                        await ReconcileForceFieldAsync(record.DeployableId, CancellationToken.None);
                     continue;
                 }
                 if (record.Kind == InhibitorKind)

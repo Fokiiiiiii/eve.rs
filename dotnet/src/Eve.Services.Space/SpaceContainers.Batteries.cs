@@ -131,7 +131,8 @@ public sealed partial class SpaceContainers
     /// <summary>
     /// Starts or stops a POS battery's fire (protocol 104) for the pilot that holds its control grant. A battery that is not player-controlled is not a
     /// battery order (null), so the dogma service handles the item as a ship module. A pilot without the grant is refused; the effect must be the battery
-    /// type's own offensive effect; the battery must be online; a start needs a target (the simulation checks that the battery holds it). The simulation
+    /// type's own offensive effect; the battery must be online for a start, and a start needs a target (the simulation checks that the battery holds it). A stop
+    /// is always accepted: the holder's, or any pilot's when the battery is unheld, online or not. The simulation
     /// records only that the battery is set to fire: no damage, cycle, capacitor or charge is run for it yet.
     /// </summary>
     private async Task<TargetingResult?> BatteryFireAsync(ClientSession session, long batteryId, bool on, string effectName, long target, CancellationToken cancellationToken)
@@ -141,7 +142,7 @@ public sealed partial class SpaceContainers
             return null;
         }
         var characterId = session.CharacterId ?? 0;
-        if (characterId <= 0)
+        if (on && characterId <= 0)
         {
             return TargetingResult.Refusal("NO_CONTROL_GRANT");
         }
@@ -161,8 +162,9 @@ public sealed partial class SpaceContainers
         }
 
         await using var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        var holder = await _deployed.BatteryControllerAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
-        if (holder != characterId)
+        var holder = await _deployed.BatteryControllerAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false) ?? 0;
+        // A start needs the grant. A stop needs none when the battery is unheld, and the holder's stop is always accepted.
+        if (holder != characterId && (on || holder != 0))
         {
             return TargetingResult.Refusal("NO_CONTROL_GRANT");
         }
@@ -178,6 +180,16 @@ public sealed partial class SpaceContainers
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            if (!on)
+            {
+                // A stop is never a placement: a placement names its holder, and an unheld battery has none. It is sent as it is.
+                var stopped = await _sim.BatteryFireAsync(
+                    new SimBatteryFire(SimClient.NextRequestId(), batteryId, battery.SolarSystemId, false, 0),
+                    cancellationToken).ConfigureAwait(false);
+                return stopped.Reason.Length > 0
+                    ? TargetingResult.Refusal(stopped.Reason)
+                    : new TargetingResult(true, false, Array.Empty<long>());
+            }
             var placed = await _sim.PlaceBatteryAsync(
                 new SimPlaceBattery(batteryId, battery.SolarSystemId, battery.TypeId, battery.GroupId, battery.Name, (ulong)session.SessionId,
                     battery.Position, battery.Radius, numbers.ScanResolution, numbers.MaxTargetRange, numbers.MaxLockedTargets, online),

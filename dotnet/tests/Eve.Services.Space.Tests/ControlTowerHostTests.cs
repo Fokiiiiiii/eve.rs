@@ -1929,6 +1929,22 @@ public class ControlTowerHostTests
         Assert.Equal(0L, rebound.TowerId);
     }
 
+    [PgFact]
+    public async Task Relinquishing_a_battery_takes_its_holder_out_of_the_simulation_so_its_sentry_may_take_it_again()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "", true, []));
+        await fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO", new PyLong(fixture.Battery), new PyLong(fixture.Target));
+        Assert.Equal((ulong)fixture.Session.SessionId, rig.Sim.Heard.OfType<SimPlaceBattery>().Last().HolderSession);
+
+        // the pilot lets go of the battery: the grant is gone, and the simulation must be told the battery has no holder, so its locks and fire are let go
+        Assert.IsType<PyNone>(await fixture.Holder.CallAsync("RelinquishStructureControl", new PyLong(fixture.Battery)));
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var released = rig.Sim.Heard.OfType<SimPlaceBattery>().Last();
+        Assert.Equal((fixture.Battery, 0UL), (released.BatteryId, released.HolderSession));
+    }
+
     private const int ForceFieldType = 16_103, ForceFieldGroup = 411;
 
     /// <summary>An online control tower at a moon of <see cref="LowSecSystem"/>, with the pilot that manages it (the fuel test's path).</summary>

@@ -4,15 +4,15 @@
   {
    "name": "hello",
    "kind": "Hello",
-   "version": 101,
-   "hex": "03000000016500"
+   "version": 102,
+   "hex": "03000000016600"
   },
   {
    "name": "hello ack",
    "kind": "HelloAck",
-   "version": 101,
+   "version": 102,
    "pollHz": 4,
-   "hex": "0700000002650004000000"
+   "hex": "0700000002660004000000"
   },
   {
    "name": "active Crimewatch flag",
@@ -728,6 +728,94 @@
    "balls": [],
    "error": "SCENE_NOT_LOADED",
    "hex": "2c000000a73d000000000000000fc4c9010000000000000000000000000110005343454e455f4e4f545f4c4f41444544"
+  },
+  {
+   "name": "place a battery online with its holder",
+   "kind": "PlaceBattery",
+   "batteryId": "1050000001",
+   "solarSystemId": 30000142,
+   "typeId": 16631,
+   "groupId": 1000,
+   "displayName": "Battery",
+   "holderSession": "1790646377000015",
+   "position": [
+    1.0,
+    2.0,
+    3.0
+   ],
+   "radius": 60.0,
+   "scanResolution": 400.0,
+   "maxTargetRange": 50000.0,
+   "maxLockedTargets": 2,
+   "online": true,
+   "hex": "5b000000a881ba953e000000000ec4c901f7400000e80300000700426174746572794f2c3859955c0600000000000000f03f000000000000004000000000000008400000000000004e40000000000000794000000000006ae8400200000001"
+  },
+  {
+   "name": "place a battery offline without a holder",
+   "kind": "PlaceBattery",
+   "batteryId": "1050000001",
+   "solarSystemId": 30000142,
+   "typeId": 16631,
+   "groupId": 1000,
+   "displayName": "",
+   "holderSession": "0",
+   "position": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "radius": 60.0,
+   "scanResolution": 0.0,
+   "maxTargetRange": 0.0,
+   "maxLockedTargets": 0,
+   "online": false,
+   "hex": "54000000a881ba953e000000000ec4c901f7400000e8030000000000000000000000000000000000000000000000000000000000000000000000000000000000004e40000000000000000000000000000000000000000000"
+  },
+  {
+   "name": "battery placed",
+   "kind": "BatteryPlaced",
+   "batteryId": "1050000001",
+   "reason": "",
+   "hex": "0b000000a981ba953e000000000000"
+  },
+  {
+   "name": "battery placement refused for an unknown system",
+   "kind": "BatteryPlaced",
+   "batteryId": "1050000001",
+   "reason": "SYSTEM_UNKNOWN",
+   "hex": "19000000a981ba953e000000000e0053595354454d5f554e4b4e4f574e"
+  },
+  {
+   "name": "lock a target with a battery",
+   "kind": "BatteryTarget",
+   "requestId": "70",
+   "batteryId": "1050000001",
+   "solarSystemId": 30000142,
+   "order": 1,
+   "target": "1790646377000016",
+   "hex": "1e000000aa460000000000000081ba953e000000000ec4c90101502c3859955c0600"
+  },
+  {
+   "name": "battery target answer with a pending lock",
+   "kind": "BatteryTargets",
+   "requestId": "70",
+   "batteryId": "1050000001",
+   "reason": "",
+   "pending": true,
+   "targets": [
+    "1790646377000015"
+   ],
+   "hex": "20000000ab460000000000000081ba953e00000000000001010000004f2c3859955c0600"
+  },
+  {
+   "name": "battery target refused out of range",
+   "kind": "BatteryTargets",
+   "requestId": "71",
+   "batteryId": "1050000001",
+   "reason": "TARGET_OUT_OF_RANGE",
+   "pending": false,
+   "targets": [],
+   "hex": "2b000000ab470000000000000081ba953e0000000013005441524745545f4f55545f4f465f52414e47450000000000"
   },
   {
    "name": "read a public-system source ship pose",
@@ -8370,6 +8458,26 @@
    "name": "negative crystal damage",
    "reason": "bad-value",
    "hex": "260000001b4f2c3859955c06009fb6089b1509000001000000000000001f5a0000019a9999999999b9bf"
+  },
+  {
+   "name": "battery target order zero",
+   "reason": "bad-value",
+   "hex": "1e000000aa460000000000000081ba953e000000000ec4c90100502c3859955c0600"
+  },
+  {
+   "name": "battery target order five",
+   "reason": "bad-value",
+   "hex": "1e000000aa460000000000000081ba953e000000000ec4c90105502c3859955c0600"
+  },
+  {
+   "name": "battery radius not finite",
+   "reason": "bad-value",
+   "hex": "5b000000a881ba953e000000000ec4c901f7400000e80300000700426174746572794f2c3859955c0600000000000000f03f00000000000000400000000000000840000000000000f87f000000000000794000000000006ae8400200000001"
+  },
+  {
+   "name": "battery position not finite",
+   "reason": "bad-value",
+   "hex": "5b000000a881ba953e000000000ec4c901f7400000e80300000700426174746572794f2c3859955c0600000000000000f87f000000000000004000000000000008400000000000004e40000000000000794000000000006ae8400200000001"
   }
  ]
 }

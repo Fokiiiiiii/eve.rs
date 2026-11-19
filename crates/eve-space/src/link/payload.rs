@@ -1032,7 +1032,7 @@ impl Message {
                 out.extend_from_slice(&battery.solar_system_id.to_le_bytes());
                 out.extend_from_slice(&battery.type_id.to_le_bytes());
                 out.extend_from_slice(&battery.group_id.to_le_bytes());
-                put_text(&mut out, &battery.name);
+                put_text(&mut out, &battery.display_name);
                 out.extend_from_slice(&battery.holder_session.to_le_bytes());
                 put_vector(&mut out, &battery.position);
                 out.extend_from_slice(&battery.radius.to_le_bytes());

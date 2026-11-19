@@ -86,6 +86,18 @@ impl Battery {
         }
     }
 
+    /// Takes the battery offline outside an order: every lock, held or pending, is let go, and the holder that had them is told once with
+    /// `OnTargetOBO clear` (the client drops all its targets). Nothing is told when nothing was held.
+    fn go_offline(&mut self) -> Vec<Out> {
+        let held = !self.targeting.is_empty();
+        let holder = self.holder;
+        self.targeting = Targeting::default();
+        match holder {
+            Some(holder) if held => vec![obo(holder, "clear", self.id, None, None)],
+            _ => Vec::new(),
+        }
+    }
+
     /// Lets go of every lock, telling the holder that had them, and returns what is told.
     fn release_all(&mut self, reason: &'static str) -> Vec<Out> {
         let Some(holder) = self.holder else {
@@ -140,8 +152,9 @@ impl BatteryFireAnswer {
 }
 
 impl Scene {
-    /// Places a battery, or updates it (protocol 102). Going offline releases its locks with the reason `batteryOffline`, and a change of holder
-    /// releases them with `controlChanged`, each told to the holder that had them. The reply is `Err` with the reason when the numbers are not
+    /// Places a battery, or updates it (protocol 102). Going offline outside an order (its fuel ran out, its tower went offline or it was
+    /// unanchored) lets go of every lock and tells the holder `clear`, once and only when it held one. A change of holder releases the locks with
+    /// `controlChanged`, each told to the holder that had them. The reply is `Err` with the reason when the numbers are not
     /// usable; nothing is changed then.
     pub(crate) fn place_battery(&mut self, placement: BatteryPlacement) -> Result<Vec<Out>, &'static str> {
         let usable = |value: f64| value.is_finite();
@@ -160,14 +173,13 @@ impl Scene {
         let battery_id = placement.battery_id;
         let holder = (placement.holder_session != 0).then_some(placement.holder_session);
         let mut battery = self.batteries.remove(&battery_id).unwrap_or_else(|| Battery::new(battery_id));
-        let released = if !placement.online {
-            Some("batteryOffline")
+        let out = if !placement.online {
+            battery.go_offline()
         } else if battery.holder != holder {
-            Some("controlChanged")
+            battery.release_all("controlChanged")
         } else {
-            None
+            Vec::new()
         };
-        let out = released.map_or_else(Vec::new, |reason| battery.release_all(reason));
         battery.position = Vec3::new(placement.position[0], placement.position[1], placement.position[2]);
         battery.radius = placement.radius;
         battery.scan_resolution = placement.scan_resolution;

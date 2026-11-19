@@ -2753,7 +2753,7 @@ impl Message {
                 let solar_system_id = r.i32()?;
                 let type_id = r.i32()?;
                 let group_id = r.i32()?;
-                let name = r.text()?;
+                let display_name = r.text()?;
                 let holder_session = r.u64()?;
                 let position = read_vector(&mut r)?;
                 let radius = r.f64()?;
@@ -2776,7 +2776,7 @@ impl Message {
                     solar_system_id,
                     type_id,
                     group_id,
-                    name,
+                    display_name,
                     holder_session,
                     position,
                     radius,

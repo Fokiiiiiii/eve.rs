@@ -36,17 +36,17 @@ internal sealed class FactionWarfareControlBunkers
     private readonly DogmaStatic _statics;
     private readonly SdeReader _sde;
     private readonly Action<string>? _log;
-    private readonly Func<int, CancellationToken, Task<IReadOnlyList<double>?>>? _readVerifiedPosition;
     private readonly object _damageOrder = new();
     private Task _damageQueue = Task.CompletedTask;
 
+    private const double SunWarpInClearanceMeters = 100_000d;
+    private const double InfrastructureHubWarpInOffsetMeters = 100_000d;
+
     public FactionWarfareControlBunkers(NpgsqlDataSource source, FwStore store, DurableScheduler scheduler, EventBus events,
-        ISimulation sim, SpaceSessions space, DogmaStatic statics, SdeReader sde, Action<string>? log = null,
-        Func<int, CancellationToken, Task<IReadOnlyList<double>?>>? readVerifiedPosition = null)
+        ISimulation sim, SpaceSessions space, DogmaStatic statics, SdeReader sde, Action<string>? log = null)
     {
         (_source, _store, _scheduler, _events, _sim, _space, _statics, _sde, _log) =
             (source, store, scheduler, events, sim, space, statics, sde, log);
-        _readVerifiedPosition = readVerifiedPosition;
         _scheduler.Register(CaptureJobKind, CaptureDueAsync);
         _events.Subscribe("factionwarfare.control-bunker-captures", [CaptureCompletedTopic], CaptureCompletedAsync);
         _sim.Received += OnReceived;
@@ -166,10 +166,10 @@ internal sealed class FactionWarfareControlBunkers
                 liveBody.Position.Count == 3 && liveBody.Position.All(double.IsFinite);
             IReadOnlyList<double>? point = bodyIsLive
                 ? liveBody.Position
-                : _readVerifiedPosition is null ? null : await _readVerifiedPosition(solarSystemId, cancellationToken);
+                : await SunWarpInPositionAsync(solarSystemId, cancellationToken);
             if (point is not { Count: 3 } || point.Any(position => !double.IsFinite(position)))
             {
-                _log?.Invoke($"FW Control Bunker of system {solarSystemId} has no live group-925 ball or verified position source; placement was skipped.");
+                _log?.Invoke($"FW Control Bunker of system {solarSystemId} has no live group-925 ball or SDE sun position; placement was skipped.");
                 return;
             }
             var corporationId = FwFactions.MilitiaCorporationOf(system.OccupierId);
@@ -190,6 +190,30 @@ internal sealed class FactionWarfareControlBunkers
         {
             _log?.Invoke($"FW Control Bunker of system {solarSystemId} was not put in space: {error}");
         }
+    }
+
+    /// <summary>
+    /// Derives a stable hub anchor from the pinned system sun. V24's GetSunWarpInPoint uses this radius-based point, and the
+    /// EveJS sovereignty-hub placement applies an additional 100 km Y offset to keep a hub clear of the sun warp-in point.
+    /// The mapStars row is system-centered, so its sun position is the origin.
+    /// </summary>
+    private async Task<IReadOnlyList<double>?> SunWarpInPositionAsync(int solarSystemId, CancellationToken cancellationToken)
+    {
+        var stars = await _sde.ReadByFieldAsync("mapStars", "solarSystemID", [solarSystemId], cancellationToken);
+        if (stars.Count != 1 || !stars[0].Doc.TryGetProperty("radius", out var radiusValue) ||
+            radiusValue.ValueKind != System.Text.Json.JsonValueKind.Number)
+            return null;
+
+        var radius = radiusValue.GetDouble();
+        if (!double.IsFinite(radius) || radius <= 0)
+            return null;
+
+        var distance = radius + SunWarpInClearanceMeters;
+        return [
+            distance * Math.Cos(radius),
+            radius / 5d + InfrastructureHubWarpInOffsetMeters,
+            -distance * Math.Sin(radius),
+        ];
     }
 
     /// <summary>Changes the live slim item's vulnerability in step with the persisted victory-point state.</summary>

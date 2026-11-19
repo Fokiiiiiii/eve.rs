@@ -74,7 +74,8 @@ MANIFEST_TO_ARNON = [(50017727, 50016629, 30005204), (50003290, 50003261, 300052
                      (50002614, 50002747, 30005202), (50002749, 50003638, ARNON)]
 ARNON_TO_TAR = [(50003638, 50002749, 30005202), (50002747, 50002614, 30005201), (50002613, 50001390, TAR)]
 
-def fly(who, ship_id: int, system: int, hops) -> tuple:
+def fly(who, ship_id: int, system: int, hops, *, post_jump_quiet_s: float = 3.0,
+        retry_temporary_gate_refusals: bool = False) -> tuple:
     """Flies the gates of a route in turn: warp to the gate, jump, and bind the next system's ballpark and dogma. Returns the ballpark and the
     dogma of the system the route ends in."""
     ballpark = who.call("beyonce", "MachoBindObject", system, None)
@@ -82,11 +83,22 @@ def fly(who, ship_id: int, system: int, hops) -> tuple:
     for gate, dest_gate, dest_system in hops:
         who.call_bound(ballpark[0], "CmdWarpToStuff", "item", gate, minRange=0)
         until_stopped(who)
-        who.call_bound(ballpark[0], "CmdStargateJump", gate, dest_gate, ship_id)
+        jump_started = time.monotonic()
+        while True:
+            try:
+                who.call_bound(ballpark[0], "CmdStargateJump", gate, dest_gate, ship_id)
+                break
+            except packet.MachoError as error:
+                too_far = "UI/Menusvc/MenuHints/NotWithingMaxJumpDist" in repr(error.payload)
+                if not retry_temporary_gate_refusals or not too_far:
+                    raise
+                if time.monotonic() - jump_started >= 240.0:
+                    raise AssertionError(f"gate {gate} stayed outside jump range after its warp was requested") from error
+                watch({"events": who}, 3.0)
         wait_quietly(who, 6.0)
         ballpark = who.call("beyonce", "MachoBindObject", dest_system, None)
         dogma = who.call("dogmaIM", "MachoBindObject", (dest_system, 5), None)
-        wait_quietly(who, 3.0)
+        wait_quietly(who, post_jump_quiet_s)
     return ballpark, dogma
 
 def journal_of(ship_id: int) -> list[str]:

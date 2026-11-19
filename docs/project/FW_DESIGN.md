@@ -113,8 +113,10 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
   `FactionWarfareKillProducer` fill pilot/corporation kill counts for hostile player kills in warzones.
 - **Capture** (`FwService.CaptureAsync` plus `FactionWarfareControlBunkers`): a vulnerable system (75,000 attacker points) passes to
   the occupier's enemy at the next downtime after a group-925 Control Bunker hull-depletion event; attacker points and LP pool reset.
-  The handler also publishes the post-commit state notice and updates a loaded scene when an anchor is available. Production has no verified
-  Control Bunker placement source, so the normal system-entry spawn and Agency item lookup remain unavailable; see the implementation record.
+  The handler also publishes the post-commit state notice and restores the captured occupier's hub in a loaded scene. Scene-entry placement derives
+  the V24 sun warp-in point from pinned SDE `mapStars` and applies EveJS's Sovereignty Hub Y offset; this is an explicit inference because no
+  FW-specific position source was found. Host persistence/lifecycle and the registered Agency RPC are covered, but exact live placement and GUI
+  presentation remain unchecked; see the implementation record.
 - **NPC station war-faction factor**: applied to the NPC station facility tax of industry jobs for the pilot's war faction.
 - **Corporation LP tax**: `LoyaltyPointStore.CreditMemberAsync` takes the member's corporation rate of an LP credit into the
   corporation's own balance. Applied to the insurgency victory payout; the Viridian expansion notes give the scope.
@@ -144,10 +146,11 @@ Refusals reach the client as `CustomInfo` notices (text keys of the client's loc
   (`FactionWarfareKillProducer`, on the durable ship-killmail event). This records statistics only; it does not add system or personal VP.
 - **Ship-kill LP**: not built. The wiki formula is 3.25 times hull, insurance and fitting value over 10,000, capped at 50,000 LP.
 - **Complex and battlefield victory points**: built (complex gate, NPC defenders, per-pilot split; battlefield scoring and awards). Victory-point state is persisted in `attacker_points` and drives contest/vulnerability. Battlefield LP uses the 50,000 LP pool documented below.
-- **Control Bunker placement and capture**: the Host can record group-925 hull depletion, schedule the vulnerable-system capture for next downtime,
-  reset occupier/points/LP and publish the capture notice. SDE supplies bunker types and dogma health, but neither V24 callsites nor the inspected
-  EveJS runtime supply an authoritative initial position. Production therefore skips bunker placement and `GetControlBunkerIDInSystem` returns an
-  ID only when a live group-925 scene ball exists. The test-only anchor verifies the remaining lifecycle code, not normal gameplay placement.
+- **Control Bunker placement and capture**: the Host records group-925 hull depletion, schedules the vulnerable-system capture for next downtime,
+  resets occupier/points/LP and publishes the capture notice. Scene-entry spawn and capture re-spawn derive a stable anchor from the pinned SDE sun
+  and V24's warp-in calculation, following EveJS's related Sovereignty Hub placement. This is a documented implementation inference, not an
+  authoritative FW-specific coordinate rule. A PostgreSQL Host lifecycle regression covers the derived anchor, live ID, damage, downtime capture,
+  reset, and faction-type replacement. Exact live-server placement and graphical Agency presentation remain open; ship-kill LP is also not built.
 - **Statistics**: kill and VP producers are built as above. Some other activity rows still depend on producers reaching `FwService.RecordActivityAsync` and `AddVictoryPointsAsync`; `GetStats_CorpPilots` is not served (no client consumer).
 - **Mission LP credits**: mission turn-in credits the issuing corporation's LP through `LoyaltyPointStore` and applies the member corporation's LP tax in the same completion transaction. Report-derived base tables and formula factors are configurable approximations; SDE `extraStandings` supplies mission standing entries, with configurable fallback values only for basic Level 4/5 missions.
 - **Live verification**: the scout-complex capture walk passed on eve_p3 on 2026-10-20; focused `FwBattlefield` tests passed 9/9 on eve_p4 on 2026-10-23. Graphical-client verification remains open.

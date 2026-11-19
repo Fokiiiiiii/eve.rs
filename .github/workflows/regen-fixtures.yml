@@ -1,0 +1,43 @@
+name: regen-fixtures
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Branch whose generated fixtures and project map are regenerated'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  regen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.target }}
+          fetch-depth: 0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Regenerate
+        run: |
+          python3 tools/dev/gen-simlink-fixtures.py
+          python3 tools/dev/gen-hostlink-fixtures.py
+          python3 tools/dev/gen_project_map.py
+      - name: Commit and push the result
+        env:
+          TARGET: ${{ inputs.target }}
+        run: |
+          git config user.name Fokiiiiiii
+          git config user.email contact@foki.sh
+          git add -A oracle docs/project/MAP.md
+          if git diff --cached --quiet; then
+            echo "nothing changed"
+          else
+            git commit -m "Regenerate link fixtures and the project map"
+            git push origin "HEAD:refs/heads/$TARGET"
+          fi

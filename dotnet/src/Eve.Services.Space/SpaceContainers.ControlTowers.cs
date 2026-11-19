@@ -512,6 +512,10 @@ public sealed partial class SpaceContainers
     /// <summary>The simulation's answer to a removal when no field of the tower is in its scene: the field is gone already.</summary>
     private const string ForceFieldNotInSpace = "FORCE_FIELD_NOT_IN_SPACE";
 
+    /// <summary>How many times a removal the simulation refuses is asked again before the reconcile fails, and the wait between the asks.</summary>
+    private const int ForceFieldRemovalAttempts = 5;
+    private static readonly TimeSpan ForceFieldRemovalRetryDelay = TimeSpan.FromMilliseconds(200);
+
     /// <summary>
     /// Makes a control tower's force field agree with its state: an online tower has one field item and one field in its system's scene, and any other state has
     /// neither. The item is written in one transaction and the simulation is told after its commit. A repeat sync keeps the item and sends the same placement,
@@ -555,6 +559,11 @@ public sealed partial class SpaceContainers
             {
                 removal = new SimRemoveForceField(towerId, removed.SolarSystemId);
             }
+            else if (state == TowerOffline)
+            {
+                // an offline tower with no item may still have its field in the simulation (its removal was committed and not answered): the simulation is asked anyway
+                removal = new SimRemoveForceField(towerId, tower.SolarSystemId);
+            }
             await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
 
@@ -575,9 +584,24 @@ public sealed partial class SpaceContainers
         }
         if (removal is not null)
         {
-            var answer = await _sim.RemoveForceFieldAsync(removal, cancellationToken).ConfigureAwait(false);
-            if (answer.Reason.Length > 0 && answer.Reason != ForceFieldNotInSpace)
-                throw new InvalidOperationException($"The simulation did not remove the force field of control tower {towerId}: {answer.Reason}");
+            // a refusal, or a link that is down, is asked again until the simulation says the field is gone or not in space
+            for (var attempt = 1; ; attempt++)
+            {
+                string reason;
+                try
+                {
+                    reason = (await _sim.RemoveForceFieldAsync(removal, cancellationToken).ConfigureAwait(false)).Reason;
+                }
+                catch (SimUnavailableException) when (attempt < ForceFieldRemovalAttempts)
+                {
+                    reason = "the simulation is unavailable";
+                }
+                if (reason.Length == 0 || reason == ForceFieldNotInSpace)
+                    break;
+                if (attempt >= ForceFieldRemovalAttempts)
+                    throw new InvalidOperationException($"The simulation did not remove the force field of control tower {towerId}: {reason}");
+                await Task.Delay(ForceFieldRemovalRetryDelay, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 

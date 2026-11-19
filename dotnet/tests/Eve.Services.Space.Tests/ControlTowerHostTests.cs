@@ -2067,6 +2067,41 @@ public class ControlTowerHostTests
     }
 
     [PgFact]
+    public async Task An_offline_tower_without_a_field_item_is_still_told_to_take_its_field_out()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, tower) = await OnlineTowerAsync(rig);
+        Assert.Equal(ModuleResult.Done, await rig.Space.DeactivateAsync(session, tower, "onlineForStructures", CancellationToken.None));
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(tower));
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+        Assert.Single(rig.Sim.Heard.OfType<SimRemoveForceField>());
+
+        // the item is gone, but the simulation may still hold the field (its removal was not answered): the next sync asks again
+        rig.Sim.Heard.Clear();
+        await rig.Containers.SynchronizeControlTowerSlimStateAsync(tower);
+        Assert.Equal(new SimRemoveForceField(tower, (int)LowSecSystem), Assert.Single(rig.Sim.Heard.OfType<SimRemoveForceField>()));
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+    }
+
+    [PgFact]
+    public async Task An_offline_tower_whose_removal_is_refused_is_asked_again_until_the_simulation_says_the_field_is_gone()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, tower) = await OnlineTowerAsync(rig);
+        Assert.Equal(ModuleResult.Done, await rig.Space.DeactivateAsync(session, tower, "onlineForStructures", CancellationToken.None));
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+
+        // the simulation refuses the next two removals, then answers that the field is not in space: the sync is not failed, and each answer is asked for
+        rig.Sim.Heard.Clear();
+        rig.Sim.ForceFieldRemovalAnswers.Enqueue("SIMULATION_BUSY");
+        rig.Sim.ForceFieldRemovalAnswers.Enqueue("SIMULATION_BUSY");
+        rig.Sim.ForceFieldRemovalAnswers.Enqueue("FORCE_FIELD_NOT_IN_SPACE");
+        await rig.Containers.SynchronizeControlTowerSlimStateAsync(tower);
+        var removal = new SimRemoveForceField(tower, (int)LowSecSystem);
+        Assert.Equal(new[] { removal, removal, removal }, rig.Sim.Heard.OfType<SimRemoveForceField>().ToArray());
+    }
+
+    [PgFact]
     public async Task A_tower_password_change_is_the_last_word_on_a_pilot_whose_ship_password_match_was_still_running()
     {
         await using var rig = await Rig.CreateAsync();

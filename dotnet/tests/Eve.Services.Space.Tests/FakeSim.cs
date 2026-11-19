@@ -436,6 +436,9 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What a force field removal is answered with: empty (taken out) or a reason.</summary>
     public string ForceFieldRemovalReason { get; set; } = "";
 
+    /// <summary>The answers to the next removals, in order, before <see cref="ForceFieldRemovalReason"/> is used: a test makes the simulation refuse a removal, then take it.</summary>
+    public Queue<string> ForceFieldRemovalAnswers { get; } = new();
+
     /// <summary>When set, a placement is entered (<see cref="ForceFieldPlacementEntered"/>) and waits here before the simulation answers it: a test holds a sync between its commit and its send.</summary>
     public TaskCompletionSource? ForceFieldPlacementRelease { get; set; }
 
@@ -456,7 +459,8 @@ internal sealed class FakeSim : ISimulation
     public Task<SimForceFieldRemoved> RemoveForceFieldAsync(SimRemoveForceField removal, CancellationToken cancellationToken = default)
     {
         Heard.Enqueue(removal);
-        return Task.FromResult(new SimForceFieldRemoved(removal.TowerId, ForceFieldRemovalReason));
+        var reason = ForceFieldRemovalAnswers.Count > 0 ? ForceFieldRemovalAnswers.Dequeue() : ForceFieldRemovalReason;
+        return Task.FromResult(new SimForceFieldRemoved(removal.TowerId, reason));
     }
 
     public void SetForceFieldAccess(SimSetForceFieldAccess access) => Heard.Enqueue(access);

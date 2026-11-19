@@ -12,7 +12,7 @@ public sealed class BatteryCodecTests
         Assert.Equal(placed.SolarSystemId, decodedPlaced.SolarSystemId);
         Assert.Equal(placed.TypeId, decodedPlaced.TypeId);
         Assert.Equal(placed.GroupId, decodedPlaced.GroupId);
-        Assert.Equal(placed.Name, decodedPlaced.Name);
+        Assert.Equal(placed.DisplayName, decodedPlaced.DisplayName);
         Assert.Equal(placed.HolderSession, decodedPlaced.HolderSession);
         Assert.Equal(placed.Position, decodedPlaced.Position);
         Assert.Equal(placed.Radius, decodedPlaced.Radius);

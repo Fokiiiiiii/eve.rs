@@ -628,6 +628,8 @@ impl Scene {
         let scan_resolution_changed = new.scan_resolution != old.scan_resolution;
         let signature_radius_changed = new.signature_radius != old.signature_radius;
         let max_locked_targets_changed = new.max_locked_targets != old.max_locked_targets;
+        // a pilot whose corporation or alliance changed is judged by the fields again: its harmonic follows what they admit now
+        let affiliation_changed = new.corporation_id != old.corporation_id || new.alliance_id != old.alliance_id;
         let targeting_attributes_changed = scan_resolution_changed
             || signature_radius_changed
             || max_locked_targets_changed
@@ -712,6 +714,9 @@ impl Scene {
         }
         if max_locked_targets_changed {
             out.extend(self.enforce_target_limit(session, now));
+        }
+        if affiliation_changed {
+            out.extend(self.refresh_force_field_harmonic(session, now));
         }
         if targeting_attributes_changed {
             out.extend(self.settle_targets(now));

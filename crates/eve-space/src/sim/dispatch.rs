@@ -5,8 +5,10 @@ use crate::scene::{DOCKING_DECISION_COMMAND, MAX_CONDUIT_PASSENGERS};
 /// The command a code and its arguments say, if they say one.
 pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
     match (code, args) {
-        (1, [fraction]) => Some(Command::SetSpeedFraction(*fraction)),
-        (2, [x, y, z]) => Some(Command::GotoDirection(Vec3::new(*x, *y, *z))),
+        (1, [fraction]) if fraction.is_finite() => Some(Command::SetSpeedFraction(*fraction)),
+        (2, [x, y, z]) if x.is_finite() && y.is_finite() && z.is_finite() => {
+            Some(Command::GotoDirection(Vec3::new(*x, *y, *z)))
+        }
         (3, []) => Some(Command::Stop),
         (4, [station]) if is_id(*station) => Some(Command::Dock { station_id: *station as i64 }),
         (DOCKING_DECISION_COMMAND, [station, allowed])
@@ -1912,6 +1914,11 @@ impl Sim {
                 };
                 let (answer, told) = match self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
                     Some(scene) => scene.battery_fire(battery_id, order, now),
+                    // A stop is always accepted: a battery that is not in space has no fire to end.
+                    None if !on => (
+                        crate::targeting::BatteryFireAnswer { reason: None, active: false, target: 0 },
+                        Vec::new(),
+                    ),
                     None => (
                         crate::targeting::BatteryFireAnswer {
                             reason: Some("BATTERY_NOT_IN_SPACE"),
@@ -2161,15 +2168,20 @@ impl Sim {
                     self.scenes.insert(scene_key, self.universe.scene_of(system));
                 }
                 if let Some(scene) = self.scenes.get_mut(&scene_key) {
-                    let pilot = (ship_id != 0).then_some(crate::targeting::SentryPilot {
-                        ship_id,
-                        corporation_id,
-                        alliance_id,
-                        security_status,
-                        standing,
-                        at_war,
-                    });
-                    scene.set_sentry_pilot(tower_id, pilot);
+                    // a pilot with no valid ship id is not a pilot the host names: it changes nothing
+                    if ship_id > 0 {
+                        scene.set_sentry_pilot(
+                            tower_id,
+                            Some(crate::targeting::SentryPilot {
+                                ship_id,
+                                corporation_id,
+                                alliance_id,
+                                security_status,
+                                standing,
+                                at_war,
+                            }),
+                        );
+                    }
                 }
                 Vec::new()
             }

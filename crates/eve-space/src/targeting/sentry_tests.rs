@@ -167,3 +167,50 @@ fn an_offline_policy_unbinding_forgetting_the_pilots_or_an_offline_battery_lets_
         assert_eq!(battery.firing, None, "case {case}");
     }
 }
+
+/// A sentry battery is POS state the scene keeps while no pilot is in it: a scene holding one is not empty.
+#[test]
+fn a_scene_holding_a_sentry_battery_is_not_empty() {
+    let (mut scene, _) = sentry_scene(2);
+    scene.pilots.clear();
+    assert!(!scene.is_empty(), "a scene with a battery and no pilot was taken as empty");
+}
+
+/// A binding the host sends before its battery is placed is kept, and applied when the battery is placed, so the sentry works.
+#[test]
+fn a_binding_sent_before_its_battery_is_applied_when_the_battery_is_placed() {
+    let (mut scene, now) = crowd(2);
+    scene.bind_sentry_battery(BATTERY, TOWER);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, 0, true)).expect("the battery is placed");
+    scene.set_sentry_policy(policy(Some(0.0), None));
+    scene.set_sentry_pilot(TOWER, Some(pilot(ship_id(B), -2.0)));
+    settle_twice(&mut scene, now);
+    assert_eq!(scene.batteries[&BATTERY].firing, Some(ship_id(B)), "the binding sent first was lost");
+}
+
+/// An unbinding sent before its battery is placed drops the binding that was kept for it.
+#[test]
+fn an_unbinding_sent_before_its_battery_drops_the_binding_kept_for_it() {
+    let (mut scene, _) = crowd(2);
+    scene.bind_sentry_battery(BATTERY, TOWER);
+    scene.bind_sentry_battery(BATTERY, 0);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, 0, true)).expect("the battery is placed");
+    assert_eq!(scene.batteries[&BATTERY].sentry_tower, None, "the unbinding did not drop the kept binding");
+}
+
+/// A sentry pilot whose ship is no longer a pilot of the scene is dropped when the batteries settle; a pilot still in the scene is kept.
+#[test]
+fn a_sentry_pilot_whose_ship_has_left_is_dropped_when_the_batteries_settle() {
+    let (mut scene, now) = sentry_scene(2);
+    scene.set_sentry_policy(policy(Some(0.0), None));
+    scene.set_sentry_pilot(TOWER, Some(pilot(ship_id(A), 0.0)));
+    scene.set_sentry_pilot(TOWER, Some(pilot(ship_id(B) + 1000, 0.0)));
+    settle_twice(&mut scene, now);
+    assert!(scene.sentry_pilots.contains_key(&(TOWER, ship_id(A))), "a pilot still in the scene is kept");
+    assert!(
+        !scene.sentry_pilots.contains_key(&(TOWER, ship_id(B) + 1000)),
+        "a pilot that left is still known"
+    );
+}

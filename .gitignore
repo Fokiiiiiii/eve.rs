@@ -25,6 +25,9 @@ __pycache__/
 .vscode/
 .DS_Store
 
+# Serena local project state (generated per checkout)
+.serena/
+
 # SDE archives and extracted builds are fetched on first start (eve-sde ensure), never committed
 /sde/data/
 

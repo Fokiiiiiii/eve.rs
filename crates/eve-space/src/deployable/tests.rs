@@ -1383,3 +1383,157 @@ fn a_deployable_reaches_a_pilot_that_comes_into_its_view_and_leaves_with_it() {
     let gone = format!("{:?}", scene.reconcile_deployables(t + 4 * SECOND));
     assert!(gone.contains("RemoveBalls"), "the pilot that leaves the box is told the point is gone: {gone}");
 }
+
+/// A lifetime too long for the clock ends at the last tick instead of overflowing, in a restored field, a bridge and a placed deployable.
+#[test]
+fn a_lifetime_too_long_for_the_clock_ends_at_the_last_tick_and_does_not_overflow() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let field_id = DEPLOYABLE_ID_BASE + 900;
+    let placement = crate::link::DeployedPlacement {
+        solar_system_id: scene.solar_system_id(),
+        deployable_id: field_id,
+        name: "Cynosural Field".to_string(),
+        type_id: 21_094,
+        group_id: 2_020,
+        position: [a.x, a.y, a.z],
+        radius: 250.0,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: scene.pilots[&A].ship.spec.ship_id,
+        lifetime_ms: 1.0e300,
+    };
+    scene.restore_field(placement, t);
+    assert_eq!(scene.deployables[&field_id].ends_at, i64::MAX, "the restored field lives to the last tick");
+    assert!(scene.place_bridge(A, 1, 30_000_001, 1.0e300, 2_500.0, t), "the bridge is placed");
+    assert!(
+        scene
+            .deployables
+            .values()
+            .any(|d| matches!(d.role, Role::JumpBridge { .. }) && d.ends_at == i64::MAX),
+        "the bridge lives to the last tick"
+    );
+    let effect = module(MODULE, Action::CynoField { ball: PROBE_SPEC(), lifetime_ms: 1.0 }, 0.0);
+    let (probe_id, _) =
+        scene.place_deployable(A, &effect, PROBE_SPEC(), Role::WarpSource { range: 1.0 }, None, 1.0e300, t);
+    assert_eq!(
+        scene.deployables[&probe_id].ends_at,
+        i64::MAX,
+        "the placed deployable lives to the last tick"
+    );
+}
+
+/// A restored id at the top of the range leaves no id for a later placement, which is refused rather than overflowing the id.
+#[test]
+fn a_placement_past_the_last_deployable_id_is_refused() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let placement = crate::link::DeployedPlacement {
+        solar_system_id: scene.solar_system_id(),
+        deployable_id: i64::MAX,
+        name: "Cynosural Field".to_string(),
+        type_id: 21_094,
+        group_id: 2_020,
+        position: [a.x, a.y, a.z],
+        radius: 250.0,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: scene.pilots[&A].ship.spec.ship_id,
+        lifetime_ms: 1_000.0,
+    };
+    scene.restore_field(placement, t);
+    assert!(
+        !scene.place_bridge(A, 1, 30_000_001, 1_000.0, 2_500.0, t),
+        "a bridge past the last id is refused"
+    );
+    assert_eq!(scene.deployables.len(), 1, "only the restored field is in space");
+}
+
+/// A link that completes near the last tick holds the ship without overflowing the link's status tail.
+#[test]
+fn a_link_that_completes_near_the_last_tick_holds_without_overflow() {
+    let (mut scene, t) = crowd();
+    let idle = AnalysisBeaconState {
+        active: true,
+        activate_at: 0,
+        deployed_at: t,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    scene.place_analysis_beacon(crab_placement(&scene, idle), t);
+    let ship = scene.pilots[&A].ship.spec.ship_id;
+    scene.set_analysis_beacon_state(
+        CRAB,
+        AnalysisBeaconState { link_state: 2, link_complete_at: i64::MAX - 10, linked_ship_id: ship, ..idle },
+        t,
+    );
+    let goto = Command::GotoDirection(eve_destiny::Vec3::new(1.0, 0.0, 0.0));
+    assert!(
+        format!("{:?}", scene.command(A, goto, t)).contains("LINK_HOLD"),
+        "the ship is held during the link"
+    );
+}
+
+/// A tower that goes out of space takes its sentry policy, its field's access and what the host knows of its pilots with it.
+#[test]
+fn a_tower_that_goes_out_of_space_takes_its_policy_access_and_pilots_with_it() {
+    let tower_id = 990_000_000_300;
+    let (mut scene, t) = crowd();
+    let (a, system) = (scene.pilots[&A].ship.position, scene.solar_system_id());
+    let placement = crate::link::DisruptorPlacement {
+        deployable_id: tower_id,
+        solar_system_id: system,
+        name: "Amarr Control Tower".to_string(),
+        type_id: 12_235,
+        group_id: 365,
+        position: [a.x + 50_000.0, a.y, a.z],
+        radius: 3_394.0,
+        range: 0.0,
+        active: true,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: 0,
+    };
+    scene.place_control_tower(placement, t);
+    scene.set_sentry_policy(crate::targeting::SentryPolicy {
+        tower_id,
+        online: true,
+        standing: None,
+        security_status: None,
+        war: false,
+        high_security: false,
+        owner_corporation_id: 4_242,
+        owner_alliance_id: 0,
+    });
+    scene.set_force_field_access(
+        tower_id,
+        crate::scene::force_field::Access {
+            corporation_id: 4_242,
+            alliance_id: 0,
+            allow_corporation: true,
+            allow_alliance: false,
+        },
+    );
+    scene.set_sentry_pilot(
+        tower_id,
+        Some(crate::targeting::SentryPilot {
+            ship_id: scene.pilots[&A].ship.spec.ship_id,
+            corporation_id: 98_000_002,
+            alliance_id: 0,
+            security_status: Some(0.0),
+            standing: 0.0,
+            at_war: false,
+        }),
+    );
+    scene.deployables.get_mut(&tower_id).unwrap().ends_at = t;
+    scene.advance_deployables(t + SECOND);
+    assert!(!scene.deployables.contains_key(&tower_id), "the tower is out of space");
+    assert!(!scene.sentry_policies.contains_key(&tower_id), "the tower's sentry policy was kept");
+    assert!(!scene.force_field_access.contains_key(&tower_id), "the tower's field access was kept");
+    assert!(scene.sentry_pilots.keys().all(|(tower, _)| *tower != tower_id), "the tower's pilots were kept");
+}

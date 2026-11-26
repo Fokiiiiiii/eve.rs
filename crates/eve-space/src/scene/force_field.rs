@@ -277,12 +277,12 @@ impl Scene {
             ship.course = Course::Stop;
             ship.speed_fraction = 0.0;
         }
-        Some(Correction {
-            position: ship.position,
-            velocity: ship.velocity,
-            cancelled: pulls_back,
-            moved: norm(minus(denial.point, end)) > 0.0,
-        })
+        let moved = norm(minus(denial.point, end)) > 0.0;
+        // a boundary that moved nothing, cancelled nothing and gave no impulse changes nothing: the host is not told
+        if !moved && !pulls_back && impulse == 0.0 {
+            return None;
+        }
+        Some(Correction { position: ship.position, velocity: ship.velocity, cancelled: pulls_back, moved })
     }
 
     /// Recomputes a pilot's harmonic where its ship is now, after the admission of a field changed (a password, or a tower's access). The ship is not

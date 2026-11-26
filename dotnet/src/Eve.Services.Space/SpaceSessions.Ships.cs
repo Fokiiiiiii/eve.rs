@@ -286,6 +286,8 @@ public sealed partial class SpaceSessions
                     session.Change(("structureid", None), ("shipid", new PyLong(ejected.PilotShip.Id)), ("locationid", new PyInt(pilot.SolarSystemId)));
                 else session.Change(("shipid", new PyLong(ejected.PilotShip.Id)));
                 Background(() => RefreshTetherPolicyAsync(session));
+                // the pilot's ship changed in space: its battery grants go, as at a dock
+                Background(() => ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None));
                 return Task.FromResult(true);
             },
             (result, _) =>
@@ -437,6 +439,8 @@ public sealed partial class SpaceSessions
                 }
                 session.Change(("shipid", new PyLong(shipId)));
                 Background(() => RefreshTetherPolicyAsync(session));
+                // the pilot boarded another ship in space: its battery grants go, as at a dock
+                Background(() => ReleaseBatteryControlsOfLeavingPilotAsync(characterId, CancellationToken.None));
                 return Task.FromResult(true);
             },
             async (result, _) =>

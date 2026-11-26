@@ -122,7 +122,11 @@ public sealed partial class SpaceSessions
                 destroyed,
                 pilot?.Session), CancellationToken.None).ConfigureAwait(false);
 
-            if (pilot is not null) _pilots.TryRemove(sessionId, out _);
+            if (pilot is not null)
+            {
+                _pilots.TryRemove(sessionId, out _);
+                await ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None).ConfigureAwait(false);
+            }
             _abyssalOfflineResidents.TryRemove(destroyed.ShipId, out _);
             _sim.Leave(sessionId, LeaveWhy.LoggedOff);
         }
@@ -431,6 +435,9 @@ public sealed partial class SpaceSessions
         pilot.AbyssalContentId = move.Destination.InstanceId > 0 ? contentId : null;
         pilot.LastAbyssalMove = new AbyssalMoveReceipt(
             contentId, pilot.CharacterId, pilot.ShipId, move.Source, move.Destination);
+        // the pilot entered a pocket from the cluster: its battery grants go, as at a dock (a move between rooms of a pocket keeps them)
+        if (sessionHandoff && move.Destination.InstanceId > 0)
+            await ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None).ConfigureAwait(false);
         await RefreshEnvironmentAsync(pilot.Session, pilot.CharacterId, pilot.ShipId).ConfigureAwait(false);
         return null;
     }
@@ -693,6 +700,7 @@ public sealed partial class SpaceSessions
             }
 
             _pilots.TryRemove((ulong)pilot.Session.SessionId, out _);
+            await ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None).ConfigureAwait(false);
             _abyssalOfflineResidents.TryRemove(request.ShipId, out _);
             var client = pilot.Session;
             await CompleteBoundObjectReleasesAsync(DetachBoundObjects(client), CancellationToken.None);
@@ -838,6 +846,7 @@ public sealed partial class SpaceSessions
                 ("shipid", new PyLong(activeShip.Id)),
                 ("locationid", new PyInt(station.Id)));
             _pilots.TryRemove((ulong)pilot.Session.SessionId, out _);
+            await ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None).ConfigureAwait(false);
             _abyssalOfflineResidents.TryRemove(request.ShipId, out _);
             sessionUpdated = true;
         }

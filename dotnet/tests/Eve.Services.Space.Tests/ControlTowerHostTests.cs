@@ -277,6 +277,223 @@ public class ControlTowerHostTests
         Assert.Equal(session.CharacterId, await HeldByAsync(rig, battery));
     }
 
+    [PgFact]
+    public async Task A_host_restart_leaves_no_battery_grant_and_places_the_online_battery_with_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        rig.Sim.Heard.Clear();
+
+        // the host restarts: a new composition over the same database, and no pilot is logged in
+        using var restarted = new SpaceContainers(rig.Sim, rig.Ships, rig.Items, rig.SpaceItems,
+            new PgWorkCycleLedger(rig.Source, rig.SpaceSchema), new EventBusFacts(rig.Events), rig.Statics, rig.Space,
+            () => rig.Now, deployed: rig.Deployed, source: rig.Source);
+        await restarted.RestoreDeployedAsync((int)LowSecSystem);
+
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (placed.HolderSession, placed.Online));
+
+        // a second restore changes nothing: the battery is still holderless and still has no grant
+        rig.Sim.Heard.Clear();
+        await restarted.RestoreDeployedAsync((int)LowSecSystem);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var again = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (again.HolderSession, again.Online));
+    }
+
+    /// <summary>The stargate a holder jumps through in the jump test, its far gate, and the system the far gate leads to.</summary>
+    private const long HolderJumpGate = 50016630;
+    private const long HolderJumpFarGate = 50016839;
+    private const int HolderJumpDestinationSystem = 30100034;
+
+    /// <summary>Records the battery grants that a pilot leaving space releases, through the same release the composition wires.</summary>
+    private static List<long> RecordBatteryReleases(Rig rig)
+    {
+        var released = new List<long>();
+        rig.Space.ReleaseBatteryControl = async (characterId, cancellationToken) =>
+        {
+            await rig.Containers.ReleaseBatteryControlAsync(characterId, cancellationToken);
+            released.Add(characterId);
+        };
+        return released;
+    }
+
+    /// <summary>Waits, for a bounded time, until a pilot's leaving space has released its grants (the release is made in the background).</summary>
+    private static async Task UntilBatteryReleasedAsync(List<long> released)
+    {
+        for (var attempt = 0; attempt < 500 && released.Count == 0; attempt++)
+            await Task.Delay(10);
+    }
+
+    [PgFact]
+    public async Task A_holder_that_docks_gives_up_its_battery_grant_so_the_scene_tells_the_battery_it_has_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var released = RecordBatteryReleases(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        rig.Sim.Heard.Clear();
+
+        // the simulation reports the dock; the pilot leaves space and its grant goes, as it does at a logoff
+        rig.Sim.Say(new SimDocked((ulong)fixture.Session.SessionId, Rig.Station, SimCondition.Full));
+        await UntilBatteryReleasedAsync(released);
+
+        Assert.False(rig.Space.IsInSpace(fixture.Session));
+        Assert.Equal(new[] { fixture.Session.CharacterId!.Value }, released);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (placed.HolderSession, placed.Online));
+    }
+
+    [PgFact]
+    public async Task A_holder_that_jumps_to_another_system_gives_up_its_battery_grant_so_the_scene_tells_the_battery_it_has_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var released = RecordBatteryReleases(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        rig.Sim.Heard.Clear();
+
+        // the simulation reports the jump through a gate; the pilot is in the far system, and its grant has gone with the old one
+        rig.Sim.Say(new SimJumped((ulong)fixture.Session.SessionId, (int)LowSecSystem, HolderJumpGate, HolderJumpDestinationSystem, HolderJumpFarGate));
+        await UntilBatteryReleasedAsync(released);
+
+        Assert.Equal(new[] { fixture.Session.CharacterId!.Value }, released);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (placed.HolderSession, placed.Online));
+    }
+
+    [PgFact]
+    public async Task A_holder_that_ejects_from_its_ship_gives_up_its_battery_grant_so_the_scene_tells_the_battery_it_has_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var released = RecordBatteryReleases(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        rig.Sim.Heard.Clear();
+        rig.Space.LifecycleBlockers = (_, _, _, _) => ValueTask.FromResult<IReadOnlyList<string>>([]);
+        var shipBefore = fixture.Session.GetInt("shipid");
+
+        // the pilot ejects from its ship into a capsule: its ship changes in space, and the grant goes as it does at a dock
+        Assert.IsType<PyTuple>(await rig.Space.EjectAsync(fixture.Session, CancellationToken.None));
+        await UntilBatteryReleasedAsync(released);
+
+        Assert.Equal(new[] { fixture.Session.CharacterId!.Value }, released);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (placed.HolderSession, placed.Online));
+        Assert.NotEqual(shipBefore, fixture.Session.GetInt("shipid"));
+    }
+
+    [PgFact]
+    public async Task A_holder_whose_ship_is_destroyed_gives_up_its_battery_grant_so_the_scene_tells_the_battery_it_has_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var released = RecordBatteryReleases(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        rig.Sim.Heard.Clear();
+
+        // the simulation reports the holder's ship destroyed in space: the pilot is handed a survivor, so its ship changes, and the grant goes
+        var shipId = fixture.Session.GetInt("shipid")!.Value;
+        rig.Sim.Say(new SimDestroyed((ulong)fixture.Session.SessionId, shipId, 0, [100.0, 200.0, 300.0], [0.0, 0.0, 1.0], 47.0, 0));
+        await UntilBatteryReleasedAsync(released);
+
+        Assert.Equal(new[] { fixture.Session.CharacterId!.Value }, released);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((0UL, true), (placed.HolderSession, placed.Online));
+    }
+
+    [PgFact]
+    public async Task A_relinquish_made_while_the_holders_lock_order_is_in_the_scene_takes_the_lock_back_and_refuses_the_order()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        rig.Sim.Heard.Clear();
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "", true, []));
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        // a second wire of the same pilot: the holder's first wire answers its order only when the scene does, so the relinquish goes over this one
+        await using var relinquishing = await PosMgrHostWire.StartAsync(posMgr, fixture.Session, () => rig.Now);
+
+        // the scene holds the holder's placement of the battery (made under the battery's gate) until the test lets it go
+        var placementHeld = new TaskCompletionSource();
+        var letPlacementGo = new TaskCompletionSource();
+        var holder = (ulong)fixture.Session.SessionId;
+        rig.Sim.PlaceBatteryHook = async request =>
+        {
+            if (request.HolderSession == holder)
+            {
+                placementHeld.TrySetResult();
+                await letPlacementGo.Task;
+            }
+        };
+        var order = fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO", new PyLong(fixture.Battery), new PyLong(fixture.Target));
+        await placementHeld.Task.WaitAsync(TimeSpan.FromSeconds(30));
+
+        // the holder relinquishes while its order waits: the grant goes in the database, and the battery's clear waits for the battery's gate
+        var relinquish = relinquishing.CallAsync("RelinquishStructureControl", new PyLong(fixture.Battery));
+        var grantGone = false;
+        for (var attempt = 0; attempt < 500 && !grantGone; attempt++)
+        {
+            grantGone = await HeldByAsync(rig, fixture.Battery) is null;
+            if (!grantGone)
+                await Task.Delay(10);
+        }
+        letPlacementGo.SetResult();
+        Assert.True(grantGone, "the relinquish did not release the grant while the order waited");
+
+        // the order's pilot no longer holds the grant when the scene answers: its lock is taken back and the order is refused
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => order);
+        Assert.Equal("DeniedShipChanged", refused.Error.UserErrorMessage);
+        Assert.IsType<PyNone>(await relinquish);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        Assert.Equal(
+            new[] { (fixture.Battery, (byte)1, fixture.Target), (fixture.Battery, (byte)2, fixture.Target) },
+            rig.Sim.Heard.OfType<SimBatteryTarget>().Select(target => (target.BatteryId, target.Order, target.Target)));
+        var last = rig.Sim.Heard.OfType<SimPlaceBattery>().Last();
+        Assert.Equal((0UL, true), (last.HolderSession, last.Online));
+    }
+
+    [PgFact]
+    public async Task A_battery_activate_and_deactivate_are_refused_for_want_of_the_control_grant_once_the_grant_is_gone()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        rig.Sim.Heard.Clear();
+
+        // the grant is checked before the effect's name, as the reference checks it before anything else of a battery's operation
+        var activated = await rig.Space.ActivateAsync(fixture.Session, fixture.Battery, "projectileFire", 0, 1, CancellationToken.None);
+        Assert.Equal(ModuleResult.Refusal("STARBASE_CONTROL_REQUIRED"), activated);
+        var deactivated = await rig.Space.DeactivateAsync(fixture.Session, fixture.Battery, "projectileFire", CancellationToken.None);
+        Assert.Equal(ModuleResult.Refusal("STARBASE_CONTROL_REQUIRED"), deactivated);
+        Assert.Empty(rig.Sim.Heard.OfType<SimCommand>());
+    }
+
+    [PgFact]
+    public async Task A_battery_activate_is_not_refused_for_the_grant_while_its_holder_holds_the_grant()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var typeId = await PlayerControlledBatteryTypeAsync(rig);
+        var effect = (await rig.Statics.OffensiveEffectNameAsync(typeId))!;
+
+        // the ship's module lookup holds no battery, so the grant gate does not refuse the holder there: the refusal is not the control one
+        var activated = await rig.Space.ActivateAsync(fixture.Session, fixture.Battery, effect, 0, 1, CancellationToken.None);
+        Assert.NotEqual(ModuleResult.Refusal("STARBASE_CONTROL_REQUIRED"), activated);
+
+        // through the dogma location the holder fires its battery: the battery's fire path takes the order, not the ship's module path
+        Assert.Equal(new PyInt(1), await fixture.Holder.BoundCallAsync(fixture.Oid, "Activate",
+            new PyLong(fixture.Battery), new PyStr(effect), new PyLong(fixture.Target), new PyInt(1)));
+        var fired = Assert.Single(rig.Sim.Heard.OfType<SimBatteryFire>());
+        Assert.Equal((fixture.Battery, true), (fired.BatteryId, fired.On));
+    }
+
     /// <summary>The pilot holding a POS battery's control grant, read from PostgreSQL.</summary>
     private static async Task<long?> HeldByAsync(Rig rig, long battery)
     {
@@ -1653,6 +1870,8 @@ public class ControlTowerHostTests
         await holder.CallAsync("AnchorStructure", new PyLong(battery), new PyTuple(position.Select(value => (PyValue)new PyReal(value)).ToArray()));
         rig.Now += AnchoringMs;
         await rig.Scheduler.RunDueAsync();
+        // a battery is online only under an online tower: the sentry places it offline otherwise
+        await rig.Deployed.SetTowerStateAsync(tower, "online");
         await rig.Deployed.SetTowerStateAsync(battery, "online");
         if (grant)
         {
@@ -1779,6 +1998,78 @@ public class ControlTowerHostTests
         Assert.DoesNotContain(Events.Of(fixture.OtherSession), item => item.Name == "OnTargetOBO");
     }
 
+    [PgFact]
+    public async Task Battery_control_is_released_when_its_tower_runs_out_of_fuel_so_the_old_holder_cannot_order_it_back_online()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        await rig.Deployed.SetTowerStateAsync(fixture.Tower, "online");
+        await rig.Scheduler.ScheduleAsync(new Eve.Scheduler.JobSpec(SpaceContainers.ControlTowerFuelJob, rig.Now)
+        {
+            Key = $"tower:{fixture.Tower}",
+            Payload = new SpaceContainers.ControlTowerFuelDue(fixture.Tower),
+            OnDuplicate = Eve.Scheduler.OnDuplicate.Replace,
+        });
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(fixture.Battery));
+
+        // the tower and its battery come back online, but nobody assumed the battery again: the offline transition released the old grant
+        await rig.Deployed.SetTowerStateAsync(fixture.Tower, "online");
+        await rig.Deployed.SetTowerStateAsync(fixture.Battery, "online");
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        Assert.Equal("DeniedShipChanged", refused.Error.UserErrorMessage);
+        Assert.Empty(rig.Sim.Heard.OfType<SimBatteryTarget>());
+    }
+
+    [PgFact]
+    public async Task Battery_control_relinquished_or_left_by_its_pilot_tells_the_scene_it_has_no_holder()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "", true, []));
+        await fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO", new PyLong(fixture.Battery), new PyLong(fixture.Target));
+
+        // the pilot relinquishes: the scene must stop naming it as the holder, or its pending lock keeps being told to a pilot that gave control up
+        Assert.IsType<PyNone>(await fixture.Holder.CallAsync("RelinquishStructureControl", new PyLong(fixture.Battery)));
+        var relinquished = rig.Sim.Heard.OfType<SimPlaceBattery>().Last();
+        Assert.Equal((fixture.Battery, 0UL, true), (relinquished.BatteryId, relinquished.HolderSession, relinquished.Online));
+
+        // the pilot assumes it again and then leaves the cluster: the scene is told no holder once more
+        Assert.IsType<PyNone>(await fixture.Holder.CallAsync("AssumeStructureControl", new PyLong(fixture.Battery)));
+        var before = rig.Sim.Heard.OfType<SimPlaceBattery>().Count();
+        await rig.Containers.ReleaseBatteryControlAsync(fixture.Session.CharacterId!.Value, CancellationToken.None);
+        var left = rig.Sim.Heard.OfType<SimPlaceBattery>().ToArray();
+        Assert.True(left.Length > before, "the scene was not told that the pilot left the battery");
+        Assert.Equal((fixture.Battery, 0UL, true), (left[^1].BatteryId, left[^1].HolderSession, left[^1].Online));
+    }
+
+    [PgFact]
+    public async Task Battery_order_is_refused_once_its_holder_is_in_another_system_than_its_battery()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        const long OtherSystem = 30000013;
+        fixture.Holder.Session.Set("solarsystemid", new PyInt(OtherSystem));
+        fixture.Holder.Session.Set("solarsystemid2", new PyInt(OtherSystem));
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        Assert.Equal("DeniedShipChanged", refused.Error.UserErrorMessage);
+        Assert.Empty(rig.Sim.Heard.OfType<SimBatteryTarget>());
+    }
+
+    [PgFact]
+    public async Task Battery_order_is_refused_once_its_holder_has_left_the_owning_corporation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        fixture.Holder.Session.Set("corpid", new PyInt(987654));
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO",
+            new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        Assert.Equal("DeniedShipChanged", refused.Error.UserErrorMessage);
+        Assert.Empty(rig.Sim.Heard.OfType<SimBatteryTarget>());
+    }
+
     /// <summary>
     /// A battery's fire (protocol 104) through the registered dogma location: the holder of the grant starts and stops it, a refused effect is refused, and a
     /// pilot without the grant is refused, with nothing sent to the simulation.
@@ -1837,6 +2128,50 @@ public class ControlTowerHostTests
         Assert.Equal("CustomNotify", offline.Error.UserErrorMessage);
         Assert.Single(rig.Sim.Heard.OfType<SimBatteryFire>());
         Assert.Contains(rig.Sim.Heard.OfType<SimPlaceBattery>(), placed => !placed.Online);
+    }
+
+    /// <summary>
+    /// A stop of a battery's fire (protocol 104) is always accepted: the holder's stop of an offline battery reaches the simulation, and so does the stop of an
+    /// unheld battery by a pilot without the grant. Another pilot's stop of a battery that is held stays refused, with nothing sent to the simulation.
+    /// </summary>
+    [PgFact]
+    public async Task Battery_fire_stop_is_accepted_for_an_offline_or_unheld_battery_and_refused_for_another_pilots_held_one()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var typeId = await PlayerControlledBatteryTypeAsync(rig);
+        var effect = (await rig.Statics.OffensiveEffectNameAsync(typeId))!;
+        Assert.Equal(new PyInt(1), await fixture.Holder.BoundCallAsync(fixture.Oid, "Activate",
+            new PyLong(fixture.Battery), new PyStr(effect), new PyLong(fixture.Target), new PyInt(1)));
+        Assert.Single(rig.Sim.Heard.OfType<SimBatteryFire>());
+
+        // offline: the holder's stop is accepted and is sent to the simulation
+        await rig.Deployed.SetTowerStateAsync(fixture.Battery, "offline");
+        Assert.Equal(new PyInt(1), await fixture.Holder.BoundCallAsync(fixture.Oid, "Deactivate",
+            new PyLong(fixture.Battery), new PyStr(effect)));
+        var offlineStop = rig.Sim.Heard.OfType<SimBatteryFire>().ToArray();
+        Assert.Equal(2, offlineStop.Length);
+        Assert.Equal((fixture.Battery, false, 0L), (offlineStop[1].BatteryId, offlineStop[1].On, offlineStop[1].Target));
+
+        // unheld: the grant is let go, and the stop is accepted from the pilot that held it
+        await rig.Containers.ReleaseBatteryControlAsync(fixture.Session.CharacterId!.Value, CancellationToken.None);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        Assert.Equal(new PyInt(1), await fixture.Holder.BoundCallAsync(fixture.Oid, "Deactivate",
+            new PyLong(fixture.Battery), new PyStr(effect)));
+        var unheldStop = rig.Sim.Heard.OfType<SimBatteryFire>().ToArray();
+        Assert.Equal(3, unheldStop.Length);
+        Assert.Equal((fixture.Battery, false, 0L), (unheldStop[2].BatteryId, unheldStop[2].On, unheldStop[2].Target));
+
+        // held by the pilot again, online again: another pilot's stop is refused and nothing is sent
+        await rig.Deployed.SetTowerStateAsync(fixture.Battery, "online");
+        Assert.IsType<PyNone>(await fixture.Holder.CallAsync("AssumeStructureControl", new PyLong(fixture.Battery)));
+        var bound = Assert.IsType<PyTuple>(await fixture.Other.CallServiceAsync("dogmaIM", "MachoBindObject",
+            new PyTuple([new PyLong(LowSecSystem), new PyInt(5)]), PyNone.Instance));
+        var otherOid = BoundOid(bound.Items[0]);
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Other.BoundCallAsync(otherOid, "Deactivate",
+            new PyLong(fixture.Battery), new PyStr(effect)));
+        Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        Assert.Equal(3, rig.Sim.Heard.OfType<SimBatteryFire>().Count());
     }
 
     /// <summary>The Amarr Control Tower's shield radius (SDE attribute 680, shieldRadius): the radius of its force field, not of the tower's ball.</summary>
@@ -1927,6 +2262,209 @@ public class ControlTowerHostTests
         await rig.Containers.SynchronizeControlTowerSlimStateAsync(fixture.Tower);
         var rebound = rig.Sim.Heard.OfType<SimSentryBattery>().Last(bound => bound.BatteryId == fixture.Battery);
         Assert.Equal(0L, rebound.TowerId);
+    }
+
+    /// <summary>A sentry pass that has read no grant, and is placing the battery with no holder, is not overtaken by a pilot taking control: the pilot's grant
+    /// waits for the battery gate, and once the grant stands the sentry is unbound instead of driving the pilot's battery.</summary>
+    [PgFact]
+    public async Task A_pilot_taking_control_during_a_sentry_placement_leaves_the_battery_with_no_sentry()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        var owner = fixture.Session.GetInt("corpid") ?? 0;
+        await FuelAsync(rig, fixture.Tower, HeliumFuelBlock, 39, owner);
+        await FuelAsync(rig, fixture.Tower, NitrogenFuelBlock, 40, owner);
+        await FuelAsync(rig, fixture.Tower, HeliumFuelBlock, 2, owner);
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(fixture.Session, fixture.Tower, "onlineForStructures", 0, 1, CancellationToken.None));
+        rig.Now += OnliningMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("online", await rig.Deployed.TowerStateAsync(fixture.Tower));
+
+        // the sentry pass places the battery with no holder; while that placement is in the scene, the holder asks for the battery's control
+        Task? assume = null;
+        rig.Sim.PlaceBatteryHook = request =>
+        {
+            if (request.HolderSession == 0 && assume is null)
+                assume = fixture.Holder.CallAsync("AssumeStructureControl", new PyLong(fixture.Battery));
+            return Task.CompletedTask;
+        };
+        await rig.Containers.SynchronizeControlTowerSlimStateAsync(fixture.Tower);
+        Assert.NotNull(assume);
+        await assume.WaitAsync(TimeSpan.FromSeconds(10));
+        rig.Sim.PlaceBatteryHook = null;
+
+        // the grant stands, and the simulation is not told that the tower's sentry drives the pilot's battery
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        var last = rig.Sim.Heard.OfType<SimSentryBattery>().Last(bound => bound.BatteryId == fixture.Battery);
+        Assert.Equal(0L, last.TowerId);
+    }
+
+    /// <summary>A battery order that waited for the battery gate reads its holder once it has the gate: a grant released while the order waited is not
+    /// placed in the scene with its old holder.</summary>
+    [PgFact]
+    public async Task A_battery_order_that_waited_for_the_gate_is_not_placed_with_a_holder_relinquished_while_it_waited()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var holder = (ulong)fixture.Session.SessionId;
+        static async Task Refused(Task task)
+        {
+            try
+            {
+                await task;
+            }
+            catch (MachoWrappedException)
+            {
+            }
+        }
+
+        Task? secondOrder = null;
+        Task? relinquish = null;
+        int? released = null;
+        rig.Sim.PlaceBatteryHook = async request =>
+        {
+            if (request.HolderSession != holder || secondOrder is not null)
+                return;
+            // a second order from the same holder starts while this one holds the battery gate; unfixed, it reads its holder before it waits for the gate
+            secondOrder = Refused(rig.Space.BatteryOrderAsync(fixture.Session, fixture.Battery, Eve.Services.TargetingOrder.Lock, fixture.Target, CancellationToken.None));
+            await Task.Delay(300);
+            relinquish = rig.Containers.ReleaseBatteryControlAsync(fixture.Session.CharacterId!.Value, CancellationToken.None);
+            // the grant is gone before this placement returns: the relinquish waits for the gate this order holds
+            for (var waited = 0; await HeldByAsync(rig, fixture.Battery) is not null; waited++)
+                Assert.True(waited < 1000, "the relinquish never released the grant");
+            released = rig.Sim.Heard.Count;
+        };
+
+        await Refused(fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO", new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        rig.Sim.PlaceBatteryHook = null;
+        Assert.NotNull(secondOrder);
+        Assert.NotNull(relinquish);
+        await relinquish.WaitAsync(TimeSpan.FromSeconds(10));
+        await secondOrder.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.NotNull(released);
+        Assert.DoesNotContain(rig.Sim.Heard.Skip(released.Value).OfType<SimPlaceBattery>(), placed => placed.HolderSession == holder);
+    }
+
+    /// <summary>Completing a control tower's unanchor takes its modules offline: their battery grants are released, and the simulation is told each battery is
+    /// offline with no holder.</summary>
+    [PgFact]
+    public async Task Completing_a_tower_unanchor_releases_its_batteries_grants_and_tells_the_simulation_they_are_offline()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        await rig.Deployed.SetTowerStateAsync(fixture.Tower, "unanchoring");
+
+        await rig.Containers.CompleteControlTowerUnanchorAsync(fixture.Tower, CancellationToken.None);
+
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((false, 0UL), (placed.Online, placed.HolderSession));
+    }
+
+    /// <summary>A battery taken offline on its own loses its control grant, and the simulation is told it is offline with no holder.</summary>
+    [PgFact]
+    public async Task Taking_a_battery_offline_alone_clears_its_grant_and_tells_the_simulation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+
+        await rig.Space.DeactivateAsync(fixture.Session, fixture.Battery, "onlineForStructures", CancellationToken.None);
+
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((false, 0UL), (placed.Online, placed.HolderSession));
+    }
+
+    /// <summary>A force field placement decided while the tower was online does not reach the scene after a later reconcile has removed the field: the
+    /// reconciles of one tower run one at a time, so the removal is sent after the placement it follows.</summary>
+    [PgFact]
+    public async Task A_force_field_placement_decided_while_the_tower_was_online_does_not_overtake_the_removal_decided_after_it()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (_, tower) = await OnlineTowerAsync(rig);
+        Assert.Single(rig.Sim.Heard.OfType<SimPlaceForceField>());
+        rig.Sim.Heard.Clear();
+
+        // the online tower's reconcile decides to place its field, and the placement is held before it reaches the scene
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Sim.ForceFieldPlacementHold = release.Task;
+        rig.Sim.ForceFieldPlacementArrived = arrived;
+        var placing = rig.Containers.SynchronizeControlTowerSlimStateAsync(tower);
+        await arrived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // the tower goes offline after that placement was decided; a later reconcile decides to remove the field it has placed
+        await rig.Deployed.SetTowerStateAsync(tower, "offline");
+        var removing = rig.Containers.SynchronizeControlTowerSlimStateAsync(tower);
+        await Task.Delay(300);
+        release.SetResult();
+        await placing.WaitAsync(TimeSpan.FromSeconds(10));
+        await removing.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // the scene hears the placement first and the removal last, so the field is not left in space
+        var fieldMessages = rig.Sim.Heard.Where(message => message is SimPlaceForceField or SimRemoveForceField).ToArray();
+        Assert.Equal(2, fieldMessages.Length);
+        Assert.IsType<SimPlaceForceField>(fieldMessages[0]);
+        Assert.IsType<SimRemoveForceField>(fieldMessages[1]);
+    }
+
+    /// <summary>A pilot who may not configure a tower is refused before its password is checked or hashed: an over-long password gets the same refusal as a
+    /// short one, not the invalid-settings error.</summary>
+    [PgFact]
+    public async Task An_unauthorized_pilot_is_refused_a_tower_password_before_the_password_is_checked()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        var refusedShort = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Other.CallAsync("SetTowerPassword",
+            new PyLong(fixture.Tower), new PyStr("short")));
+        var refusedLong = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Other.CallAsync("SetTowerPassword",
+            new PyLong(fixture.Tower), new PyStr(new string('x', 51))));
+        Assert.Equal(refusedShort.Error.Payload, refusedLong.Error.Payload);
+    }
+
+    /// <summary>A sentry threshold that is not a number is refused as invalid settings, the same refusal as an out-of-range threshold.</summary>
+    [PgFact]
+    public async Task A_sentry_threshold_that_is_not_a_number_is_refused_as_invalid_settings_like_an_out_of_range_one()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        var outOfRange = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.CallAsync("SetTowerSentrySettings",
+            new PyLong(fixture.Tower), new PyReal(11.0), new PyReal(-2.5), PyBool.False, PyBool.False, PyBool.False));
+        var notANumber = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.CallAsync("SetTowerSentrySettings",
+            new PyLong(fixture.Tower), new PyStr("standing"), new PyReal(-2.5), PyBool.False, PyBool.False, PyBool.False));
+        Assert.Equal(outOfRange.Error.Payload, notANumber.Error.Payload);
+    }
+
+    /// <summary>A pilot who sets the starbase password more than five times in a minute is refused with a user error until its block passes.</summary>
+    [PgFact]
+    public async Task A_pilot_who_sets_the_starbase_password_too_often_is_refused_with_a_user_error()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        for (var attempt = 0; attempt < 5; attempt++)
+            Assert.IsType<PyNone>(await rig.Space.SetShipPasswordAsync(fixture.Session, new PyStr("field-secret"), CancellationToken.None));
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.SetShipPasswordAsync(fixture.Session, new PyStr("field-secret"), CancellationToken.None));
+        Assert.True(refused.Error.IsUserError);
+        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.SetShipPasswordAsync(fixture.Session, new PyStr("field-secret"), CancellationToken.None));
+    }
+
+    /// <summary>A usage count too large for an int is refused as invalid settings, the same refusal as a count out of the 0 to 3 range.</summary>
+    [PgFact]
+    public async Task A_usage_count_too_large_for_an_int_is_refused_as_invalid_settings_like_one_out_of_range()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        PyValue Usage(long viewPut) => Py.Rowset(["structureID", "viewput", "viewputtake", "use"],
+            [Py.List(new PyLong(fixture.Tower), new PyLong(viewPut), new PyInt(0), new PyInt(0))]);
+        var deploy = Py.Dict(("anchor", new PyInt(0)), ("unanchor", new PyInt(0)), ("online", new PyInt(0)), ("offline", new PyInt(0)));
+        var outOfRange = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.CallAsync("SetStarbasePermissions",
+            new PyLong(fixture.Tower), deploy, Usage(9)));
+        var tooLarge = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.CallAsync("SetStarbasePermissions",
+            new PyLong(fixture.Tower), deploy, Usage(1L << 40)));
+        Assert.Equal(outOfRange.Error.Payload, tooLarge.Error.Payload);
     }
 
     [PgFact]
@@ -2106,6 +2644,125 @@ public class ControlTowerHostTests
         Assert.Equal(new SimSetForceFieldAccess(tower, (int)LowSecSystem, (int)record.CorporationId, (int)record.AllianceId, false, false),
             rig.Sim.Heard.OfType<SimSetForceFieldAccess>().Last());
         Assert.Equal(2, rig.Sim.Heard.OfType<SimSetForceFieldAccess>().Count());
+    }
+
+    [PgFact]
+    public async Task A_starbase_module_outlives_its_unanchored_tower_offline_and_still_names_it()
+    {
+        // EveJS keeps an anchored module with its stored tower, and the V24.01 client shows a module whose tower is gone as an orphan it can unanchor;
+        // so the unanchor keeps the module as an offline record that names the removed tower
+        await using var rig = await Rig.CreateAsync();
+        rig.Containers.CharacterSessions = rig.CharacterSessions;
+        var batteryTypeId = await PlayerControlledBatteryTypeAsync(rig);
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower, batteryTypeId], LowSecSystem);
+        var (tower, battery) = (items[0], items[1]);
+        Assert.Equal(tower, await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None));
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        var towerRecord = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(tower));
+        Assert.Equal(battery, await rig.Containers.LaunchFromShipAsync(session, battery, CancellationToken.None));
+        var position = new[] { towerRecord.Position[0] + 10_000, towerRecord.Position[1], towerRecord.Position[2] };
+        rig.Sim.PositionAnswers[battery] = position;
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = position;
+        await rig.Containers.AnchorControlTowerAsync(session, battery, position, CancellationToken.None);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        await rig.Deployed.SetTowerStateAsync(battery, "online");
+        await rig.Deployed.SetTowerStateAsync(tower, "online");
+        Assert.Equal(tower, Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(battery)).ControlTowerId);
+
+        await rig.Deployed.SetTowerStateAsync(tower, "offline");
+        await rig.Containers.UnanchorControlTowerAsync(session, tower);
+        await rig.Containers.CompleteControlTowerUnanchorAsync(tower, CancellationToken.None);
+
+        Assert.Null(await rig.Deployed.GetAsync(tower));
+        var orphan = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(battery));
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(battery));
+        Assert.Equal(tower, orphan.ControlTowerId);
+    }
+
+    [PgFact]
+    public async Task Completing_an_unanchor_deletes_the_tower_force_field_rows_with_the_tower_row()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, tower) = await OnlineTowerAsync(rig);
+        Assert.Single(await ForceFieldItemsAsync(rig));
+
+        // the tower is offline while its field is still in space: the unanchor must take the field with the tower row
+        await rig.Deployed.SetTowerStateAsync(tower, "offline");
+        await rig.Containers.UnanchorControlTowerAsync(session, tower);
+        Assert.Equal("unanchoring", await rig.Deployed.TowerStateAsync(tower));
+
+        await rig.Containers.CompleteControlTowerUnanchorAsync(tower, CancellationToken.None);
+
+        Assert.Null(await rig.Deployed.GetAsync(tower));
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+    }
+
+    [PgFact]
+    public async Task An_unauthorized_pilot_is_refused_within_two_seconds_while_another_transaction_holds_the_tower_row()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (_, tower) = await OnlineTowerAsync(rig);
+        var (other, _) = await PilotWithItemsAsync(rig, [], LowSecSystem, account: 2, name: "Second Tester", sessionId: 2);
+        // the pilot is in the tower's system but belongs to another corporation, so the tower is not its to read
+        other.Set("corpid", new PyLong(TestCorporation + 1));
+        other.Set("isCEO", PyBool.False);
+        other.Set("corprole", new PyLong(0));
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var otherHost = await PosMgrHostWire.StartAsync(posMgr, other, () => rig.Now);
+
+        // another transaction holds the tower's row for as long as the refusal takes
+        await using var holder = await rig.Source.OpenConnectionAsync();
+        await using var holderTransaction = await holder.BeginTransactionAsync();
+        Assert.NotNull(await rig.Deployed.LockAndGetAsync(holder, holderTransaction, tower, CancellationToken.None));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => otherHost.CallAsync("GetTowerSentrySettings", new PyLong(tower)))
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        await holderTransaction.RollbackAsync();
+    }
+
+    [PgFact]
+    public async Task A_starbase_module_anchor_takes_the_tower_row_before_the_module_row()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.Containers.CharacterSessions = rig.CharacterSessions;
+        var batteryTypeId = await PlayerControlledBatteryTypeAsync(rig);
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower, batteryTypeId], LowSecSystem);
+        var (tower, battery) = (items[0], items[1]);
+        Assert.Equal(tower, await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None));
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        var towerRecord = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(tower));
+        Assert.Equal(battery, await rig.Containers.LaunchFromShipAsync(session, battery, CancellationToken.None));
+        var position = new[] { towerRecord.Position[0] + 10_000, towerRecord.Position[1], towerRecord.Position[2] };
+        rig.Sim.PositionAnswers[battery] = position;
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = position;
+
+        // another transaction holds the battery's row, so the anchor waits on it
+        await using var holder = await rig.Source.OpenConnectionAsync();
+        await using var holderTransaction = await holder.BeginTransactionAsync();
+        Assert.NotNull(await rig.Deployed.LockAndGetAsync(holder, holderTransaction, battery, CancellationToken.None));
+        var anchor = rig.Containers.AnchorControlTowerAsync(session, battery, position, CancellationToken.None);
+        await Task.Delay(300);
+        Assert.False(anchor.IsCompleted);
+
+        // the lock order is tower row, then module row: while the anchor waits, the tower's row is already held by the anchor
+        await using var probe = await rig.Source.OpenConnectionAsync();
+        await using var probeTransaction = await probe.BeginTransactionAsync();
+        await using (var setTimeout = new NpgsqlCommand("SET LOCAL lock_timeout = '300ms'", probe, probeTransaction))
+            await setTimeout.ExecuteNonQueryAsync();
+        var blocked = await Record.ExceptionAsync(() => rig.Deployed.LockAndGetAsync(probe, probeTransaction, tower, CancellationToken.None));
+        Assert.NotNull(blocked);
+        Assert.Contains("lock timeout", blocked.Message);
+
+        // once the battery's row is free, the anchor completes
+        await holderTransaction.RollbackAsync();
+        await anchor.WaitAsync(TimeSpan.FromSeconds(10));
     }
 
     [PgFact]

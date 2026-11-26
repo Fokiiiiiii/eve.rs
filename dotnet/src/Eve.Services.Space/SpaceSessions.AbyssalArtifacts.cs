@@ -131,6 +131,7 @@ public sealed partial class SpaceSessions
             await CancelRepairsAsync(pilot, CancellationToken.None).ConfigureAwait(false);
             await CompleteBoundObjectReleasesAsync(DetachBoundObjects(pilot.Session), CancellationToken.None);
             _pilots.TryRemove((ulong)pilot.Session.SessionId, out _);
+            await ReleaseBatteryControlsOfLeavingPilotAsync(pilot.CharacterId, CancellationToken.None);
         }
         _abyssalOfflineResidents.TryRemove(persistedShip.Id, out _);
         return new(!removed.AlreadyAbsent, removed.AlreadyAbsent, false, null);

@@ -738,3 +738,112 @@ def test_diff_core_command_emits_all_call_rows_and_can_write_json(tmp_path, caps
     report = json.loads(capsys.readouterr().out)
     assert report["identical"] is True
     assert len(report["calls"]) == 1
+
+
+def run_flow(*, name="Pilot A", session_id=100, call_id=7, extra=(), reply_value=None):
+    """One recorded flow: a request, its reply and a notice. Ids and names are what a second run changes."""
+    reply = name if reply_value is None else reply_value
+    return [
+        call(1, "GetValidRandomName", service="charUnboundMgr", args={"$tuple": [1]}, call_id=call_id),
+        result(2, reply, call_id=call_id),
+        notice(3, "OnServerSkillsChanged", args={"$tuple": [{"$long": session_id}]}),
+        *extra,
+    ]
+
+
+def test_diff_runs_of_identical_flows_have_no_differences_and_no_wildcards():
+    report = mitm.diff_runs(run_flow(), run_flow(), run_flow(), run_flow())
+
+    assert report["identical"] is True
+    assert report["differences"] == []
+    assert report["wildcards"] == []
+    assert report["summary"]["compared_records"] == 3
+
+
+def test_values_that_change_between_runs_of_one_server_are_wildcards():
+    report = mitm.diff_runs(
+        run_flow(name="Pilot A", session_id=100, call_id=7),
+        run_flow(name="Pilot B", session_id=200, call_id=9),
+        run_flow(name="Pilot C", session_id=300, call_id=4),
+        run_flow(name="Pilot D", session_id=400, call_id=5),
+    )
+
+    assert report["identical"] is True
+    assert {item["path"] for item in report["wildcards"]} == {"/result", "/args/$tuple/0/$long"}
+    assert report["summary"]["wildcards"] == 2
+
+
+def test_a_value_that_is_stable_within_each_server_is_compared_exactly():
+    report = mitm.diff_runs(
+        run_flow(session_id=100),
+        run_flow(session_id=100),
+        run_flow(session_id=300),
+        run_flow(session_id=300),
+    )
+
+    assert report["identical"] is False
+    assert report["wildcards"] == []
+    assert report["differences"] == [{
+        "record": "conn1 Notification notificationMgr.OnServerSkillsChanged#1",
+        "path": "/args/$tuple/0/$long",
+        "kind": "value",
+        "reference": ["int", 100],
+        "candidate": ["int", 300],
+    }]
+
+
+def test_a_wildcard_still_has_to_keep_its_marshal_type():
+    report = mitm.diff_runs(
+        run_flow(reply_value="Pilot A"),
+        run_flow(reply_value="Pilot B"),
+        run_flow(reply_value=5),
+        run_flow(reply_value=6),
+    )
+
+    assert report["identical"] is False
+    assert [(item["kind"], item["path"]) for item in report["differences"]] == [("wildcard_type", "/result")]
+    assert report["differences"][0]["reference"] == ["str", "Pilot A"]
+    assert report["differences"][0]["candidate"] == ["int", 5]
+
+
+def test_a_record_seen_in_only_one_run_of_a_server_is_unstable_not_a_difference():
+    extra = [notice(4, "OnOnlyOnce")]
+
+    report = mitm.diff_runs(run_flow(extra=extra), run_flow(), run_flow(), run_flow())
+
+    assert report["identical"] is False
+    assert report["differences"] == []
+    assert report["unstable_records"] == [
+        {"side": "reference", "record": "conn1 Notification notificationMgr.OnOnlyOnce#1"},
+    ]
+
+
+def test_a_record_missing_from_the_candidate_in_both_runs_is_a_difference():
+    report = mitm.diff_runs(run_flow(extra=[notice(4, "OnTutorial")]), run_flow(extra=[notice(4, "OnTutorial")]),
+                            run_flow(), run_flow())
+
+    assert report["identical"] is False
+    assert report["unstable_records"] == []
+    assert report["differences"] == [{
+        "record": "conn1 Notification notificationMgr.OnTutorial#1",
+        "kind": "missing_record",
+    }]
+
+
+def test_diff_runs_command_exit_codes_and_json(tmp_path, capsys):
+    same = [write(tmp_path / f"{name}.jsonl", run_flow()) for name in ("ref1", "ref2", "cand1", "cand2")]
+    args = ["diff-runs", *map(str, same)]
+
+    assert mitm.main(args) == 0
+    assert "identical under run-to-run wildcard rules" in capsys.readouterr().out
+    assert mitm.main([*args, "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["identical"] is True
+
+    changed = write(tmp_path / "cand3.jsonl", run_flow(session_id=300))
+    args = ["diff-runs", str(same[0]), str(same[1]), str(changed), str(changed)]
+
+    assert mitm.main(args) == 1
+    assert "differences: " in capsys.readouterr().out
+    assert mitm.main([*args, "--json"]) == 1
+    report = json.loads(capsys.readouterr().out)
+    assert report["summary"]["differences"] == 1

@@ -214,6 +214,9 @@ impl Scene {
         battery.max_locked_targets = placement.max_locked_targets;
         battery.online = placement.online;
         battery.holder = holder;
+        if let Some(tower_id) = self.pending_sentry_bindings.remove(&battery_id) {
+            battery.sentry_tower = Some(tower_id);
+        }
         self.batteries.insert(battery_id, battery);
         Ok(out)
     }
@@ -268,6 +271,18 @@ impl Scene {
         order: BatteryFire,
         now: i64,
     ) -> (BatteryFireAnswer, Vec<Out>) {
+        // A stop is always accepted. A battery that is absent, offline or unheld has no fire to settle, so it only loses any fire it has.
+        if order == BatteryFire::Stop
+            && !self
+                .batteries
+                .get(&battery_id)
+                .is_some_and(|battery| battery.online && battery.holder.is_some())
+        {
+            if let Some(battery) = self.batteries.get_mut(&battery_id) {
+                battery.firing = None;
+            }
+            return (BatteryFireAnswer { reason: None, active: false, target: 0 }, Vec::new());
+        }
         let Some(battery) = self.batteries.get(&battery_id) else {
             return (BatteryFireAnswer::refused("BATTERY_NOT_IN_SPACE"), Vec::new());
         };
@@ -320,8 +335,10 @@ impl Scene {
                 return Err(Refusal::battery_refused("TARGET_NOT_FOUND"));
             }
         }
-        let apart = (distance(battery.position, subject.position) - battery.radius - subject.radius).max(0.0);
-        if battery.max_target_range <= 0.0 || apart >= battery.max_target_range {
+        let apart = super::lock::gap_or_infinity(
+            distance(battery.position, subject.position) - battery.radius - subject.radius,
+        );
+        if battery.max_target_range <= 0.0 || !super::lock::in_range(apart, battery.max_target_range) {
             return Err(Refusal {
                 reason: "TARGET_OUT_OF_RANGE",
                 target_type: subject.type_id,
@@ -478,6 +495,7 @@ impl Scene {
         for battery_id in ids {
             out.extend(self.settle_battery(battery_id, now));
         }
+        self.prune_sentry_pilots();
         self.sentry_pass(now);
         out
     }

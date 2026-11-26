@@ -209,14 +209,20 @@ public sealed partial class SpaceContainers
         if (session.CharacterId is not { } characterId || session.GetInt("shipid") is not > 0 || !_space.IsInSpace(session))
             throw Refuse("A control tower can only be anchored by a pilot in space.");
 
+        // the pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } preview)
+            throw Refuse("That control tower is not in space.");
+        var unlockedState = await _deployed.TowerStateAsync(towerId, cancellationToken);
+        var sight = await PreflightControlTowerAccessAsync(session, preview, requireAnchoringSkill: true, cancellationToken,
+            requireInteractionDistance: unlockedState != TowerAnchoring, requireConfigurationRole: false, operation: "anchor");
+
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken) is not { Kind: ControlTowerKind } record)
             throw Refuse("That control tower is not in space.");
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
-        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: true, cancellationToken,
-            requireInteractionDistance: state != TowerAnchoring, requireConfigurationRole: false,
-            operation: "anchor", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, record, sight, requireConfigurationRole: false, operation: "anchor",
+            connection, transaction, cancellationToken);
         if (state == TowerAnchoring)
         {
             await transaction.CommitAsync(cancellationToken);
@@ -285,30 +291,27 @@ public sealed partial class SpaceContainers
             throw Refuse("A starbase structure can only be anchored by a pilot in space.");
 
         var now = _nowUnixMs();
-        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        if (await _deployed.LockAndGetAsync(connection, transaction, moduleId, cancellationToken) is not { Kind: StarbaseModuleKind } module)
+        // the module is read unlocked only to choose its tower; then the tower row is locked before the module row, the order every starbase path takes,
+        // and the module's state is checked under its own lock
+        if (await _deployed.GetAsync(moduleId, cancellationToken) is not { Kind: StarbaseModuleKind } reference)
             throw Refuse("That starbase structure is not in space.");
-        var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, cancellationToken);
-        if (state is TowerAnchoring or TowerOffline or TowerOnline or TowerOnlining)
-        {
-            await transaction.CommitAsync(cancellationToken);
+        var unlockedState = await _deployed.TowerStateAsync(moduleId, cancellationToken);
+        if (unlockedState is TowerAnchoring or TowerOffline or TowerOnline or TowerOnlining)
             return;
-        }
-        if (state != TowerUnanchored)
+        if (unlockedState != TowerUnanchored)
             throw Refuse("That starbase structure is not fully unanchored.");
 
-        await _statics.EnsureTypesAsync([module.TypeId], cancellationToken);
-        var moduleType = _statics.Type(module.TypeId)
-            ?? throw new InvalidOperationException($"SDE type {module.TypeId} for starbase structure {moduleId} is missing.");
+        await _statics.EnsureTypesAsync([reference.TypeId], cancellationToken);
+        var moduleType = _statics.Type(reference.TypeId)
+            ?? throw new InvalidOperationException($"SDE type {reference.TypeId} for starbase structure {moduleId} is missing.");
         if (await _ships.MissingSkillAsync(characterId, new Dictionary<int, double> { [182] = AnchoringSkillTypeId, [277] = 1 }, cancellationToken) is not null)
             throw Refuse("Anchoring skill I is required to anchor a starbase structure.");
 
         var candidates = new List<(DeployedRecord Tower, double Distance)>();
-        foreach (var candidate in await _deployed.InSystemAsync(module.SolarSystemId, cancellationToken))
+        foreach (var candidate in await _deployed.InSystemAsync(reference.SolarSystemId, cancellationToken))
         {
-            if (candidate.Kind != ControlTowerKind || candidate.CorporationId != module.CorporationId ||
-                candidate.OwnerId != module.OwnerId || candidate.ActivateAtMs == NeverAnchored || candidate.ActivateAtMs > now)
+            if (candidate.Kind != ControlTowerKind || candidate.CorporationId != reference.CorporationId ||
+                candidate.OwnerId != reference.OwnerId || candidate.ActivateAtMs == NeverAnchored || candidate.ActivateAtMs > now)
                 continue;
             var towerState = await _deployed.TowerStateAsync(candidate.DeployableId, cancellationToken);
             if (towerState is TowerUnanchored or TowerAnchoring or TowerUnanchoring)
@@ -317,7 +320,7 @@ public sealed partial class SpaceContainers
             candidates.Add((candidate, distance));
         }
         var maximumDistanceAttribute = _statics.AttributeId("maxStructureDistance") ?? 650;
-        DeployedRecord? associatedTower = null;
+        var inRange = new List<DeployedRecord>();
         foreach (var candidate in candidates.OrderBy(entry => entry.Distance).ThenBy(entry => entry.Tower.DeployableId))
         {
             await _statics.EnsureTypesAsync([candidate.Tower.TypeId], cancellationToken);
@@ -325,15 +328,33 @@ public sealed partial class SpaceContainers
             var maximumDistance = towerType?.Attributes.GetValueOrDefault(maximumDistanceAttribute) ?? 300_000;
             if (maximumDistance <= 0 || candidate.Distance > maximumDistance)
                 continue;
-            associatedTower = await _deployed.LockAndGetAsync(connection, transaction, candidate.Tower.DeployableId, cancellationToken);
-            if (associatedTower is not { Kind: ControlTowerKind })
-                continue;
-            await RequireControlTowerAccessAsync(session, associatedTower, requireAnchoringSkill: false, cancellationToken,
-                requireInteractionDistance: false, requireConfigurationRole: false, operation: "anchor", connection: connection, transaction: transaction);
-            break;
+            inRange.Add(candidate.Tower);
         }
-        if (associatedTower is null)
+
+        if (inRange.Count == 0)
             throw Refuse("A starbase structure must be anchored within range of its corporation's anchored control tower.");
+        // the nearest tower in range is checked before any row lock is taken: its position comes from the simulation
+        var towerSight = await PreflightControlTowerAccessAsync(session, inRange[0], requireAnchoringSkill: false, cancellationToken,
+            requireInteractionDistance: false, requireConfigurationRole: false, operation: "anchor");
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        // the tower row is locked before the module row, the order every starbase path takes
+        if (await _deployed.LockAndGetAsync(connection, transaction, inRange[0].DeployableId, cancellationToken) is not { Kind: ControlTowerKind } associatedTower)
+            throw Refuse("A starbase structure must be anchored within range of its corporation's anchored control tower.");
+        if (await _deployed.LockAndGetAsync(connection, transaction, moduleId, cancellationToken) is not { Kind: StarbaseModuleKind } module ||
+            module.SolarSystemId != reference.SolarSystemId || module.CorporationId != reference.CorporationId || module.OwnerId != reference.OwnerId)
+            throw Refuse("That starbase structure is not in space.");
+        var lockedState = await _deployed.TowerStateAsync(connection, transaction, moduleId, cancellationToken);
+        if (lockedState is TowerAnchoring or TowerOffline or TowerOnline or TowerOnlining)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return;
+        }
+        if (lockedState != TowerUnanchored)
+            throw Refuse("That starbase structure is not fully unanchored.");
+        await RequireTowerAccessUnderLockAsync(session, associatedTower, towerSight, requireConfigurationRole: false, operation: "anchor",
+            connection, transaction, cancellationToken);
 
         if (await _space.PositionOfAsync(session, moduleId, cancellationToken) is not { } modulePosition ||
             await _space.PositionOfAsync(session, session.GetInt("shipid")!.Value, cancellationToken) is not { } shipPosition ||
@@ -399,6 +420,11 @@ public sealed partial class SpaceContainers
         if (await _deployed.GetAsync(moduleId, cancellationToken) is not { Kind: StarbaseModuleKind, ControlTowerId: > 0 } reference)
             throw Refuse("That starbase structure is not associated with a control tower.");
 
+        // the tower's pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(reference.ControlTowerId, cancellationToken) is not { Kind: ControlTowerKind } towerPreview)
+            throw Refuse("That starbase structure is not associated with an available control tower.");
+        var towerSight = await PreflightControlTowerAccessAsync(session, towerPreview, requireAnchoringSkill: false, cancellationToken,
+            requireConfigurationRole: false, operation: "online");
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         // Lock the tower first, matching production-cycle transitions and serializing CPU/power reservations.
@@ -408,8 +434,8 @@ public sealed partial class SpaceContainers
             module.SolarSystemId != tower.SolarSystemId)
             throw Refuse("That starbase structure is not associated with an available control tower.");
 
-        await RequireControlTowerAccessAsync(session, tower, requireAnchoringSkill: false, cancellationToken,
-            requireConfigurationRole: false, operation: "online", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, tower, towerSight, requireConfigurationRole: false, operation: "online",
+            connection, transaction, cancellationToken);
         var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, cancellationToken);
         if (state is TowerOnlining or TowerOnline)
         {
@@ -453,6 +479,11 @@ public sealed partial class SpaceContainers
         if (await _deployed.GetAsync(moduleId, cancellationToken) is not { Kind: StarbaseModuleKind, ControlTowerId: > 0 } reference)
             throw Refuse("That starbase structure is not associated with a control tower.");
 
+        // the tower's pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(reference.ControlTowerId, cancellationToken) is not { Kind: ControlTowerKind } towerPreview)
+            throw Refuse("That starbase structure is not associated with an available control tower.");
+        var towerSight = await PreflightControlTowerAccessAsync(session, towerPreview, requireAnchoringSkill: false, cancellationToken,
+            requireConfigurationRole: false, operation: "offline");
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, reference.ControlTowerId, cancellationToken) is not { Kind: ControlTowerKind } tower ||
@@ -460,8 +491,8 @@ public sealed partial class SpaceContainers
             module.ControlTowerId != tower.DeployableId || module.OwnerId != tower.OwnerId || module.CorporationId != tower.CorporationId)
             throw Refuse("That starbase structure is not associated with an available control tower.");
 
-        await RequireControlTowerAccessAsync(session, tower, requireAnchoringSkill: false, cancellationToken,
-            requireConfigurationRole: false, operation: "offline", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, tower, towerSight, requireConfigurationRole: false, operation: "offline",
+            connection, transaction, cancellationToken);
         var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, cancellationToken);
         if (state is not (TowerOnline or TowerOnlining))
         {
@@ -469,8 +500,12 @@ public sealed partial class SpaceContainers
             return;
         }
         await _deployed.SetTowerStateAsync(connection, transaction, moduleId, TowerOffline, cancellationToken);
+        // a battery that goes offline loses its control grant, as the tower's offline does
+        await _deployed.ClearBatteryControlAsync(connection, transaction, moduleId, cancellationToken);
         await _scheduler.CancelAsync(connection, transaction, StarbaseModuleOnlineJob, $"module:{moduleId}", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        // the simulation is told after the commit: the battery is offline with no holder
+        await OfflineBatteriesAsync(tower.DeployableId, cancellationToken);
         SetControlTowerSlimState(moduleId, StructureAnchored, null);
         _scheduler.Wake();
     }
@@ -516,123 +551,81 @@ public sealed partial class SpaceContainers
     private const int ForceFieldRemovalAttempts = 5;
     private static readonly TimeSpan ForceFieldRemovalRetryDelay = TimeSpan.FromMilliseconds(200);
 
+    /// <summary>The per-tower gates of the force field reconcile: a tower's item commit and the simulation's send to it happen under one gate, so two syncs cannot send in the other's order.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, SemaphoreSlim> _forceFieldGates = new();
+
     /// <summary>
     /// Makes a control tower's force field agree with its state: an online tower has one field item and one field in its system's scene, and any other state has
     /// neither. The item is written in one transaction and the simulation is told after its commit. A repeat sync keeps the item and sends the same placement,
     /// which the simulation takes as unchanged. A refused placement, or a removal the simulation refuses for another reason, is an error.
     /// </summary>
-    /// <summary>The per-tower gates of the force field reconcile: a tower's item commit and the simulation's send to it happen under one gate, so two syncs cannot send in the other's order.</summary>
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, SemaphoreSlim> _forceFieldGates = new();
-
     private async Task ReconcileForceFieldAsync(long towerId, CancellationToken cancellationToken)
-    {
-        var gate = _forceFieldGates.GetOrAdd(towerId, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            await ReconcileForceFieldUnderGateAsync(towerId, cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            gate.Release();
-        }
-    }
-
-    /// <summary>The reconcile itself, run under its tower's gate.</summary>
-    private async Task ReconcileForceFieldUnderGateAsync(long towerId, CancellationToken cancellationToken)
     {
         if (_deployed is null || _source is null)
             return;
-        SimPlaceForceField? placement = null;
-        SimRemoveForceField? removal = null;
-        await using (var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
-        await using (var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
-        {
-            if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false) is not { Kind: ControlTowerKind } tower)
-                return;
-            var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false);
-            if (state == TowerOnline && tower.ActivateAtMs != NeverAnchored && tower.ActivateAtMs <= _nowUnixMs())
-            {
-                placement = await EnsureForceFieldInTransactionAsync(connection, transaction, tower, cancellationToken).ConfigureAwait(false);
-            }
-            else if (await RemoveForceFieldInTransactionAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false) is { } removed)
-            {
-                removal = new SimRemoveForceField(towerId, removed.SolarSystemId);
-            }
-            else if (state == TowerOffline)
-            {
-                // an offline tower with no item may still have its field in the simulation (its removal was committed and not answered): the simulation is asked anyway
-                removal = new SimRemoveForceField(towerId, tower.SolarSystemId);
-            }
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        }
-
-        if (placement is not null)
-        {
-            var answer = await _sim.PlaceForceFieldAsync(placement, cancellationToken).ConfigureAwait(false);
-            if (answer.Reason.Length > 0)
-            {
-                // the simulation holds no field of the tower, so the item the placement wrote is taken back: an item exists only with a field in the scene, and the next sync writes a new one
-                await using (var compensation = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
-                await using (var transaction = await compensation.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
-                {
-                    await RemoveForceFieldInTransactionAsync(compensation, transaction, towerId, cancellationToken).ConfigureAwait(false);
-                    await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-                }
-                throw new InvalidOperationException($"The simulation did not place force field {placement.FieldId} of control tower {towerId}: {answer.Reason}");
-            }
-        }
-        if (removal is not null)
-        {
-            // a refusal, or a link that is down, is asked again until the simulation says the field is gone or not in space
-            for (var attempt = 1; ; attempt++)
-            {
-                string reason;
-                try
-                {
-                    reason = (await _sim.RemoveForceFieldAsync(removal, cancellationToken).ConfigureAwait(false)).Reason;
-                }
-                catch (SimUnavailableException) when (attempt < ForceFieldRemovalAttempts)
-                {
-                    reason = "the simulation is unavailable";
-                }
-                if (reason.Length == 0 || reason == ForceFieldNotInSpace)
-                    break;
-                if (attempt >= ForceFieldRemovalAttempts)
-                    throw new InvalidOperationException($"The simulation did not remove the force field of control tower {towerId}: {reason}");
-                await Task.Delay(ForceFieldRemovalRetryDelay, cancellationToken).ConfigureAwait(false);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Takes a tower's force field out of the database and out of its system's scene, whether or not either still holds it: a tower that is unanchored may have
-    /// gone offline while the simulation refused its removal, and nothing reconciles the field once the record is forgotten. A field the simulation does not have
-    /// is no error; a refusal or an unavailable simulation is logged, as the removal of the hull is.
-    /// </summary>
-    private async Task TakeOutForceFieldAsync(long towerId, int solarSystemId, CancellationToken cancellationToken)
-    {
-        if (_source is null)
-            return;
         var gate = _forceFieldGates.GetOrAdd(towerId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            SimPlaceForceField? placement = null;
+            SimRemoveForceField? removal = null;
             await using (var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
             await using (var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
             {
-                await RemoveForceFieldInTransactionAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false);
+                if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false) is not { Kind: ControlTowerKind } tower)
+                    return;
+                var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false);
+                if (state == TowerOnline && tower.ActivateAtMs != NeverAnchored && tower.ActivateAtMs <= _nowUnixMs())
+                {
+                    placement = await EnsureForceFieldInTransactionAsync(connection, transaction, tower, cancellationToken).ConfigureAwait(false);
+                }
+                else if (await RemoveForceFieldInTransactionAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false) is { } removed)
+                {
+                    removal = new SimRemoveForceField(towerId, removed.SolarSystemId);
+                }
+                else if (state == TowerOffline)
+                {
+                    // an offline tower with no item may still have its field in the simulation (its removal was committed and not answered): the simulation is asked anyway
+                    removal = new SimRemoveForceField(towerId, tower.SolarSystemId);
+                }
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-            try
+
+            if (placement is not null)
             {
-                var answer = await _sim.RemoveForceFieldAsync(new SimRemoveForceField(towerId, solarSystemId), cancellationToken).ConfigureAwait(false);
-                if (answer.Reason.Length > 0 && answer.Reason != ForceFieldNotInSpace)
-                    _log?.Invoke($"the simulation did not take the force field of control tower {towerId} out: {answer.Reason}");
+                var answer = await _sim.PlaceForceFieldAsync(placement, cancellationToken).ConfigureAwait(false);
+                if (answer.Reason.Length > 0)
+                {
+                    // the simulation holds no field of the tower, so the item the placement wrote is taken back: an item exists only with a field in the scene, and the next sync writes a new one
+                    await using (var compensation = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
+                    await using (var transaction = await compensation.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
+                    {
+                        await RemoveForceFieldInTransactionAsync(compensation, transaction, towerId, cancellationToken).ConfigureAwait(false);
+                        await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    throw new InvalidOperationException($"The simulation did not place force field {placement.FieldId} of control tower {towerId}: {answer.Reason}");
+                }
             }
-            catch (SimUnavailableException error)
+            if (removal is not null)
             {
-                _log?.Invoke($"the force field of control tower {towerId} was not taken out: {error.Message}");
+                // a refusal, or a link that is down, is asked again until the simulation says the field is gone or not in space
+                for (var attempt = 1; ; attempt++)
+                {
+                    string reason;
+                    try
+                    {
+                        reason = (await _sim.RemoveForceFieldAsync(removal, cancellationToken).ConfigureAwait(false)).Reason;
+                    }
+                    catch (SimUnavailableException) when (attempt < ForceFieldRemovalAttempts)
+                    {
+                        reason = "the simulation is unavailable";
+                    }
+                    if (reason.Length == 0 || reason == ForceFieldNotInSpace)
+                        break;
+                    if (attempt >= ForceFieldRemovalAttempts)
+                        throw new InvalidOperationException($"The simulation did not remove the force field of control tower {towerId}: {reason}");
+                    await Task.Delay(ForceFieldRemovalRetryDelay, cancellationToken).ConfigureAwait(false);
+                }
             }
         }
         finally
@@ -716,7 +709,7 @@ public sealed partial class SpaceContainers
             }, startedAt);
         }
 
-        await OfflineBatteriesAsync(towerId, cancellationToken).ConfigureAwait(false);
+        // the sentry pass places every battery of the tower that no pilot holds (online or offline, with no holder): a separate offline sweep placed the same battery twice
         await RefreshForceFieldAccessAsync(towerId, cancellationToken).ConfigureAwait(false);
         await ReconcileForceFieldAsync(towerId, cancellationToken).ConfigureAwait(false);
         await ReconcileSentryAsync(towerId, cancellationToken).ConfigureAwait(false);
@@ -736,6 +729,7 @@ public sealed partial class SpaceContainers
                 continue;
 
             await _deployed.SetTowerStateAsync(connection, transaction, module.DeployableId, TowerOffline, cancellationToken).ConfigureAwait(false);
+            await _deployed.ClearBatteryControlAsync(connection, transaction, module.DeployableId, cancellationToken).ConfigureAwait(false);
             if (_scheduler is not null)
                 await _scheduler.CancelAsync(connection, transaction, StarbaseModuleOnlineJob, $"module:{module.DeployableId}", cancellationToken).ConfigureAwait(false);
         }
@@ -788,12 +782,17 @@ public sealed partial class SpaceContainers
     {
         if (_deployed is null || _scheduler is null || _source is null)
             throw Refuse("Control tower online operations are not available on this server.");
+        // the pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } preview)
+            throw Refuse("That control tower is not in space.");
+        var sight = await PreflightControlTowerAccessAsync(session, preview, requireAnchoringSkill: false, cancellationToken,
+            requireConfigurationRole: false, operation: "online");
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken) is not { Kind: ControlTowerKind } record)
             throw Refuse("That control tower is not in space.");
-        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: false, cancellationToken,
-            requireConfigurationRole: false, operation: "online", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, record, sight, requireConfigurationRole: false, operation: "online",
+            connection, transaction, cancellationToken);
         if (record.ActivateAtMs == NeverAnchored || record.ActivateAtMs > _nowUnixMs())
             throw Refuse("The control tower must finish anchoring before it can be put online.");
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
@@ -837,12 +836,17 @@ public sealed partial class SpaceContainers
     {
         if (_deployed is null || _scheduler is null || _source is null)
             throw Refuse("Control tower online operations are not available on this server.");
+        // the pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } preview)
+            throw Refuse("That control tower is not in space.");
+        var sight = await PreflightControlTowerAccessAsync(session, preview, requireAnchoringSkill: false, cancellationToken,
+            requireConfigurationRole: false, operation: "offline");
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken) is not { Kind: ControlTowerKind } record)
             throw Refuse("That control tower is not in space.");
-        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: false, cancellationToken,
-            requireConfigurationRole: false, operation: "offline", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, record, sight, requireConfigurationRole: false, operation: "offline",
+            connection, transaction, cancellationToken);
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
         if (state == TowerOffline)
         {
@@ -863,9 +867,14 @@ public sealed partial class SpaceContainers
         _scheduler.Wake();
     }
 
-    private async Task RequireControlTowerAccessAsync(ClientSession session, DeployedRecord record, bool requireAnchoringSkill, CancellationToken cancellationToken,
-        bool requireInteractionDistance = true, bool requireConfigurationRole = true, string? operation = null,
-        NpgsqlConnection? connection = null, NpgsqlTransaction? transaction = null)
+    /// <summary>What the simulation said about a pilot's ship and a control tower, read before any row lock is taken. The tower's system and owners are kept, so
+    /// the locked check can confirm that the row it locks is still the tower that was seen.</summary>
+    internal readonly record struct ControlTowerSight(int SolarSystemId, long OwnerId, long CorporationId, long AllianceId, double SurfaceDistance);
+
+    /// <summary>The cheap pilot checks: logged in with a corporation, in the tower's system and in space, the corporation the operation needs and the role it
+    /// needs. Takes no row lock and makes no simulation call.</summary>
+    private (bool SameCorporation, bool HasConfigurationRole) CheckPilotOnTower(ClientSession session, DeployedRecord record, bool requireConfigurationRole,
+        string? operation)
     {
         var characterId = session.CharacterId ?? 0;
         var corporationId = session.GetInt("corpid") ?? session.GetInt("corporationid") ?? 0;
@@ -887,23 +896,19 @@ public sealed partial class SpaceContainers
         var hasConfigurationRole = sameCorporation && (isCeo || (roles & (DirectorRole | StarbaseConfigRole)) != 0);
         if (requireConfigurationRole && !hasConfigurationRole)
             throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
-        if (!requireConfigurationRole && operation is not null && !hasConfigurationRole)
-        {
-            if (connection is null || _deployed is null)
-                throw new InvalidOperationException("A transaction is required to check persisted control tower deployment permissions.");
-            var rawConfiguration = await _deployed.TowerConfigurationAsync(connection, transaction, record.DeployableId, cancellationToken);
-            var configuration = rawConfiguration is null ? new PosMgrTowerConfiguration() :
-                JsonSerializer.Deserialize<PosMgrTowerConfiguration>(rawConfiguration, PosMgrJson) ?? new PosMgrTowerConfiguration();
-            var permission = Normalize(configuration).DeployFlags.GetValueOrDefault(operation);
-            var allianceId = session.GetInt("allianceid") ?? session.GetInt("allianceID") ?? 0;
-            var sameAlliance = record.AllianceId > 0 && allianceId == record.AllianceId;
-            var permitted = permission == 1 && sameCorporation || permission == 2 && (sameCorporation || sameAlliance);
-            if (!permitted)
-                throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
-        }
+        return (sameCorporation, hasConfigurationRole);
+    }
 
+    /// <summary>The checks that run before a caller's transaction takes any row lock: the cheap pilot checks, the simulation's position of the tower and the
+    /// ship, the interaction range and the anchoring skill. The locked check is <see cref="RequireTowerAccessUnderLockAsync"/>.</summary>
+    private async Task<ControlTowerSight> PreflightControlTowerAccessAsync(ClientSession session, DeployedRecord record, bool requireAnchoringSkill,
+        CancellationToken cancellationToken, bool requireInteractionDistance = true, bool requireConfigurationRole = true, string? operation = null)
+    {
+        CheckPilotOnTower(session, record, requireConfigurationRole, operation);
+        var characterId = session.CharacterId ?? 0;
+        var shipId = session.GetInt("shipid") ?? 0;
         if (await _space.PositionOfAsync(session, record.DeployableId, cancellationToken) is null ||
-            await _space.PositionOfAsync(session, shipId, cancellationToken) is not { } shipPosition || shipPosition.SolarSystemId != systemId)
+            await _space.PositionOfAsync(session, shipId, cancellationToken) is not { } shipPosition || shipPosition.SolarSystemId != record.SolarSystemId)
             throw Refuse("The control tower is not visible in the current space scene.");
         var shipRadius = Math.Max(0, shipPosition.Radius ?? 0);
         if (shipRadius <= 0 && await _ships.LoadAsync(characterId, cancellationToken) is { } snapshot && snapshot.Ship.Id == shipId)
@@ -915,6 +920,42 @@ public sealed partial class SpaceContainers
         if (requireAnchoringSkill && await _ships.MissingSkillAsync(characterId,
             new Dictionary<int, double> { [182] = AnchoringSkillTypeId, [277] = 1 }, cancellationToken) is not null)
             throw Refuse("Anchoring skill I is required to anchor a control tower.");
+        return new ControlTowerSight(record.SolarSystemId, record.OwnerId, record.CorporationId, record.AllianceId, surfaceDistance);
+    }
+
+    /// <summary>The check under a tower's row lock. The locked row must still be the tower the preflight saw, the cheap pilot checks must hold, and an operation
+    /// the corporation's deploy flags grant passes. No simulation call is made while the lock is held.</summary>
+    private async Task RequireTowerAccessUnderLockAsync(ClientSession session, DeployedRecord record, ControlTowerSight sight, bool requireConfigurationRole,
+        string? operation, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken)
+    {
+        var (sameCorporation, hasConfigurationRole) = CheckPilotOnTower(session, record, requireConfigurationRole, operation);
+        if (record.SolarSystemId != sight.SolarSystemId || record.OwnerId != sight.OwnerId || record.CorporationId != sight.CorporationId ||
+            record.AllianceId != sight.AllianceId)
+            throw Refuse("The control tower changed while it was being checked. Try again.");
+        if (!requireConfigurationRole && operation is not null && !hasConfigurationRole)
+        {
+            if (_deployed is null)
+                throw new InvalidOperationException("A transaction is required to check persisted control tower deployment permissions.");
+            var rawConfiguration = await _deployed.TowerConfigurationAsync(connection, transaction, record.DeployableId, cancellationToken);
+            var configuration = rawConfiguration is null ? new PosMgrTowerConfiguration() :
+                JsonSerializer.Deserialize<PosMgrTowerConfiguration>(rawConfiguration, PosMgrJson) ?? new PosMgrTowerConfiguration();
+            var permission = Normalize(configuration).DeployFlags.GetValueOrDefault(operation);
+            var allianceId = session.GetInt("allianceid") ?? session.GetInt("allianceID") ?? 0;
+            var sameAlliance = record.AllianceId > 0 && allianceId == record.AllianceId;
+            var permitted = permission == 1 && sameCorporation || permission == 2 && (sameCorporation || sameAlliance);
+            if (!permitted)
+                throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
+        }
+    }
+
+    /// <summary>The pilot checks for a caller that holds no row lock and needs no deployment permission: the preflight alone.</summary>
+    private async Task RequireControlTowerAccessAsync(ClientSession session, DeployedRecord record, bool requireAnchoringSkill, CancellationToken cancellationToken,
+        bool requireInteractionDistance = true, bool requireConfigurationRole = true, string? operation = null)
+    {
+        if (operation is not null)
+            throw new InvalidOperationException("A transaction is required to check persisted control tower deployment permissions.");
+        await PreflightControlTowerAccessAsync(session, record, requireAnchoringSkill, cancellationToken,
+            requireInteractionDistance, requireConfigurationRole, null).ConfigureAwait(false);
     }
 
     private async Task<TowerResources?> ReadTowerResourcesAsync(
@@ -1095,6 +1136,13 @@ public sealed partial class SpaceContainers
     {
         if (_deployed is null || _scheduler is null || _source is null)
             throw Refuse("Control tower unanchoring is not available on this server.");
+        // the pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } preview)
+            throw Refuse("That control tower is not in space.");
+        var unlockedState = await _deployed.TowerStateAsync(towerId, cancellationToken);
+        var sight = await PreflightControlTowerAccessAsync(session, preview, requireAnchoringSkill: false, cancellationToken,
+            requireInteractionDistance: unlockedState != TowerUnanchoring, requireConfigurationRole: false, operation: "unanchor");
+
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken) is not { Kind: ControlTowerKind } record)
@@ -1102,9 +1150,8 @@ public sealed partial class SpaceContainers
         if (record.ActivateAtMs == NeverAnchored || record.ActivateAtMs > _nowUnixMs())
             throw Refuse("The control tower is not anchored yet.");
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
-        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: false, cancellationToken,
-            requireInteractionDistance: state != TowerUnanchoring, requireConfigurationRole: false,
-            operation: "unanchor", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, record, sight, requireConfigurationRole: false, operation: "unanchor",
+            connection, transaction, cancellationToken);
         if (state == TowerUnanchoring)
         {
             await transaction.CommitAsync(cancellationToken);
@@ -1136,39 +1183,69 @@ public sealed partial class SpaceContainers
         CompleteControlTowerUnanchorAsync(towerId, null, null, null, cancellationToken);
 
     public async Task CompleteControlTowerUnanchorAsync(long towerId, NpgsqlConnection? connection,
-        NpgsqlTransaction? transaction, Eve.Events.EventBus? events, CancellationToken cancellationToken = default)
+        NpgsqlTransaction? transaction, Eve.Events.EventBus? events, CancellationToken cancellationToken = default,
+        Action<Func<Task>>? afterCommit = null)
     {
         if (_deployed is null || await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } record
             || await _deployed.TowerStateAsync(towerId, cancellationToken) != TowerUnanchoring)
         {
             return;
         }
-        // the field goes with the tower, whether or not the offline sync managed to take it out
-        await TakeOutForceFieldAsync(towerId, record.SolarSystemId, cancellationToken);
-        _sim.RemoveDeployed(towerId);
-        if (await _items.GetAsync(towerId, cancellationToken) is null)
+        // a missing item (a manual removal) has nothing to drop; otherwise the item stays where the tower was
+        if (await _items.GetAsync(towerId, cancellationToken) is not null)
         {
-            // the item is gone (a manual removal): there is nothing to drop
-            await RemoveTowerAsync();
-            return;
+            await _ships.SetCustomInfoAsync(towerId, StructureUnanchorDrop.HullMarker(towerId), cancellationToken);
+            await _spaceItems.SaveAsync(new SpaceItem(
+                towerId, record.SolarSystemId, record.Position, [1.0, 0.0, 0.0], record.Radius, record.GroupId, record.ShipId,
+                record.OwnerId, record.CorporationId, record.AllianceId, 0, NeverExpires), cancellationToken);
+            await PlaceUnanchorDropAsync(towerId, StructureUnanchorDrop.HullMarker(towerId), cancellationToken);
         }
-        await _ships.SetCustomInfoAsync(towerId, StructureUnanchorDrop.HullMarker(towerId), cancellationToken);
-        await _spaceItems.SaveAsync(new SpaceItem(
-            towerId, record.SolarSystemId, record.Position, [1.0, 0.0, 0.0], record.Radius, record.GroupId, record.ShipId,
-            record.OwnerId, record.CorporationId, record.AllianceId, 0, NeverExpires), cancellationToken);
-        await PlaceUnanchorDropAsync(towerId, StructureUnanchorDrop.HullMarker(towerId), cancellationToken);
-        await RemoveTowerAsync();
+        var (released, removedField) = await RemoveTowerRecordAsync(connection, transaction, events, record, cancellationToken);
+        // the simulation hears of the removal only after the commit, so a removal the database refuses leaves the tower in the scene
+        Func<Task> tellSimulation = () => TellSimulationOfRemovalAsync(towerId, released, removedField);
+        if (afterCommit is null)
+            await tellSimulation();
+        else
+            afterCommit(tellSimulation);
+    }
 
-        async Task RemoveTowerAsync()
+    /// <summary>
+    /// Removes an unanchoring tower's record in one transaction with its modules' battery grants: the grants are released, the modules are taken offline and
+    /// the tower row is deleted. Without a caller transaction this opens and commits its own.
+    /// </summary>
+    private async Task<(IReadOnlyList<(long BatteryId, long CharacterId)> Released, SpaceItem? RemovedField)> RemoveTowerRecordAsync(NpgsqlConnection? connection,
+        NpgsqlTransaction? transaction, Eve.Events.EventBus? events, DeployedRecord record, CancellationToken cancellationToken)
+    {
+        if (connection is null || transaction is null)
         {
-            if (connection is null || transaction is null || events is null)
-            {
-                await _deployed.RemoveAsync(towerId, cancellationToken);
-                return;
-            }
-            if (await _deployed.RemoveAsync(connection, transaction, towerId, cancellationToken) && record.CorporationId > 0)
-                await events.PublishInTransactionAsync(connection, transaction, ControlTowerEligibilityChangedTopic,
-                    new ControlTowerEligibilityChanged(record.CorporationId), $"tower:{towerId}", cancellationToken);
+            await using var ownConnection = await _source!.OpenConnectionAsync(cancellationToken);
+            await using var ownTransaction = await ownConnection.BeginTransactionAsync(cancellationToken);
+            var ownRemoval = await RemoveTowerRecordAsync(ownConnection, ownTransaction, events, record, cancellationToken);
+            await ownTransaction.CommitAsync(cancellationToken);
+            return ownRemoval;
         }
+        var released = await _deployed!.ReleaseBatteryControlsOfTowerAsync(connection, transaction, record.DeployableId, cancellationToken);
+        await OfflineStarbaseModulesAsync(connection, transaction, record.DeployableId, cancellationToken);
+        // the tower's force field rows leave in this transaction with the tower row, so no field outlives its tower
+        var removedField = await RemoveForceFieldInTransactionAsync(connection, transaction, record.DeployableId, cancellationToken);
+        if (await _deployed.RemoveAsync(connection, transaction, record.DeployableId, cancellationToken) && record.CorporationId > 0 && events is not null)
+            await events.PublishInTransactionAsync(connection, transaction, ControlTowerEligibilityChangedTopic,
+                new ControlTowerEligibilityChanged(record.CorporationId), $"tower:{record.DeployableId}", cancellationToken);
+        return (released, removedField);
+    }
+
+    /// <summary>The simulation's side of a removed tower: the tower leaves the scene, and its modules, now offline, are told offline with no holder.</summary>
+    private async Task TellSimulationOfRemovalAsync(long towerId, IReadOnlyList<(long BatteryId, long CharacterId)> released, SpaceItem? removedField)
+    {
+        _sim.RemoveDeployed(towerId);
+        if (removedField is not null)
+        {
+            var answer = await _sim.RemoveForceFieldAsync(new SimRemoveForceField(towerId, removedField.SolarSystemId), CancellationToken.None).ConfigureAwait(false);
+            if (answer.Reason.Length > 0 && answer.Reason != ForceFieldNotInSpace)
+                _log?.Invoke($"control tower {towerId} unanchored: the simulation did not remove its force field: {answer.Reason}");
+        }
+        await OfflineBatteriesAsync(towerId).ConfigureAwait(false);
+        if (released.Count > 0)
+            _log?.Invoke($"control tower {towerId} unanchored: released {released.Count} battery grant(s)");
     }
 }

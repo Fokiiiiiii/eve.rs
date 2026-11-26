@@ -61,6 +61,141 @@ public class SimClientTests
         await Until(() => !client.IsConnected);
     }
 
+    [Fact]
+    public async Task A_request_the_simulation_never_answers_fails_within_the_limit_and_names_the_request()
+    {
+        var logged = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(new HelloThenSilenceStream()), logged.Enqueue, null, TimeSpan.FromSeconds(1));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var failure = await Assert.ThrowsAsync<SimUnavailableException>(() => client.ControlStructureAsync(
+            new SimControlStructure(7, 30_000_142, 1_000_000_001, 9, true, 1)).WaitAsync(Patience));
+
+        Assert.True(clock.Elapsed < Patience);
+        Assert.Contains("SimControlStructure", failure.Message);
+        Assert.Contains("1 second", failure.Message);
+        Assert.Contains(logged, line => line.Contains("SimControlStructure") && line.Contains("requests pending"));
+    }
+
+    [Fact]
+    public async Task A_charge_adjustment_the_simulation_never_answers_fails_within_the_limit_and_names_the_request()
+    {
+        var logged = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(new HelloThenSilenceStream()), logged.Enqueue, null, TimeSpan.FromSeconds(1));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var failure = await Assert.ThrowsAsync<SimUnavailableException>(() => client.AdjustChargeAsync(
+            new SimAdjustCharge(102, 7, 9988400001939, 34, new SimChargeOp.Add(10, 5))).WaitAsync(Patience));
+
+        Assert.True(clock.Elapsed < Patience);
+        Assert.Contains("SimAdjustCharge", failure.Message);
+        Assert.Contains("1 second", failure.Message);
+        Assert.Contains(logged, line => line.Contains("SimAdjustCharge") && line.Contains("requests pending"));
+    }
+
+    [Fact]
+    public async Task A_one_way_send_the_simulation_never_takes_fails_within_the_limit_and_names_the_message()
+    {
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(new HelloThenStuckWriteStream()), null, null, TimeSpan.FromSeconds(1));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var failure = await Assert.ThrowsAsync<SimUnavailableException>(() => client
+            .TrySetSlimFieldAsync(42, "wormholeAge", new SimSlimInt(1)).WaitAsync(Patience));
+
+        Assert.True(clock.Elapsed < Patience);
+        Assert.Contains("SimSetSlimField", failure.Message);
+        Assert.Contains("1 second", failure.Message);
+    }
+
+    /// <summary>Takes the hello, then never completes a write: a frame queued after the hello is never written.</summary>
+    private sealed class HelloThenStuckWriteStream : Stream
+    {
+        private readonly byte[] _helloAck = SimCodec.Encode(new SimHelloAck(SimCodec.ProtocolVersion, 4));
+        private int _helloAckOffset;
+        private int _writes;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_helloAckOffset < _helloAck.Length)
+            {
+                var count = Math.Min(buffer.Length, _helloAck.Length - _helloAckOffset);
+                _helloAck.AsMemory(_helloAckOffset, count).CopyTo(buffer);
+                _helloAckOffset += count;
+                return count;
+            }
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) =>
+            System.Threading.Interlocked.Increment(ref _writes) == 1 ? ValueTask.CompletedTask : new ValueTask(Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken));
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Flush() { }
+    }
+
+    private sealed class HelloThenSilenceStream : Stream
+    {
+        private readonly byte[] _helloAck = SimCodec.Encode(new SimHelloAck(SimCodec.ProtocolVersion, 4));
+        private int _helloAckOffset;
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => true;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            if (_helloAckOffset < _helloAck.Length)
+            {
+                var count = Math.Min(buffer.Length, _helloAck.Length - _helloAckOffset);
+                _helloAck.AsMemory(_helloAckOffset, count).CopyTo(buffer);
+                _helloAckOffset += count;
+                return count;
+            }
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return 0;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            ReadAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default) => ValueTask.CompletedTask;
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) => Task.CompletedTask;
+
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Flush() { }
+    }
+
     private static async Task<(FakeSimulation Sim, SimClient Client)> ConnectedAsync(
         Func<SimMessage, IEnumerable<SimMessage>>? reply = null,
         Action<string>? log = null,

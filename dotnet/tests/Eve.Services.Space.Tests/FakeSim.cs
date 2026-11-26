@@ -266,10 +266,15 @@ internal sealed class FakeSim : ISimulation
     /// <summary>The scene's scripted answers to battery orders, taken in order; with none left an order is accepted with nothing held.</summary>
     public Queue<SimBatteryTargets> BatteryTargetAnswers { get; } = new();
 
-    public Task<SimBatteryPlaced> PlaceBatteryAsync(SimPlaceBattery request, CancellationToken cancellationToken = default)
+    /// <summary>A hook a test sets to hold a battery placement in the scene: the placement is answered only after the hook returns.</summary>
+    public Func<SimPlaceBattery, Task>? PlaceBatteryHook { get; set; }
+
+    public async Task<SimBatteryPlaced> PlaceBatteryAsync(SimPlaceBattery request, CancellationToken cancellationToken = default)
     {
         Heard.Enqueue(request);
-        return Task.FromResult(new SimBatteryPlaced(request.BatteryId, BatteryPlacementReason));
+        if (PlaceBatteryHook is { } hook)
+            await hook(request);
+        return new SimBatteryPlaced(request.BatteryId, BatteryPlacementReason);
     }
 
     public Task<SimBatteryTargets> BatteryTargetAsync(SimBatteryTarget request, CancellationToken cancellationToken = default)
@@ -451,6 +456,12 @@ internal sealed class FakeSim : ISimulation
     /// <summary>The answers to the next removals, in order, before <see cref="ForceFieldRemovalReason"/> is used: a test makes the simulation refuse a removal, then take it.</summary>
     public Queue<string> ForceFieldRemovalAnswers { get; } = new();
 
+    /// <summary>A hold a test sets for the next force field placement: the placement reaches the scene (is recorded) only after this task completes.</summary>
+    public Task? ForceFieldPlacementHold { get; set; }
+
+    /// <summary>Completed when the next force field placement arrives at the scene, before its hold.</summary>
+    public TaskCompletionSource? ForceFieldPlacementArrived { get; set; }
+
     /// <summary>When set, a placement is entered (<see cref="ForceFieldPlacementEntered"/>) and waits here before the simulation answers it: a test holds a sync between its commit and its send.</summary>
     public TaskCompletionSource? ForceFieldPlacementRelease { get; set; }
 
@@ -459,10 +470,20 @@ internal sealed class FakeSim : ISimulation
 
     public async Task<SimForceFieldPlaced> PlaceForceFieldAsync(SimPlaceForceField field, CancellationToken cancellationToken = default)
     {
+        if (ForceFieldPlacementArrived is { } arrived)
+        {
+            ForceFieldPlacementArrived = null;
+            arrived.TrySetResult();
+        }
         if (ForceFieldPlacementRelease is { } release)
         {
             ForceFieldPlacementEntered.TrySetResult();
             await release.Task;
+        }
+        if (ForceFieldPlacementHold is { } hold)
+        {
+            ForceFieldPlacementHold = null;
+            await hold;
         }
         Heard.Enqueue(field);
         return new SimForceFieldPlaced(field.FieldId, ForceFieldPlacementReason);

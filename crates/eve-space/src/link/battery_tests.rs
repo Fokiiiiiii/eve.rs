@@ -77,12 +77,10 @@ fn battery_frames_refuse_an_order_outside_one_to_four_and_non_finite_numbers() {
     assert!(Message::decode(&frame[4..]).is_err());
     frame[25] = 0;
     assert!(Message::decode(&frame[4..]).is_err());
-    let mut radius = placement();
-    radius.radius = f64::NAN;
-    assert!(Message::decode(&Message::PlaceBattery(Box::new(radius)).encode()[4..]).is_err());
-    let mut position = placement();
-    position.position[1] = f64::INFINITY;
-    assert!(Message::decode(&Message::PlaceBattery(Box::new(position)).encode()[4..]).is_err());
+    // the encoder makes no frame with a non-finite number, so the number is set in the bytes of a valid frame
+    let frame = Message::PlaceBattery(Box::new(placement())).encode();
+    assert!(Message::decode(&with_f64_from_end(frame.clone(), 29, f64::NAN)[4..]).is_err());
+    assert!(Message::decode(&with_f64_from_end(frame, 45, f64::INFINITY)[4..]).is_err());
 }
 
 #[test]
@@ -94,4 +92,52 @@ fn battery_fire_refuses_a_flag_that_is_not_a_boolean() {
     assert!(Message::decode(&frame[4..]).is_ok());
     frame[25] = 2;
     assert!(Message::decode(&frame[4..]).is_err());
+}
+
+/// A ship's radii and its lock range and scan resolution are finite and not negative: the decoder refuses a ship that has one that is not.
+#[test]
+fn ship_frames_refuse_a_radius_or_range_that_is_not_finite_or_is_negative() {
+    let good = crate::scene::tests::spec();
+    for corrupt in [
+        crate::ship::ShipSpec { radius: f64::NAN, ..good.clone() },
+        crate::ship::ShipSpec { radius: -1.0, ..good.clone() },
+        crate::ship::ShipSpec { signature_radius: f64::INFINITY, ..good.clone() },
+        crate::ship::ShipSpec { max_target_range: -5.0, ..good.clone() },
+        crate::ship::ShipSpec { scan_resolution: f64::NAN, ..good.clone() },
+    ] {
+        let frame = Message::ShipSpec { session_id: 7, ship: Box::new(corrupt.clone()) }.encode();
+        assert!(Message::decode(&frame[4..]).is_err(), "a ship with {corrupt:?} was decoded");
+    }
+    let frame = Message::ShipSpec { session_id: 7, ship: Box::new(good) }.encode();
+    assert!(Message::decode(&frame[4..]).is_ok(), "a valid ship is refused");
+}
+
+/// The frame with the eight bytes `from_end` bytes before its end set to `value` (see the force field tests).
+fn with_f64_from_end(mut frame: Vec<u8>, from_end: usize, value: f64) -> Vec<u8> {
+    let at = frame.len() - from_end;
+    frame[at..at + 8].copy_from_slice(&value.to_le_bytes());
+    frame
+}
+
+/// The encoder makes no battery placement with a non-finite number, as the C# encoder refuses it.
+#[test]
+#[should_panic(expected = "finite")]
+fn battery_placement_with_a_non_finite_number_is_not_encoded() {
+    let radius = BatteryPlacement { radius: f64::NAN, ..placement() };
+    let _ = Message::PlaceBattery(Box::new(radius)).encode();
+}
+
+/// The encoder makes no battery order outside one to four, as the C# encoder refuses it.
+#[test]
+#[should_panic(expected = "order")]
+fn a_battery_order_outside_one_to_four_is_not_encoded() {
+    let _ = Message::BatteryTarget { request_id: 70, battery_id: 1, solar_system_id: 2, order: 5, target: 3 }
+        .encode();
+}
+
+/// The encoder makes no frame whose text is longer than a u16 length allows: it is refused, not cut short.
+#[test]
+#[should_panic(expected = "u16")]
+fn a_text_longer_than_a_u16_length_is_not_encoded() {
+    let _ = Message::BatteryPlaced { battery_id: 1, reason: "x".repeat(usize::from(u16::MAX) + 1) }.encode();
 }

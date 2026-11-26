@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) fn put_text(out: &mut Vec<u8>, text: &str) {
+    assert!(text.len() <= usize::from(u16::MAX), "text is longer than a u16 length allows");
     out.extend_from_slice(&(text.len() as u16).to_le_bytes());
     out.extend_from_slice(text.as_bytes());
 }

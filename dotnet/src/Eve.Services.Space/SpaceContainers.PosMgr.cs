@@ -145,6 +145,11 @@ public sealed partial class SpaceContainers
 
     private async Task<PyValue> SetTowerPasswordAsync(ServiceCall call)
     {
+        // the pilot is authorized before the password is checked or hashed, so a refused pilot costs no derivation; the saving transaction authorizes again
+        var towerId = ReadPositiveId(call.Arg(0));
+        if (_deployed is null || towerId <= 0 || await _deployed.GetAsync(towerId, call.Cancellation).ConfigureAwait(false) is not { Kind: ControlTowerKind } authorized)
+            throw TowerNotFound();
+        await RequireControlTowerAccessAsync(call.Session, authorized, false, call.Cancellation).ConfigureAwait(false);
         var password = call.Arg(1);
         string? passwordSalt = null;
         string? passwordHash = null;
@@ -164,31 +169,35 @@ public sealed partial class SpaceContainers
             call.Arg(3) is not PyNone && allowAlliance is null)
             throw SettingsInvalid();
 
-        var towerId = ReadPositiveId(call.Arg(0));
         var access = (Corporation: false, Alliance: false);
-        var updated = await UpdateTowerConfigurationAsync(call, towerId, (record, configuration) =>
+        // the save, the rematch and the access send run under the system's gate, so two saves reach the simulation in their commit order
+        await _space.RunInSystemPasswordGateAsync((int)authorized.SolarSystemId, async () =>
         {
-            var nextAllowCorp = allowCorp ?? configuration.AllowCorp;
-            var nextAllowAlliance = allowAlliance ?? configuration.AllowAlliance;
-            if (allowAlliance is true && record.AllianceId <= 0)
-                throw MachoErrors.ThrowUserError("STARBASE_ALLIANCE_REQUIRED");
-            access = (nextAllowCorp, nextAllowAlliance);
-            return configuration with
+            var updated = await UpdateTowerConfigurationAsync(call, towerId, (record, configuration) =>
             {
-                AllowCorp = nextAllowCorp,
-                AllowAlliance = nextAllowAlliance,
-                PasswordSalt = passwordSalt ?? configuration.PasswordSalt,
-                PasswordHash = passwordHash ?? configuration.PasswordHash,
-            };
-        }).ConfigureAwait(false);
-        // a changed password is matched again for the pilots holding a ship password here (after the commit, so a refused change matches nothing)
-        if (passwordHash is not null)
-            await _space.RematchShipPasswordsAsync(updated.SolarSystemId, call.Cancellation).ConfigureAwait(false);
-        // the simulation admits by the access the tower now saves (after the commit, so a refused change is never told)
-        var liveAlliance = await LiveAllianceAsync(updated, call.Cancellation).ConfigureAwait(false);
-        _forceFieldAccessAlliances[towerId] = liveAlliance;
-        _sim.SetForceFieldAccess(new SimSetForceFieldAccess(towerId, updated.SolarSystemId, updated.CorporationId, liveAlliance,
-            access.Corporation, access.Alliance));
+                var nextAllowCorp = allowCorp ?? configuration.AllowCorp;
+                var nextAllowAlliance = allowAlliance ?? configuration.AllowAlliance;
+                if (allowAlliance is true && record.AllianceId <= 0)
+                    throw MachoErrors.ThrowUserError("STARBASE_ALLIANCE_REQUIRED");
+                access = (nextAllowCorp, nextAllowAlliance);
+                return configuration with
+                {
+                    AllowCorp = nextAllowCorp,
+                    AllowAlliance = nextAllowAlliance,
+                    PasswordSalt = passwordSalt ?? configuration.PasswordSalt,
+                    PasswordHash = passwordHash ?? configuration.PasswordHash,
+                };
+            }).ConfigureAwait(false);
+            // a changed password is matched again for the pilots holding a ship password here (after the commit, so a refused change matches nothing)
+            if (passwordHash is not null)
+                await _space.RematchShipPasswordsAsync(updated.SolarSystemId, call.Cancellation).ConfigureAwait(false);
+            // the simulation admits by the access the tower now saves (after the commit, so a refused change is never told)
+            var liveAlliance = await LiveAllianceAsync(updated, call.Cancellation).ConfigureAwait(false);
+            _forceFieldAccessAlliances[towerId] = liveAlliance;
+            _sim.SetForceFieldAccess(new SimSetForceFieldAccess(towerId, updated.SolarSystemId, updated.CorporationId, liveAlliance,
+                access.Corporation, access.Alliance));
+            return PyNone.Instance;
+        }, call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
     }
 
@@ -357,21 +366,40 @@ public sealed partial class SpaceContainers
         var moduleId = ReadPositiveId(call.Arg(0));
         var characterId = call.Session.CharacterId ?? 0;
         if (_deployed is null || _source is null || moduleId <= 0 || characterId <= 0) throw TowerNotFound();
-        await using var connection = await _source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
-        await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
-        var battery = await _deployed.LockAndGetAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
-        if (battery is not { Kind: StarbaseModuleKind }) throw TowerNotFound();
-        await _statics.EnsureTypesAsync([battery.TypeId], call.Cancellation).ConfigureAwait(false);
-        if (!IsPlayerControlledBattery(battery.TypeId)) throw BatteryNotControllable();
-        await RequireControlTowerAccessAsync(call.Session, battery, false, call.Cancellation,
+        // the pilot checks and the simulation's position come before the battery's gate and row lock
+        if (await _deployed.GetAsync(moduleId, call.Cancellation).ConfigureAwait(false) is not { Kind: StarbaseModuleKind } preview) throw TowerNotFound();
+        var sight = await PreflightControlTowerAccessAsync(call.Session, preview, false, call.Cancellation,
             requireConfigurationRole: false).ConfigureAwait(false);
-        var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
-        if (state is not (TowerOnline or TowerOnlining)) throw BatteryNotOnline();
-        var holder = await _deployed.BatteryControllerAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
-        if (holder is { } other && other != characterId) throw BatteryControlledByAnotherPilot();
-        if (holder is null)
-            await _deployed.GrantBatteryControlAsync(connection, transaction, moduleId, characterId, _nowUnixMs(), call.Cancellation).ConfigureAwait(false);
-        await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
+        long towerId;
+        // the battery gate is the one a sentry pass and the battery's own orders take, so a grant cannot land between a sentry's read and its placement
+        var batteryGate = _batteryGates.GetOrAdd(moduleId, _ => new SemaphoreSlim(1, 1));
+        await batteryGate.WaitAsync(call.Cancellation).ConfigureAwait(false);
+        try
+        {
+            await using var connection = await _source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
+            await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
+            var battery = await _deployed.LockAndGetAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
+            if (battery is not { Kind: StarbaseModuleKind }) throw TowerNotFound();
+            await _statics.EnsureTypesAsync([battery.TypeId], call.Cancellation).ConfigureAwait(false);
+            if (!IsPlayerControlledBattery(battery.TypeId)) throw BatteryNotControllable();
+            await RequireTowerAccessUnderLockAsync(call.Session, battery, sight, requireConfigurationRole: false, operation: null,
+                connection, transaction, call.Cancellation).ConfigureAwait(false);
+            var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
+            if (state is not (TowerOnline or TowerOnlining)) throw BatteryNotOnline();
+            var holder = await _deployed.BatteryControllerAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
+            if (holder is { } other && other != characterId) throw BatteryControlledByAnotherPilot();
+            if (holder is null)
+                await _deployed.GrantBatteryControlAsync(connection, transaction, moduleId, characterId, _nowUnixMs(), call.Cancellation).ConfigureAwait(false);
+            await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
+            towerId = battery.ControlTowerId;
+        }
+        finally
+        {
+            batteryGate.Release();
+        }
+        // the sentry is reconciled once the gate is released: a reconcile takes the same gate, so it cannot be called while the gate is held here
+        if (towerId > 0)
+            await ReconcileSentryAsync(towerId, call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
     }
 
@@ -386,6 +414,8 @@ public sealed partial class SpaceContainers
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
         var released = await _deployed.ReleaseBatteryControlAsync(connection, transaction, moduleId, characterId, call.Cancellation).ConfigureAwait(false);
         await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
+        if (released)
+            await ClearBatteryHolderAsync(moduleId, call.Cancellation).ConfigureAwait(false);
         // the simulation must learn the battery has no holder, or its holder's locks and fire run on and its tower's sentry cannot take it
         if (released && await _deployed.GetAsync(moduleId, call.Cancellation).ConfigureAwait(false) is { ControlTowerId: > 0 } battery)
             await ReconcileSentryAsync(battery.ControlTowerId, call.Cancellation).ConfigureAwait(false);
@@ -397,7 +427,10 @@ public sealed partial class SpaceContainers
     {
         if (_deployed is null || characterId <= 0) return;
         // the simulation must learn each released battery has no holder, as RelinquishStructureControlAsync tells it
-        foreach (var tower in await _deployed.ReleaseBatteryControlsOfCharacterAsync(characterId, cancellationToken).ConfigureAwait(false))
+        var released = await _deployed.ReleaseBatteryControlsOfCharacterAsync(characterId, cancellationToken).ConfigureAwait(false);
+        foreach (var (batteryId, _) in released)
+            await ClearBatteryHolderAsync(batteryId, cancellationToken).ConfigureAwait(false);
+        foreach (var tower in released.Select(entry => entry.ControlTowerId).Where(tower => tower > 0).Distinct())
             await ReconcileSentryAsync(tower, cancellationToken).ConfigureAwait(false);
     }
 
@@ -596,9 +629,13 @@ public sealed partial class SpaceContainers
     {
         if (_deployed is null || _source is null) throw NotAvailable();
         var towerId = ReadPositiveId(call.Arg(0));
+        // the pilot checks and the simulation's position come before the row lock
+        if (await _deployed.GetAsync(towerId, call.Cancellation).ConfigureAwait(false) is not { Kind: ControlTowerKind } preview) throw TowerNotFound();
+        var sight = await PreflightControlTowerAccessAsync(call.Session, preview, false, call.Cancellation,
+            requireConfigurationRole: true).ConfigureAwait(false);
         await using var connection = await _source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
-        var moved = await ExecuteMoonCycleAsync(call, towerId, true, null, null, connection, transaction).ConfigureAwait(false);
+        var moved = await ExecuteMoonCycleAsync(call, towerId, true, null, null, connection, transaction, sight).ConfigureAwait(false);
         await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
         if (moved && await _deployed.GetAsync(towerId, call.Cancellation).ConfigureAwait(false) is { } tower)
             NotifyMoonProcessChange(call.Session, tower, new PyList([]));
@@ -661,15 +698,16 @@ public sealed partial class SpaceContainers
     }
 
     private async Task<bool> ExecuteMoonCycleAsync(ServiceCall call, long towerId, bool forced, long? scheduledForMs,
-        JobContext? jobContext, NpgsqlConnection connection, NpgsqlTransaction transaction)
+        JobContext? jobContext, NpgsqlConnection connection, NpgsqlTransaction transaction, ControlTowerSight? sight = null)
     {
         if (_deployed is null) throw NotAvailable();
         var tower = await _deployed.LockAndGetAsync(connection, transaction, towerId, call.Cancellation).ConfigureAwait(false);
         if (tower is not { Kind: ControlTowerKind }) throw TowerNotFound();
         if (forced)
         {
-            await RequireControlTowerAccessAsync(call.Session, tower, false, call.Cancellation,
-                requireConfigurationRole: true, connection: connection, transaction: transaction).ConfigureAwait(false);
+            await RequireTowerAccessUnderLockAsync(call.Session, tower,
+                sight ?? throw new InvalidOperationException("A forced moon cycle needs its pilot check before the row lock."),
+                requireConfigurationRole: true, operation: null, connection, transaction, call.Cancellation).ConfigureAwait(false);
             if (((call.Session.GetInt("role") ?? 0) & (1L << 54)) == 0)
                 throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Only a Game Master may force a starbase production cycle.")));
         }
@@ -881,12 +919,16 @@ public sealed partial class SpaceContainers
         ServiceCall call, long towerId, bool write)
     {
         if (_deployed is null || _source is null || towerId <= 0) throw TowerNotFound();
+        // the pilot checks and the simulation's position come before the row lock
+        if (await _deployed.GetAsync(towerId, call.Cancellation).ConfigureAwait(false) is not { Kind: ControlTowerKind } preview) throw TowerNotFound();
+        var sight = await PreflightControlTowerAccessAsync(call.Session, preview, false, call.Cancellation,
+            requireConfigurationRole: write).ConfigureAwait(false);
         await using var connection = await _source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
         var record = await _deployed.LockAndGetAsync(connection, transaction, towerId, call.Cancellation).ConfigureAwait(false);
         if (record is not { Kind: ControlTowerKind }) throw TowerNotFound();
-        await RequireControlTowerAccessAsync(call.Session, record, false, call.Cancellation,
-            requireConfigurationRole: write).ConfigureAwait(false);
+        await RequireTowerAccessUnderLockAsync(call.Session, record, sight, requireConfigurationRole: write, operation: null,
+            connection, transaction, call.Cancellation).ConfigureAwait(false);
         var raw = await _deployed.TowerConfigurationAsync(connection, transaction, towerId, call.Cancellation).ConfigureAwait(false);
         var configuration = raw is null ? new PosMgrTowerConfiguration() :
             JsonSerializer.Deserialize<PosMgrTowerConfiguration>(raw, PosMgrJson) ?? new PosMgrTowerConfiguration();
@@ -904,11 +946,15 @@ public sealed partial class SpaceContainers
             Task<PosMgrTowerConfiguration>> update)
     {
         if (_deployed is null || _source is null || towerId <= 0) throw TowerNotFound();
+        // the pilot checks and the simulation's position come before the row lock
+        if (await _deployed.GetAsync(towerId, call.Cancellation).ConfigureAwait(false) is not { Kind: ControlTowerKind } preview) throw TowerNotFound();
+        var sight = await PreflightControlTowerAccessAsync(call.Session, preview, false, call.Cancellation).ConfigureAwait(false);
         await using var connection = await _source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
         await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
         var record = await _deployed.LockAndGetAsync(connection, transaction, towerId, call.Cancellation).ConfigureAwait(false);
         if (record is not { Kind: ControlTowerKind }) throw TowerNotFound();
-        await RequireControlTowerAccessAsync(call.Session, record, false, call.Cancellation).ConfigureAwait(false);
+        await RequireTowerAccessUnderLockAsync(call.Session, record, sight, requireConfigurationRole: true, operation: null,
+            connection, transaction, call.Cancellation).ConfigureAwait(false);
         var raw = await _deployed.TowerConfigurationAsync(connection, transaction, towerId, call.Cancellation).ConfigureAwait(false);
         var current = Normalize(raw is null ? new PosMgrTowerConfiguration() :
             JsonSerializer.Deserialize<PosMgrTowerConfiguration>(raw, PosMgrJson) ?? new PosMgrTowerConfiguration());
@@ -1112,7 +1158,10 @@ public sealed partial class SpaceContainers
                 !TryInteger(Column("viewput", 1), out var viewPut) ||
                 !TryInteger(Column("viewputtake", 2), out var viewPutTake) || !TryInteger(Column("use", 3), out var use))
                 throw SettingsInvalid();
-            result.Add(new TowerUsage(id, checked((int)viewPut), checked((int)viewPutTake), checked((int)use)));
+            // a count outside the int range is refused as the settings are, before any cast
+            if (viewPut is < int.MinValue or > int.MaxValue || viewPutTake is < int.MinValue or > int.MaxValue || use is < int.MinValue or > int.MaxValue)
+                throw SettingsInvalid();
+            result.Add(new TowerUsage(id, (int)viewPut, (int)viewPutTake, (int)use));
         }
         // Some client serializers send just the row list rather than a Rowset object.
         if (result.Count == 0 && value is PyList or PyTuple)
@@ -1186,7 +1235,8 @@ public sealed partial class SpaceContainers
         PyReal real when double.IsFinite(real.Value) => real.Value,
         PyInt integer => integer.Value,
         PyLong integer => integer.Value,
-        _ => double.NaN,
+        // anything else (a string, a non-finite real) is not a number: refused, never sent as NaN
+        _ => throw SettingsInvalid(),
     };
 
     private static long ReadPositiveId(PyValue? value) => TryInteger(value, out var id) && id > 0 ? id : 0;

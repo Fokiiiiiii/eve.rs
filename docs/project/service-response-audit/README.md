@@ -9,7 +9,7 @@
 3. [TODO入口](../../TODO.md#evejs-response-audit-backlog-2026-10-13) — 448 named出口を63 service group、182候補を59 namespaceで参照。既存owner TODOへ統合し重複加算しない。
 4. [Core A-F新handoff](../../service-response-audit/core-a-f.md:345) と [Host/protobuf監査](../../service-response-audit/host-protobuf.md) — 新分類と登録・共通通信の根拠。
 
-現在の476 named名差は **未実装448／client-local対応3／legacy未確認25**。綴りalias 2はclient-local 3の内数です。Core A-F旧44件は **未実装33／client-local対応3／legacy6／現行same-service実装済2**、現在の未登録名は42件。実装済2件は既存ledger・TODOから既に除外されており、二重減算しません。
+現在の476 named名差は **未実装448／client-local対応3／legacy未確認25**。綴りalias 2はclient-local 3の内数です。Core A-F 44件の2026-11-19再分類は **実装済み32（直接Hostテスト20、dispatch確認のみ10）／未実装3（31 stub・34・35）／client-local対応3／legacy6**（現行same-service実装済2を含む）、Host未登録名は10件。上の全体448／476は、このCore A-F再分類をまだ反映していない旧台帳値です。実装済2件は既存ledger・TODOから既に除外されており、二重減算しません。
 
 全体は **672＝476＋protobuf候補182＋返値・通知・session・provider14群**。service広告差11／候補29、bound 39（未実装37＋legacy2）、provider6群は重複する別の切り口で、448へ加算しません。182は全nested DTO比較済みではなく、完全比較0／未完了182。Host coverage 181名／1280経路は応答一致率ではありません。
 

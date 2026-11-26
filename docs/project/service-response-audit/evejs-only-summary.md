@@ -109,7 +109,7 @@ source実装・test・build・Git mutation・子agentは引き続き行ってい
 
 ### core-a-f新handoffとの照合（2026-10-13）
 
-旧44件は**未実装33／client-local対応3／legacy 6／現行同service実装済み2**、現在の未登録名は42です。agentMgr.MachoResolveObjectとdungeonInstanceCacheMgr.GetTriglavianSiteInstancesは、既存ledger・TODOでも既に欠落から除外済みでした。2件を再び減算せず、core-a-fの分類変更7件を反映しています。**全体の672行、物理名差476、サービス11／候補29、protobuf候補182、14群、Host181／1280は維持**します。named未実装のTODOは448件・63groupへ更新しました。[core-a-f revised 44-row handoff](../../../docs/project/service-response-audit/core-a-f.md:345)
+2026-11-19の再分類では**実装済み32（直接Hostテスト20、dispatch確認のみ10＝うち部分実装2）／未実装3（31 stub・34・35）／client-local対応3／legacy 6**（現行同service実装済2を含む）、Host未登録名は10です。全体の448／476はこの再分類を反映していません。agentMgr.MachoResolveObjectとdungeonInstanceCacheMgr.GetTriglavianSiteInstancesは、既存ledger・TODOでも既に欠落から除外済みでした。2件を再び減算せず、core-a-fの分類変更7件を反映しています。**全体の672行、物理名差476、サービス11／候補29、protobuf候補182、14群、Host181／1280は維持**します。named未実装のTODOは448件・63groupへ更新しました。[core-a-f revised 44-row handoff](../../../docs/project/service-response-audit/core-a-f.md:345)
 
 Source snapshotは引き続きmain/dda03ca0（親dirty宣言を含む）です。文書読戻し時のmain HEADはc114dc0dへ進んでいましたが、その新commitのsource再監査は今回行っていません。この文書更新で動的受入を追加確認したものはありません。
 

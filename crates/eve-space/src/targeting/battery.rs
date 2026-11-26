@@ -326,7 +326,7 @@ impl Scene {
         let apart = super::lock::gap_or_infinity(
             distance(battery.position, subject.position) - battery.radius - subject.radius,
         );
-        if battery.max_target_range <= 0.0 || !(apart < battery.max_target_range) {
+        if battery.max_target_range <= 0.0 || !super::lock::in_range(apart, battery.max_target_range) {
             return Err(Refusal {
                 reason: "TARGET_OUT_OF_RANGE",
                 target_type: subject.type_id,

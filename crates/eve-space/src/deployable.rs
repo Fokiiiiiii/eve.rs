@@ -1031,6 +1031,12 @@ impl Scene {
         placement: crate::link::ForceFieldPlacement,
         now: i64,
     ) -> Result<Vec<Out>, &'static str> {
+        if placement.field_id <= 0 {
+            return Err("FORCE_FIELD_ID_INVALID");
+        }
+        if placement.tower_id <= 0 {
+            return Err("FORCE_FIELD_TOWER_INVALID");
+        }
         if !(placement.radius.is_finite() && placement.radius > 0.0) {
             return Err("FORCE_FIELD_RADIUS_INVALID");
         }

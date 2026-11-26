@@ -2776,6 +2776,9 @@ impl Message {
                 let display_name = r.text()?;
                 let position = read_vector(&mut r)?;
                 let radius = r.f64()?;
+                if field_id <= 0 || tower_id <= 0 {
+                    return Err(DecodeError::BadValue("force field id"));
+                }
                 if !radius.is_finite() || position.iter().any(|value| !value.is_finite()) {
                     return Err(DecodeError::BadValue("force field"));
                 }

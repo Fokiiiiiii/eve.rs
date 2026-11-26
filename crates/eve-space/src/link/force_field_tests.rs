@@ -66,6 +66,20 @@ fn force_field_frames_refuse_a_non_finite_radius_or_position() {
     assert!(Message::decode(&Message::PlaceForceField(Box::new(position)).encode()[4..]).is_err());
 }
 
+/// The decoder refuses a field or tower id that is zero or negative, as the placement refuses it.
+#[test]
+fn force_field_frames_refuse_an_id_that_is_not_positive() {
+    for (field_id, tower_id) in
+        [(0, 1_050_000_099), (-1, 1_050_000_099), (1_050_000_100, 0), (1_050_000_100, -1)]
+    {
+        let bad = ForceFieldPlacement { field_id, tower_id, ..placement() };
+        assert!(
+            Message::decode(&Message::PlaceForceField(Box::new(bad)).encode()[4..]).is_err(),
+            "field {field_id} of tower {tower_id} was decoded"
+        );
+    }
+}
+
 #[test]
 fn a_truncated_force_field_frame_is_refused() {
     let frame = Message::RemoveForceField { tower_id: 1_050_000_099, solar_system_id: 30_000_001 }.encode();

@@ -262,3 +262,27 @@ fn the_last_pilot_leaving_keeps_a_scene_with_tower_access_and_policy() {
     assert_eq!(scene.force_field_access.get(&TOWER).map(|access| access.corporation_id), Some(98_000_001));
     assert!(scene.sentry_policies.contains_key(&TOWER));
 }
+
+/// A field and its tower are named by positive ids: a zero or negative one is refused and takes no place.
+#[test]
+fn a_field_or_tower_without_a_positive_id_is_refused_and_takes_no_place() {
+    let mut sim = new_sim();
+    let answer = sim.handle(Message::PlaceForceField(Box::new(placement(0, TOWER, 1_000.0))), NOON).unwrap();
+    assert_eq!(
+        answer,
+        vec![Message::ForceFieldPlaced { field_id: 0, reason: "FORCE_FIELD_ID_INVALID".to_string() }]
+    );
+    let answer =
+        sim.handle(Message::PlaceForceField(Box::new(placement(-FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    assert_eq!(
+        answer,
+        vec![Message::ForceFieldPlaced { field_id: -FIELD, reason: "FORCE_FIELD_ID_INVALID".to_string() }]
+    );
+    let answer = sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, 0, 1_000.0))), NOON).unwrap();
+    assert_eq!(
+        answer,
+        vec![Message::ForceFieldPlaced { field_id: FIELD, reason: "FORCE_FIELD_TOWER_INVALID".to_string() }]
+    );
+    assert!(fields_of(&sim, TOWER).is_empty());
+    assert!(fields_of(&sim, 0).is_empty());
+}

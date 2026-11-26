@@ -145,6 +145,11 @@ public sealed partial class SpaceContainers
 
     private async Task<PyValue> SetTowerPasswordAsync(ServiceCall call)
     {
+        // the pilot is authorized before the password is checked or hashed, so a refused pilot costs no derivation; the saving transaction authorizes again
+        var towerId = ReadPositiveId(call.Arg(0));
+        if (_deployed is null || towerId <= 0 || await _deployed.GetAsync(towerId, call.Cancellation).ConfigureAwait(false) is not { Kind: ControlTowerKind } authorized)
+            throw TowerNotFound();
+        await RequireControlTowerAccessAsync(call.Session, authorized, false, call.Cancellation).ConfigureAwait(false);
         var password = call.Arg(1);
         string? passwordSalt = null;
         string? passwordHash = null;
@@ -164,7 +169,6 @@ public sealed partial class SpaceContainers
             call.Arg(3) is not PyNone && allowAlliance is null)
             throw SettingsInvalid();
 
-        var towerId = ReadPositiveId(call.Arg(0));
         var access = (Corporation: false, Alliance: false);
         var updated = await UpdateTowerConfigurationAsync(call, towerId, (record, configuration) =>
         {

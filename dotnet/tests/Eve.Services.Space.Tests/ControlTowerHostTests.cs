@@ -2366,6 +2366,20 @@ public class ControlTowerHostTests
         Assert.IsType<SimRemoveForceField>(fieldMessages[1]);
     }
 
+    /// <summary>A pilot who may not configure a tower is refused before its password is checked or hashed: an over-long password gets the same refusal as a
+    /// short one, not the invalid-settings error.</summary>
+    [PgFact]
+    public async Task An_unauthorized_pilot_is_refused_a_tower_password_before_the_password_is_checked()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        var refusedShort = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Other.CallAsync("SetTowerPassword",
+            new PyLong(fixture.Tower), new PyStr("short")));
+        var refusedLong = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Other.CallAsync("SetTowerPassword",
+            new PyLong(fixture.Tower), new PyStr(new string('x', 51))));
+        Assert.Equal(refusedShort.Error.Payload, refusedLong.Error.Payload);
+    }
+
     [PgFact]
     public async Task Relinquishing_a_battery_takes_its_holder_out_of_the_simulation_so_its_sentry_may_take_it_again()
     {

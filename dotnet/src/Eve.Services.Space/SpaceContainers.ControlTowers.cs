@@ -1166,9 +1166,9 @@ public sealed partial class SpaceContainers
                 record.OwnerId, record.CorporationId, record.AllianceId, 0, NeverExpires), cancellationToken);
             await PlaceUnanchorDropAsync(towerId, StructureUnanchorDrop.HullMarker(towerId), cancellationToken);
         }
-        var released = await RemoveTowerRecordAsync(connection, transaction, events, record, cancellationToken);
+        var (released, removedField) = await RemoveTowerRecordAsync(connection, transaction, events, record, cancellationToken);
         // the simulation hears of the removal only after the commit, so a removal the database refuses leaves the tower in the scene
-        Func<Task> tellSimulation = () => TellSimulationOfRemovalAsync(towerId, released);
+        Func<Task> tellSimulation = () => TellSimulationOfRemovalAsync(towerId, released, removedField);
         if (afterCommit is null)
             await tellSimulation();
         else
@@ -1179,29 +1179,37 @@ public sealed partial class SpaceContainers
     /// Removes an unanchoring tower's record in one transaction with its modules' battery grants: the grants are released, the modules are taken offline and
     /// the tower row is deleted. Without a caller transaction this opens and commits its own.
     /// </summary>
-    private async Task<IReadOnlyList<(long BatteryId, long CharacterId)>> RemoveTowerRecordAsync(NpgsqlConnection? connection,
+    private async Task<(IReadOnlyList<(long BatteryId, long CharacterId)> Released, SpaceItem? RemovedField)> RemoveTowerRecordAsync(NpgsqlConnection? connection,
         NpgsqlTransaction? transaction, Eve.Events.EventBus? events, DeployedRecord record, CancellationToken cancellationToken)
     {
         if (connection is null || transaction is null)
         {
             await using var ownConnection = await _source!.OpenConnectionAsync(cancellationToken);
             await using var ownTransaction = await ownConnection.BeginTransactionAsync(cancellationToken);
-            var ownReleased = await RemoveTowerRecordAsync(ownConnection, ownTransaction, events, record, cancellationToken);
+            var ownRemoval = await RemoveTowerRecordAsync(ownConnection, ownTransaction, events, record, cancellationToken);
             await ownTransaction.CommitAsync(cancellationToken);
-            return ownReleased;
+            return ownRemoval;
         }
         var released = await _deployed!.ReleaseBatteryControlsOfTowerAsync(connection, transaction, record.DeployableId, cancellationToken);
         await OfflineStarbaseModulesAsync(connection, transaction, record.DeployableId, cancellationToken);
+        // the tower's force field rows leave in this transaction with the tower row, so no field outlives its tower
+        var removedField = await RemoveForceFieldInTransactionAsync(connection, transaction, record.DeployableId, cancellationToken);
         if (await _deployed.RemoveAsync(connection, transaction, record.DeployableId, cancellationToken) && record.CorporationId > 0 && events is not null)
             await events.PublishInTransactionAsync(connection, transaction, ControlTowerEligibilityChangedTopic,
                 new ControlTowerEligibilityChanged(record.CorporationId), $"tower:{record.DeployableId}", cancellationToken);
-        return released;
+        return (released, removedField);
     }
 
     /// <summary>The simulation's side of a removed tower: the tower leaves the scene, and its modules, now offline, are told offline with no holder.</summary>
-    private async Task TellSimulationOfRemovalAsync(long towerId, IReadOnlyList<(long BatteryId, long CharacterId)> released)
+    private async Task TellSimulationOfRemovalAsync(long towerId, IReadOnlyList<(long BatteryId, long CharacterId)> released, SpaceItem? removedField)
     {
         _sim.RemoveDeployed(towerId);
+        if (removedField is not null)
+        {
+            var answer = await _sim.RemoveForceFieldAsync(new SimRemoveForceField(towerId, removedField.SolarSystemId), CancellationToken.None).ConfigureAwait(false);
+            if (answer.Reason.Length > 0 && answer.Reason != ForceFieldNotInSpace)
+                _log?.Invoke($"control tower {towerId} unanchored: the simulation did not remove its force field: {answer.Reason}");
+        }
         await OfflineBatteriesAsync(towerId).ConfigureAwait(false);
         if (released.Count > 0)
             _log?.Invoke($"control tower {towerId} unanchored: released {released.Count} battery grant(s)");

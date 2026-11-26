@@ -2255,6 +2255,53 @@ public class ControlTowerHostTests
         Assert.Equal(0L, last.TowerId);
     }
 
+    /// <summary>A battery order that waited for the battery gate reads its holder once it has the gate: a grant released while the order waited is not
+    /// placed in the scene with its old holder.</summary>
+    [PgFact]
+    public async Task A_battery_order_that_waited_for_the_gate_is_not_placed_with_a_holder_relinquished_while_it_waited()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var holder = (ulong)fixture.Session.SessionId;
+        static async Task Refused(Task task)
+        {
+            try
+            {
+                await task;
+            }
+            catch (MachoWrappedException)
+            {
+            }
+        }
+
+        Task? secondOrder = null;
+        Task? relinquish = null;
+        int? released = null;
+        rig.Sim.PlaceBatteryHook = async request =>
+        {
+            if (request.HolderSession != holder || secondOrder is not null)
+                return;
+            // a second order from the same holder starts while this one holds the battery gate; unfixed, it reads its holder before it waits for the gate
+            secondOrder = Refused(rig.Space.BatteryOrderAsync(fixture.Session, fixture.Battery, Eve.Services.TargetingOrder.Lock, fixture.Target, CancellationToken.None));
+            await Task.Delay(300);
+            relinquish = rig.Containers.ReleaseBatteryControlAsync(fixture.Session.CharacterId!.Value, CancellationToken.None);
+            // the grant is gone before this placement returns: the relinquish waits for the gate this order holds
+            for (var waited = 0; await HeldByAsync(rig, fixture.Battery) is not null; waited++)
+                Assert.True(waited < 1000, "the relinquish never released the grant");
+            released = rig.Sim.Heard.Count;
+        };
+
+        await Refused(fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO", new PyLong(fixture.Battery), new PyLong(fixture.Target)));
+        rig.Sim.PlaceBatteryHook = null;
+        Assert.NotNull(secondOrder);
+        Assert.NotNull(relinquish);
+        await relinquish.WaitAsync(TimeSpan.FromSeconds(10));
+        await secondOrder.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.NotNull(released);
+        Assert.DoesNotContain(rig.Sim.Heard.Skip(released.Value).OfType<SimPlaceBattery>(), placed => placed.HolderSession == holder);
+    }
+
     [PgFact]
     public async Task Relinquishing_a_battery_takes_its_holder_out_of_the_simulation_so_its_sentry_may_take_it_again()
     {

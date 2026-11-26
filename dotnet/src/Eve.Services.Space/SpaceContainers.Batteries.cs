@@ -78,19 +78,21 @@ public sealed partial class SpaceContainers
             return TargetingResult.Refusal("BATTERY_NUMBERS_MISSING");
         }
 
-        await using var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        var holder = await _deployed.BatteryControllerAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
-        if (holder != characterId || !BatteryOperatorInPlace(session, battery))
-        {
-            return TargetingResult.Refusal("NO_CONTROL_GRANT");
-        }
-        var state = await _deployed.TowerStateAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
-        var online = state is TowerOnline or TowerOnlining;
-
         var gate = _batteryGates.GetOrAdd(batteryId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // the holder and the online state are read inside the battery gate: a relinquish or an assume that ran while this order waited for the gate
+            // must not be placed with the holder it has just taken away
+            await using var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            var holder = await _deployed.BatteryControllerAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
+            if (holder != characterId || !BatteryOperatorInPlace(session, battery))
+            {
+                return TargetingResult.Refusal("NO_CONTROL_GRANT");
+            }
+            var state = await _deployed.TowerStateAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
+            var online = state is TowerOnline or TowerOnlining;
+
             var placed = await _sim.PlaceBatteryAsync(
                 new SimPlaceBattery(batteryId, battery.SolarSystemId, battery.TypeId, battery.GroupId, battery.Name, (ulong)session.SessionId,
                     battery.Position, battery.Radius, numbers.ScanResolution, numbers.MaxTargetRange, numbers.MaxLockedTargets, online),
@@ -212,24 +214,26 @@ public sealed partial class SpaceContainers
             return TargetingResult.Refusal("BATTERY_NUMBERS_MISSING");
         }
 
-        await using var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
-        var holder = await _deployed.BatteryControllerAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
-        if (holder != characterId)
-        {
-            return TargetingResult.Refusal("NO_CONTROL_GRANT");
-        }
-        var offensive = await _statics.OffensiveEffectNameAsync(battery.TypeId, cancellationToken).ConfigureAwait(false);
-        if (offensive is null || !string.Equals(offensive, effectName, StringComparison.OrdinalIgnoreCase))
-        {
-            return TargetingResult.Refusal("EFFECT_INVALID");
-        }
-        var state = await _deployed.TowerStateAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
-        var online = state is TowerOnline or TowerOnlining;
-
         var gate = _batteryGates.GetOrAdd(batteryId, _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
+            // the holder and the online state are read inside the battery gate, as the targeting order reads them, so a grant that changed while this
+            // fire waited for the gate is seen before the battery is placed
+            await using var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            var holder = await _deployed.BatteryControllerAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
+            if (holder != characterId)
+            {
+                return TargetingResult.Refusal("NO_CONTROL_GRANT");
+            }
+            var offensive = await _statics.OffensiveEffectNameAsync(battery.TypeId, cancellationToken).ConfigureAwait(false);
+            if (offensive is null || !string.Equals(offensive, effectName, StringComparison.OrdinalIgnoreCase))
+            {
+                return TargetingResult.Refusal("EFFECT_INVALID");
+            }
+            var state = await _deployed.TowerStateAsync(connection, null, batteryId, cancellationToken).ConfigureAwait(false);
+            var online = state is TowerOnline or TowerOnlining;
+
             var placed = await _sim.PlaceBatteryAsync(
                 new SimPlaceBattery(batteryId, battery.SolarSystemId, battery.TypeId, battery.GroupId, battery.Name, (ulong)session.SessionId,
                     battery.Position, battery.Radius, numbers.ScanResolution, numbers.MaxTargetRange, numbers.MaxLockedTargets, online),

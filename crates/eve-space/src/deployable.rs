@@ -157,6 +157,9 @@ pub struct Deployable {
     pub slim_fields: BTreeMap<String, SlimValue>,
 }
 
+/// The largest radius a force field may have, in metres: a larger one's square overflows the test of what lies inside it.
+pub(crate) const FORCE_FIELD_MAX_RADIUS: f64 = 1.0e9;
+
 fn ticks(milliseconds: f64) -> i64 {
     (milliseconds * (TICKS_PER_SECOND as f64) / 1000.0).round() as i64
 }
@@ -1039,6 +1042,9 @@ impl Scene {
         }
         if !(placement.radius.is_finite() && placement.radius > 0.0) {
             return Err("FORCE_FIELD_RADIUS_INVALID");
+        }
+        if placement.radius > FORCE_FIELD_MAX_RADIUS {
+            return Err("FORCE_FIELD_RADIUS_TOO_LARGE");
         }
         let tower_id = placement.tower_id;
         let holds_it =

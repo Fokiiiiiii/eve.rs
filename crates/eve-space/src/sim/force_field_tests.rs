@@ -286,3 +286,23 @@ fn a_field_or_tower_without_a_positive_id_is_refused_and_takes_no_place() {
     assert!(fields_of(&sim, TOWER).is_empty());
     assert!(fields_of(&sim, 0).is_empty());
 }
+
+/// A field's radius is at most one billion metres: a larger one is refused and takes no place, and the largest one is placed.
+#[test]
+fn a_field_with_a_radius_above_a_billion_metres_is_refused() {
+    let mut sim = new_sim();
+    let answer =
+        sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1.0e9 + 1.0))), NOON).unwrap();
+    assert_eq!(
+        answer,
+        vec![Message::ForceFieldPlaced {
+            field_id: FIELD,
+            reason: "FORCE_FIELD_RADIUS_TOO_LARGE".to_string()
+        }]
+    );
+    assert!(fields_of(&sim, TOWER).is_empty());
+    let answer =
+        sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1.0e9))), NOON).unwrap();
+    assert_eq!(answer, vec![Message::ForceFieldPlaced { field_id: FIELD, reason: String::new() }]);
+    assert_eq!(fields_of(&sim, TOWER), [(FIELD, 1.0e9)]);
+}

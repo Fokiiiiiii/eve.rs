@@ -80,6 +80,15 @@ fn force_field_frames_refuse_an_id_that_is_not_positive() {
     }
 }
 
+/// The decoder refuses a radius above one billion metres, whose square overflows; the largest radius is decoded.
+#[test]
+fn force_field_frames_refuse_a_radius_above_a_billion_metres() {
+    let too_large = ForceFieldPlacement { radius: 1.0e9 + 1.0, ..placement() };
+    assert!(Message::decode(&Message::PlaceForceField(Box::new(too_large)).encode()[4..]).is_err());
+    let largest = ForceFieldPlacement { radius: 1.0e9, ..placement() };
+    assert!(Message::decode(&Message::PlaceForceField(Box::new(largest)).encode()[4..]).is_ok());
+}
+
 #[test]
 fn a_truncated_force_field_frame_is_refused() {
     let frame = Message::RemoveForceField { tower_id: 1_050_000_099, solar_system_id: 30_000_001 }.encode();

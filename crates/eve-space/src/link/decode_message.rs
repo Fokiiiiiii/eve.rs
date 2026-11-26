@@ -2782,6 +2782,9 @@ impl Message {
                 if !radius.is_finite() || position.iter().any(|value| !value.is_finite()) {
                     return Err(DecodeError::BadValue("force field"));
                 }
+                if radius > crate::deployable::FORCE_FIELD_MAX_RADIUS {
+                    return Err(DecodeError::BadValue("force field radius"));
+                }
                 Message::PlaceForceField(Box::new(ForceFieldPlacement {
                     field_id,
                     tower_id,

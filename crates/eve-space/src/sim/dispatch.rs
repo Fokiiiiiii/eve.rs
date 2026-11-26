@@ -5,8 +5,10 @@ use crate::scene::{DOCKING_DECISION_COMMAND, MAX_CONDUIT_PASSENGERS};
 /// The command a code and its arguments say, if they say one.
 pub(super) fn command_of(code: u8, args: &[f64]) -> Option<Command> {
     match (code, args) {
-        (1, [fraction]) => Some(Command::SetSpeedFraction(*fraction)),
-        (2, [x, y, z]) => Some(Command::GotoDirection(Vec3::new(*x, *y, *z))),
+        (1, [fraction]) if fraction.is_finite() => Some(Command::SetSpeedFraction(*fraction)),
+        (2, [x, y, z]) if x.is_finite() && y.is_finite() && z.is_finite() => {
+            Some(Command::GotoDirection(Vec3::new(*x, *y, *z)))
+        }
         (3, []) => Some(Command::Stop),
         (4, [station]) if is_id(*station) => Some(Command::Dock { station_id: *station as i64 }),
         (DOCKING_DECISION_COMMAND, [station, allowed])

@@ -29,6 +29,9 @@ public sealed class IncursionAnomalyService : IService
     /// <summary>The static sites (landmarks) of a system, one JSON row each (siteID, solarSystemID, position, dungeonNameID, factionID). Absent: no static sites.</summary>
     private readonly Func<long, CancellationToken, ValueTask<IReadOnlyList<JsonObject>>>? _readStaticSites;
 
+    /// <summary>The structures of a system, one JSON row each (structureID, typeID, groupID, categoryID, position, targetID). Absent: no structures.</summary>
+    private readonly Func<long, CancellationToken, ValueTask<IReadOnlyList<JsonObject>>>? _readStructures;
+
     public IncursionAnomalyService(
         string serviceName,
         Func<CancellationToken, ValueTask<IReadOnlyList<JsonObject>>> readIncursions,
@@ -39,12 +42,14 @@ public sealed class IncursionAnomalyService : IService
         Func<ClientSession, long, CancellationToken, ValueTask>? recallProbe = null,
         Func<string, ServiceCall, ValueTask<PyValue>>? probeScans = null,
         Func<long, CancellationToken, ValueTask<PyDict>>? readSignatures = null,
-        Func<long, CancellationToken, ValueTask<IReadOnlyList<JsonObject>>>? readStaticSites = null)
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<JsonObject>>>? readStaticSites = null,
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<JsonObject>>>? readStructures = null)
     {
         _recallProbe = recallProbe;
         _probeScans = probeScans;
         _readSignatures = readSignatures;
         _readStaticSites = readStaticSites;
+        _readStructures = readStructures;
         if (serviceName is not (MapName or TaleManagerName or ScanManagerName))
             throw new ArgumentOutOfRangeException(nameof(serviceName), serviceName, "Unsupported incursion/anomaly service.");
         ArgumentNullException.ThrowIfNull(readIncursions);
@@ -199,11 +204,32 @@ public sealed class IncursionAnomalyService : IService
                 ("factionID", factionId > 0 ? Py.Number(factionId) : PyNone.Instance))));
         }
 
+        var structureRows = new List<KeyValuePair<PyValue, PyValue>>();
+        var structureSites = systemId > 0 && _readStructures is { } readStructures
+            ? await readStructures(systemId, cancellationToken)
+            : Array.Empty<JsonObject>();
+        foreach (var structure in structureSites)
+        {
+            var structureId = Positive(structure["structureID"]);
+            var typeId = Positive(structure["typeID"]);
+            // A structure without a type or a target id is not a signal tracker site (EVE.js keeps the same rule).
+            var targetId = StringValue(structure["targetID"]).Trim().ToUpperInvariant();
+            if (structureId <= 0 || typeId <= 0 || targetId.Length == 0)
+                continue;
+
+            structureRows.Add(new(Py.Number(structureId), Py.KeyVal(
+                ("typeID", Py.Number(typeId)),
+                ("groupID", Py.Number(Positive(structure["groupID"]))),
+                ("categoryID", Py.Number(Positive(structure["categoryID"], 65))),
+                ("position", MarshalRealVector(structure["position"])),
+                ("targetID", new PyStr(targetId)))));
+        }
+
         return new PyList([
             new PyDict(anomalies),
             signatures,
             new PyDict(staticSites),
-            new PyDict([]),
+            new PyDict(structureRows),
         ]);
     }
 

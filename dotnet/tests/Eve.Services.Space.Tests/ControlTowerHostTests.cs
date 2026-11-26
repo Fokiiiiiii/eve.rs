@@ -2393,6 +2393,20 @@ public class ControlTowerHostTests
         Assert.Equal(outOfRange.Error.Payload, notANumber.Error.Payload);
     }
 
+    /// <summary>A pilot who sets the starbase password more than five times in a minute is refused with a user error until its block passes.</summary>
+    [PgFact]
+    public async Task A_pilot_who_sets_the_starbase_password_too_often_is_refused_with_a_user_error()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        for (var attempt = 0; attempt < 5; attempt++)
+            Assert.IsType<PyNone>(await rig.Space.SetShipPasswordAsync(fixture.Session, new PyStr("field-secret"), CancellationToken.None));
+
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.SetShipPasswordAsync(fixture.Session, new PyStr("field-secret"), CancellationToken.None));
+        Assert.True(refused.Error.IsUserError);
+        await Assert.ThrowsAsync<MachoWrappedException>(() => rig.Space.SetShipPasswordAsync(fixture.Session, new PyStr("field-secret"), CancellationToken.None));
+    }
+
     /// <summary>A usage count too large for an int is refused as invalid settings, the same refusal as a count out of the 0 to 3 range.</summary>
     [PgFact]
     public async Task A_usage_count_too_large_for_an_int_is_refused_as_invalid_settings_like_one_out_of_range()

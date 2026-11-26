@@ -181,6 +181,9 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
     /// <summary>Caches the piloted ship's force-field credential for this session and applies its matching tower harmonic.</summary>
     public async Task<PyValue> SetShipPasswordAsync(ClientSession session, PyValue? value, CancellationToken cancellationToken)
     {
+        // every attempt counts, valid or not, before the password is looked at
+        if (session.CharacterId is { } limitedCharacter && limitedCharacter > 0 && !TryTakePasswordAttempt(limitedCharacter, DateTimeOffset.UtcNow))
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Too many starbase password attempts. Try again in a few minutes.")));
         if (value is not PyStr { Value: var password } || password.Length is < 1 or > 50)
             throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("The starbase password cannot exceed 50 characters.")));
 
@@ -205,6 +208,48 @@ public sealed partial class SpaceSessions : IDisposable, ISpaceTargeting, ISpace
         foreach (var (towerId, matched) in matches)
             _sim.SetShipForceFieldPassword(new SimShipForceFieldPassword(sessionId, towerId, systemId, matched));
         return PyNone.Instance;
+    }
+
+    /// <summary>How many starbase password attempts a pilot may make in a minute, and the first and longest block once it has made too many.</summary>
+    private const int PasswordAttemptsPerMinute = 5;
+    private static readonly TimeSpan PasswordAttemptWindow = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan PasswordBlockFirst = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan PasswordBlockLongest = TimeSpan.FromHours(1);
+
+    private sealed class PasswordAttempts
+    {
+        public System.Collections.Generic.List<DateTimeOffset> Recent { get; } = [];
+        public int Blocks { get; set; }
+        public DateTimeOffset BlockedUntil { get; set; }
+    }
+
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, PasswordAttempts> _passwordAttempts = new();
+
+    /// <summary>
+    /// Takes one attempt at the starbase password for a character, keyed by character id. Five attempts in a minute are allowed; after them the character is
+    /// blocked for a minute, and each further trip doubles the block up to an hour. Returns false while the character is blocked.
+    /// </summary>
+    private bool TryTakePasswordAttempt(long characterId, DateTimeOffset now)
+    {
+        var attempts = _passwordAttempts.GetOrAdd(characterId, _ => new PasswordAttempts());
+        lock (attempts)
+        {
+            if (attempts.BlockedUntil != default && now - attempts.BlockedUntil >= PasswordBlockLongest)
+                attempts.Blocks = 0; // a character quiet for an hour starts its blocks again from the first
+            if (now < attempts.BlockedUntil)
+                return false;
+            attempts.Recent.RemoveAll(at => now - at >= PasswordAttemptWindow);
+            if (attempts.Recent.Count < PasswordAttemptsPerMinute)
+            {
+                attempts.Recent.Add(now);
+                return true;
+            }
+            var block = TimeSpan.FromTicks(Math.Min(PasswordBlockLongest.Ticks, PasswordBlockFirst.Ticks << Math.Min(attempts.Blocks, 16)));
+            attempts.Blocks++;
+            attempts.BlockedUntil = now + block;
+            attempts.Recent.Clear();
+            return false;
+        }
     }
 
     /// <summary>Blockers owned by adjacent systems (crime timers, targeting, fleet, drone and movement state).</summary>

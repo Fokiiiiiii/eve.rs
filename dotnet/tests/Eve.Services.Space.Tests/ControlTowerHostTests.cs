@@ -2624,6 +2624,24 @@ public class ControlTowerHostTests
     }
 
     [PgFact]
+    public async Task Completing_an_unanchor_deletes_the_tower_force_field_rows_with_the_tower_row()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (session, tower) = await OnlineTowerAsync(rig);
+        Assert.Single(await ForceFieldItemsAsync(rig));
+
+        // the tower is offline while its field is still in space: the unanchor must take the field with the tower row
+        await rig.Deployed.SetTowerStateAsync(tower, "offline");
+        await rig.Containers.UnanchorControlTowerAsync(session, tower);
+        Assert.Equal("unanchoring", await rig.Deployed.TowerStateAsync(tower));
+
+        await rig.Containers.CompleteControlTowerUnanchorAsync(tower, CancellationToken.None);
+
+        Assert.Null(await rig.Deployed.GetAsync(tower));
+        Assert.Empty(await ForceFieldItemsAsync(rig));
+    }
+
+    [PgFact]
     public async Task An_unauthorized_pilot_is_refused_within_two_seconds_while_another_transaction_holds_the_tower_row()
     {
         await using var rig = await Rig.CreateAsync();

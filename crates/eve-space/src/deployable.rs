@@ -68,7 +68,7 @@ pub enum Role {
     /// A player control tower the host keeps a record of (protocol 73): a ball in space, anchored (`active`) when its anchoring time is over. It has no warp or cyno
     /// effect: the fuel and the modules are not modelled yet.
     ControlTower { active: bool },
-    /// The force field of an online POS control tower (protocol 103): a ball of its radius around the tower, whose harmonic is the tower. The host places
+    /// The force field of an online POS control tower (protocol 104): a ball of its radius around the tower, whose harmonic is the tower. The host places
     /// and takes it out with the tower's state; the boundary and admission rules are not applied by the field itself.
     ForceField { tower_id: i64 },
     /// A deadspace pocket of a dungeon the host keeps a record of (protocol 74): a region of the scene around its origin, in no client ball. It has no effect in the
@@ -1023,7 +1023,7 @@ impl Scene {
             .collect()
     }
 
-    /// The host puts an online POS control tower's force field in its system (protocol 103): a ball of `radius` metres around `position`, whose harmonic is
+    /// The host puts an online POS control tower's force field in its system (protocol 104): a ball of `radius` metres around `position`, whose harmonic is
     /// the tower. The same field again changes nothing; another id replaces the tower's field. Refused when the radius is not positive, or when the id is
     /// held by a deployable that is not this tower's field.
     pub(crate) fn place_force_field(
@@ -1065,7 +1065,7 @@ impl Scene {
             spec: Spec {
                 charge_type_id: placement.type_id,
                 group_id: placement.group_id,
-                name: placement.name,
+                name: placement.display_name,
                 radius: placement.radius,
             },
             role: Role::ForceField { tower_id },
@@ -1086,7 +1086,7 @@ impl Scene {
         Ok(out)
     }
 
-    /// The host takes a tower's force field out of its system (protocol 103): the ball is removed and those who see it are told it is gone. Refused when
+    /// The host takes a tower's force field out of its system (protocol 104): the ball is removed and those who see it are told it is gone. Refused when
     /// the tower has no field in the scene.
     pub(crate) fn remove_force_field(&mut self, tower_id: i64, at: i64) -> Result<Vec<Out>, &'static str> {
         let Some(field_id) = self

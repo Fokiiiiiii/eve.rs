@@ -5,8 +5,9 @@
 The pilot (the owner's test ship, the Cockroach, with the QA Smartbomb) undocks in Manifest (30100032) and flies the stargates to the nearest occupied
 system that has an open scout complex (the complexes are spawned by the server's tick). It enlists in the occupier's enemy (facWarMgr.JoinFactionAsCharacter),
 warps to the complex's acceleration gate and takes it (keeper.ActivateAccelerationGate), then moves to 18 km or more from the gate (the smartbomb's
-surface rule, DEVIATIONS "Smartbomb near a station or stargate") and inside the complex's 30 km presence. The smartbomb clears the defenders; the capture
-timer then runs while the pilot stays in the complex. When the scout is captured the system's attacker points rise by its 50 victory points, the pilot is
+surface rule, DEVIATIONS "Smartbomb near a station or stargate") and inside the complex's 30 km presence. The smartbomb clears the defenders and the
+capture timer runs while the pilot stays in the complex. After entering the warzone system it asks `GetControlBunkerIDInSystem` and requires the live hub
+ball before continuing. When the scout is captured the system's attacker points rise by its 50 victory points, the pilot is
 told OnFacWarDungeonCompleted and OnVictoryPointStateUpdated, fwVictoryPointMgr shows the points, and the pilot's statistics (facWarMgr.GetStats_Character) hold the 50 points. The server's state is read through the run's database
 (tests/fw_complex_live.py). Run it through tools/mitm to keep the capture.
 """
@@ -83,6 +84,16 @@ def activate_gate(who, gate: int, limit: float = 90.0) -> None:
                 raise AssertionError(f"the gate {gate} was refused for {int(limit)} s: {repr(describe(error.payload))[:600]}") from error
             watch({"events": who}, 5.0)
 
+def control_bunker_id(who, limit: float = 30.0) -> int:
+    """The Agency's Infrastructure Hub RPC resolves to a live group-925 scene item after entering a warzone system."""
+    started = time.monotonic()
+    while time.monotonic() - started < limit:
+        answer = m.plain(who.call("facWarMgr", "GetControlBunkerIDInSystem"))
+        if isinstance(answer, int) and not isinstance(answer, bool) and answer > 0:
+            return answer
+        watch({"events": who}, 1.0)
+    raise AssertionError("GetControlBunkerIDInSystem did not expose the live system Infrastructure Hub")
+
 def test_a_pilot_takes_a_scout_complex_in_space_and_captures_it_for_its_faction():
     run = uuid.uuid4().hex[:10]
     occupied = fw.occupied_systems()
@@ -104,8 +115,12 @@ def test_a_pilot_takes_a_scout_complex_in_space_and_captures_it_for_its_faction(
         assert error is None, f"enlisting in the enemy faction {enemy}: {base.brief(error)}"
         service = who.call("ship", "MachoBindObject", (STATION, 15), None)
         who.call_bound(service[0], "Undock", ship_id, False)
-        wait_quietly(who, 2.0)
-        ballpark, dogma = fly(who, ship_id, SYSTEM, hops)
+        # The undock starts the ten-second session-change timer; the server refuses gate jumps until it expires.
+        wait_quietly(who, 10.5)
+        ballpark, dogma = fly(who, ship_id, SYSTEM, hops, post_jump_quiet_s=6.0,
+                              retry_temporary_gate_refusals=True)
+        bunker_id = control_bunker_id(who)
+        print("CONTROL_BUNKER", bunker_id, "SYSTEM", target)
         # the site starts with the pilot in the system (the server's tick): its gate is the site's
         instance = fw.wait_for_site(complex_id)
         gate = fw.gate_of(instance)

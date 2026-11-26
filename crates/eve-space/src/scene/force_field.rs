@@ -1,4 +1,4 @@
-//! POS force field admission, boundary and presentation (protocol 103, slices 2 and 3).
+//! POS force field admission, boundary and presentation (protocol 104, slices 2 and 3).
 //!
 //! A field admits the ships of its tower's corporation and alliance (where the tower allows each) and the ships whose pilot has set the tower's password
 //! (EVE.js `canShipEnterForceField`, `starbaseAccessRuntime.js`). Any other ship is stopped at the field's boundary (EVE.js `enforceForceFieldMovement`,
@@ -140,13 +140,13 @@ struct Denial {
 }
 
 impl Scene {
-    /// Records who a tower's field admits by corporation and alliance (protocol 103, kind 184). It applies to the field of the tower now and to one placed
+    /// Records who a tower's field admits by corporation and alliance (protocol 104, kind 184). It applies to the field of the tower now and to one placed
     /// later.
     pub(crate) fn set_force_field_access(&mut self, tower_id: i64, access: Access) {
         self.force_field_access.insert(tower_id, access);
     }
 
-    /// Records whether a pilot's ship password matches a tower's (protocol 103, kind 185): the Host checks the password, and a matching ship is admitted.
+    /// Records whether a pilot's ship password matches a tower's (protocol 104, kind 185): the Host checks the password, and a matching ship is admitted.
     pub(crate) fn set_force_field_password(&mut self, session: SessionId, tower_id: i64, matched: bool) {
         if matched {
             self.force_field_passwords.insert((session, tower_id));

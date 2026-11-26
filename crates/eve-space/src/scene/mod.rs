@@ -327,12 +327,14 @@ pub enum Out {
     WarpExited { session: SessionId },
     /// The answer to a battery placement (protocol 102): the reason, empty when the battery is in the scene.
     BatteryPlaced { battery_id: i64, reason: String },
-    /// The answer to a force field placement (protocol 103): the reason, empty when the field is in the scene.
+    /// The answer to a force field placement (protocol 104): the reason, empty when the field is in the scene.
     ForceFieldPlaced { field_id: i64, reason: String },
-    /// The answer to a force field removal (protocol 103): the reason, empty when the field was taken out.
+    /// The answer to a force field removal (protocol 104): the reason, empty when the field was taken out.
     ForceFieldRemoved { tower_id: i64, reason: String },
     /// The answer to a battery's target order (protocol 102): the reason (empty when accepted), whether a lock is pending, what the battery holds.
     BatteryTargets { request_id: u64, battery_id: i64, reason: String, pending: bool, targets: Vec<i64> },
+    /// The answer to a battery's fire order (protocol 104): the reason (empty when accepted), whether it fires, and at what target (0 for none).
+    BatteryFired { request_id: u64, battery_id: i64, reason: String, active: bool, target: i64 },
     /// The answer to a question about the ship's condition.
     Condition { session: SessionId, command: u8, condition: Condition },
     /// A cynosural field was lit by the ship of `session`: the host keeps its record (`Message::Deployed`).
@@ -535,9 +537,10 @@ impl Out {
             | Out::SimDamageableEntityRemoved { .. }
             | Out::AbyssalFieldMembership { .. }
             | Out::BatteryPlaced { .. }
+            | Out::BatteryTargets { .. }
+            | Out::BatteryFired { .. }
             | Out::ForceFieldPlaced { .. }
-            | Out::ForceFieldRemoved { .. }
-            | Out::BatteryTargets { .. } => 0,
+            | Out::ForceFieldRemoved { .. } => 0,
         }
     }
 }
@@ -914,9 +917,9 @@ pub struct Scene {
     pub(crate) unpiloted: BTreeMap<i64, SessionId>,
     /// The session viewing each controlled structure, without a second physical ship.
     pub(crate) controlled_structures: BTreeMap<SessionId, ControlledStructureObserver>,
-    /// The access of each tower's force field (protocol 103, kind 184): who it admits by corporation and alliance.
+    /// The access of each tower's force field (protocol 104, kind 184): who it admits by corporation and alliance.
     pub(crate) force_field_access: BTreeMap<i64, force_field::Access>,
-    /// The (pilot, tower) pairs whose ship password matches the tower's (protocol 103, kind 185): such a ship is admitted by the field.
+    /// The (pilot, tower) pairs whose ship password matches the tower's (protocol 104, kind 185): such a ship is admitted by the field.
     pub(crate) force_field_passwords: BTreeSet<(SessionId, i64)>,
     /// The harmonic of each pilot's ship inside a field it is admitted to; a pilot with none is not listed.
     pub(crate) force_field_harmonics: BTreeMap<SessionId, i64>,
@@ -930,6 +933,10 @@ pub struct Scene {
     pub(crate) structure_modules: BTreeMap<i64, ControlledStructureModules>,
     /// The POS batteries of the scene (protocol 102): each has its own lock state, independent of any pilot ship.
     pub(crate) batteries: BTreeMap<i64, crate::targeting::Battery>,
+    /// The sentry policy of each tower the scene knows (protocol 106), by tower id.
+    pub(crate) sentry_policies: BTreeMap<i64, crate::targeting::SentryPolicy>,
+    /// What the Host knows of each pilot toward each tower (protocol 106), by (tower id, ship id).
+    pub(crate) sentry_pilots: BTreeMap<(i64, i64), crate::targeting::SentryPilot>,
     /// Host-authoritative mechanics for a private Abyssal room scene.
     pub(crate) abyssal: Option<AbyssalSceneSpec>,
     /// NPCs materialized by stable content/run/ship identity, retained as tombstones after destruction.
@@ -1009,6 +1016,8 @@ impl Scene {
             structure_health: BTreeMap::new(),
             structure_modules: BTreeMap::new(),
             batteries: BTreeMap::new(),
+            sentry_policies: BTreeMap::new(),
+            sentry_pilots: BTreeMap::new(),
             abyssal: None,
             abyssal_npc_spawn_receipts: HashMap::new(),
             abyssal_participant_deaths: HashMap::new(),

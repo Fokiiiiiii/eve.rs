@@ -281,6 +281,18 @@ internal sealed class FakeSim : ISimulation
         return Task.FromResult(answer with { RequestId = request.RequestId, BatteryId = request.BatteryId });
     }
 
+    /// <summary>Answers to fire orders, dequeued in order; with none queued an order is accepted (the simulation's own rules are tested in eve-space).</summary>
+    public Queue<SimBatteryFired> BatteryFireAnswers { get; } = new();
+
+    public Task<SimBatteryFired> BatteryFireAsync(SimBatteryFire request, CancellationToken cancellationToken = default)
+    {
+        Heard.Enqueue(request);
+        var answer = BatteryFireAnswers.Count > 0
+            ? BatteryFireAnswers.Dequeue()
+            : new SimBatteryFired(request.RequestId, request.BatteryId, "", request.On, request.On ? request.Target : 0);
+        return Task.FromResult(answer with { RequestId = request.RequestId, BatteryId = request.BatteryId });
+    }
+
     public void PlaceAsteroid(SimPlaceAsteroid asteroid) => Heard.Enqueue(asteroid);
 
     public void DroneWorkResult(SimDroneWorkResult result) => Heard.Enqueue(result);
@@ -466,6 +478,9 @@ internal sealed class FakeSim : ISimulation
     public void SetForceFieldAccess(SimSetForceFieldAccess access) => Heard.Enqueue(access);
 
     public void SetShipForceFieldPassword(SimShipForceFieldPassword password) => Heard.Enqueue(password);
+    public void SetSentryPolicy(SimSentryPolicy policy) => Heard.Enqueue(policy);
+    public void SetSentryBattery(SimSentryBattery battery) => Heard.Enqueue(battery);
+    public void SetSentryPilot(SimSentryPilot pilot) => Heard.Enqueue(pilot);
     public void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket) => Heard.Enqueue(pocket);
     public Task<bool> PlaceDeadspacePocketAsync(SimPlaceDeadspacePocket pocket, CancellationToken cancellationToken = default)
     {

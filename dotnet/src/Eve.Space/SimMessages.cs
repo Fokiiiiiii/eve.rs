@@ -1267,21 +1267,34 @@ public sealed record SimBatteryPlaced(long BatteryId, string Reason) : SimMessag
 public sealed record SimBatteryTarget(ulong RequestId, long BatteryId, int SolarSystemId, byte Order, long Target) : SimMessage;
 /// <summary>The answer to <see cref="SimBatteryTarget"/>: an empty reason means the order was accepted; <paramref name="Pending"/> says a lock is still going.</summary>
 public sealed record SimBatteryTargets(ulong RequestId, long BatteryId, string Reason, bool Pending, IReadOnlyList<long> Targets) : SimMessage;
-/// <summary>The host puts an online POS control tower's force field in its system's scene (protocol 103): a ball of <paramref name="Radius"/> metres around
+/// <summary>Starts (<paramref name="On"/>) or stops a POS battery's fire at a target it holds (protocol 104). Answered by <see cref="SimBatteryFired"/> under the request id.</summary>
+public sealed record SimBatteryFire(ulong RequestId, long BatteryId, int SolarSystemId, bool On, long Target) : SimMessage;
+/// <summary>The answer to <see cref="SimBatteryFire"/>: an empty reason means the order was accepted; <paramref name="Active"/> says the battery fires at <paramref name="Target"/> (0 for none).</summary>
+public sealed record SimBatteryFired(ulong RequestId, long BatteryId, string Reason, bool Active, long Target) : SimMessage;
+/// <summary>The host puts an online POS control tower's force field in its system's scene (protocol 104): a ball of <paramref name="Radius"/> metres around
 /// <paramref name="Position"/>, whose harmonic is the tower. Answered by <see cref="SimForceFieldPlaced"/>.</summary>
-public sealed record SimPlaceForceField(long FieldId, long TowerId, int SolarSystemId, int TypeId, int GroupId, string Name,
+public sealed record SimPlaceForceField(long FieldId, long TowerId, int SolarSystemId, int TypeId, int GroupId, string DisplayName,
     IReadOnlyList<double> Position, double Radius) : SimMessage;
 /// <summary>The answer to <see cref="SimPlaceForceField"/>: an empty reason means the field is in the scene.</summary>
 public sealed record SimForceFieldPlaced(long FieldId, string Reason) : SimMessage;
-/// <summary>The host takes a tower's force field out of its system's scene (protocol 103). Answered by <see cref="SimForceFieldRemoved"/>.</summary>
+/// <summary>The host takes a tower's force field out of its system's scene (protocol 104). Answered by <see cref="SimForceFieldRemoved"/>.</summary>
 public sealed record SimRemoveForceField(long TowerId, int SolarSystemId) : SimMessage;
 /// <summary>The answer to <see cref="SimRemoveForceField"/>: an empty reason means the field was taken out.</summary>
 public sealed record SimForceFieldRemoved(long TowerId, string Reason) : SimMessage;
-/// <summary>The host sets who a tower's force field admits by corporation and alliance (protocol 103). The field of the tower now or placed later takes it.
+/// <summary>The host sets who a tower's force field admits by corporation and alliance (protocol 104). The field of the tower now or placed later takes it.
 /// No answer.</summary>
 public sealed record SimSetForceFieldAccess(long TowerId, int SolarSystemId, int CorporationId, int AllianceId, bool AllowCorporation, bool AllowAlliance) : SimMessage;
-/// <summary>The host says whether a pilot's ship password matches a tower's (protocol 103): a matching ship is admitted by the tower's field. No answer.</summary>
+/// <summary>The host says whether a pilot's ship password matches a tower's (protocol 104): a matching ship is admitted by the tower's field. No answer.</summary>
 public sealed record SimShipForceFieldPassword(ulong SessionId, long TowerId, int SolarSystemId, bool Matched) : SimMessage;
+/// <summary>The host sets a POS tower's sentry policy in its system's scene (protocol 106): its stored thresholds (null when unset), the war flag, the
+/// high-security gate and the owner. <paramref name="Online"/> is false when the tower is offline or out of fuel. No answer.</summary>
+public sealed record SimSentryPolicy(long TowerId, int SolarSystemId, bool Online, double? Standing, double? SecurityStatus, bool War, bool HighSecurity,
+    long OwnerCorporationId, long OwnerAllianceId) : SimMessage;
+/// <summary>The host binds a battery to a tower's sentry policy; a tower id of 0 unbinds it (protocol 106). No answer.</summary>
+public sealed record SimSentryBattery(long BatteryId, int SolarSystemId, long TowerId) : SimMessage;
+/// <summary>What the host knows of a pilot's ship toward a tower's policy (protocol 106); a ship id of 0 forgets every pilot of the tower. No answer.</summary>
+public sealed record SimSentryPilot(long TowerId, int SolarSystemId, long ShipId, long CorporationId, long AllianceId, double? SecurityStatus,
+    double Standing, bool AtWar) : SimMessage;
 
 /// <summary>The simulation's harmonic for a pilot's ship changed: the tower of the admitted field it is inside, or -1 (simulation to host, protocol 105).</summary>
 public sealed record SimShipForceFieldHarmonic(ulong SessionId, long ShipId, long Harmonic) : SimMessage;

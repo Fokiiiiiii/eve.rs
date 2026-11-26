@@ -26,7 +26,7 @@
 
 - SW-04 のdeployment dynamic blocker行（旧L67）は Host / Rust scene / SimLink query とfocused regressionで修正確認した。詳細とGUI未確認範囲は [`space-world-gaps-implementation.md`](space-world-gaps-implementation.md)。
 - Ansiblexの移動RPC行（旧L59-L60、別記録に重複）は、登録済みHost travel、永続fuel/fee settlement、retry/concurrencyをPostgreSQL Host testで確認したため未解決一覧から除いた。anchoring/setup、初期scene配置、GUI walkは引き続き開いている。
-- Control BunkerはHull-depletion handlerとdowntime capture state transitionを実装したが、配置先のauthoritative sourceがなく本番scene spawnはfail-closed。重複する2記録はこの未解決理由を保持する。
+- Control BunkerはHull-depletion handlerとdowntime captureに加え、build 3396210 `mapStars` からSun warp-in anchorを導出してscene-entry spawn/re-spawnする。V24 warp-in計算とEveJS Sovereignty Hub placementからの実装推定で、FW固有の公開座標規則やgraphical-client配置一致は未確認。詳細は [`space-world-gaps-implementation.md`](space-world-gaps-implementation.md)。
 
 ## 外部監査所見
 
@@ -50,9 +50,9 @@
 
 - コア・ハブ — communityTrackMgrの進捗生成元なし — audit-fixes-core.md:L28
 - フィッティング・Dogma — Starbase AddTargetOBO/RemoveTargetOBO未実装 — audit-fixes-dogma.md:L41
-- 戦闘・ドローン — Control Bunkerの本番配置位置・通常spawn不足（capture handlerは部分実装） — audit-fixes-factionwarfare.md:L49
+- 戦闘・ドローン — Control BunkerのFW固有配置座標・Agency表示のgraphical-client検証は未確認（scene-entry spawnはSDE Sun warp-inから導出） — audit-fixes-factionwarfare.md:L49
 - ミッション・エージェント — SDE mission poolからofferを作る経路なし（件数外） — audit-fixes-agents.md:L21
-- 戦闘・ドローン — Control Bunker IDはlive group-925 ballの確認が必要。ball配置source未解決（重複記録） — service-audit/DEEPCHECK_facWarMgr.md:L64
+- 戦闘・ドローン — Control Bunkerのexact placement parityとgraphical Agency表示は未確認（RPCはlive group-925 ballがある時だけIDを返す） — service-audit/DEEPCHECK_facWarMgr.md:L64
 - 船・宇宙空間 — Filamentのcomponent操作が未実装 — service-audit/DEEPCHECK_beyonce.md:L70
 - 船・宇宙空間 — FitShips未登録 — service-audit/DEEPCHECK_ship.md:L22
 - 船・宇宙空間 — LaunchFromContainer未登録 — service-audit/DEEPCHECK_ship.md:L27
@@ -68,7 +68,7 @@
 - Host・wire・marshal — 惑星RPC・material monitor・惑星状態merge — service-response-audit/host-native-services.md:L206
 - 構造物・POS — POS force-field ball/harmonic/admissionは未実装。燃料切れ後のtower/module offline同期は修正済 — deepfix-structures-pos.md:L53; pos-force-field-and-modules.md
 - 構造物・POS — Starbase AddTargetOBO/RemoveTargetOBO未実装 — audit-fixes-dogma.md:L41
-- 構造物・POS — Control Bunkerの本番配置・通常scene spawnは未解決（capture handlerは部分実装） — audit-fixes-factionwarfare.md:L49; service-audit/DEEPCHECK_facWarMgr.md:L64
+- 構造物・POS — Control BunkerのFW固有配置座標・graphical Agency表示は未確認。SDE由来のSun warp-in anchorで通常spawn/capture後の再spawnを実装済み — audit-fixes-factionwarfare.md:L49; service-audit/DEEPCHECK_facWarMgr.md:L64
 
 この表は記録単位の掲載数で、重複不具合を除いた総数ではない。NCは「不具合なし」を意味しない。
 修正確認は記録されたテスト範囲に限り、GUI実クライアントの受入れや監査完了を示さない。

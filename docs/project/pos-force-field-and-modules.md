@@ -76,15 +76,114 @@ Not done in slice 1: `oracle/fixtures/simlink/messages.json` is not regenerated.
 
 Slices 2 and 3 status (2026-11-18, Host): `AddTargetOBO` and `RemoveTargetOBO` are on the dogma location (`DogmaIMService.Targeting.cs`), through `ISpaceTargeting.BatteryOrderAsync`, `SpaceContainers.Batteries.cs` (grant, online state, SDE numbers, placement, order) and the sim client's battery replies. Verified: `ControlTowerHostTests` battery tests 5 passed, 0 failed, 0 skipped on `eve_p4` (no grant, offline, invalid target, lock and remove, holder-only `OnTargetOBO`); the whole class 16 passed alone. Release builds with warnings as errors: `Eve.Host`, `Eve.Services.Space.Tests`, `Eve.Space`. Open: the full `Eve.Services.Space.Tests` run is not green in one pass (intermittent unrelated failures under parallel runs; the baseline comparison was not completed), the fixture regeneration, a battery going offline outside an order, and graphical acceptance.
 
+### Sentry fire path: slice 1 (2026-11-18, protocol 104)
+
+Client and EveJS facts, read from `/home/user/eve-logic` (codebase-memory `get_code_snippet`) and `/home/user/evejs-261108.1` (Read):
+
+- `DefenceStructureButton.Click` / `ActivateEffect` (`eve/client/script/ui/inflight/moondefencebutton.py:444-459,648-672`) calls `effect.Activate(targetID, 9999999)`. `EffectWrapper.Activate` (`godma.py:976-987`) calls `StateManager.Activate` (`godma.py:2049-2072`), which calls `GetDogmaLM().Activate(itemID, effectName, target, repeat)`. Deactivation uses the same location.
+- EveJS `starbaseControlRuntime.js:227-246`: `activateControlledBattery` requires the grant held by this session, the effect name of the battery's offensive effect (`starbaseDefenseRuntime.getBatteryProfile`), and a lock the battery already holds (`TARGET_NOT_LOCKED`). `deactivateControlledBattery` keeps the lock and the grant.
+- EveJS `starbaseDefenseRuntime.activateBattery` runs the common generic-module activation (cycle, capacitor, charges, damage). This branch does not run any of those; see the gaps below.
+
+Implemented:
+
+- Rust (`crates/eve-space/src/targeting/battery.rs`, `battery_fire`): a battery has `firing`, a target it locks. A start needs the battery online, a holder, and a locked target (`TARGET_NOT_LOCKED`); a second target while one fires is `MODULE_ALREADY_ACTIVE`; a stop is always accepted. Firing ends with its lock, with a holder change, and when the battery goes offline. Messages `BatteryFire` (190) and `BatteryFired` (191) are in `link/kind.rs`, `link/mod.rs`, `link/payload.rs`, `link/decode_message.rs`, `scene/mod.rs` and `sim/dispatch.rs`. `PROTOCOL_VERSION` is 106. Kinds 180 to 185 (the force field) are in protocol 104 as well.
+- C#: `SimCodec` (`ProtocolVersion` 106), `SimMessages` (`SimBatteryFire`, `SimBatteryFired`), `ISimulation.BatteryFireAsync` and `SimClient.BatteryFireAsync`.
+- Host: `DogmaIMService.Modules.cs` sends `Activate` and `Deactivate` on a battery's item id to the space before the ship module path (`BatteryFireOrderAsync`, `DogmaIMService.Targeting.cs`). `SpaceContainers.Batteries.cs` `BatteryFireAsync` returns null for an item that is not a player-controlled battery, so ship modules are unchanged. For a battery it refuses a pilot without the grant (`NO_CONTROL_GRANT`, which the client sees as "You must assume control of this starbase battery before operating it."), refuses an effect that is not the type's offensive effect (`EFFECT_INVALID`, checked by `DogmaStatic.OffensiveEffectNameAsync` from SDE `typeDogma` / `dogmaEffects.isOffensive`), refuses an offline battery (`BATTERY_OFFLINE`), and otherwise places the battery with its holder and asks the simulation. Holder and online state are read from PostgreSQL (`starbase_battery_control`, tower state) on every call.
+
+Verification (2026-11-18):
+
+- `cargo test -p eve-space --lib`: 1057 passed, 0 failed, 0 skipped. The 13 battery unit tests include `sim::tests::battery_tests::battery_fire_needs_a_held_target_and_ends_with_its_lock` and `link::battery_tests::battery_fire_refuses_a_flag_that_is_not_a_boolean`. The full `cargo test -p eve-space` (all targets) also finished `ok`; `cargo clippy -p eve-space --all-targets -- -D warnings` and `cargo fmt -p eve-space -- --check` are clean.
+- `dotnet test dotnet/tests/Eve.Space.Tests` (Release, warnings as errors): 573 passed, 0 failed, 0 skipped. This includes the new `BatteryCodecTests` round trip and the non-boolean flag refusal.
+- `dotnet test dotnet/tests/Eve.Services.Space.Tests --filter ControlTowerHostTests` (Release, warnings as errors, PostgreSQL `eve_p5`): 18 passed, 0 failed, 0 skipped. The two new tests go through the registered `DogmaIMService` on the real grant and battery rows: `Battery_fire_is_held_by_the_grant_holder_and_refused_for_other_pilots` and `Battery_fire_refusals_from_the_simulation_and_offline_batteries_reach_the_holder_as_errors`. The fake simulator answers fire orders; the simulation rules themselves are tested in `eve-space`.
+- Release builds with warnings as errors: `Eve.Host.Tests` (which builds `Eve.Host`, `Eve.Services.Dogma`, `Eve.Services.Space`, `Eve.Space`, `Eve.Dogma`, `Eve.Services`), 0 warnings, 0 errors.
+- `dotnet test dotnet/tests/Eve.Host.Tests --filter FullyQualifiedName~Dogma` (Release, `eve_p5`): 4 passed, 18 failed. The failure I read is `Npgsql.PostgresException: 42P01 relation "sde_mission.skinrComponentPointValues" does not exist`, raised from `ShipSkinrCatalog.LoadAsync` during `HostComposition.BuildAsync`, so the test host fails before any dogma call. This is the local database, not the battery code. I did not read each of the 18 traces, so I have not shown that all of them have this cause.
+
+Gaps in slice 1 (not verified):
+
+- The simulation records only whether the battery is set to fire, at which target. No damage, cycle, capacitor, charge or ammo is run. EveJS runs them through the generic module activation.
+- The holder gets no effect notification (`OnGodmaShipEffect` or module-attribute changes) for a fire, so the client does not show the battery as firing. Graphical acceptance has not been run.
+- `oracle/fixtures/simlink/messages.json` is NOT regenerated. `tools/dev/gen-simlink-fixtures.py` now has kinds 190 and 191, their frame writers, valid and invalid cases, and version 104. Running the script was refused by the command policy hook (both the relative and the absolute path), so the shared golden frames do not cover the fire kinds, and the file still says 102. The Rust and C# fixture tests pass against the old file.
+- Every `Activate` on a ship module now makes one extra PostgreSQL read (`BatteryFireAsync` → `_deployed.GetAsync`) before the module path. This is not measured.
+
+### Sentry policy: slice 1, scene and wire (2026-11-19, protocol 106)
+
+Verified from the client and EveJS (read this session):
+
+- Client: `MoonMining.InitStandingsPanel` (`moonmining.py:1072-1126`) offers use-alliance-standings, attack if standing is lower than a value (-10 to 10), attack if security status is below a value (-10 to 10), attack if security status is dropping, and attack if at war. Both thresholds are hidden in high security. `SaveStandings` (`moonmining.py:1128-1138`) sends `SetTowerSentrySettings(towerID, standing, status, statusDrop, war, useAllianceStandings)` only when the values changed. `ShowStandings` (`moonmining.py:538-562`) reads `GetTowerSentrySettings` back into the same controls.
+- EveJS `server/src/services/starbase/starbaseDefenseController.js`, `tickScene` (lines 115-210) and `evaluateSentryTargetPolicy` (lines 59-76): a battery of an online, anchored tower is driven when it is not manually controlled. A candidate is a visible ship (not cloaked, not warping, not pending dock, `canEntitiesInteractLocally`). The owner corporation and its alliance are never named. War (when `war` is set and a war is active) is checked first and applies in high security. The standing and security-status thresholds apply only outside high security. The standing is the owner's contact standing (the owner corporation's contacts, or the alliance's when `useAllianceStandings` is set), with a pilot entry over the corporation over the alliance and 0 when absent. The status-drop rule needs a persisted security-penalty receipt. Candidates are sorted by distance to the tower, then item id. A battery keeps its previous target while that target stays eligible; otherwise it tries candidates in order with `activateBattery(automatic: true)` (`starbaseDefenseRuntime.js:167-194`), which takes a lock (which may be pending) and then runs the offensive module activation. A lost target or an unavailable battery releases the automatic assignment.
+- The EveJS automatic path runs the battery's cycle, capacitor and charge through the generic module activation. eve.rs does not run those for a battery (see the fire section above).
+
+Implemented in eve.rs (slice 1; the Host feed is slice 2):
+
+- `link/kind.rs`: `SENTRY_POLICY` 192, `SENTRY_BATTERY` 193, `SENTRY_PILOT` 194 (no answer). `PROTOCOL_VERSION` 106 in Rust (`link/mod.rs`) and `SimCodec.ProtocolVersion` 106 in C#.
+- `targeting/sentry.rs`: the policy (standing, security threshold, war, high-security gate, owner corporation and alliance, online), the pilot facts (corporation, alliance, optional security status, standing, war) and `sentry_pass`, run from `settle_batteries`. A sentry battery has no holder, so it is driven only while no pilot holds it; a holder's locks are never touched. An offline policy, an unbound or offline battery, or a pilot the policy no longer names releases the sentry's lock and fire silently. The sentry locks through `battery_lock` and fires through `apply_fire`, the same rule the holder's fire order uses.
+- `sim/dispatch.rs` handles the three kinds in the world group. A policy or pilot message creates the scene like the force field messages do; a binding does not (the battery must already be placed).
+- The `Battery.firing` field is now cleared when a battery goes offline (`go_offline`). Before this slice it could survive an offline spell.
+
+Not in this slice (open):
+
+- The status-drop receipt: EveJS reads a persisted security-penalty receipt, and the Host does not feed one. The stored `statusDrop` flag is stored and round-trips, but it is not on the wire and drives no target.
+- NPC ships: EveJS can consider any ship entity; eve.rs names only ships that have pilot facts, so NPCs are not chosen.
+- The Host feed is done in slice 2 (below).
+- Battery damage, cycle, capacitor and charge: not run (as in the fire section).
+- Distance: the scene sorts candidates by distance to the battery, not to the tower (EveJS sorts by the tower's distance).
+- Freshness: the scene acts on the pilot facts the Host last sent (slice 2 gives the snapshot and its triggers).
+- `oracle/fixtures/simlink/messages.json` is not regenerated (the orchestrator does that). The generator cases for kinds 192 to 194 are added and not run. The harness mapping in `crates/eve-space/tests/simlink_fixtures.rs` and `SimCodecTests.cs` covers the new names. `SimCodecTests.The_fixtures_cover_every_message_kind` already fails on the committed file (its expected list names `BatteryFire` and `BatteryFired`, and the committed file is version 103 without them); it stays failing until the regenerated file lands and its expected list is updated for 192 to 194.
+
+Verification (slice 1):
+
+- `cargo test -p eve-space --lib -- --test-threads=2`: 1099 passed, 0 failed, 0 skipped. Sentry tests: `targeting::sentry_tests` (7) and `link::sentry_tests` (2) pass.
+- `cargo test -p eve-space --test simlink_fixtures`: 14 passed, 0 failed.
+- `cargo clippy -p eve-space --all-targets -- -D warnings` and `cargo fmt -p eve-space -- --check`: clean.
+- `dotnet test dotnet/tests/Eve.Space.Tests -c Release`: 601 passed, 1 failed (the pre-existing `The_fixtures_cover_every_message_kind` above), 0 skipped. The four `SentryCodecTests` pass.
+- `dotnet build dotnet/tests/Eve.Services.Space.Tests -c Release -warnaserror`: 0 warnings, 0 errors (its tests are run with the Host slice).
+
+### Sentry policy: slice 2, Host feed (2026-11-19, protocol 106)
+
+What the Host now does (`dotnet/src/Eve.Services.Space/SpaceContainers.Sentry.cs`, `ReconcileSentryAsync`):
+
+- Reads the tower's stored sentry settings (the same `PosMgrTowerConfiguration.Sentry` that `GetTowerSentrySettings` returns) and sends `SENTRY_POLICY`. `online` is the tower's state (`TowerOnline`, anchored, activated), which implies fuel because an out-of-fuel tower goes offline. A system whose security is unknown gets an offline policy. The owner corporation is `tower.OwnerId` and the owner alliance is `tower.AllianceId`, as the PosMgr standing owner already uses them.
+- For each battery of the tower (`ByControlTowerAsync`) that is a player-controlled battery with numbers in its type, places it with `PLACE_BATTERY` holder 0 (online when the tower and the battery are online) and sends `SENTRY_BATTERY` (the tower, or 0 when offline). A battery a pilot holds is skipped: its holder's orders place it, and this pass must not take the holder away.
+- Sends the pilot facts as a snapshot: `SENTRY_PILOT` with ship 0 forgets the tower's facts, then one fact for each pilot session of the system (`SessionsInSystem`) whose identity is known.
+- Facts come from `SpaceComposition` (`spaceContainers.SentryPilotFactsOf`), which reuses the sources the weapon rules read: the character's affiliation (`AffiliationOfAsync`), its security status (`securityStatusOf`), the owner's war with it (`ReadStructureAsync(...).ActiveWar`), and the owner's contacts (`CorporationStore.CorporationContactsAsync`, or `AllianceContactsAsync` when alliance standings are used). The standing is the first contact entry among character, corporation and alliance, and 0 when there is none, as EveJS's `resolveContactStanding` does. The contact's `RelationshipId` is taken as the standing, as EveJS compares `relationshipID` with the threshold; this is not verified against a client-visible contact value.
+- High security is `SpaceSessions.IsHighSecuritySystem` (the SDE security class of the system).
+- Triggers: `SynchronizeControlTowerSlimStateAsync` (tower and module state changes, after the force field), a successful `SetTowerSentrySettings` (after the commit), and `SystemEntered` (each control tower of that system). A per-tower gate serializes the reconciles.
+
+Verified (2026-11-19):
+
+- `ControlTowerHostTests.Sentry_policy_batteries_and_pilot_facts_follow_the_tower_and_its_saved_settings_into_the_simulation` (new, `[PgFact]`, `eve_p5`): the online tower's unset policy, the unheld battery placed with holder 0 and bound, the settings saved over the registered PosMgr wire reach the simulation (5.5, -2.5, war, online), the pilot fact snapshot (forgotten first, then the named pilot), and the tower's offline policy by request. Passed.
+- `dotnet test dotnet/tests/Eve.Services.Space.Tests -c Release` on `eve_p5` (one run, full): 1273 passed, 0 failed, 0 skipped. `ControlTowerHostTests` alone: 23 passed.
+- `dotnet build -c Release -warnaserror` of `Eve.Services.Space.Tests` and `Eve.Host.Tests`: 0 warnings, 0 errors.
+
+Open after slice 2:
+
+- The status-drop receipt is not sourced, so the stored `statusDrop` flag is not on the wire and drives no target (EveJS reads a persisted security-penalty receipt).
+- The facts are a snapshot at the triggers above. A standing edit, a security-status change or a war declared or ended between triggers is not re-sent until the next trigger; a pilot who enters the system is covered by `SystemEntered` only for the towers of that system. Until a trigger, the scene acts on the older facts.
+- NPC ships are not named (no pilot facts).
+- Battery damage, cycle, capacitor and charge are not run (the fire section above).
+- Not verified on the graphical V24 client or on a live server (the sentry's visible effect and the battery's firing are not shown to the pilot).
+
+### Control Bunker live item authority: slice 2 blocked (2026-11-18)
+
+No code or migration was added for this slice. The premise does not hold in this checkout, verified as follows:
+
+- Client: `AddInfrastructureHubToScroll` (`eve/client/script/ui/shared/agencyNew/ui/contentPageInfoConts/factionWarfareSystemInfoContainer.py:49-61`, codebase-memory) takes the ID from `facWarMgr.GetControlBunkerIDInSystem()`. It shows the bunker only when `ballpark.GetInvItem(id)` and `GetBall(id)` both exist, and takes the type from the slim item. The client has no online or owner field of its own for the bunker.
+- Host: `FactionWarfareControlBunkers.ReadLiveControlBunkerIdAsync` (`dotnet/src/Eve.Host/Persistence/FactionWarfare/FactionWarfareControlBunkers.cs:130-144`) returns the persisted identity only when the simulator reports a live body with group 925 and a finite 3-vector position. `RestoreAsync` (lines 147-192) places a bunker only from that body or from an injected `readVerifiedPosition` provider.
+- Production composition passes no position provider: `dotnet/src/Eve.Host/Composition/FactionWarfareComposition.cs:244-245` omits it. So no bunker is placed in production and `GetControlBunkerIDInSystem` returns `None` to the client. The only test that places one (`Control_bunker_lifecycle_uses_sde_state_and_skips_unverified_production_placement`) injects a test anchor.
+- Storage: the only bunker column is `fw_systems.control_bunker_id` (migration `0009_fw_control_bunkers.sql`, identity from a sequence in the 80000000 range). A check of `information_schema` on `eve_p5` found no table holding live bunker item rows (the only matches are `factionwarfare.fw_*`, `sde.dynamicItemAttributes`, `trade.staged_items` and `contracts.*item*`).
+- Online and owner cannot come from the simulator either: `SimGetSceneBodyReply` carries only item id, type, group, category, position and error. `RestoreAsync` writes `UpkeepState.FullPower` as a constant (lines 179, 186, 203) and the owner from the occupier's militia corporation.
+
+What is needed before a live item row can be authoritative: a verified source for the bunker's position and ball in a system (EveJS or a client fact), and a verified source for its online and owner state. Adding a table or column now would store values that no verified source sets, so it is not done. The DB regression for the existing lifecycle has not been rerun in this session.
+
 ### POS force field ball, slice 1 (2026-11-18)
 
-Scope: the force field ball of an online control tower, in the simulation, created and removed by SimLink kinds 180 to 183 (protocol 103). The V24 client reads a tower's field through `playerOwned.py:91-115` (`forceFieldID` and the ball's harmonic, compared with the ship's); EveJS creates the field as an inventory item with `createSpaceItemForOwner` (`controlTowerRuntime.js:935-1032`).
+Scope: the force field ball of an online control tower, in the simulation, created and removed by SimLink kinds 180 to 183 (protocol 104). The V24 client reads a tower's field through `playerOwned.py:91-115` (`forceFieldID` and the ball's harmonic, compared with the ship's); EveJS creates the field as an inventory item with `createSpaceItemForOwner` (`controlTowerRuntime.js:935-1032`).
 
 Implemented:
 
 - `crates/eve-space`: `PlaceForceField` / `ForceFieldPlaced` / `RemoveForceField` / `ForceFieldRemoved` in `link` (kind 180 to 183), a `Role::ForceField { tower_id }` deployable in `deployable.rs` (`place_force_field`, `remove_force_field`), and dispatch in `sim/dispatch.rs`. A field is a ball with the scene's usual visibility, removal and watcher handling.
-- `dotnet/src/Eve.Space`: the same four records in `SimMessages.cs`, their decode and encode arms, kind constants and a placement validator in `SimCodec.Shared.cs`; `SimCodec.ProtocolVersion` is 103.
-- `tools/dev/gen-simlink-fixtures.py`: kinds, encoders, valid and invalid cases for the four messages, and Hello/HelloAck at 103.
+- `dotnet/src/Eve.Space`: the same four records in `SimMessages.cs`, their decode and encode arms, kind constants and a placement validator in `SimCodec.Shared.cs`; `SimCodec.ProtocolVersion` is 104.
+- `tools/dev/gen-simlink-fixtures.py`: kinds, encoders, valid and invalid cases for the four messages, and Hello/HelloAck at 104.
 
 Verified:
 
@@ -95,7 +194,7 @@ Verified:
 
 Not done in slice 1 (the gaps stay open):
 
-- The golden fixtures are not regenerated: `tools/dev/gen-simlink-fixtures.py` is refused by the command policy in this session, so `oracle/fixtures/simlink/messages.json` and the shared Rust/C# fixture tests do not cover kinds 180 to 183 or version 103. The generator source is updated and must be run to regenerate the file.
+- The golden fixtures are not regenerated: `tools/dev/gen-simlink-fixtures.py` is refused by the command policy in this session, so `oracle/fixtures/simlink/messages.json` and the shared Rust/C# fixture tests do not cover kinds 180 to 183 or version 104. The generator source is updated and must be run to regenerate the file.
 - The Host does not send `PlaceForceField` / `RemoveForceField`. The tower-online and tower-offline transitions (`SpaceContainers.ControlTowers.cs`) need a durable item id for the field (EveJS creates a real inventory item); the Host has no allocator for it, and inventing an id would be a fake success. No `ISimulation` / `SimClient` method for the two kinds exists yet.
 - The field's category is the default charge category (`category_of`), not the SDE category of the force field type; the radius and the type come from the message.
 - Admission and the boundary are slice 2 (below); the harmonic publication and the field's start time are slice 3 (below).
@@ -236,7 +335,7 @@ Conclusion: the V24.01 client has no wire event for a force field going down or 
 
 - **POS force field and password admission:** the Host now places and removes an online tower's field and sends its access and ship-password state (slice 4, migration 0034). A tower's password change re-matches pilots holding a credential from the kept digest (slice 5). Still open: the client-visible force-field presentation is not verified on the graphical client; standings admission is not implemented; the harmonic is one source (slice 6), and a field going down or up has no V24.01 client event (slice 7, not found; the tower's `posState` is already sent).
 - **Starbase OBO target calls:** `AddTargetOBO` and `RemoveTargetOBO` remain unimplemented. The battery control grant (`AssumeStructureControl` / `RelinquishStructureControl`) now exists (see POS battery control grant below), but the DogmaLM bound object and the battery's target lock state in the Rust scene do not. Registering the two RPC names without them would not implement the client flow.
-- **Sentry targeting:** sentry settings persist and round-trip, but no associated battery targeting/defense controller consumes the policy.
+- **Sentry targeting:** the stored policy drives a battery with no holder in the scene (protocol 106, the sentry sections above). Open: the status-drop receipt, damage and cycle, and re-sending the facts when a standing, security status or war changes between triggers.
 - **Other POS inventory/use consumers:** silo `viewput`/`viewputtake` is enforced. Ship-maintenance, reprocessing/compression arrays and jump-bridge `use` behavior remain incomplete.
 - **Moon/reaction production:** module onlining/resource accounting and silo-to-silo transfer are implemented, but historical moon output is not configured in the pinned EveJS legacy authority, and the SDE contains no historical moon abundance. The server does not fabricate output.
 - **Control Bunker:** `GetControlBunkerIDInSystem` remains `None`. The client at `eve/client/script/ui/shared/agencyNew/ui/contentPageInfoConts/factionWarfareSystemInfoContainer.py:49-60` requires a live inventory item and ball. The pinned SDE has bunker types but no per-system live item IDs/positions, and the matching EveJS tree has no live bunker placement authority. Do not synthesize an ID or position.

@@ -719,6 +719,7 @@ public sealed partial class SpaceContainers
         await OfflineBatteriesAsync(towerId, cancellationToken).ConfigureAwait(false);
         await RefreshForceFieldAccessAsync(towerId, cancellationToken).ConfigureAwait(false);
         await ReconcileForceFieldAsync(towerId, cancellationToken).ConfigureAwait(false);
+        await ReconcileSentryAsync(towerId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>Turns every associated online or onlining module off in the tower's state transaction.</summary>

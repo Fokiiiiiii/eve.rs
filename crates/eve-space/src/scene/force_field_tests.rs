@@ -80,7 +80,7 @@ fn field_scene() -> Scene {
         solar_system_id: 30_000_001,
         type_id: 16_000,
         group_id: 411,
-        name: "Force Field".to_string(),
+        display_name: "Force Field".to_string(),
         position: [0.0, 0.0, 0.0],
         radius: FIELD_RADIUS,
     };
@@ -472,7 +472,7 @@ fn a_force_field_carries_the_time_it_was_placed_at_for_the_client() {
         solar_system_id: 30_000_001,
         type_id: 16_000,
         group_id: 411,
-        name: "Force Field".to_string(),
+        display_name: "Force Field".to_string(),
         position: [0.0, 0.0, 0.0],
         radius: FIELD_RADIUS,
     };

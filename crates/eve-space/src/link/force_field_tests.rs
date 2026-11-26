@@ -7,7 +7,7 @@ fn placement() -> ForceFieldPlacement {
         solar_system_id: 30_000_001,
         type_id: 16_000,
         group_id: 411,
-        name: "Force Field".to_string(),
+        display_name: "Force Field".to_string(),
         position: [1.0, 2.0, 3.0],
         radius: 1_000.0,
     }
@@ -33,7 +33,7 @@ fn force_field_frames_roundtrip_byte_for_byte() {
 }
 
 #[test]
-fn force_field_kinds_are_the_protocol_103_codes_in_the_180_range() {
+fn force_field_kinds_are_the_protocol_104_codes_in_the_180_range() {
     assert_eq!(
         [
             kind::PLACE_FORCE_FIELD,

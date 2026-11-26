@@ -13,7 +13,7 @@ public sealed class ForceFieldCodecTests
         Assert.Equal(placed.SolarSystemId, decodedPlaced.SolarSystemId);
         Assert.Equal(placed.TypeId, decodedPlaced.TypeId);
         Assert.Equal(placed.GroupId, decodedPlaced.GroupId);
-        Assert.Equal(placed.Name, decodedPlaced.Name);
+        Assert.Equal(placed.DisplayName, decodedPlaced.DisplayName);
         Assert.Equal(placed.Position, decodedPlaced.Position);
         Assert.Equal(placed.Radius, decodedPlaced.Radius);
 
@@ -28,13 +28,13 @@ public sealed class ForceFieldCodecTests
     }
 
     [Fact]
-    public void Force_field_kinds_are_the_protocol_103_codes_in_the_180_range()
+    public void Force_field_kinds_are_the_protocol_104_codes_in_the_180_range()
     {
         Assert.Equal((byte)180, SimCodec.Encode(new SimPlaceForceField(1, 2, 3, 4, 5, "F", [0.0, 0.0, 0.0], 1.0))[4]);
         Assert.Equal((byte)181, SimCodec.Encode(new SimForceFieldPlaced(1, string.Empty))[4]);
         Assert.Equal((byte)182, SimCodec.Encode(new SimRemoveForceField(2, 3))[4]);
         Assert.Equal((byte)183, SimCodec.Encode(new SimForceFieldRemoved(2, string.Empty))[4]);
-        Assert.Equal(105, SimCodec.ProtocolVersion);
+        Assert.Equal(106, SimCodec.ProtocolVersion);
     }
 
     [Fact]

@@ -11,6 +11,14 @@ public static partial class SimCodec
             0, 0, 0, 0, 0, string.Empty, [0d, 0d, 0d, 0d], 0, 0, 0, 0));
     }
 
+    /// <summary>A flag, then the number (zero when there is none): protocol 106's optional thresholds. A number the simulation cannot read is refused.</summary>
+    private static void WriteOptionalNumber(Writer w, double? value)
+    {
+        if (value is { } number && !double.IsFinite(number)) throw new ArgumentException("A sentry threshold must be finite.", nameof(value));
+        w.U8((byte)(value is null ? 0 : 1));
+        w.F64(value ?? 0.0);
+    }
+
     private static void WriteWeapon(Writer w, SimNpcWeapon weapon)
     {
         w.I64(weapon.ModuleId);
@@ -1529,7 +1537,7 @@ private static void WriteStructureDamageCorrelation(
                 if (!ValidForceFieldPlacement(m.Position, m.Radius))
                     throw new ArgumentException("Invalid force field placement.", nameof(message));
                 w.U8(Kind.PlaceForceField); w.I64(m.FieldId); w.I64(m.TowerId); w.I32(m.SolarSystemId); w.I32(m.TypeId); w.I32(m.GroupId);
-                w.Text(m.Name); WriteVector(w, m.Position); w.F64(m.Radius);
+                w.Text(m.DisplayName); WriteVector(w, m.Position); w.F64(m.Radius);
                 break;
             case SimForceFieldPlaced m:
                 if (m.FieldId <= 0)
@@ -1552,6 +1560,19 @@ private static void WriteStructureDamageCorrelation(
                 w.U8(Kind.SetForceFieldAccess); w.I64(m.TowerId); w.I32(m.SolarSystemId); w.I32(m.CorporationId); w.I32(m.AllianceId);
                 w.U8((byte)(m.AllowCorporation ? 1 : 0)); w.U8((byte)(m.AllowAlliance ? 1 : 0));
                 break;
+            case SimSentryPolicy m:
+                w.U8(Kind.SentryPolicy); w.I64(m.TowerId); w.I32(m.SolarSystemId); w.U8((byte)(m.Online ? 1 : 0));
+                WriteOptionalNumber(w, m.Standing); WriteOptionalNumber(w, m.SecurityStatus);
+                w.U8((byte)(m.War ? 1 : 0)); w.U8((byte)(m.HighSecurity ? 1 : 0)); w.I64(m.OwnerCorporationId); w.I64(m.OwnerAllianceId);
+                break;
+            case SimSentryBattery m:
+                w.U8(Kind.SentryBattery); w.I64(m.BatteryId); w.I32(m.SolarSystemId); w.I64(m.TowerId);
+                break;
+            case SimSentryPilot m:
+                if (!double.IsFinite(m.Standing)) throw new ArgumentException("The sentry standing must be finite.", nameof(m));
+                w.U8(Kind.SentryPilot); w.I64(m.TowerId); w.I32(m.SolarSystemId); w.I64(m.ShipId); w.I64(m.CorporationId); w.I64(m.AllianceId);
+                WriteOptionalNumber(w, m.SecurityStatus); w.F64(m.Standing); w.U8((byte)(m.AtWar ? 1 : 0));
+                break;
             case SimShipForceFieldPassword m:
                 if (m.TowerId <= 0)
                     throw new SimLinkException(SimLinkError.BadValue, "force field tower");
@@ -1571,6 +1592,12 @@ private static void WriteStructureDamageCorrelation(
             case SimBatteryTarget m:
                 if (m.Order is < 1 or > 4) throw new ArgumentException("Invalid battery order.", nameof(message));
                 w.U8(Kind.BatteryTarget); w.U64(m.RequestId); w.I64(m.BatteryId); w.I32(m.SolarSystemId); w.U8(m.Order); w.I64(m.Target);
+                break;
+            case SimBatteryFire m:
+                w.U8(Kind.BatteryFire); w.U64(m.RequestId); w.I64(m.BatteryId); w.I32(m.SolarSystemId); w.U8((byte)(m.On ? 1 : 0)); w.I64(m.Target);
+                break;
+            case SimBatteryFired m:
+                w.U8(Kind.BatteryFired); w.U64(m.RequestId); w.I64(m.BatteryId); w.Text(m.Reason); w.U8((byte)(m.Active ? 1 : 0)); w.I64(m.Target);
                 break;
             case SimBatteryTargets m:
                 w.U8(Kind.BatteryTargets); w.U64(m.RequestId); w.I64(m.BatteryId); w.Text(m.Reason); w.U8((byte)(m.Pending ? 1 : 0));

@@ -60,7 +60,7 @@ public sealed class FactionWarfareProducerHostTests
     }
 
     [FactionWarfareProducerPgFact]
-    public async Task Control_bunker_lifecycle_uses_sde_state_and_skips_unverified_production_placement()
+    public async Task Control_bunker_lifecycle_uses_sde_sun_geometry_and_captures_at_downtime()
     {
         var connectionString = PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!);
         await using var source = NpgsqlDataSource.Create(connectionString);
@@ -95,25 +95,28 @@ public sealed class FactionWarfareProducerHostTests
             await events.PumpAsync(); // establish the durable capture subscriber before the damage event
             var simContract = DispatchProxy.Create<ISimulation, RecordingSimulation>();
             var sim = (RecordingSimulation)(object)simContract;
-            var anchorFixture = new double[] { 1234d, 5678d, 91011d };
-            var allowTestAnchor = false;
             using var space = new SpaceSessions(simContract, null!, statics, null!, null!, () => now);
             var log = new List<string>();
-            var bunkers = new FactionWarfareControlBunkers(source, store, scheduler, events, simContract, space, statics, sde, log.Add,
-                (_, _) => Task.FromResult<IReadOnlyList<double>?>(allowTestAnchor ? anchorFixture : null));
-            await bunkers.RestoreAsync(systemId);
-            Assert.Empty(sim.Placed);
-            Assert.Null(await bunkers.ReadLiveControlBunkerIdAsync(systemId));
-            Assert.Contains(log, message => message.Contains("no live group-925 ball or verified position source", StringComparison.Ordinal));
+            var bunkers = new FactionWarfareControlBunkers(source, store, scheduler, events, simContract, space, statics, sde, log.Add);
 
-            allowTestAnchor = true; // test fixture only; production composition supplies no position provider
+            var star = Assert.Single(await sde.ReadByFieldAsync("mapStars", "solarSystemID", [systemId]));
+            var starRadius = star.Doc.GetProperty("radius").GetDouble();
+            var sunWarpDistance = starRadius + 100_000d;
+            var expectedAnchor = new[]
+            {
+                sunWarpDistance * Math.Cos(starRadius),
+                starRadius / 5d + 100_000d,
+                -sunWarpDistance * Math.Sin(starRadius),
+            };
+
             await bunkers.RestoreAsync(systemId);
             var first = Assert.Single(sim.Placed);
             Assert.Equal(80_000_000, first.StructureId);
             Assert.Equal(925, first.GroupId);
             Assert.Equal(oldOccupier, (long)statics.Type(first.TypeId)!.Attributes[FactionDogmaAttribute]);
             Assert.Equal(StructureState.ShieldVulnerable, first.Status.State);
-            Assert.Equal(anchorFixture, first.Position);
+            Assert.Equal(expectedAnchor, first.Position);
+            Assert.DoesNotContain(log, message => message.Contains("placement was skipped", StringComparison.Ordinal));
             Assert.Equal(first.StructureId, await bunkers.ReadLiveControlBunkerIdAsync(systemId));
 
             await bunkers.RestoreAsync(systemId);
@@ -154,7 +157,7 @@ public sealed class FactionWarfareProducerHostTests
             var replacement = sim.Placed[^1];
             Assert.Equal(newOccupier, (long)statics.Type(replacement.TypeId)!.Attributes[FactionDogmaAttribute]);
             Assert.Equal(StructureState.FobInvulnerable, replacement.Status.State);
-            Assert.Equal(anchorFixture, replacement.Position);
+            Assert.Equal(expectedAnchor, replacement.Position);
             Assert.Equal(replacement.StructureId, await bunkers.ReadLiveControlBunkerIdAsync(systemId));
         }
         finally

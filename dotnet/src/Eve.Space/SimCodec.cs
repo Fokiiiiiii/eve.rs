@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 105;
+    public const ushort ProtocolVersion = 106;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -1343,12 +1343,12 @@ public static partial class SimCodec
                     var solarSystem = r.I32();
                     var type = r.I32();
                     var group = r.I32();
-                    var name = r.Text();
+                    var displayName = r.Text();
                     var position = ReadVector(ref r);
                     var radius = r.F64();
                     if (!ValidForceFieldPlacement(position, radius))
                         throw new SimLinkException(SimLinkError.BadValue, "bad force field placement");
-                    message = new SimPlaceForceField(field, tower, solarSystem, type, group, name, position, radius);
+                    message = new SimPlaceForceField(field, tower, solarSystem, type, group, displayName, position, radius);
                     break;
                 }
             case Kind.ForceFieldPlaced:
@@ -1430,6 +1430,59 @@ public static partial class SimCodec
                     var order = r.U8();
                     if (order is < 1 or > 4) throw new SimLinkException(SimLinkError.BadValue, "battery order");
                     message = new SimBatteryTarget(request, battery, solarSystem, order, r.I64());
+                    break;
+                }
+            case Kind.BatteryFire:
+                {
+                    var request = r.U64();
+                    var battery = r.I64();
+                    var solarSystem = r.I32();
+                    var on = ReadFlag(ref r, "on");
+                    message = new SimBatteryFire(request, battery, solarSystem, on, r.I64());
+                    break;
+                }
+            case Kind.BatteryFired:
+                {
+                    var request = r.U64();
+                    var battery = r.I64();
+                    var reason = r.Text();
+                    var active = ReadFlag(ref r, "active");
+                    message = new SimBatteryFired(request, battery, reason, active, r.I64());
+                    break;
+                }
+            case Kind.SentryPolicy:
+                {
+                    var tower = r.I64();
+                    var solarSystem = r.I32();
+                    var online = ReadFlag(ref r, "sentry online");
+                    var standing = ReadOptionalFinite(ref r, "sentry standing");
+                    var securityStatus = ReadOptionalFinite(ref r, "sentry security status");
+                    var war = ReadFlag(ref r, "sentry war");
+                    var highSecurity = ReadFlag(ref r, "sentry high security");
+                    var ownerCorporation = r.I64();
+                    var ownerAlliance = r.I64();
+                    message = new SimSentryPolicy(tower, solarSystem, online, standing, securityStatus, war, highSecurity, ownerCorporation, ownerAlliance);
+                    break;
+                }
+            case Kind.SentryBattery:
+                {
+                    var battery = r.I64();
+                    var solarSystem = r.I32();
+                    message = new SimSentryBattery(battery, solarSystem, r.I64());
+                    break;
+                }
+            case Kind.SentryPilot:
+                {
+                    var tower = r.I64();
+                    var solarSystem = r.I32();
+                    var ship = r.I64();
+                    var corporation = r.I64();
+                    var alliance = r.I64();
+                    var securityStatus = ReadOptionalFinite(ref r, "sentry pilot security status");
+                    var standing = r.F64();
+                    if (!double.IsFinite(standing)) throw new SimLinkException(SimLinkError.BadValue, "bad sentry pilot standing");
+                    var atWar = ReadFlag(ref r, "sentry pilot war");
+                    message = new SimSentryPilot(tower, solarSystem, ship, corporation, alliance, securityStatus, standing, atWar);
                     break;
                 }
             case Kind.BatteryTargets:

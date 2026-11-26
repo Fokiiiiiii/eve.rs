@@ -815,6 +815,10 @@ public sealed partial class SpaceSessions
         }
     }
 
+    /// <summary>Whether a solar system is high security by its SDE security; null when the system is not known.</summary>
+    public bool? IsHighSecuritySystem(int solarSystemId) =>
+        _systems.Get(solarSystemId) is { } system ? Security.IsHighSecOrHigher(Security.ClassFromLevel(system.Security)) : null;
+
     private async Task<bool> IsCapsuleAsync(Pilot pilot, SecurityClass securityClass, CancellationToken cancellationToken)
     {
         if (!Security.IsLowSec(securityClass))

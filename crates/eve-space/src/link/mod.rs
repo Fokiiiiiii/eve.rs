@@ -18,6 +18,8 @@ mod moon_mining_tests;
 mod payload;
 mod reader;
 #[cfg(test)]
+mod sentry_tests;
+#[cfg(test)]
 mod structure_tests;
 mod tournament_cutoff;
 pub(crate) mod tournament_metrics;
@@ -52,7 +54,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 105;
+pub const PROTOCOL_VERSION: u16 = 106;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -261,7 +263,7 @@ pub struct BatteryPlacement {
     pub online: bool,
 }
 
-/// A POS control tower's force field as the Host places it (protocol 103): the ball of an online tower. `field_id` is the field's id in the scene and
+/// A POS control tower's force field as the Host places it (protocol 104): the ball of an online tower. `field_id` is the field's id in the scene and
 /// `tower_id` the tower it belongs to (its harmonic, EVE.js `getForceFieldAccess`). `position` and `radius` are the ball's; the radius is the SDE shield radius.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForceFieldPlacement {
@@ -270,7 +272,7 @@ pub struct ForceFieldPlacement {
     pub solar_system_id: i32,
     pub type_id: i32,
     pub group_id: i32,
-    pub name: String,
+    pub display_name: String,
     pub position: [f64; 3],
     pub radius: f64,
 }
@@ -1132,7 +1134,24 @@ pub enum Message {
         pending: bool,
         targets: Vec<i64>,
     },
-    /// The host puts an online POS control tower's force field in space (protocol 103). A field already there for the same tower and id, with the same
+    /// Starts (`on`) or stops a POS battery's fire (protocol 104). A start needs a target the battery holds; a stop needs no target. Answered by
+    /// `BatteryFired` under `request_id`. Only the holder can order it; the Host checks the grant before it is sent.
+    BatteryFire {
+        request_id: u64,
+        battery_id: i64,
+        solar_system_id: i32,
+        on: bool,
+        target: i64,
+    },
+    /// The answer to `BatteryFire` (protocol 104).
+    BatteryFired {
+        request_id: u64,
+        battery_id: i64,
+        reason: String,
+        active: bool,
+        target: i64,
+    },
+    /// The host puts an online POS control tower's force field in space (protocol 104). A field already there for the same tower and id, with the same
     /// place and radius, changes nothing; another id replaces the tower's field. Answered by `ForceFieldPlaced`.
     PlaceForceField(Box<ForceFieldPlacement>),
     /// The answer to `PlaceForceField`: `reason` is empty when the field is in the scene, else why it is not.
@@ -1140,7 +1159,7 @@ pub enum Message {
         field_id: i64,
         reason: String,
     },
-    /// The host takes a tower's force field out of space (protocol 103). Answered by `ForceFieldRemoved`.
+    /// The host takes a tower's force field out of space (protocol 104). Answered by `ForceFieldRemoved`.
     RemoveForceField {
         tower_id: i64,
         solar_system_id: i32,
@@ -1150,7 +1169,7 @@ pub enum Message {
         tower_id: i64,
         reason: String,
     },
-    /// The host sets who a tower's force field admits by corporation and alliance (protocol 103). The field of the tower now or placed later takes it.
+    /// The host sets who a tower's force field admits by corporation and alliance (protocol 104). The field of the tower now or placed later takes it.
     SetForceFieldAccess {
         tower_id: i64,
         solar_system_id: i32,
@@ -1159,12 +1178,42 @@ pub enum Message {
         allow_corporation: bool,
         allow_alliance: bool,
     },
-    /// The host says whether a pilot's ship password matches a tower's (protocol 103): a matching ship is admitted by the tower's field.
+    /// The host says whether a pilot's ship password matches a tower's (protocol 104): a matching ship is admitted by the tower's field.
     ShipForceFieldPassword {
         session_id: u64,
         tower_id: i64,
         solar_system_id: i32,
         matched: bool,
+    },
+    /// The host sets a tower's sentry policy (protocol 106). `standing` and `security_status` are the stored thresholds (`None` when unset), `online`
+    /// is false when the tower is offline or out of fuel, and `high_security` hides both thresholds. No answer.
+    SentryPolicy {
+        tower_id: i64,
+        solar_system_id: i32,
+        online: bool,
+        standing: Option<f64>,
+        security_status: Option<f64>,
+        war: bool,
+        high_security: bool,
+        owner_corporation_id: i64,
+        owner_alliance_id: i64,
+    },
+    /// The host binds a battery to a tower's sentry policy; `tower_id` 0 unbinds it (protocol 106). No answer.
+    SentryBattery {
+        battery_id: i64,
+        solar_system_id: i32,
+        tower_id: i64,
+    },
+    /// What the host knows of a pilot's ship toward a tower's policy (protocol 106); `ship_id` 0 forgets every pilot of the tower. No answer.
+    SentryPilot {
+        tower_id: i64,
+        solar_system_id: i32,
+        ship_id: i64,
+        corporation_id: i64,
+        alliance_id: i64,
+        security_status: Option<f64>,
+        standing: f64,
+        at_war: bool,
     },
     GetAbyssalParticipantPose {
         request_id: u64,
@@ -1906,12 +1955,17 @@ impl Message {
             Self::BatteryPlaced { .. } => kind::BATTERY_PLACED,
             Self::BatteryTarget { .. } => kind::BATTERY_TARGET,
             Self::BatteryTargets { .. } => kind::BATTERY_TARGETS,
+            Self::BatteryFire { .. } => kind::BATTERY_FIRE,
+            Self::BatteryFired { .. } => kind::BATTERY_FIRED,
             Self::PlaceForceField(_) => kind::PLACE_FORCE_FIELD,
             Self::ForceFieldPlaced { .. } => kind::FORCE_FIELD_PLACED,
             Self::RemoveForceField { .. } => kind::REMOVE_FORCE_FIELD,
             Self::ForceFieldRemoved { .. } => kind::FORCE_FIELD_REMOVED,
             Self::SetForceFieldAccess { .. } => kind::SET_FORCE_FIELD_ACCESS,
             Self::ShipForceFieldPassword { .. } => kind::SHIP_FORCE_FIELD_PASSWORD,
+            Self::SentryPolicy { .. } => kind::SENTRY_POLICY,
+            Self::SentryBattery { .. } => kind::SENTRY_BATTERY,
+            Self::SentryPilot { .. } => kind::SENTRY_PILOT,
             Self::GetAbyssalParticipantPose { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE,
             Self::GetAbyssalParticipantPoseReply { .. } => kind::GET_ABYSSAL_PARTICIPANT_POSE_REPLY,
             Self::Enter(_) => kind::ENTER,

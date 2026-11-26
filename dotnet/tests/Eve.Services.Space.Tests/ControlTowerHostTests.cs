@@ -2130,6 +2130,50 @@ public class ControlTowerHostTests
         Assert.Contains(rig.Sim.Heard.OfType<SimPlaceBattery>(), placed => !placed.Online);
     }
 
+    /// <summary>
+    /// A stop of a battery's fire (protocol 104) is always accepted: the holder's stop of an offline battery reaches the simulation, and so does the stop of an
+    /// unheld battery by a pilot without the grant. Another pilot's stop of a battery that is held stays refused, with nothing sent to the simulation.
+    /// </summary>
+    [PgFact]
+    public async Task Battery_fire_stop_is_accepted_for_an_offline_or_unheld_battery_and_refused_for_another_pilots_held_one()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        var typeId = await PlayerControlledBatteryTypeAsync(rig);
+        var effect = (await rig.Statics.OffensiveEffectNameAsync(typeId))!;
+        Assert.Equal(new PyInt(1), await fixture.Holder.BoundCallAsync(fixture.Oid, "Activate",
+            new PyLong(fixture.Battery), new PyStr(effect), new PyLong(fixture.Target), new PyInt(1)));
+        Assert.Single(rig.Sim.Heard.OfType<SimBatteryFire>());
+
+        // offline: the holder's stop is accepted and is sent to the simulation
+        await rig.Deployed.SetTowerStateAsync(fixture.Battery, "offline");
+        Assert.Equal(new PyInt(1), await fixture.Holder.BoundCallAsync(fixture.Oid, "Deactivate",
+            new PyLong(fixture.Battery), new PyStr(effect)));
+        var offlineStop = rig.Sim.Heard.OfType<SimBatteryFire>().ToArray();
+        Assert.Equal(2, offlineStop.Length);
+        Assert.Equal((fixture.Battery, false, 0L), (offlineStop[1].BatteryId, offlineStop[1].On, offlineStop[1].Target));
+
+        // unheld: the grant is let go, and the stop is accepted from the pilot that held it
+        await rig.Containers.ReleaseBatteryControlAsync(fixture.Session.CharacterId!.Value, CancellationToken.None);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        Assert.Equal(new PyInt(1), await fixture.Holder.BoundCallAsync(fixture.Oid, "Deactivate",
+            new PyLong(fixture.Battery), new PyStr(effect)));
+        var unheldStop = rig.Sim.Heard.OfType<SimBatteryFire>().ToArray();
+        Assert.Equal(3, unheldStop.Length);
+        Assert.Equal((fixture.Battery, false, 0L), (unheldStop[2].BatteryId, unheldStop[2].On, unheldStop[2].Target));
+
+        // held by the pilot again, online again: another pilot's stop is refused and nothing is sent
+        await rig.Deployed.SetTowerStateAsync(fixture.Battery, "online");
+        Assert.IsType<PyNone>(await fixture.Holder.CallAsync("AssumeStructureControl", new PyLong(fixture.Battery)));
+        var bound = Assert.IsType<PyTuple>(await fixture.Other.CallServiceAsync("dogmaIM", "MachoBindObject",
+            new PyTuple([new PyLong(LowSecSystem), new PyInt(5)]), PyNone.Instance));
+        var otherOid = BoundOid(bound.Items[0]);
+        var refused = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Other.BoundCallAsync(otherOid, "Deactivate",
+            new PyLong(fixture.Battery), new PyStr(effect)));
+        Assert.Equal("CustomNotify", refused.Error.UserErrorMessage);
+        Assert.Equal(3, rig.Sim.Heard.OfType<SimBatteryFire>().Count());
+    }
+
     /// <summary>The Amarr Control Tower's shield radius (SDE attribute 680, shieldRadius): the radius of its force field, not of the tower's ball.</summary>
     private const double TowerShieldRadius = 30_000d;
     /// <summary>The SDE's Force Field type (group 411), which every POS control tower's field is an item of.</summary>

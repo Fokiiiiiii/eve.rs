@@ -175,3 +175,82 @@ fn battery_fire_needs_a_held_target_and_ends_with_its_lock() {
         "{offline:?}"
     );
 }
+
+/// A stop is always accepted (protocol 104): a battery that is offline, has no holder or is not in space answers a stop with no reason, and a fire
+/// that is on ends with its stop. A start on a battery that is offline is still refused.
+#[test]
+fn a_stop_is_always_accepted_for_an_offline_unheld_or_absent_battery() {
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([(*system()).clone()])));
+    sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+    let at = sim.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&SESSION].ship.position;
+    let place = |holder_session, online| BatteryPlacement {
+        battery_id: BATTERY,
+        solar_system_id: SYSTEM,
+        type_id: 16_631,
+        group_id: 1_000,
+        display_name: "Test battery".to_string(),
+        holder_session,
+        position: [at.x, at.y, at.z],
+        radius: 60.0,
+        scan_resolution: 400.0,
+        max_target_range: 50_000.0,
+        max_locked_targets: 2,
+        online,
+    };
+    let fire = |request_id: u64, battery_id: i64, on: bool| Message::BatteryFire {
+        request_id,
+        battery_id,
+        solar_system_id: SYSTEM,
+        on,
+        target: STATION,
+    };
+    sim.handle(Message::PlaceBattery(Box::new(place(SESSION, true))), NOON).unwrap();
+    sim.handle(
+        Message::BatteryTarget {
+            request_id: 40,
+            battery_id: BATTERY,
+            solar_system_id: SYSTEM,
+            order: 1,
+            target: STATION,
+        },
+        NOON,
+    )
+    .unwrap();
+    sim.poll(NOON + 200 * SECOND);
+    let started = sim.handle(fire(41, BATTERY, true), NOON + 200 * SECOND).unwrap();
+    assert!(
+        matches!(&started[..], [Message::BatteryFired { request_id: 41, reason, active: true, .. }] if reason.is_empty()),
+        "{started:?}"
+    );
+
+    // offline: going offline ends the fire, and the stop that follows is accepted
+    sim.handle(Message::PlaceBattery(Box::new(place(SESSION, false))), NOON + 200 * SECOND).unwrap();
+    let offline = sim.handle(fire(42, BATTERY, false), NOON + 200 * SECOND).unwrap();
+    assert!(
+        matches!(&offline[..], [Message::BatteryFired { request_id: 42, reason, active: false, target: 0, .. }] if reason.is_empty()),
+        "{offline:?}"
+    );
+
+    // no holder, online: a stop is accepted as well
+    sim.handle(Message::PlaceBattery(Box::new(place(0, true))), NOON + 200 * SECOND).unwrap();
+    let unheld = sim.handle(fire(43, BATTERY, false), NOON + 200 * SECOND).unwrap();
+    assert!(
+        matches!(&unheld[..], [Message::BatteryFired { request_id: 43, reason, active: false, target: 0, .. }] if reason.is_empty()),
+        "{unheld:?}"
+    );
+
+    // not in space: there is no fire to end, so the stop is accepted
+    let absent = sim.handle(fire(44, BATTERY + 7, false), NOON + 200 * SECOND).unwrap();
+    assert!(
+        matches!(&absent[..], [Message::BatteryFired { request_id: 44, reason, active: false, target: 0, .. }] if reason.is_empty()),
+        "{absent:?}"
+    );
+
+    // a start on the battery while it is offline is still refused
+    sim.handle(Message::PlaceBattery(Box::new(place(SESSION, false))), NOON + 200 * SECOND).unwrap();
+    let refused = sim.handle(fire(45, BATTERY, true), NOON + 200 * SECOND).unwrap();
+    assert!(
+        matches!(&refused[..], [Message::BatteryFired { request_id: 45, reason, active: false, .. }] if reason == "BATTERY_OFFLINE"),
+        "{refused:?}"
+    );
+}

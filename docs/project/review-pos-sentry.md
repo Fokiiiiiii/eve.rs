@@ -34,12 +34,14 @@ Traced paths:
   reconciled (`PosMgr.cs:344-348`), which places unheld batteries with no holder.
 - R-03: `ReleaseBatteryControlAsync` is called on leaving the cluster (`SpaceComposition.cs:616`). Fix: the store returns the control towers of the
   released batteries (`PgDeployedStore.cs`), and each is reconciled (`PosMgr.cs:353-360`).
+- R-04 (fixed 2026-11-19): a stop of a battery's fire was refused on an offline battery (`BATTERY_OFFLINE`) and on an unheld one (`NO_CONTROL_GRANT`), against the rule in the `battery_fire` documentation that a stop is always accepted. The scene now accepts a stop whatever the battery state (`targeting/battery.rs`, `sim/dispatch.rs`; commit `d9f30a7f9`). The Host sends a stop without a placement, which names a holder, so the holder's stop and the stop of an unheld battery are accepted, and another pilot's stop of a battery that is held stays refused with `NO_CONTROL_GRANT` (`SpaceContainers.Batteries.cs`; commit `f5919a3af`). Tests, both written to fail first: `a_stop_is_always_accepted_for_an_offline_unheld_or_absent_battery` (Rust, `BATTERY_OFFLINE` before the fix) and `Battery_fire_stop_is_accepted_for_an_offline_or_unheld_battery_and_refused_for_another_pilots_held_one` (Host, `BATTERY_OFFLINE` before the fix). The `battery_fire` rule is now the one the document states.
+
 
 ## 2. Open findings, not fixed
 
 | ID | Finding | Status and reason |
 |----|---------|-------------------|
-| R-04 | `battery_fire` documents that a stop is always accepted (`battery.rs:262`), but it refuses a stop on an offline battery (`battery.rs:274`) and on an unheld one (`battery.rs:277`). The Host also refuses a stop on an offline battery after placement (`SpaceContainers.Batteries.cs:188`), and maps it to `BATTERY_OFFLINE` (`DogmaIMService.Targeting.cs:174`). No test covers a stop (`sim/battery_tests.rs:157-173` covers only starts). | Confirmed contract mismatch, impact small: the fire already ended when the battery went offline (`go_offline`, `battery.rs:93`, tells the holder `clear`), so a later `Deactivate` gets an error. Which side is authoritative is an owner decision, so it is not changed. |
+| R-04 | Fixed on 2026-11-19 (section 1): a stop of a battery's fire is always accepted, in the scene, in the Host and on the Dogma path. | `crates/eve-space/src/targeting/battery.rs`, `sim/dispatch.rs`, `dotnet/src/Eve.Services.Space/SpaceContainers.Batteries.cs` | `d9f30a7f9`, `f5919a3af` | the stop tests listed in section 1 |
 | R-05 | Time-of-check race in the sentry reconcile. `ReconcileSentryAsync` reads the grant (`Sentry.cs:62`) before it takes the battery gate. `BatteryFireAsync` and `BatteryTargetAsync` also read the grant (`Batteries.cs:66`, `:163`) before the gate. If a pilot's grant and holder placement land between the sentry's read and its holder-`0` placement, the simulation ends with no holder while the grant stands, and the sentry binds the battery (same outcome as R-01). | Plausible, reasoned from the code; not reproduced. A deterministic test needs an interleaving seam that the rig does not have. The fix would re-read the grant inside the gate. Not fixed without a failing test. |
 | R-06 | Pilot facts are a snapshot at each reconcile (`Sentry.cs:89-102`). A standing, security status or war change during a visit is not re-sent until the next trigger. | Known and open: `docs/project/TODO.md:2658` lists it. Not a new defect. |
 | R-07 | The offline placement clears the holder in the simulation while the grant stands (by design: `ControlTowerHostTests` "is placed offline in the simulation ... with no holder"). After the tower is online again the pilot's next order re-places the holder. | Residual, not a defect. Noted because the window between online and the next pilot order has no holder in the simulation. |
@@ -77,7 +79,7 @@ Traced paths:
 ## 5. Gaps in the tests (they still pass, and they do not fail on these rules)
 
 - No test pins the boundary: a standing equal to the threshold, or a security status equal to it, is not named (`sentry_tests.rs`).
-- No test covers a stop (`Deactivate`) on an offline battery (R-04).
+- R-04 had no test for a stop; the two tests named in section 1 cover it now.
 - No Host test covers the grant-read race (R-05).
 
 ## 6. Full-project run and what was not run

@@ -9,7 +9,7 @@ Method: read-only. The code was read with Serena and codebase-memory, and the EV
 Each fix has its own commit, with the failing test first. Status by finding:
 
 - **Fixed:** F1 (restart re-sends the saved access and the pilot password matches), F2 (a gun reload keeps the credential), F3 (a tower's reconcile is serialized from its commit to its send; the no-item removal retry is not done), F4 (a pilot's match and the system rematch are ordered), F5 (the Host path already existed; the simulation's respec now refreshes the harmonic), F6 (a refused placement takes its item back; the restore goes on past a refusal; the pinned test is corrected), F8 (unanchor completion takes the field out of the simulation; the item half was not reproducible).
-- **Not in this batch:** F7 (alliance membership is not re-read live), F9 (the Rust cancel rule), F10 (the settle-path test gap and the restore test gap, partly closed by the F1 and F6 tests), F11 (non-positive ids in the codecs).
+- **Fixed later, each with its own commit:** F7 (live alliance membership of the owner corporation, `cd4c0b895`), F9 (Follow and Orbit cancel rule; Goto rejected, see below, `3f91f7dc1`), F10 (settle-path and restore reconcile tests, `40e9e08b3`), F11 (non-positive ids refused by the codecs, `293fae7c7`).
 - **Protocol:** unchanged. No SimLink kind was added. The `SetPilotAffiliation` message the review proposed for F5 was not added.
 - **Final checks:** full `Eve.Services.Space.Tests` (Debug): 1278 passed, 0 failed, 0 skipped. `cargo test -p eve-space --lib`: 1094 passed, 0 failed. Release build with `-warnaserror`: `Eve.Services.Space` and `Eve.Services.Space.Tests` both 0 warnings, 0 errors. A Release `-D warnings` build of `eve-space` was not run (about 2 GB free disk).
 
@@ -223,6 +223,8 @@ Rejected candidates are listed at the end, with reasons.
 ---
 
 ## F11 (Low, confirmed): non-positive ids are accepted
+
+**Outcome (fixed):** `force_field_frames_refuse_a_non_positive_field_or_tower_id` (Rust, `link/force_field_tests.rs`) failed first: `decoded PlaceForceField(... field_id: 0 ...)`. Fix: the Rust decoder (`link/decode_message.rs`) refuses `field_id <= 0` and `tower_id <= 0` for the six force field kinds. The C# decoder and encoder (`SimCodec.cs`, `SimCodec.Encode.cs`) refuse the same values with `SimLinkException`. Test `Force_field_codec_refuses_a_non_positive_field_or_tower_id` (`ForceFieldCodecTests.cs`). The frame layout, the protocol version and the fixtures are unchanged. Verified: `cargo test -p eve-space --lib force_field` 44 of 44 passed; `Eve.Space.Tests --filter ForceFieldCodecTests` 5 of 5 passed. Caveat: the C# test was written and its fix applied before it was run, so its red run was not observed.
 
 - `crates/eve-space/src/link/decode_message.rs:2759-2781` and `dotnet/src/Eve.Space/SimCodec.cs:1336-1349` accept `field_id <= 0` and `tower_id <= 0`.
 - The harmonic is the tower id (`deployable.rs:211-213`, `force_field.rs:297`). A tower id of 0 gives harmonic 0, which the Rust encoder emits and the C# decoder refuses (`SimCodec.cs:1664-1670`), so the frame fails.

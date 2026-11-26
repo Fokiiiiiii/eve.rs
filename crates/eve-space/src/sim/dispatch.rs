@@ -2161,15 +2161,20 @@ impl Sim {
                     self.scenes.insert(scene_key, self.universe.scene_of(system));
                 }
                 if let Some(scene) = self.scenes.get_mut(&scene_key) {
-                    let pilot = (ship_id != 0).then_some(crate::targeting::SentryPilot {
-                        ship_id,
-                        corporation_id,
-                        alliance_id,
-                        security_status,
-                        standing,
-                        at_war,
-                    });
-                    scene.set_sentry_pilot(tower_id, pilot);
+                    // a pilot with no valid ship id is not a pilot the host names: it changes nothing
+                    if ship_id > 0 {
+                        scene.set_sentry_pilot(
+                            tower_id,
+                            Some(crate::targeting::SentryPilot {
+                                ship_id,
+                                corporation_id,
+                                alliance_id,
+                                security_status,
+                                standing,
+                                at_war,
+                            }),
+                        );
+                    }
                 }
                 Vec::new()
             }

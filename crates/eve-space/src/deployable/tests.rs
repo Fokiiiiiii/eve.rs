@@ -1477,3 +1477,63 @@ fn a_link_that_completes_near_the_last_tick_holds_without_overflow() {
         "the ship is held during the link"
     );
 }
+
+/// A tower that goes out of space takes its sentry policy, its field's access and what the host knows of its pilots with it.
+#[test]
+fn a_tower_that_goes_out_of_space_takes_its_policy_access_and_pilots_with_it() {
+    let tower_id = 990_000_000_300;
+    let (mut scene, t) = crowd();
+    let (a, system) = (scene.pilots[&A].ship.position, scene.solar_system_id());
+    let placement = crate::link::DisruptorPlacement {
+        deployable_id: tower_id,
+        solar_system_id: system,
+        name: "Amarr Control Tower".to_string(),
+        type_id: 12_235,
+        group_id: 365,
+        position: [a.x + 50_000.0, a.y, a.z],
+        radius: 3_394.0,
+        range: 0.0,
+        active: true,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: 0,
+    };
+    scene.place_control_tower(placement, t);
+    scene.set_sentry_policy(crate::targeting::SentryPolicy {
+        tower_id,
+        online: true,
+        standing: None,
+        security_status: None,
+        war: false,
+        high_security: false,
+        owner_corporation_id: 4_242,
+        owner_alliance_id: 0,
+    });
+    scene.set_force_field_access(
+        tower_id,
+        crate::scene::force_field::Access {
+            corporation_id: 4_242,
+            alliance_id: 0,
+            allow_corporation: true,
+            allow_alliance: false,
+        },
+    );
+    scene.set_sentry_pilot(
+        tower_id,
+        Some(crate::targeting::SentryPilot {
+            ship_id: scene.pilots[&A].ship.spec.ship_id,
+            corporation_id: 98_000_002,
+            alliance_id: 0,
+            security_status: Some(0.0),
+            standing: 0.0,
+            at_war: false,
+        }),
+    );
+    scene.deployables.get_mut(&tower_id).unwrap().ends_at = t;
+    scene.advance_deployables(t + SECOND);
+    assert!(!scene.deployables.contains_key(&tower_id), "the tower is out of space");
+    assert!(!scene.sentry_policies.contains_key(&tower_id), "the tower's sentry policy was kept");
+    assert!(!scene.force_field_access.contains_key(&tower_id), "the tower's field access was kept");
+    assert!(scene.sentry_pilots.keys().all(|(tower, _)| *tower != tower_id), "the tower's pilots were kept");
+}

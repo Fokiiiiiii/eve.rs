@@ -263,6 +263,45 @@ fn the_last_pilot_leaving_keeps_a_scene_with_tower_access_and_policy() {
     assert!(scene.sentry_policies.contains_key(&TOWER));
 }
 
+/// A sentry pilot with no ship id is not a pilot the host names: it changes nothing, and the tower's other pilots are kept.
+#[test]
+fn a_sentry_pilot_with_no_ship_id_changes_nothing() {
+    let mut sim = new_sim();
+    let key = SceneKey::solar_system(SYSTEM);
+    let ship = sim.scenes[&key].pilots[&SESSION].ship.spec.ship_id;
+    sim.scenes.get_mut(&key).unwrap().set_sentry_pilot(
+        TOWER,
+        Some(crate::targeting::SentryPilot {
+            ship_id: ship,
+            corporation_id: 98_000_002,
+            alliance_id: 0,
+            security_status: Some(0.0),
+            standing: 0.0,
+            at_war: false,
+        }),
+    );
+    let told = sim
+        .handle(
+            Message::SentryPilot {
+                tower_id: TOWER,
+                solar_system_id: SYSTEM,
+                ship_id: 0,
+                corporation_id: 0,
+                alliance_id: 0,
+                security_status: None,
+                standing: 0.0,
+                at_war: false,
+            },
+            NOON,
+        )
+        .unwrap();
+    assert!(told.is_empty());
+    assert!(
+        sim.scenes[&key].sentry_pilots.contains_key(&(TOWER, ship)),
+        "a sentry pilot with no ship id cleared the tower"
+    );
+}
+
 /// A field and its tower are named by positive ids: a zero or negative one is refused and takes no place.
 #[test]
 fn a_field_or_tower_without_a_positive_id_is_refused_and_takes_no_place() {

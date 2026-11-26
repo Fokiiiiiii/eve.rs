@@ -1181,6 +1181,9 @@ impl Scene {
 
     /// A deployable is taken out of the scene: a bomb's explosion is played, and the pilots who were told of it are told it is gone.
     fn depart(&mut self, deployable: &Deployable, explode: bool, now: i64) -> Vec<Out> {
+        if matches!(deployable.role, Role::ControlTower { .. }) {
+            self.forget_tower(deployable.id);
+        }
         let stamp = self.next_stamp(now);
         let mut actions = Vec::new();
         if explode {

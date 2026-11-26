@@ -214,6 +214,9 @@ impl Scene {
         battery.max_locked_targets = placement.max_locked_targets;
         battery.online = placement.online;
         battery.holder = holder;
+        if let Some(tower_id) = self.pending_sentry_bindings.remove(&battery_id) {
+            battery.sentry_tower = Some(tower_id);
+        }
         self.batteries.insert(battery_id, battery);
         Ok(out)
     }
@@ -480,6 +483,7 @@ impl Scene {
         for battery_id in ids {
             out.extend(self.settle_battery(battery_id, now));
         }
+        self.prune_sentry_pilots();
         self.sentry_pass(now);
         out
     }

@@ -253,6 +253,100 @@ public sealed class ShipScoopingHostTests
         Assert.Empty(Events.Of(session));
     }
 
+    [PgFact]
+    public async Task ScoopToMobileDepotHold_names_the_refusal_when_the_depot_is_still_activating()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.UseShipInventoryService();
+        var depotType = (await rig.Statics.TypesInGroupsAsync(["Mobile Depot"]))
+            .First(type => type.Name == "Mobile Depot");
+        var (session, bound, systemId, characterId, shipId) = await MakeSpacePilotAsync(rig, shipTypeId: 77114);
+        var depotId = await MakeMobileDepotAsync(rig, characterId, shipId, systemId, depotType.TypeId, depotType.GroupId);
+        await ChangeDeployedAsync(rig, depotId, record => record with { ActivateAtMs = rig.Now + 60_000 });
+        Events.Of(session);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.RegisteredCallAsync(
+            session, bound, "ScoopToMobileDepotHold", new PyLong(depotId)));
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Equal("Mobile Depot is still activating.", NoticeOf(error));
+        var depot = (await rig.Items.GetAsync(depotId))!;
+        Assert.Equal((systemId, CharacterShips.InSpaceFlag), (depot.LocationId, depot.Flag));
+        Assert.NotNull(await rig.Deployed.GetAsync(depotId));
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
+    public async Task ScoopToMobileDepotHold_names_the_refusal_when_another_pilot_owns_the_depot()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.UseShipInventoryService();
+        var depotType = (await rig.Statics.TypesInGroupsAsync(["Mobile Depot"]))
+            .First(type => type.Name == "Mobile Depot");
+        var (session, bound, systemId, characterId, shipId) = await MakeSpacePilotAsync(rig, shipTypeId: 77114);
+        var depotId = await MakeMobileDepotAsync(rig, characterId, shipId, systemId, depotType.TypeId, depotType.GroupId);
+        await ChangeDeployedAsync(rig, depotId, record => record with { OwnerId = characterId + 1 });
+        Events.Of(session);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.RegisteredCallAsync(
+            session, bound, "ScoopToMobileDepotHold", new PyLong(depotId)));
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Equal("Only the owner can scoop this Mobile Depot.", NoticeOf(error));
+        var depot = (await rig.Items.GetAsync(depotId))!;
+        Assert.Equal((systemId, CharacterShips.InSpaceFlag), (depot.LocationId, depot.Flag));
+        Assert.NotNull(await rig.Deployed.GetAsync(depotId));
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
+    public async Task ScoopToMobileDepotHold_names_the_refusal_when_the_ship_has_no_mobile_depot_hold()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.UseShipInventoryService();
+        var depotType = (await rig.Statics.TypesInGroupsAsync(["Mobile Depot"]))
+            .First(type => type.Name == "Mobile Depot");
+        // The default space pilot flies a Rifter, whose hull has no Mobile Depot Hold.
+        var (session, bound, systemId, characterId, shipId) = await MakeSpacePilotAsync(rig);
+        var depotId = await MakeMobileDepotAsync(rig, characterId, shipId, systemId, depotType.TypeId, depotType.GroupId);
+        Events.Of(session);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.RegisteredCallAsync(
+            session, bound, "ScoopToMobileDepotHold", new PyLong(depotId)));
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Equal("This ship does not have a Mobile Depot Hold.", NoticeOf(error));
+        var depot = (await rig.Items.GetAsync(depotId))!;
+        Assert.Equal((systemId, CharacterShips.InSpaceFlag), (depot.LocationId, depot.Flag));
+        Assert.NotNull(await rig.Deployed.GetAsync(depotId));
+        Assert.Empty(Events.Of(session));
+    }
+
+    [PgFact]
+    public async Task ScoopToMobileDepotHold_names_the_refusal_for_an_item_id_that_is_not_positive()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.UseShipInventoryService();
+        var (session, bound, _, _, _) = await MakeSpacePilotAsync(rig, shipTypeId: 77114);
+        Events.Of(session);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.RegisteredCallAsync(
+            session, bound, "ScoopToMobileDepotHold", new PyLong(0)));
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Equal("Unable to scoop this item.", NoticeOf(error));
+        Assert.Empty(Events.Of(session));
+    }
+
+    private static async Task ChangeDeployedAsync(Rig rig, long depotId, Func<DeployedRecord, DeployedRecord> change)
+    {
+        var record = await rig.Deployed.GetAsync(depotId) ?? throw new InvalidOperationException("Test depot record is missing.");
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await rig.Deployed.SaveAsync(connection, transaction, change(record));
+        await transaction.CommitAsync();
+    }
+
     private static async Task<(ClientSession Session, string Bound, long Can, long Cargo, int System, long Character, long Ship)>
         MakeSpaceCanAsync(Rig rig, bool withCargo = false, int shipTypeId = 587)
     {

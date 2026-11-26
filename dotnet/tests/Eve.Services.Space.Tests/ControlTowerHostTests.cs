@@ -2624,6 +2624,31 @@ public class ControlTowerHostTests
     }
 
     [PgFact]
+    public async Task An_unauthorized_pilot_is_refused_within_two_seconds_while_another_transaction_holds_the_tower_row()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (_, tower) = await OnlineTowerAsync(rig);
+        var (other, _) = await PilotWithItemsAsync(rig, [], LowSecSystem, account: 2, name: "Second Tester", sessionId: 2);
+        // the pilot is in the tower's system but belongs to another corporation, so the tower is not its to read
+        other.Set("corpid", new PyLong(TestCorporation + 1));
+        other.Set("isCEO", PyBool.False);
+        other.Set("corprole", new PyLong(0));
+        var posMgr = new PosMgrService(
+            anchorControlTower: (pilot, itemId, position, token) => new ValueTask(rig.Containers.AnchorControlTowerAsync(pilot, itemId, position, token)),
+            operation: rig.Containers.PosMgrControlTowerOperationAsync);
+        await using var otherHost = await PosMgrHostWire.StartAsync(posMgr, other, () => rig.Now);
+
+        // another transaction holds the tower's row for as long as the refusal takes
+        await using var holder = await rig.Source.OpenConnectionAsync();
+        await using var holderTransaction = await holder.BeginTransactionAsync();
+        Assert.NotNull(await rig.Deployed.LockAndGetAsync(holder, holderTransaction, tower, CancellationToken.None));
+
+        await Assert.ThrowsAsync<MachoWrappedException>(() => otherHost.CallAsync("GetTowerSentrySettings", new PyLong(tower)))
+            .WaitAsync(TimeSpan.FromSeconds(2));
+        await holderTransaction.RollbackAsync();
+    }
+
+    [PgFact]
     public async Task A_starbase_module_anchor_takes_the_tower_row_before_the_module_row()
     {
         await using var rig = await Rig.CreateAsync();

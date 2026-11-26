@@ -2760,6 +2760,9 @@ impl Message {
             kind::PLACE_FORCE_FIELD => {
                 let field_id = r.i64()?;
                 let tower_id = r.i64()?;
+                if field_id <= 0 || tower_id <= 0 {
+                    return Err(DecodeError::BadValue("force field id"));
+                }
                 let solar_system_id = r.i32()?;
                 let type_id = r.i32()?;
                 let group_id = r.i32()?;
@@ -2780,13 +2783,32 @@ impl Message {
                     radius,
                 }))
             }
-            kind::FORCE_FIELD_PLACED => Message::ForceFieldPlaced { field_id: r.i64()?, reason: r.text()? },
-            kind::REMOVE_FORCE_FIELD => {
-                Message::RemoveForceField { tower_id: r.i64()?, solar_system_id: r.i32()? }
+            kind::FORCE_FIELD_PLACED => {
+                let field_id = r.i64()?;
+                if field_id <= 0 {
+                    return Err(DecodeError::BadValue("force field id"));
+                }
+                Message::ForceFieldPlaced { field_id, reason: r.text()? }
             }
-            kind::FORCE_FIELD_REMOVED => Message::ForceFieldRemoved { tower_id: r.i64()?, reason: r.text()? },
+            kind::REMOVE_FORCE_FIELD => {
+                let tower_id = r.i64()?;
+                if tower_id <= 0 {
+                    return Err(DecodeError::BadValue("force field tower"));
+                }
+                Message::RemoveForceField { tower_id, solar_system_id: r.i32()? }
+            }
+            kind::FORCE_FIELD_REMOVED => {
+                let tower_id = r.i64()?;
+                if tower_id <= 0 {
+                    return Err(DecodeError::BadValue("force field tower"));
+                }
+                Message::ForceFieldRemoved { tower_id, reason: r.text()? }
+            }
             kind::SET_FORCE_FIELD_ACCESS => {
                 let tower_id = r.i64()?;
+                if tower_id <= 0 {
+                    return Err(DecodeError::BadValue("force field tower"));
+                }
                 let solar_system_id = r.i32()?;
                 let corporation_id = r.i32()?;
                 let alliance_id = r.i32()?;
@@ -2812,6 +2834,9 @@ impl Message {
             kind::SHIP_FORCE_FIELD_PASSWORD => {
                 let session_id = r.u64()?;
                 let tower_id = r.i64()?;
+                if tower_id <= 0 {
+                    return Err(DecodeError::BadValue("force field tower"));
+                }
                 let solar_system_id = r.i32()?;
                 let matched = match r.u8()? {
                     0 => false,

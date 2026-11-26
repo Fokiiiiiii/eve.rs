@@ -1524,25 +1524,37 @@ private static void WriteStructureDamageCorrelation(
                 w.U64(m.SessionId);
                 break;
             case SimPlaceForceField m:
+                if (m.FieldId <= 0 || m.TowerId <= 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "force field id");
                 if (!ValidForceFieldPlacement(m.Position, m.Radius))
                     throw new ArgumentException("Invalid force field placement.", nameof(message));
                 w.U8(Kind.PlaceForceField); w.I64(m.FieldId); w.I64(m.TowerId); w.I32(m.SolarSystemId); w.I32(m.TypeId); w.I32(m.GroupId);
                 w.Text(m.Name); WriteVector(w, m.Position); w.F64(m.Radius);
                 break;
             case SimForceFieldPlaced m:
+                if (m.FieldId <= 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "force field id");
                 w.U8(Kind.ForceFieldPlaced); w.I64(m.FieldId); w.Text(m.Reason);
                 break;
             case SimRemoveForceField m:
+                if (m.TowerId <= 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "force field tower");
                 w.U8(Kind.RemoveForceField); w.I64(m.TowerId); w.I32(m.SolarSystemId);
                 break;
             case SimForceFieldRemoved m:
+                if (m.TowerId <= 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "force field tower");
                 w.U8(Kind.ForceFieldRemoved); w.I64(m.TowerId); w.Text(m.Reason);
                 break;
             case SimSetForceFieldAccess m:
+                if (m.TowerId <= 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "force field tower");
                 w.U8(Kind.SetForceFieldAccess); w.I64(m.TowerId); w.I32(m.SolarSystemId); w.I32(m.CorporationId); w.I32(m.AllianceId);
                 w.U8((byte)(m.AllowCorporation ? 1 : 0)); w.U8((byte)(m.AllowAlliance ? 1 : 0));
                 break;
             case SimShipForceFieldPassword m:
+                if (m.TowerId <= 0)
+                    throw new SimLinkException(SimLinkError.BadValue, "force field tower");
                 w.U8(Kind.ShipForceFieldPassword); w.U64(m.SessionId); w.I64(m.TowerId); w.I32(m.SolarSystemId);
                 w.U8((byte)(m.Matched ? 1 : 0));
                 break;

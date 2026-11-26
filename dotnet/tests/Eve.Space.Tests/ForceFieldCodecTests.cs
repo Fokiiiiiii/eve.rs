@@ -58,6 +58,42 @@ public sealed class ForceFieldCodecTests
     }
 
     [Fact]
+    public void Force_field_codec_refuses_a_non_positive_field_or_tower_id()
+    {
+        // the frame layout does not change: a zero or negative field or tower id is refused by the encoder and by the decoder
+        Assert.Throws<SimLinkException>(() => SimCodec.Encode(new SimPlaceForceField(0, 2, 3, 4, 5, "F", [0.0, 0.0, 0.0], 1.0)));
+        Assert.Throws<SimLinkException>(() => SimCodec.Encode(new SimPlaceForceField(1, -1, 3, 4, 5, "F", [0.0, 0.0, 0.0], 1.0)));
+        Assert.Throws<SimLinkException>(() => SimCodec.Encode(new SimForceFieldPlaced(-1, string.Empty)));
+        Assert.Throws<SimLinkException>(() => SimCodec.Encode(new SimRemoveForceField(0, 3)));
+        Assert.Throws<SimLinkException>(() => SimCodec.Encode(new SimForceFieldRemoved(0, string.Empty)));
+        Assert.Throws<SimLinkException>(() => SimCodec.Encode(new SimSetForceFieldAccess(0, 3, 4, 5, true, false)));
+        Assert.Throws<SimLinkException>(() => SimCodec.Encode(new SimShipForceFieldPassword(1, 0, 3, true)));
+
+        // a valid frame with its id bytes set to zero (offset 5 is the first id after the kind byte at 4) is refused by the decoder
+        var place = SimCodec.Encode(new SimPlaceForceField(1_050_000_100, 1_050_000_099, 30_000_001, 16_000, 411, "Force Field", [1.0, 2.0, 3.0], 1_000.0));
+        Assert.IsType<SimPlaceForceField>(SimCodec.Decode(place.AsMemory(4)));
+        AssertDecodeRefuses(place, 5);
+        AssertDecodeRefuses(place, 13);
+        AssertDecodeRefuses(SimCodec.Encode(new SimForceFieldPlaced(1_050_000_100, string.Empty)), 5);
+        AssertDecodeRefuses(SimCodec.Encode(new SimRemoveForceField(1_050_000_099, 30_000_001)), 5);
+        AssertDecodeRefuses(SimCodec.Encode(new SimForceFieldRemoved(1_050_000_099, string.Empty)), 5);
+        AssertDecodeRefuses(SimCodec.Encode(new SimSetForceFieldAccess(1_050_000_099, 30_000_001, 98_000_001, 97_000_001, true, false)), 5);
+        // the session is 8 bytes at offset 5, so the tower is at 13
+        AssertDecodeRefuses(SimCodec.Encode(new SimShipForceFieldPassword(1_790_646_377_000_015, 1_050_000_099, 30_000_001, true)), 13);
+    }
+
+    private static void AssertDecodeRefuses(byte[] frame, int offset) =>
+        Assert.Throws<SimLinkException>(() => SimCodec.Decode(WithInt64At(frame, offset, 0).AsMemory(4)));
+
+    private static byte[] WithInt64At(byte[] frame, int offset, long value)
+    {
+        var copy = (byte[])frame.Clone();
+        for (var i = 0; i < 8; i++)
+            copy[offset + i] = (byte)(value >> (8 * i));
+        return copy;
+    }
+
+    [Fact]
     public void Force_field_encoder_refuses_numbers_the_simulation_cannot_read()
     {
         Assert.Throws<ArgumentException>(() => SimCodec.Encode(new SimPlaceForceField(1, 2, 3, 4, 5, "F", [double.NaN, 0.0, 0.0], 1.0)));

@@ -1338,6 +1338,8 @@ public static partial class SimCodec
                 {
                     var field = r.I64();
                     var tower = r.I64();
+                    if (field <= 0 || tower <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "force field id");
                     var solarSystem = r.I32();
                     var type = r.I32();
                     var group = r.I32();
@@ -1350,17 +1352,34 @@ public static partial class SimCodec
                     break;
                 }
             case Kind.ForceFieldPlaced:
-                message = new SimForceFieldPlaced(r.I64(), r.Text());
-                break;
+                {
+                    var field = r.I64();
+                    if (field <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "force field id");
+                    message = new SimForceFieldPlaced(field, r.Text());
+                    break;
+                }
             case Kind.RemoveForceField:
-                message = new SimRemoveForceField(r.I64(), r.I32());
-                break;
+                {
+                    var tower = r.I64();
+                    if (tower <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "force field tower");
+                    message = new SimRemoveForceField(tower, r.I32());
+                    break;
+                }
             case Kind.ForceFieldRemoved:
-                message = new SimForceFieldRemoved(r.I64(), r.Text());
-                break;
+                {
+                    var tower = r.I64();
+                    if (tower <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "force field tower");
+                    message = new SimForceFieldRemoved(tower, r.Text());
+                    break;
+                }
             case Kind.SetForceFieldAccess:
                 {
                     var tower = r.I64();
+                    if (tower <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "force field tower");
                     var solarSystem = r.I32();
                     var corporation = r.I32();
                     var alliance = r.I32();
@@ -1373,6 +1392,8 @@ public static partial class SimCodec
                 {
                     var session = r.U64();
                     var tower = r.I64();
+                    if (tower <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "force field tower");
                     var solarSystem = r.I32();
                     var matched = ReadFlag(ref r, "matched");
                     message = new SimShipForceFieldPassword(session, tower, solarSystem, matched);

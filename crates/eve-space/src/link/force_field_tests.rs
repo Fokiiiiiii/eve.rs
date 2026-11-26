@@ -67,6 +67,38 @@ fn force_field_frames_refuse_a_non_finite_radius_or_position() {
 }
 
 #[test]
+fn force_field_frames_refuse_a_non_positive_field_or_tower_id() {
+    // the frame layout is unchanged: a field and a tower are named by a positive id, so a zero or negative one is refused
+    let refused = [
+        Message::PlaceForceField(Box::new(ForceFieldPlacement { field_id: 0, ..placement() })),
+        Message::PlaceForceField(Box::new(ForceFieldPlacement { field_id: -1, ..placement() })),
+        Message::PlaceForceField(Box::new(ForceFieldPlacement { tower_id: 0, ..placement() })),
+        Message::PlaceForceField(Box::new(ForceFieldPlacement { tower_id: -1, ..placement() })),
+        Message::ForceFieldPlaced { field_id: 0, reason: String::new() },
+        Message::RemoveForceField { tower_id: 0, solar_system_id: 30_000_001 },
+        Message::ForceFieldRemoved { tower_id: -1, reason: String::new() },
+        Message::SetForceFieldAccess {
+            tower_id: 0,
+            solar_system_id: 30_000_001,
+            corporation_id: 98_000_001,
+            alliance_id: 97_000_001,
+            allow_corporation: true,
+            allow_alliance: false,
+        },
+        Message::ShipForceFieldPassword {
+            session_id: 1_790_646_377_000_015,
+            tower_id: -1,
+            solar_system_id: 30_000_001,
+            matched: true,
+        },
+    ];
+    for message in refused {
+        let frame = message.encode();
+        assert!(Message::decode(&frame[4..]).is_err(), "decoded {message:?}");
+    }
+}
+
+#[test]
 fn a_truncated_force_field_frame_is_refused() {
     let frame = Message::RemoveForceField { tower_id: 1_050_000_099, solar_system_id: 30_000_001 }.encode();
     assert!(Message::decode(&frame[4..frame.len() - 1]).is_err());

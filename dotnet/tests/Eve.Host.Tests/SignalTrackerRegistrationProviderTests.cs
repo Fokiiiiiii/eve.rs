@@ -82,6 +82,57 @@ public sealed class SignalTrackerRegistrationProviderTests
         AssertSignalTrackerNotification(sink.Packets[1], systemId, shouldRemoveOldSites: true);
     }
 
+    [Fact]
+    public async Task Refresh_sends_a_structure_delta_when_a_structure_appears_in_the_system()
+    {
+        const long systemId = 30_000_142;
+        const long structureId = 1_000_000_000_001;
+        var sessions = new CharacterSessions();
+        var sink = new RecordingSink();
+        var session = CreateSession(sessions, 42, systemId, sink);
+        var provider = new SignalTrackerRegistrationProvider(sessions);
+        var current = FullStateWithStructures(null);
+        provider.ReadFullState = (_, _) => ValueTask.FromResult<PyValue>(current);
+
+        await provider.RegisterAsync(RegisterCall(session), current);
+        session.RunAfterResponse();
+        Assert.Single(sink.Packets);
+
+        current = FullStateWithStructures(structureId);
+        await provider.RefreshAsync();
+
+        Assert.Equal(2, sink.Packets.Count);
+        var args = DeltaArguments(sink.Packets[1], "OnSignalTrackerStructureUpdate");
+        Assert.Equal(3, args.Count);
+        Assert.Equal(systemId, Assert.IsType<PyInt>(args[0]).Value);
+        var added = Assert.IsType<PyDict>(args[1]);
+        Assert.Equal(new PyLong(structureId), Assert.Single(added.Entries).Key);
+        Assert.Empty(Assert.IsType<PyList>(args[2]).Items);
+    }
+
+    private static PyList FullStateWithStructures(long? structureId)
+    {
+        var structures = new List<KeyValuePair<PyValue, PyValue>>();
+        if (structureId is { } id)
+            structures.Add(new(new PyLong(id), Py.KeyVal(("typeID", new PyInt(35_832)), ("targetID", new PyStr("ABC-123")))));
+        return new PyList([new PyDict([]), new PyDict([]), new PyDict([]), new PyDict(structures)]);
+    }
+
+    private static IReadOnlyList<PyValue> DeltaArguments(PyValue packetValue, string notification)
+    {
+        var packet = Assert.IsType<PyObject>(packetValue);
+        Assert.Equal(ClientNotification.ClassName, Str(packet.Name));
+        var packetItems = Assert.IsType<PyTuple>(packet.Args).Items;
+        var destination = Assert.IsType<PyObject>(packetItems[2]);
+        var destinationItems = Assert.IsType<PyTuple>(destination.Args).Items;
+        Assert.Equal(notification, Str(destinationItems[1]));
+        var envelope = Assert.IsType<PyTuple>(packetItems[4]).Items[0];
+        var payload = Assert.IsType<PyBuffer>(Assert.IsType<PyTuple>(envelope).Items[1]);
+        var decoded = Assert.IsType<PyTuple>(MarshalCodec.DecodeExact(payload.Value));
+        var eventCall = Assert.IsType<PyTuple>(decoded.Items[1]);
+        return Assert.IsType<PyTuple>(eventCall.Items[1]).Items;
+    }
+
     private static PyList FullStateWithStaticSite(long siteId) => new([
         new PyDict([]),
         new PyDict([]),

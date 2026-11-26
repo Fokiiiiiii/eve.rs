@@ -233,6 +233,90 @@ public sealed class IncursionAnomalyServiceTests
     }
 
     [Fact]
+    public async Task Scan_manager_full_state_lists_the_structures_of_the_system_in_the_client_row_shape()
+    {
+        const long systemId = 30000142;
+        long requestedSystem = 0;
+        var structures = new[]
+        {
+            Json("""
+            {
+              "structureID": 1000000000001,
+              "typeID": 35832,
+              "groupID": 1404,
+              "categoryID": 65,
+              "position": [5.0, 6.0, 7.0],
+              "targetID": "abc-123"
+            }
+            """),
+            Json("""
+            {
+              "structureID": 1000000000002,
+              "typeID": 35832,
+              "groupID": 1404,
+              "position": [1.0, 2.0, 3.0],
+              "targetID": "DEF-456"
+            }
+            """),
+            Json("""
+            {
+              "structureID": 1000000000003,
+              "groupID": 1404,
+              "position": [0, 0, 0],
+              "targetID": "GHI-789"
+            }
+            """),
+            Json("""
+            {
+              "structureID": 1000000000004,
+              "typeID": 35832,
+              "groupID": 1404,
+              "position": [0, 0, 0]
+            }
+            """)
+        };
+        var service = new IncursionAnomalyService(
+            "scanMgr",
+            _ => ValueTask.FromResult<IReadOnlyList<JsonObject>>([]),
+            (_, _) => ValueTask.FromResult<IReadOnlyList<JsonObject>>([]),
+            readStructures: (requested, _) =>
+            {
+                requestedSystem = requested;
+                return ValueTask.FromResult<IReadOnlyList<JsonObject>>(structures);
+            });
+        var (call, _) = Request("GetFullState", systemId);
+
+        var state = Assert.IsType<PyList>(await service.CallAsync(call));
+        Assert.Equal(systemId, requestedSystem);
+        Assert.Equal(4, state.Items.Count);
+        Assert.Empty(Assert.IsType<PyDict>(state.Items[2]).Entries);
+        var rows = Assert.IsType<PyDict>(state.Items[3]);
+        Assert.Equal(2, rows.Entries.Count);
+        var fields = Fields(Assert.IsType<PyObject>(Entry(rows, 1000000000001)));
+        Assert.Equal(5, fields.Count);
+        Assert.Equal(35832L, Int(fields["typeID"]));
+        Assert.Equal(1404L, Int(fields["groupID"]));
+        Assert.Equal(65L, Int(fields["categoryID"]));
+        Assert.Equal([5.0, 6.0, 7.0], List(fields["position"]).Select(Real).ToArray());
+        Assert.Equal("ABC-123", Str(fields["targetID"]));
+        var defaulted = Fields(Assert.IsType<PyObject>(Entry(rows, 1000000000002)));
+        Assert.Equal(65L, Int(defaulted["categoryID"]));
+        Assert.Equal("DEF-456", Str(defaulted["targetID"]));
+        Assert.Empty(Assert.IsType<PyDict>(state.Items[1]).Entries);
+    }
+
+    [Fact]
+    public void Signal_tracker_target_ids_are_three_letters_a_dash_and_three_digits_per_family_system_and_id()
+    {
+        var structure = SignalTrackerTargetId.Encode("structure", 30000142, 1000000000001);
+
+        Assert.Matches("^[A-Z]{3}-[0-9]{3}$", structure);
+        Assert.Equal(structure, SignalTrackerTargetId.Encode("Structure", 30000142, 1000000000001));
+        Assert.NotEqual(structure, SignalTrackerTargetId.Encode("site", 30000142, 1000000000001));
+        Assert.NotEqual(structure, SignalTrackerTargetId.Encode("structure", 30000143, 1000000000001));
+    }
+
+    [Fact]
     public async Task Missing_incursion_and_anomaly_state_returns_exact_empty_read_shapes()
     {
         var empty = NewService("map");
@@ -316,6 +400,16 @@ public sealed class IncursionAnomalyServiceTests
             signalTrackerRegister);
 
     private static JsonObject Json(string json) => JsonNode.Parse(json)!.AsObject();
+
+    private static PyValue Entry(PyDict dict, long key) =>
+        dict.Entries.Single(entry => entry.Key is PyInt or PyLong && Key(entry.Key) == key).Value;
+
+    private static long Key(PyValue value) => value switch
+    {
+        PyInt integer => integer.Value,
+        PyLong integer => integer.Value,
+        _ => throw new InvalidOperationException($"Expected an integer key, got {value.GetType().Name}."),
+    };
 
     private static (ServiceCall Call, Sink Sink) Request(string method, long systemId = 0, params PyValue[] args)
     {

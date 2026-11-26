@@ -8,6 +8,7 @@ using Eve.Services;
 using Eve.Services.Core;
 using Eve.Services.Space.Scanning;
 using Eve.Space;
+using Eve.Structures;
 
 namespace Eve.Host.Tests;
 
@@ -132,6 +133,79 @@ public partial class HostServerTests
         Assert.Equal(2, registrationArgs.Count);
         Assert.Equal(new PyInt(systemId), registrationArgs[0]);
         AssertOnlyStaticSite9001(Assert.IsType<PyDict>(Assert.IsType<PyList>(registrationArgs[1]).Items[2]));
+    }
+
+    [PgFact]
+    public async Task Structure_of_the_system_from_the_structure_store_reaches_the_pilot_through_the_real_scanmgr_registration()
+    {
+        const int systemId = 30_000_142;
+        const long characterId = 90_000_812;
+        const long structureId = 1_000_000_000_101;
+        const int astrahus = 35_832;
+        await using var rig = await AbyssalHostFlowTests.Rig.Create();
+        var schema = $"sigtrk_{Guid.NewGuid():N}";
+        await StructureStore.MigrateAsync(rig.Source, schema);
+        var structures = new StructureStore(rig.Source, schema);
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            Assert.True(await structures.CreateAsync(connection, transaction,
+                new NewStructure(structureId, astrahus, systemId, 1, 2, 3, 0, 1_000_001, 0, "Signal Tracker Astrahus", "")));
+            Assert.True(await structures.CreateAsync(connection, transaction,
+                new NewStructure(structureId + 1, astrahus, systemId + 1, 4, 5, 6, 0, 1_000_001, 0, "Other System Astrahus", "")));
+            await transaction.CommitAsync();
+        }
+        var groupId = (await rig.Sde.ReadAsync("types", [astrahus])).Single().Doc.GetProperty("groupID").GetInt64();
+        var composition = typeof(CharacterServicesComposition);
+        void SetCompositionField(string name, object value) =>
+            composition.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(rig.Host, value);
+        SetCompositionField("now", (Func<long>)(() => rig.Now));
+        SetCompositionField("structureStore", structures);
+        SetCompositionField("incursionAnomalyReadModel", new PersistenceIncursionAnomalyReadModel(
+            (_, _, _) => Task.FromResult<IReadOnlyList<Eve.Content.ContentInstance>>([]),
+            (_, _) => Task.FromResult(new JsonObject()),
+            () => rig.Now));
+        SetCompositionField("signalTrackerRegistrationProvider", new SignalTrackerRegistrationProvider(rig.Sessions));
+        var service = (IService)composition.GetMethod("ScanMgrRpc", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(rig.Host, null)!;
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session =>
+            {
+                session.CharacterId = characterId;
+                session.Set("solarsystemid2", new PyInt(systemId));
+                rig.Sessions.Enter(characterId, session);
+            });
+        var expectedTargetId = SignalTrackerTargetId.Encode("structure", systemId, structureId);
+
+        var (front, open) = await OpenFrontAsync();
+        var binding = Assert.IsType<PySubStruct>(await HostRpcAsync(front, open, 1, "scanMgr", "GetSystemScanMgr"));
+        var objectId = BoundObjects.ExtractName(binding)!;
+        var state = Assert.IsType<PyList>(
+            await HostBoundRpcAsync(front, open, 2, objectId, "GetFullState", new PyTuple([])));
+        AssertOnlyStructure(Assert.IsType<PyDict>(state.Items[3]), structureId, groupId, expectedTargetId);
+        Assert.Empty(Assert.IsType<PyDict>(state.Items[2]).Entries);
+
+        Assert.Same(PyNone.Instance,
+            await HostRpcAsync(front, open, 3, "scanMgr", "SignalTrackerRegister"));
+        var notification = Assert.IsType<Send>(await front.ReceiveAsync());
+        var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(notification.Payload)));
+        Assert.Equal("OnSignalTrackerFullState", packet.Dest.BroadcastId);
+        var registrationArgs = NotificationArguments(packet);
+        Assert.Equal(2, registrationArgs.Count);
+        AssertOnlyStructure(Assert.IsType<PyDict>(Assert.IsType<PyList>(registrationArgs[1]).Items[3]), structureId, groupId, expectedTargetId);
+    }
+
+    private static void AssertOnlyStructure(PyDict structures, long structureId, long groupId, string targetId)
+    {
+        var (key, value) = Assert.Single(structures.Entries);
+        Assert.Equal(structureId, Assert.IsType<PyLong>(key).Value);
+        var structure = Assert.IsType<PyObject>(value);
+        Assert.Equal(new PyInt(35_832), WireField(structure, "typeID"));
+        Assert.Equal(new PyInt(groupId), WireField(structure, "groupID"));
+        Assert.Equal(new PyInt(65), WireField(structure, "categoryID"));
+        Assert.Equal([1.0, 2.0, 3.0], Assert.IsType<PyList>(WireField(structure, "position")).Items.Select(value => Assert.IsType<PyReal>(value).Value).ToArray());
+        Assert.Equal(targetId, JsSemantics.StringValue(WireField(structure, "targetID")));
     }
 
     private static void AssertOnlyStaticSite9001(PyDict staticSites)

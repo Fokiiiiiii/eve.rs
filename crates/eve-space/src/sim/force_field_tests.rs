@@ -199,6 +199,66 @@ fn a_field_going_up_or_down_around_an_admitted_pilot_changes_its_harmonic_at_onc
     );
 }
 
+/// An access set while a pilot inside the field is not yet admitted admits it at once: the simulation's answer gives the pilot the tower's harmonic, and
+/// the ship does not move.
+#[test]
+fn an_access_set_while_a_pilot_is_inside_gives_it_the_towers_harmonic_at_once() {
+    let mut sim = new_sim();
+    let key = SceneKey::solar_system(SYSTEM);
+    let pilot = SESSION + 1;
+    sim.scenes
+        .get_mut(&key)
+        .unwrap()
+        .enter_in_space(pilot, spec(), [-50.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON)
+        .unwrap();
+    sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    let corporation_id = sim.scenes[&key].pilots[&pilot].ship.spec.corporation_id;
+    let ship_id = spec().ship_id;
+    let access = Message::SetForceFieldAccess {
+        tower_id: TOWER,
+        solar_system_id: SYSTEM,
+        corporation_id,
+        alliance_id: 0,
+        allow_corporation: true,
+        allow_alliance: false,
+    };
+    let answer = sim.handle(access, NOON).unwrap();
+    assert!(
+        answer.contains(&Message::ShipForceFieldHarmonic { session_id: pilot, ship_id, harmonic: TOWER }),
+        "the access gives the pilot inside the tower's harmonic: {answer:?}"
+    );
+    assert_eq!(sim.scenes[&key].pilots[&pilot].ship.position.x, -50.0);
+}
+
+/// An access that matches a pilot outside the field gives that pilot no harmonic: the boundary is not reached from there.
+#[test]
+fn an_access_that_matches_a_pilot_outside_the_field_gives_it_no_harmonic() {
+    let mut sim = new_sim();
+    let key = SceneKey::solar_system(SYSTEM);
+    let pilot = SESSION + 1;
+    sim.scenes
+        .get_mut(&key)
+        .unwrap()
+        .enter_in_space(pilot, spec(), [-5_000.0, 0.0, 0.0], [1.0, 0.0, 0.0], NOON)
+        .unwrap();
+    sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    let corporation_id = sim.scenes[&key].pilots[&pilot].ship.spec.corporation_id;
+    let access = Message::SetForceFieldAccess {
+        tower_id: TOWER,
+        solar_system_id: SYSTEM,
+        corporation_id,
+        alliance_id: 0,
+        allow_corporation: true,
+        allow_alliance: false,
+    };
+    let answer = sim.handle(access, NOON).unwrap();
+    assert!(
+        !answer.iter().any(|m| matches!(m, Message::ShipForceFieldHarmonic { .. })),
+        "the pilot outside the field was given a harmonic: {answer:?}"
+    );
+    assert_eq!(sim.scenes[&key].force_field_harmonics.get(&pilot), None);
+}
+
 /// A tower with no field in the scene cannot have one removed, and a system the universe does not know refuses a placement.
 #[test]
 fn removing_a_missing_field_and_placing_in_an_unknown_system_are_refused() {

@@ -2220,6 +2220,41 @@ public class ControlTowerHostTests
         Assert.Equal(0L, rebound.TowerId);
     }
 
+    /// <summary>A sentry pass that has read no grant, and is placing the battery with no holder, is not overtaken by a pilot taking control: the pilot's grant
+    /// waits for the battery gate, and once the grant stands the sentry is unbound instead of driving the pilot's battery.</summary>
+    [PgFact]
+    public async Task A_pilot_taking_control_during_a_sentry_placement_leaves_the_battery_with_no_sentry()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        var owner = fixture.Session.GetInt("corpid") ?? 0;
+        await FuelAsync(rig, fixture.Tower, HeliumFuelBlock, 39, owner);
+        await FuelAsync(rig, fixture.Tower, NitrogenFuelBlock, 40, owner);
+        await FuelAsync(rig, fixture.Tower, HeliumFuelBlock, 2, owner);
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(fixture.Session, fixture.Tower, "onlineForStructures", 0, 1, CancellationToken.None));
+        rig.Now += OnliningMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("online", await rig.Deployed.TowerStateAsync(fixture.Tower));
+
+        // the sentry pass places the battery with no holder; while that placement is in the scene, the holder asks for the battery's control
+        Task? assume = null;
+        rig.Sim.PlaceBatteryHook = request =>
+        {
+            if (request.HolderSession == 0 && assume is null)
+                assume = fixture.Holder.CallAsync("AssumeStructureControl", new PyLong(fixture.Battery));
+            return Task.CompletedTask;
+        };
+        await rig.Containers.SynchronizeControlTowerSlimStateAsync(fixture.Tower);
+        Assert.NotNull(assume);
+        await assume.WaitAsync(TimeSpan.FromSeconds(10));
+        rig.Sim.PlaceBatteryHook = null;
+
+        // the grant stands, and the simulation is not told that the tower's sentry drives the pilot's battery
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        var last = rig.Sim.Heard.OfType<SimSentryBattery>().Last(bound => bound.BatteryId == fixture.Battery);
+        Assert.Equal(0L, last.TowerId);
+    }
+
     [PgFact]
     public async Task Relinquishing_a_battery_takes_its_holder_out_of_the_simulation_so_its_sentry_may_take_it_again()
     {

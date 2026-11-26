@@ -315,21 +315,36 @@ public sealed partial class SpaceContainers
         var moduleId = ReadPositiveId(call.Arg(0));
         var characterId = call.Session.CharacterId ?? 0;
         if (_deployed is null || _source is null || moduleId <= 0 || characterId <= 0) throw TowerNotFound();
-        await using var connection = await _source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
-        await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
-        var battery = await _deployed.LockAndGetAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
-        if (battery is not { Kind: StarbaseModuleKind }) throw TowerNotFound();
-        await _statics.EnsureTypesAsync([battery.TypeId], call.Cancellation).ConfigureAwait(false);
-        if (!IsPlayerControlledBattery(battery.TypeId)) throw BatteryNotControllable();
-        await RequireControlTowerAccessAsync(call.Session, battery, false, call.Cancellation,
-            requireConfigurationRole: false).ConfigureAwait(false);
-        var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
-        if (state is not (TowerOnline or TowerOnlining)) throw BatteryNotOnline();
-        var holder = await _deployed.BatteryControllerAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
-        if (holder is { } other && other != characterId) throw BatteryControlledByAnotherPilot();
-        if (holder is null)
-            await _deployed.GrantBatteryControlAsync(connection, transaction, moduleId, characterId, _nowUnixMs(), call.Cancellation).ConfigureAwait(false);
-        await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
+        long towerId;
+        // the battery gate is the one a sentry pass and the battery's own orders take, so a grant cannot land between a sentry's read and its placement
+        var batteryGate = _batteryGates.GetOrAdd(moduleId, _ => new SemaphoreSlim(1, 1));
+        await batteryGate.WaitAsync(call.Cancellation).ConfigureAwait(false);
+        try
+        {
+            await using var connection = await _source.OpenConnectionAsync(call.Cancellation).ConfigureAwait(false);
+            await using var transaction = await connection.BeginTransactionAsync(call.Cancellation).ConfigureAwait(false);
+            var battery = await _deployed.LockAndGetAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
+            if (battery is not { Kind: StarbaseModuleKind }) throw TowerNotFound();
+            await _statics.EnsureTypesAsync([battery.TypeId], call.Cancellation).ConfigureAwait(false);
+            if (!IsPlayerControlledBattery(battery.TypeId)) throw BatteryNotControllable();
+            await RequireControlTowerAccessAsync(call.Session, battery, false, call.Cancellation,
+                requireConfigurationRole: false).ConfigureAwait(false);
+            var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
+            if (state is not (TowerOnline or TowerOnlining)) throw BatteryNotOnline();
+            var holder = await _deployed.BatteryControllerAsync(connection, transaction, moduleId, call.Cancellation).ConfigureAwait(false);
+            if (holder is { } other && other != characterId) throw BatteryControlledByAnotherPilot();
+            if (holder is null)
+                await _deployed.GrantBatteryControlAsync(connection, transaction, moduleId, characterId, _nowUnixMs(), call.Cancellation).ConfigureAwait(false);
+            await transaction.CommitAsync(call.Cancellation).ConfigureAwait(false);
+            towerId = battery.ControlTowerId;
+        }
+        finally
+        {
+            batteryGate.Release();
+        }
+        // the sentry is reconciled once the gate is released: a reconcile takes the same gate, so it cannot be called while the gate is held here
+        if (towerId > 0)
+            await ReconcileSentryAsync(towerId, call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
     }
 

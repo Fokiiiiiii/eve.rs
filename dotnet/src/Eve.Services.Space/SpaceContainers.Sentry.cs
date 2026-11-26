@@ -60,16 +60,17 @@ public sealed partial class SpaceContainers
                     continue;
                 // A pilot who holds the battery places it through its own orders, with its holder; this pass must not take the holder away. A battery whose grant
                 // stands is no sentry's even when the tower put it offline (which clears its holder in the simulation), so it is unbound here.
-                if (await _deployed.BatteryControllerAsync(connection, null, module.DeployableId, cancellationToken).ConfigureAwait(false) > 0)
-                {
-                    _sim.SetSentryBattery(new SimSentryBattery(module.DeployableId, system, 0));
-                    continue;
-                }
-                var batteryOnline = towerOnline && await _deployed.TowerStateAsync(connection, null, module.DeployableId, cancellationToken).ConfigureAwait(false) == TowerOnline;
                 var batteryGate = _batteryGates.GetOrAdd(module.DeployableId, _ => new SemaphoreSlim(1, 1));
                 await batteryGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
+                    // the grant and the online state are read inside the battery gate, which a pilot's grant takes too, so a grant cannot land between this read and the placement
+                    if (await _deployed.BatteryControllerAsync(connection, null, module.DeployableId, cancellationToken).ConfigureAwait(false) > 0)
+                    {
+                        _sim.SetSentryBattery(new SimSentryBattery(module.DeployableId, system, 0));
+                        continue;
+                    }
+                    var batteryOnline = towerOnline && await _deployed.TowerStateAsync(connection, null, module.DeployableId, cancellationToken).ConfigureAwait(false) == TowerOnline;
                     var placed = await _sim.PlaceBatteryAsync(
                         new SimPlaceBattery(module.DeployableId, system, module.TypeId, module.GroupId, module.Name, 0UL, module.Position, module.Radius,
                             numbers.ScanResolution, numbers.MaxTargetRange, numbers.MaxLockedTargets, batteryOnline),

@@ -320,8 +320,10 @@ impl Scene {
                 return Err(Refusal::battery_refused("TARGET_NOT_FOUND"));
             }
         }
-        let apart = (distance(battery.position, subject.position) - battery.radius - subject.radius).max(0.0);
-        if battery.max_target_range <= 0.0 || apart >= battery.max_target_range {
+        let apart = super::lock::gap_or_infinity(
+            distance(battery.position, subject.position) - battery.radius - subject.radius,
+        );
+        if battery.max_target_range <= 0.0 || !(apart < battery.max_target_range) {
             return Err(Refusal {
                 reason: "TARGET_OUT_OF_RANGE",
                 target_type: subject.type_id,

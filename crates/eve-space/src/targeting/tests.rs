@@ -1193,6 +1193,32 @@ fn an_out_of_range_wreck_refusal_includes_its_type_and_surface_distance() {
     assert!(on_target(&out).is_empty(), "{out:?}");
 }
 
+/// A NaN distance is never in range: a ship with a NaN position cannot lock, a battery with one cannot lock, and the auto-target sweep passes it over.
+#[test]
+fn a_nan_position_is_never_in_lock_range() {
+    let (mut scene, now) = crowd(2);
+    scene.pilots.get_mut(&B).unwrap().ship.position = Vec3::new(f64::NAN, 0.0, 0.0);
+    let out = scene.target_order(B, Order::Lock(ship_id(A)), now);
+    assert_eq!(refusal(&out).reason, "TARGET_OUT_OF_RANGE", "{out:?}");
+
+    let (mut scene, now) = crowd(2);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, 0, true)).expect("the battery is placed");
+    scene.pilots.get_mut(&B).unwrap().ship.position = Vec3::new(f64::NAN, 0.0, 0.0);
+    let refused = scene.battery_lock(BATTERY, ship_id(B), now).unwrap_err();
+    assert_eq!(refused.reason, "TARGET_OUT_OF_RANGE");
+
+    let (mut scene, now) = crowd(2);
+    scene.target_order(B, Order::Lock(ship_id(A)), now);
+    let later = now + 100 * SECOND;
+    scene.poll(later);
+    assert!(scene.pilots[&B].targeting.locked.iter().any(|l| l.target == ship_id(A)), "B has locked A");
+    scene.pilots.get_mut(&A).unwrap().ship.position = Vec3::new(f64::NAN, 0.0, 0.0);
+    scene.auto_target_sweep(A, 1.0e9, later);
+    assert!(scene.pilots[&A].targeting.locked.is_empty(), "a sweep locked a ship at a NaN distance");
+    assert!(scene.pilots[&A].targeting.pending.is_empty(), "a sweep made a pending lock at a NaN distance");
+}
+
 fn rock(id: i64, position: Vec3) -> crate::wreck::Asteroid {
     crate::wreck::Asteroid {
         id,

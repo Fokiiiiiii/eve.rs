@@ -95,3 +95,21 @@ fn battery_fire_refuses_a_flag_that_is_not_a_boolean() {
     frame[25] = 2;
     assert!(Message::decode(&frame[4..]).is_err());
 }
+
+/// A ship's radii and its lock range and scan resolution are finite and not negative: the decoder refuses a ship that has one that is not.
+#[test]
+fn ship_frames_refuse_a_radius_or_range_that_is_not_finite_or_is_negative() {
+    let good = crate::scene::tests::spec();
+    for corrupt in [
+        crate::ship::ShipSpec { radius: f64::NAN, ..good.clone() },
+        crate::ship::ShipSpec { radius: -1.0, ..good.clone() },
+        crate::ship::ShipSpec { signature_radius: f64::INFINITY, ..good.clone() },
+        crate::ship::ShipSpec { max_target_range: -5.0, ..good.clone() },
+        crate::ship::ShipSpec { scan_resolution: f64::NAN, ..good.clone() },
+    ] {
+        let frame = Message::ShipSpec { session_id: 7, ship: Box::new(corrupt.clone()) }.encode();
+        assert!(Message::decode(&frame[4..]).is_err(), "a ship with {corrupt:?} was decoded");
+    }
+    let frame = Message::ShipSpec { session_id: 7, ship: Box::new(good) }.encode();
+    assert!(Message::decode(&frame[4..]).is_ok(), "a valid ship is refused");
+}

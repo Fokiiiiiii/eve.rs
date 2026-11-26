@@ -8,6 +8,12 @@ const STRUCTURE_CATEGORY_ID: i32 = 65;
 const CARRIER_GROUP_ID: i32 = 547;
 const SUPERCARRIER_GROUP_ID: i32 = 659;
 
+/// The gap between two bodies (their distance less their radii, zero when they touch or overlap). A NaN gap, from a non-finite position or radius, is
+/// infinite: it is out of every range, and the range checks compare with `!(gap < range)` so that it is refused.
+pub(super) fn gap_or_infinity(gap: f64) -> f64 {
+    if gap.is_nan() { f64::INFINITY } else { gap.max(0.0) }
+}
+
 fn effective_target_range(spec: &crate::ship::ShipSpec) -> f64 {
     let cap = if spec.category_id == STRUCTURE_CATEGORY_ID {
         STRUCTURE_LOCK_RANGE_CAP
@@ -66,9 +72,10 @@ impl Scene {
             return Err(Refusal::of("TARGET_NOT_FOUND"));
         }
         let spec = &source.ship.spec;
-        let apart = (distance(source.ship.position, target.position) - spec.radius - target.radius).max(0.0);
+        let apart =
+            gap_or_infinity(distance(source.ship.position, target.position) - spec.radius - target.radius);
         let max_target_range = effective_target_range(spec);
-        if max_target_range <= 0.0 || apart >= max_target_range {
+        if max_target_range <= 0.0 || !(apart < max_target_range) {
             return Err(Refusal {
                 reason: "TARGET_OUT_OF_RANGE",
                 target_type: target.type_id,
@@ -106,10 +113,10 @@ impl Scene {
                 continue;
             }
             let Some(subject) = self.subject(candidate, now) else { continue };
-            let apart =
-                (distance(pilot.ship.position, subject.position) - pilot.ship.spec.radius - subject.radius)
-                    .max(0.0);
-            if apart >= range || self.check_lock(session, &subject, true).is_err() {
+            let apart = gap_or_infinity(
+                distance(pilot.ship.position, subject.position) - pilot.ship.spec.radius - subject.radius,
+            );
+            if !(apart < range) || self.check_lock(session, &subject, true).is_err() {
                 continue;
             }
             out.extend(self.lock(session, candidate, &Order::Lock(candidate), LockOrigin::Auto, now));

@@ -338,6 +338,12 @@ pub(super) fn read_ship(reader: &mut Reader) -> Result<ShipSpec, DecodeError> {
         reader.f64()?,
         reader.f64()?,
     ];
+    if [radius, signature_radius, max_target_range, scan_resolution]
+        .iter()
+        .any(|value| !value.is_finite() || *value < 0.0)
+    {
+        return Err(DecodeError::BadValue("ship"));
+    }
     let max_locked_targets = reader.i32()?;
     let vitals = read_vitals(reader)?;
     let condition = read_condition(reader)?;

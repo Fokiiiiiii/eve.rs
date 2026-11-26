@@ -1914,6 +1914,11 @@ impl Sim {
                 };
                 let (answer, told) = match self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)) {
                     Some(scene) => scene.battery_fire(battery_id, order, now),
+                    // A stop is always accepted: a battery that is not in space has no fire to end.
+                    None if !on => (
+                        crate::targeting::BatteryFireAnswer { reason: None, active: false, target: 0 },
+                        Vec::new(),
+                    ),
                     None => (
                         crate::targeting::BatteryFireAnswer {
                             reason: Some("BATTERY_NOT_IN_SPACE"),

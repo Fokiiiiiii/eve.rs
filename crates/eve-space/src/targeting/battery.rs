@@ -271,6 +271,18 @@ impl Scene {
         order: BatteryFire,
         now: i64,
     ) -> (BatteryFireAnswer, Vec<Out>) {
+        // A stop is always accepted. A battery that is absent, offline or unheld has no fire to settle, so it only loses any fire it has.
+        if order == BatteryFire::Stop
+            && !self
+                .batteries
+                .get(&battery_id)
+                .is_some_and(|battery| battery.online && battery.holder.is_some())
+        {
+            if let Some(battery) = self.batteries.get_mut(&battery_id) {
+                battery.firing = None;
+            }
+            return (BatteryFireAnswer { reason: None, active: false, target: 0 }, Vec::new());
+        }
         let Some(battery) = self.batteries.get(&battery_id) else {
             return (BatteryFireAnswer::refused("BATTERY_NOT_IN_SPACE"), Vec::new());
         };

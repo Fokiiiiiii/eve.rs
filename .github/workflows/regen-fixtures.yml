@@ -8,7 +8,7 @@ permissions:
   contents: write
 
 env:
-  TARGET: haiku10
+  TARGET: haiku11
 
 jobs:
   regen:
@@ -17,7 +17,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: haiku10
+          ref: haiku11
           fetch-depth: 0
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
@@ -38,4 +38,4 @@ jobs:
             git commit -m "Regenerate link fixtures and the project map"
             git push origin "HEAD:refs/heads/$TARGET"
           fi
-# haiku10 run
+# haiku11 run

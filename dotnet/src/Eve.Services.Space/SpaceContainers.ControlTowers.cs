@@ -469,8 +469,12 @@ public sealed partial class SpaceContainers
             return;
         }
         await _deployed.SetTowerStateAsync(connection, transaction, moduleId, TowerOffline, cancellationToken);
+        // a battery that goes offline loses its control grant, as the tower's offline does
+        await _deployed.ClearBatteryControlAsync(connection, transaction, moduleId, cancellationToken);
         await _scheduler.CancelAsync(connection, transaction, StarbaseModuleOnlineJob, $"module:{moduleId}", cancellationToken);
         await transaction.CommitAsync(cancellationToken);
+        // the simulation is told after the commit: the battery is offline with no holder
+        await OfflineBatteriesAsync(tower.DeployableId, cancellationToken);
         SetControlTowerSlimState(moduleId, StructureAnchored, null);
         _scheduler.Wake();
     }

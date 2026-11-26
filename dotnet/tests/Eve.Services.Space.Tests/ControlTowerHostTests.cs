@@ -2319,6 +2319,21 @@ public class ControlTowerHostTests
         Assert.Equal((false, 0UL), (placed.Online, placed.HolderSession));
     }
 
+    /// <summary>A battery taken offline on its own loses its control grant, and the simulation is told it is offline with no holder.</summary>
+    [PgFact]
+    public async Task Taking_a_battery_offline_alone_clears_its_grant_and_tells_the_simulation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+
+        await rig.Space.DeactivateAsync(fixture.Session, fixture.Battery, "onlineForStructures", CancellationToken.None);
+
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((false, 0UL), (placed.Online, placed.HolderSession));
+    }
+
     [PgFact]
     public async Task Relinquishing_a_battery_takes_its_holder_out_of_the_simulation_so_its_sentry_may_take_it_again()
     {

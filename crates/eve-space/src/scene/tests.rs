@@ -1409,6 +1409,50 @@ fn a_visible_control_tower_is_a_warp_target_at_the_entity_stop_distance() {
 }
 
 #[test]
+fn a_live_asteroid_in_a_belt_is_a_warp_target_at_the_entity_stop_distance() {
+    const ROCK: i64 = 1_050_000_000_777;
+    const ROCK_RADIUS: f64 = 25.0;
+
+    let mut scene = scene_with_a_planet();
+    scene.bind(SESSION, NOON);
+    let ship = scene.ship(SESSION, NOON).unwrap().clone();
+    let rock_position = Vec3::new(ship.position.x + 400_000.0, ship.position.y, ship.position.z);
+    let _ = scene.place_asteroid(
+        crate::wreck::Asteroid {
+            id: ROCK,
+            type_id: 1230,
+            group_id: 462,
+            category_id: 25,
+            name: "Veldspar".to_string(),
+            graphic_id: None,
+            position: rock_position,
+            direction: Vec3::new(1.0, 0.0, 0.0),
+            radius: ROCK_RADIUS,
+            units_remaining: 1_000,
+        },
+        NOON,
+    );
+    assert!(scene.has_asteroid(ROCK));
+
+    // EveJS resolves any live entity id; a rock is a ball of the scene like a tower, so it takes the same entity stop distance
+    let stop_distance = 1_000.0f64.max(ROCK_RADIUS) + ship.spec.radius * 2.0;
+    let resolved = scene.command(SESSION, Command::ResolveWarpTarget { target_id: ROCK, range: 0.0 }, NOON);
+    assert!(
+        matches!(resolved.last(), Some(Out::Position { command: 22, position, .. })
+            if *position == Vec3::new(rock_position.x - stop_distance, rock_position.y, rock_position.z)),
+        "a live asteroid resolves to its entity stop distance: {resolved:?}"
+    );
+
+    let warp = scene.command(SESSION, Command::WarpTo { target_id: ROCK, range: 0.0 }, NOON);
+    assert!(matches!(warp.last(), Some(Out::Accepted { command: 8, .. })), "{warp:?}");
+    assert!(matches!(
+        scene.ship(SESSION, NOON).unwrap().course,
+        Course::Warp { raw_destination, stop_distance: actual, .. }
+            if raw_destination == rock_position && actual == stop_distance
+    ));
+}
+
+#[test]
 fn a_ship_can_follow_a_control_tower_after_dropping_out_of_warp() {
     use crate::link::DisruptorPlacement;
 

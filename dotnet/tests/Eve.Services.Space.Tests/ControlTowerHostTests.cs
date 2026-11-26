@@ -2624,6 +2624,46 @@ public class ControlTowerHostTests
     }
 
     [PgFact]
+    public async Task A_starbase_module_anchor_takes_the_tower_row_before_the_module_row()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.Containers.CharacterSessions = rig.CharacterSessions;
+        var batteryTypeId = await PlayerControlledBatteryTypeAsync(rig);
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower, batteryTypeId], LowSecSystem);
+        var (tower, battery) = (items[0], items[1]);
+        Assert.Equal(tower, await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None));
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        var towerRecord = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(tower));
+        Assert.Equal(battery, await rig.Containers.LaunchFromShipAsync(session, battery, CancellationToken.None));
+        var position = new[] { towerRecord.Position[0] + 10_000, towerRecord.Position[1], towerRecord.Position[2] };
+        rig.Sim.PositionAnswers[battery] = position;
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = position;
+
+        // another transaction holds the battery's row, so the anchor waits on it
+        await using var holder = await rig.Source.OpenConnectionAsync();
+        await using var holderTransaction = await holder.BeginTransactionAsync();
+        Assert.NotNull(await rig.Deployed.LockAndGetAsync(holder, holderTransaction, battery, CancellationToken.None));
+        var anchor = rig.Containers.AnchorControlTowerAsync(session, battery, position, CancellationToken.None);
+        await Task.Delay(300);
+        Assert.False(anchor.IsCompleted);
+
+        // the lock order is tower row, then module row: while the anchor waits, the tower's row is already held by the anchor
+        await using var probe = await rig.Source.OpenConnectionAsync();
+        await using var probeTransaction = await probe.BeginTransactionAsync();
+        await using (var setTimeout = new NpgsqlCommand("SET LOCAL lock_timeout = '300ms'", probe, probeTransaction))
+            await setTimeout.ExecuteNonQueryAsync();
+        var blocked = await Record.ExceptionAsync(() => rig.Deployed.LockAndGetAsync(probe, probeTransaction, tower, CancellationToken.None));
+        Assert.NotNull(blocked);
+        Assert.Contains("lock timeout", blocked.Message);
+
+        // once the battery's row is free, the anchor completes
+        await holderTransaction.RollbackAsync();
+        await anchor.WaitAsync(TimeSpan.FromSeconds(10));
+    }
+
+    [PgFact]
     public async Task Tower_password_change_rematches_a_pilot_and_the_ship_harmonic_follows_the_simulation_answer()
     {
         await using var rig = await Rig.CreateAsync();

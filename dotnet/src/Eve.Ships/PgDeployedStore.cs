@@ -185,17 +185,19 @@ public sealed class PgDeployedStore
         return released;
     }
 
-    /// <summary>Releases every POS battery control grant a pilot holds, when the pilot leaves the cluster.</summary>
-    public async Task<IReadOnlyList<long>> ReleaseBatteryControlsOfCharacterAsync(long characterId, CancellationToken cancellationToken = default)
+    /// <summary>Releases every POS battery control grant a pilot holds, when the pilot leaves the cluster. Returns each released battery with its control
+    /// tower (0 when it has none), so the caller can tell the simulation the battery has no holder and reconcile its tower's sentry.</summary>
+    public async Task<IReadOnlyList<(long BatteryId, long ControlTowerId)>> ReleaseBatteryControlsOfCharacterAsync(long characterId, CancellationToken cancellationToken = default)
     {
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var command = new NpgsqlCommand(
-            $"DELETE FROM {_schema}.starbase_battery_control WHERE character_id = $1 RETURNING deployable_id", connection);
+            $"WITH released AS (DELETE FROM {_schema}.starbase_battery_control WHERE character_id = $1 RETURNING deployable_id) " +
+            $"SELECT r.deployable_id, d.control_tower_id FROM released r LEFT JOIN {_schema}.deployed d ON d.deployable_id = r.deployable_id", connection);
         command.Parameters.Add(new NpgsqlParameter { Value = characterId });
-        var released = new List<long>();
+        var released = new List<(long BatteryId, long ControlTowerId)>();
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         while (await reader.ReadAsync(cancellationToken))
-            released.Add(reader.GetInt64(0));
+            released.Add((reader.GetInt64(0), reader.IsDBNull(1) ? 0 : Convert.ToInt64(reader.GetValue(1), System.Globalization.CultureInfo.InvariantCulture)));
         return released;
     }
 

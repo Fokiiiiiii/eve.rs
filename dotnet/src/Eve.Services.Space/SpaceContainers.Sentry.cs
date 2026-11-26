@@ -58,9 +58,13 @@ public sealed partial class SpaceContainers
                 await _statics.EnsureTypesAsync([module.TypeId], cancellationToken).ConfigureAwait(false);
                 if (!IsPlayerControlledBattery(module.TypeId) || BatteryNumbersOf(module.TypeId) is not { } numbers)
                     continue;
-                // A pilot who holds the battery places it through its own orders, with its holder; this pass must not take the holder away.
+                // A pilot who holds the battery places it through its own orders, with its holder; this pass must not take the holder away. A battery whose grant
+                // stands is no sentry's even when the tower put it offline (which clears its holder in the simulation), so it is unbound here.
                 if (await _deployed.BatteryControllerAsync(connection, null, module.DeployableId, cancellationToken).ConfigureAwait(false) > 0)
+                {
+                    _sim.SetSentryBattery(new SimSentryBattery(module.DeployableId, system, 0));
                     continue;
+                }
                 var batteryOnline = towerOnline && await _deployed.TowerStateAsync(connection, null, module.DeployableId, cancellationToken).ConfigureAwait(false) == TowerOnline;
                 var batteryGate = _batteryGates.GetOrAdd(module.DeployableId, _ => new SemaphoreSlim(1, 1));
                 await batteryGate.WaitAsync(cancellationToken).ConfigureAwait(false);

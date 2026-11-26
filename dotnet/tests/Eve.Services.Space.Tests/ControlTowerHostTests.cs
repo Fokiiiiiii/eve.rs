@@ -2183,6 +2183,73 @@ public class ControlTowerHostTests
         Assert.Equal((fixture.Tower, false), (offline.TowerId, offline.Online));
     }
 
+    [PgFact]
+    public async Task A_battery_a_pilot_still_controls_is_no_sentrys_when_its_tower_comes_back_online()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        var owner = fixture.Session.GetInt("corpid") ?? 0;
+        await FuelAsync(rig, fixture.Tower, HeliumFuelBlock, 39, owner);
+        await FuelAsync(rig, fixture.Tower, NitrogenFuelBlock, 40, owner);
+        await FuelAsync(rig, fixture.Tower, HeliumFuelBlock, 2, owner);
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(fixture.Session, fixture.Tower, "onlineForStructures", 0, 1, CancellationToken.None));
+        rig.Now += OnliningMs;
+        await rig.Scheduler.RunDueAsync();
+        await rig.Containers.SynchronizeControlTowerSlimStateAsync(fixture.Tower);
+        Assert.Equal((fixture.Battery, fixture.Tower), (rig.Sim.Heard.OfType<SimSentryBattery>().Last().BatteryId, rig.Sim.Heard.OfType<SimSentryBattery>().Last().TowerId));
+
+        // a pilot takes the battery's control, then the tower goes offline: the simulation is told the battery is offline with no holder
+        Assert.IsType<PyNone>(await fixture.Holder.CallAsync("AssumeStructureControl", new PyLong(fixture.Battery)));
+        await rig.Space.DeactivateAsync(fixture.Session, fixture.Tower, "onlineForStructures", CancellationToken.None);
+        var offline = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(placed => placed.BatteryId == fixture.Battery);
+        Assert.Equal((false, 0UL), (offline.Online, offline.HolderSession));
+
+        // the tower comes back online (its fuel and charter were used by the first onlining); the pilot's grant still stands, so the battery is not
+        // the sentry's and the simulation must not be told to drive it
+        await FuelAsync(rig, fixture.Tower, HeliumFuelBlock, 39, owner);
+        await FuelAsync(rig, fixture.Tower, NitrogenFuelBlock, 40, owner);
+        await FuelAsync(rig, fixture.Tower, HeliumFuelBlock, 2, owner);
+        Assert.Equal(ModuleResult.Done, await rig.Space.ActivateAsync(fixture.Session, fixture.Tower, "onlineForStructures", 0, 1, CancellationToken.None));
+        rig.Now += OnliningMs;
+        await rig.Scheduler.RunDueAsync();
+        Assert.Equal("online", await rig.Deployed.TowerStateAsync(fixture.Tower));
+        await rig.Containers.SynchronizeControlTowerSlimStateAsync(fixture.Tower);
+        var rebound = rig.Sim.Heard.OfType<SimSentryBattery>().Last(bound => bound.BatteryId == fixture.Battery);
+        Assert.Equal(0L, rebound.TowerId);
+    }
+
+    [PgFact]
+    public async Task Relinquishing_a_battery_takes_its_holder_out_of_the_simulation_so_its_sentry_may_take_it_again()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "", true, []));
+        await fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO", new PyLong(fixture.Battery), new PyLong(fixture.Target));
+        Assert.Equal((ulong)fixture.Session.SessionId, rig.Sim.Heard.OfType<SimPlaceBattery>().Last().HolderSession);
+
+        // the pilot lets go of the battery: the grant is gone, and the simulation must be told the battery has no holder, so its locks and fire are let go
+        Assert.IsType<PyNone>(await fixture.Holder.CallAsync("RelinquishStructureControl", new PyLong(fixture.Battery)));
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var released = rig.Sim.Heard.OfType<SimPlaceBattery>().Last();
+        Assert.Equal((fixture.Battery, 0UL), (released.BatteryId, released.HolderSession));
+    }
+
+    [PgFact]
+    public async Task A_pilot_leaving_the_cluster_takes_its_batteries_out_of_the_simulation()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        rig.Sim.BatteryTargetAnswers.Enqueue(new SimBatteryTargets(0, fixture.Battery, "", true, []));
+        await fixture.Holder.BoundCallAsync(fixture.Oid, "AddTargetOBO", new PyLong(fixture.Battery), new PyLong(fixture.Target));
+        Assert.Equal((ulong)fixture.Session.SessionId, rig.Sim.Heard.OfType<SimPlaceBattery>().Last().HolderSession);
+
+        // the pilot leaves the cluster: its grants are gone, and the simulation must be told the battery has no holder
+        await rig.Containers.ReleaseBatteryControlAsync(fixture.Session.CharacterId!.Value, CancellationToken.None);
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var released = rig.Sim.Heard.OfType<SimPlaceBattery>().Last();
+        Assert.Equal((fixture.Battery, 0UL), (released.BatteryId, released.HolderSession));
+    }
+
     private const int ForceFieldType = 16_103, ForceFieldGroup = 411;
 
     /// <summary>An online control tower at a moon of <see cref="LowSecSystem"/>, with the pilot that manages it (the fuel test's path).</summary>

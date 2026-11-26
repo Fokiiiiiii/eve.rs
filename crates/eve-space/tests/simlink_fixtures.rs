@@ -2317,7 +2317,7 @@ fn message_of(case: &Value) -> Message {
         "ShipForceFieldHarmonic" => Message::ShipForceFieldHarmonic {
             session_id: session_id(),
             ship_id: wide(case, "shipId"),
-            harmonic: wide(case, "harmonic"),
+            harmonic: case["harmonic"].as_i64().unwrap(),
         },
         "SentryPolicy" => Message::SentryPolicy {
             tower_id: wide(case, "towerId"),
@@ -2327,8 +2327,8 @@ fn message_of(case: &Value) -> Message {
             security_status: case["securityStatus"].as_f64(),
             war: case["war"].as_bool().unwrap(),
             high_security: case["highSecurity"].as_bool().unwrap(),
-            owner_corporation_id: wide(case, "ownerCorporationId"),
-            owner_alliance_id: wide(case, "ownerAllianceId"),
+            owner_corporation_id: case["ownerCorporationId"].as_i64().unwrap(),
+            owner_alliance_id: case["ownerAllianceId"].as_i64().unwrap(),
         },
         "SentryBattery" => Message::SentryBattery {
             battery_id: wide(case, "batteryId"),
@@ -2339,8 +2339,8 @@ fn message_of(case: &Value) -> Message {
             tower_id: wide(case, "towerId"),
             solar_system_id: number("solarSystemId") as i32,
             ship_id: wide(case, "shipId"),
-            corporation_id: wide(case, "corporationId"),
-            alliance_id: wide(case, "allianceId"),
+            corporation_id: case["corporationId"].as_i64().unwrap(),
+            alliance_id: case["allianceId"].as_i64().unwrap(),
             security_status: case["securityStatus"].as_f64(),
             standing: case["standing"].as_f64().unwrap(),
             at_war: case["atWar"].as_bool().unwrap(),

@@ -194,6 +194,39 @@ public sealed class ShipScoopingHostTests
         Assert.Equal(ejected.Direction, canSpace.Direction);
     }
 
+    [PgFact]
+    public async Task ScoopToMobileDepotHold_names_the_depot_hold_when_the_depot_does_not_fit()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.UseShipInventoryService();
+        var depotType = (await rig.Statics.TypesInGroupsAsync(["Mobile Depot"]))
+            .First(type => type.Name == "Mobile Depot");
+        var (session, bound, systemId, characterId, shipId) = await MakeSpacePilotAsync(rig, shipTypeId: 77114);
+        var depotId = await MakeMobileDepotAsync(rig, characterId, shipId, systemId, depotType.TypeId, depotType.GroupId);
+        var capacity = (await rig.Ships.RoomAsync(characterId, shipId, 176))!.Value.Capacity;
+        await rig.Statics.EnsureTypesAsync([34]);
+        var unitVolume = rig.Statics.Type(34)!.Attributes[rig.Statics.AttributeId("volume")!.Value];
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Items.CreateAsync(connection, transaction,
+                new NewItem(34, characterId, shipId, 176, (long)Math.Floor(capacity / unitVolume), Singleton: false));
+            await transaction.CommitAsync();
+        }
+        Events.Of(session);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.RegisteredCallAsync(
+            session, bound, "ScoopToMobileDepotHold", new PyLong(depotId)));
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Equal("There is not enough room in the Mobile Depot Hold.", NoticeOf(error));
+        var depot = (await rig.Items.GetAsync(depotId))!;
+        Assert.Equal((systemId, CharacterShips.InSpaceFlag), (depot.LocationId, depot.Flag));
+        Assert.NotNull(await rig.SpaceItems.GetAsync(depotId));
+        Assert.NotNull(await rig.Deployed.GetAsync(depotId));
+        Assert.Empty(Events.Of(session));
+    }
+
     private static async Task<(ClientSession Session, string Bound, long Can, long Cargo, int System, long Character, long Ship)>
         MakeSpaceCanAsync(Rig rig, bool withCargo = false, int shipTypeId = 587)
     {
@@ -245,6 +278,35 @@ public sealed class ShipScoopingHostTests
             type.GroupId, shipId, characterId, 0, 0, 0, rig.Now + 86_400_000));
         await transaction.CommitAsync();
         return itemId;
+    }
+
+    private static async Task<long> MakeMobileDepotAsync(
+        Rig rig, long characterId, long shipId, int systemId, int typeId, int groupId)
+    {
+        var depotId = await MakeSpaceContainerItemAsync(rig, characterId, shipId, systemId, typeId, null);
+        var character = await rig.Characters.GetAsync(characterId) ?? throw new InvalidOperationException("Test pilot is missing.");
+        await using var connection = await rig.Source.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var depotSpace = (await rig.SpaceItems.GetAsync(connection, transaction, depotId))!;
+        await rig.SpaceItems.SaveAsync(connection, transaction, depotSpace with
+        {
+            CharacterId = characterId,
+            CorporationId = character.CorporationId,
+            AllianceId = character.AllianceId ?? 0,
+        });
+        await rig.Deployed.SaveAsync(connection, transaction, new DeployedRecord(
+            depotId, "mobile_depot", systemId, "Mobile Depot", typeId, groupId,
+            [0, 0, 0], 50, characterId, checked((int)character.CorporationId), checked((int)(character.AllianceId ?? 0)),
+            shipId, rig.Now + 86_400_000));
+        await transaction.CommitAsync();
+        return depotId;
+    }
+
+    private static string NoticeOf(MachoWrappedException error)
+    {
+        var header = (PyTuple)((PyObjectEx)error.Error.Payload).Header;
+        var args = (PyTuple)header.Items[1];
+        return Eve.Macho.JsSemantics.PlainText(Assert.Single(Assert.IsType<PyDict>(args.Items[1]).Entries).Value) ?? string.Empty;
     }
 
 }

@@ -175,6 +175,9 @@ public sealed partial class SpaceContainers
                     Math.Max(1, record.ExpiresAtMs - _nowUnixMs())));
                 return Task.CompletedTask;
             });
+        // The depot hold is checked against its own capacity; the refusal names that hold, not the cargo hold.
+        if (result is ShipRefused { Reason: ShipRefusal.NotEnoughCargoSpace } && destinationFlag == MobileDepotHoldFlag)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("There is not enough room in the Mobile Depot Hold.")));
         await CompleteScoopAsync(session, characterId, result, item.Id, itemsChanged: true);
     }
 

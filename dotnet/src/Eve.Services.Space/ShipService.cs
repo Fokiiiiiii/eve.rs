@@ -324,8 +324,11 @@ public sealed partial class ShipService(
 
     private async ValueTask<PyValue> ScoopToHoldAsync(ServiceCall call, int destinationFlag, string? password = null)
     {
-        if (containers is null || !_binding.Owns(call) || IdOf(call.Arg(0)) is not { } itemId || itemId <= 0 || rowOf is null)
+        if (containers is null || !_binding.Owns(call) || rowOf is null)
             return None;
+        // An item id that is not a positive number is refused with the scoop notice, not answered with a silent success.
+        if (IdOf(call.Arg(0)) is not { } itemId || itemId <= 0)
+            throw MachoErrors.ThrowUserError("CustomNotify", ("notify", new PyStr("Unable to scoop this item.")));
         await containers.ScoopToHoldAsync(call.Session, itemId, destinationFlag, password, call.Cancellation);
         return None;
     }

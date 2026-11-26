@@ -1178,6 +1178,16 @@ impl Scene {
             && self.pilots.keys().all(|session| crate::npc::is_npc_session(*session))
             && self.abyssal_traces.is_empty()
             && !self.system.bodies.iter().any(|body| body.kind == BodyKind::Wormhole)
+            // POS state outlives its pilots: the batteries, the tower policies and sentry pilots, the access of the fields, and the fields and towers themselves
+            && self.batteries.is_empty()
+            && self.sentry_policies.is_empty()
+            && self.sentry_pilots.is_empty()
+            && self.force_field_access.is_empty()
+            && self.structure_modules.is_empty()
+            && self.control_lease_generations.is_empty()
+            && !self.deployables.values().any(|deployable| {
+                matches!(deployable.role, crate::deployable::Role::ForceField { .. } | crate::deployable::Role::ControlTower { .. })
+            })
     }
 
     /// The wreck with this item id, if it is in the scene.

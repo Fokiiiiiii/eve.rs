@@ -218,3 +218,47 @@ fn removing_a_missing_field_and_placing_in_an_unknown_system_are_refused() {
         vec![Message::ForceFieldPlaced { field_id: FIELD, reason: "SYSTEM_UNKNOWN".to_string() }]
     );
 }
+
+/// The last pilot leaving keeps the scene that holds a tower's field: the field is the tower's and stays with the scene.
+#[test]
+fn the_last_pilot_leaving_keeps_a_scene_that_holds_a_tower_field() {
+    let mut sim = new_sim();
+    sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    sim.handle(Message::Leave { session_id: SESSION, why: 1 }, NOON).unwrap();
+    assert!(sim.scenes.contains_key(&SceneKey::solar_system(SYSTEM)), "the scene with the field was deleted");
+    assert_eq!(fields_of(&sim, TOWER), [(FIELD, 1_000.0)]);
+}
+
+/// The access the host set for a tower and its sentry policy are kept when the last pilot leaves, as the scene keeps them for a pilot who comes later.
+#[test]
+fn the_last_pilot_leaving_keeps_a_scene_with_tower_access_and_policy() {
+    let mut sim = new_sim();
+    let access = Message::SetForceFieldAccess {
+        tower_id: TOWER,
+        solar_system_id: SYSTEM,
+        corporation_id: 98_000_001,
+        alliance_id: 0,
+        allow_corporation: true,
+        allow_alliance: false,
+    };
+    sim.handle(access, NOON).unwrap();
+    let policy = Message::SentryPolicy {
+        tower_id: TOWER,
+        solar_system_id: SYSTEM,
+        online: true,
+        standing: Some(0.0),
+        security_status: None,
+        war: false,
+        high_security: false,
+        owner_corporation_id: 98_000_001,
+        owner_alliance_id: 0,
+    };
+    sim.handle(policy, NOON).unwrap();
+    sim.handle(Message::Leave { session_id: SESSION, why: 1 }, NOON).unwrap();
+    let scene = sim
+        .scenes
+        .get(&SceneKey::solar_system(SYSTEM))
+        .expect("the scene with the tower's access was deleted");
+    assert_eq!(scene.force_field_access.get(&TOWER).map(|access| access.corporation_id), Some(98_000_001));
+    assert!(scene.sentry_policies.contains_key(&TOWER));
+}

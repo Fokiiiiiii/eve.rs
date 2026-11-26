@@ -167,3 +167,11 @@ fn an_offline_policy_unbinding_forgetting_the_pilots_or_an_offline_battery_lets_
         assert_eq!(battery.firing, None, "case {case}");
     }
 }
+
+/// A sentry battery is POS state the scene keeps while no pilot is in it: a scene holding one is not empty.
+#[test]
+fn a_scene_holding_a_sentry_battery_is_not_empty() {
+    let (mut scene, _) = sentry_scene(2);
+    scene.pilots.clear();
+    assert!(!scene.is_empty(), "a scene with a battery and no pilot was taken as empty");
+}

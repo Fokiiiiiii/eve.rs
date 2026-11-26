@@ -80,6 +80,25 @@ public class SimClientTests
         Assert.Contains(logged, line => line.Contains("SimControlStructure") && line.Contains("requests pending"));
     }
 
+    [Fact]
+    public async Task A_charge_adjustment_the_simulation_never_answers_fails_within_the_limit_and_names_the_request()
+    {
+        var logged = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(new HelloThenSilenceStream()), logged.Enqueue, null, TimeSpan.FromSeconds(1));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        var failure = await Assert.ThrowsAsync<SimUnavailableException>(() => client.AdjustChargeAsync(
+            new SimAdjustCharge(102, 7, 9988400001939, 34, new SimChargeOp.Add(10, 5))).WaitAsync(Patience));
+
+        Assert.True(clock.Elapsed < Patience);
+        Assert.Contains("SimAdjustCharge", failure.Message);
+        Assert.Contains("1 second", failure.Message);
+        Assert.Contains(logged, line => line.Contains("SimAdjustCharge") && line.Contains("requests pending"));
+    }
+
     private sealed class HelloThenSilenceStream : Stream
     {
         private readonly byte[] _helloAck = SimCodec.Encode(new SimHelloAck(SimCodec.ProtocolVersion, 4));

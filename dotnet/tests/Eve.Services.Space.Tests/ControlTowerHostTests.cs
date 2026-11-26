@@ -2624,6 +2624,42 @@ public class ControlTowerHostTests
     }
 
     [PgFact]
+    public async Task A_starbase_module_outlives_its_unanchored_tower_offline_and_still_names_it()
+    {
+        // EveJS keeps an anchored module with its stored tower, and the V24.01 client shows a module whose tower is gone as an orphan it can unanchor;
+        // so the unanchor keeps the module as an offline record that names the removed tower
+        await using var rig = await Rig.CreateAsync();
+        rig.Containers.CharacterSessions = rig.CharacterSessions;
+        var batteryTypeId = await PlayerControlledBatteryTypeAsync(rig);
+        var (session, items) = await PilotWithItemsAsync(rig, [ControlTower, batteryTypeId], LowSecSystem);
+        var (tower, battery) = (items[0], items[1]);
+        Assert.Equal(tower, await rig.Containers.LaunchFromShipAsync(session, tower, CancellationToken.None));
+        await AnchorAtMoonAsync(rig, session, tower);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        var towerRecord = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(tower));
+        Assert.Equal(battery, await rig.Containers.LaunchFromShipAsync(session, battery, CancellationToken.None));
+        var position = new[] { towerRecord.Position[0] + 10_000, towerRecord.Position[1], towerRecord.Position[2] };
+        rig.Sim.PositionAnswers[battery] = position;
+        rig.Sim.PositionAnswers[session.GetInt("shipid")!.Value] = position;
+        await rig.Containers.AnchorControlTowerAsync(session, battery, position, CancellationToken.None);
+        rig.Now += AnchoringMs;
+        await rig.Scheduler.RunDueAsync();
+        await rig.Deployed.SetTowerStateAsync(battery, "online");
+        await rig.Deployed.SetTowerStateAsync(tower, "online");
+        Assert.Equal(tower, Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(battery)).ControlTowerId);
+
+        await rig.Deployed.SetTowerStateAsync(tower, "offline");
+        await rig.Containers.UnanchorControlTowerAsync(session, tower);
+        await rig.Containers.CompleteControlTowerUnanchorAsync(tower, CancellationToken.None);
+
+        Assert.Null(await rig.Deployed.GetAsync(tower));
+        var orphan = Assert.IsType<DeployedRecord>(await rig.Deployed.GetAsync(battery));
+        Assert.Equal("offline", await rig.Deployed.TowerStateAsync(battery));
+        Assert.Equal(tower, orphan.ControlTowerId);
+    }
+
+    [PgFact]
     public async Task Completing_an_unanchor_deletes_the_tower_force_field_rows_with_the_tower_row()
     {
         await using var rig = await Rig.CreateAsync();

@@ -416,3 +416,19 @@ fn a_pilot_the_scene_settles_is_held_outside_the_field() {
     );
     assert_eq!(harmonic(&scene, SESSION), NO_HARMONIC);
 }
+
+/// A ship already inside and moving out faster than the repulsion, not moved and not cancelled, is changed by nothing: the boundary tells nothing.
+#[test]
+fn a_boundary_that_changes_nothing_tells_nothing() {
+    let mut scene = field_scene();
+    {
+        let ship = &mut scene.pilots.get_mut(&SESSION).unwrap().ship;
+        ship.position = point(-10.0);
+        ship.velocity = Vec3::new(-1_000.0, 0.0, 0.0);
+    }
+    assert!(
+        scene.enforce_force_fields(SESSION, point(-10.0), false).is_none(),
+        "a boundary that changed nothing was told to the host"
+    );
+    assert_eq!(scene.pilots[&SESSION].ship.velocity.x, -1_000.0);
+}

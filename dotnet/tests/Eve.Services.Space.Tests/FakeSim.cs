@@ -453,10 +453,26 @@ internal sealed class FakeSim : ISimulation
     /// <summary>What a force field removal is answered with: empty (taken out) or a reason.</summary>
     public string ForceFieldRemovalReason { get; set; } = "";
 
-    public Task<SimForceFieldPlaced> PlaceForceFieldAsync(SimPlaceForceField field, CancellationToken cancellationToken = default)
+    /// <summary>A hold a test sets for the next force field placement: the placement reaches the scene (is recorded) only after this task completes.</summary>
+    public Task? ForceFieldPlacementHold { get; set; }
+
+    /// <summary>Completed when the next force field placement arrives at the scene, before its hold.</summary>
+    public TaskCompletionSource? ForceFieldPlacementArrived { get; set; }
+
+    public async Task<SimForceFieldPlaced> PlaceForceFieldAsync(SimPlaceForceField field, CancellationToken cancellationToken = default)
     {
+        if (ForceFieldPlacementArrived is { } arrived)
+        {
+            ForceFieldPlacementArrived = null;
+            arrived.TrySetResult();
+        }
+        if (ForceFieldPlacementHold is { } hold)
+        {
+            ForceFieldPlacementHold = null;
+            await hold;
+        }
         Heard.Enqueue(field);
-        return Task.FromResult(new SimForceFieldPlaced(field.FieldId, ForceFieldPlacementReason));
+        return new SimForceFieldPlaced(field.FieldId, ForceFieldPlacementReason);
     }
 
     public Task<SimForceFieldRemoved> RemoveForceFieldAsync(SimRemoveForceField removal, CancellationToken cancellationToken = default)

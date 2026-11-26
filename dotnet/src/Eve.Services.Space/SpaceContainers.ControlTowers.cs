@@ -521,40 +521,52 @@ public sealed partial class SpaceContainers
     /// neither. The item is written in one transaction and the simulation is told after its commit. A repeat sync keeps the item and sends the same placement,
     /// which the simulation takes as unchanged. A refused placement, or a removal the simulation refuses for another reason, is an error.
     /// </summary>
+    /// <summary>One force field reconcile per tower at a time: a placement decided earlier reaches the scene before a later removal of the same tower.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<long, System.Threading.SemaphoreSlim> _forceFieldGates = new();
+
     private async Task ReconcileForceFieldAsync(long towerId, CancellationToken cancellationToken)
     {
         if (_deployed is null || _source is null)
             return;
-        SimPlaceForceField? placement = null;
-        SimRemoveForceField? removal = null;
-        await using (var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
-        await using (var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
+        var gate = _forceFieldGates.GetOrAdd(towerId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false) is not { Kind: ControlTowerKind } tower)
-                return;
-            var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false);
-            if (state == TowerOnline && tower.ActivateAtMs != NeverAnchored && tower.ActivateAtMs <= _nowUnixMs())
+            SimPlaceForceField? placement = null;
+            SimRemoveForceField? removal = null;
+            await using (var connection = await _source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false))
+            await using (var transaction = await connection.BeginTransactionAsync(cancellationToken).ConfigureAwait(false))
             {
-                placement = await EnsureForceFieldInTransactionAsync(connection, transaction, tower, cancellationToken).ConfigureAwait(false);
+                if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false) is not { Kind: ControlTowerKind } tower)
+                    return;
+                var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false);
+                if (state == TowerOnline && tower.ActivateAtMs != NeverAnchored && tower.ActivateAtMs <= _nowUnixMs())
+                {
+                    placement = await EnsureForceFieldInTransactionAsync(connection, transaction, tower, cancellationToken).ConfigureAwait(false);
+                }
+                else if (await RemoveForceFieldInTransactionAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false) is { } removed)
+                {
+                    removal = new SimRemoveForceField(towerId, removed.SolarSystemId);
+                }
+                await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
             }
-            else if (await RemoveForceFieldInTransactionAsync(connection, transaction, towerId, cancellationToken).ConfigureAwait(false) is { } removed)
-            {
-                removal = new SimRemoveForceField(towerId, removed.SolarSystemId);
-            }
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
-        }
 
-        if (placement is not null)
-        {
-            var answer = await _sim.PlaceForceFieldAsync(placement, cancellationToken).ConfigureAwait(false);
-            if (answer.Reason.Length > 0)
-                throw new InvalidOperationException($"The simulation did not place force field {placement.FieldId} of control tower {towerId}: {answer.Reason}");
+            if (placement is not null)
+            {
+                var answer = await _sim.PlaceForceFieldAsync(placement, cancellationToken).ConfigureAwait(false);
+                if (answer.Reason.Length > 0)
+                    throw new InvalidOperationException($"The simulation did not place force field {placement.FieldId} of control tower {towerId}: {answer.Reason}");
+            }
+            if (removal is not null)
+            {
+                var answer = await _sim.RemoveForceFieldAsync(removal, cancellationToken).ConfigureAwait(false);
+                if (answer.Reason.Length > 0 && answer.Reason != ForceFieldNotInSpace)
+                    throw new InvalidOperationException($"The simulation did not remove the force field of control tower {towerId}: {answer.Reason}");
+            }
         }
-        if (removal is not null)
+        finally
         {
-            var answer = await _sim.RemoveForceFieldAsync(removal, cancellationToken).ConfigureAwait(false);
-            if (answer.Reason.Length > 0 && answer.Reason != ForceFieldNotInSpace)
-                throw new InvalidOperationException($"The simulation did not remove the force field of control tower {towerId}: {answer.Reason}");
+            gate.Release();
         }
     }
 

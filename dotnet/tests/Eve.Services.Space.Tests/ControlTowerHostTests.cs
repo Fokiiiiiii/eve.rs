@@ -2334,6 +2334,38 @@ public class ControlTowerHostTests
         Assert.Equal((false, 0UL), (placed.Online, placed.HolderSession));
     }
 
+    /// <summary>A force field placement decided while the tower was online does not reach the scene after a later reconcile has removed the field: the
+    /// reconciles of one tower run one at a time, so the removal is sent after the placement it follows.</summary>
+    [PgFact]
+    public async Task A_force_field_placement_decided_while_the_tower_was_online_does_not_overtake_the_removal_decided_after_it()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var (_, tower) = await OnlineTowerAsync(rig);
+        Assert.Single(rig.Sim.Heard.OfType<SimPlaceForceField>());
+        rig.Sim.Heard.Clear();
+
+        // the online tower's reconcile decides to place its field, and the placement is held before it reaches the scene
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Sim.ForceFieldPlacementHold = release.Task;
+        rig.Sim.ForceFieldPlacementArrived = arrived;
+        var placing = rig.Containers.SynchronizeControlTowerSlimStateAsync(tower);
+        await arrived.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // the tower goes offline after that placement was decided; a later reconcile decides to remove the field it has placed
+        await rig.Deployed.SetTowerStateAsync(tower, "offline");
+        var removing = rig.Containers.SynchronizeControlTowerSlimStateAsync(tower);
+        await Task.Delay(300);
+        release.SetResult();
+        await placing.WaitAsync(TimeSpan.FromSeconds(10));
+        await removing.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // the scene hears the placement first and the removal last, so the field is not left in space
+        var fieldMessages = rig.Sim.Heard.Where(message => message is SimPlaceForceField or SimRemoveForceField).ToArray();
+        Assert.Equal(2, fieldMessages.Length);
+        Assert.IsType<SimPlaceForceField>(fieldMessages[0]);
+        Assert.IsType<SimRemoveForceField>(fieldMessages[1]);
+    }
+
     [PgFact]
     public async Task Relinquishing_a_battery_takes_its_holder_out_of_the_simulation_so_its_sentry_may_take_it_again()
     {

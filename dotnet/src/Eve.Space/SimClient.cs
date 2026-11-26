@@ -707,7 +707,18 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 FailOverloadedLink(failure, sessionToCancel);
             return false;
         }
-        return await written.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            // the same limit as AwaitAsync: a frame the simulation never takes ends the wait as unavailable, and the caller's cancellation still applies
+            return await written.Task.WaitAsync(_requestTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            var seconds = _requestTimeout.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            _log?.Invoke($"{message.GetType().Name} was not written to the simulation within {seconds} seconds; " +
+                $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}");
+            throw new SimUnavailableException($"{message.GetType().Name} was not written to the simulation within {seconds} seconds");
+        }
     }
 
     private async Task<bool> SendAsync(SimMessage message, CancellationToken cancellationToken)
@@ -1243,7 +1254,20 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                     FailOverloadedLink(failure, sessionToCancel);
                 throw failure;
             }
-            return await completion.Task.ConfigureAwait(false);
+            try
+            {
+                // the same limit as AwaitAsync: a caller's cancellation still reaches the request through its registration
+                return await completion.Task.WaitAsync(_requestTimeout).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                // no answer within the limit: the request leaves the pending map as a cancel does, and the wait ends as unavailable
+                CancelPending(_pendingGate, _adjusting, request.RequestId, pending, completion, cancellationToken);
+                var seconds = _requestTimeout.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+                _log?.Invoke($"{request.GetType().Name} for request {request.RequestId} got no answer within {seconds} seconds; " +
+                    $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}");
+                throw new SimUnavailableException($"{request.GetType().Name} got no answer from the simulation within {seconds} seconds");
+            }
         }
         finally
         {

@@ -253,6 +253,14 @@ Rejected candidates are listed at the end, with reasons.
 - An empty password: EVE.js returns `STARBASE_PASSWORD_REQUIRED`, the Host returns `SettingsInvalid`. Error text differs only.
 - EVE.js `setShipPassword` checks only online towers and stops at the first matching one. The Host sends every tower's answer, and the simulation decides. The end result is the same.
 
+## Final verification (F1 to F11)
+
+- `cargo fmt -p eve-space -- --check`: clean after the rustfmt commit `bee73fe66`.
+- `cargo clippy -p eve-space --all-targets -- -D warnings`: exit 0 after `507dc35cb` (a `collapsible_if` in `scene/movement.rs` was collapsed).
+- `cargo test -p eve-space --lib`: 1100 passed, 0 failed, 0 ignored.
+- `dotnet test dotnet/tests/Eve.Services.Space.Tests` (Debug, full): 1280 passed, 2 failed, 0 skipped, 1282 total. Both failures were Postgres `53100 No space left on device` (the disk was full), not assertion failures: `ControlTowerHostTests.Battery_obo_notifications_reach_only_the_holder` and `StructureAreaAuthorizationTests.A_public_point_defense_module_authorizes_fresh_targets_with_owner_corporation_facts`. After `cargo clean` freed space, each was rerun alone and passed (1 of 1 each). The full suite was not run a second time.
+- `dotnet test --filter ForceFieldCodecTests`: 5 passed, 0 failed.
+
 ## Limits
 
 - Nothing was built or run. Every finding is from reading.

@@ -23,10 +23,8 @@ impl Scene {
         };
         let followed =
             course_target.and_then(|target| self.session_of(target).filter(|other| *other != session));
-        if let Some(other) = followed {
-            if depth < MAX_FOLLOW_CHAIN {
-                self.settle_pilot_after(other, now, depth + 1);
-            }
+        if let Some(other) = followed && depth < MAX_FOLLOW_CHAIN {
+            self.settle_pilot_after(other, now, depth + 1);
         }
         let ship_target = self.course_target_of(session);
         let Some(pilot) = self.pilots.get_mut(&session) else { return };

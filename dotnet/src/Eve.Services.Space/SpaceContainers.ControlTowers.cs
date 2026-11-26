@@ -209,14 +209,20 @@ public sealed partial class SpaceContainers
         if (session.CharacterId is not { } characterId || session.GetInt("shipid") is not > 0 || !_space.IsInSpace(session))
             throw Refuse("A control tower can only be anchored by a pilot in space.");
 
+        // the pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } preview)
+            throw Refuse("That control tower is not in space.");
+        var unlockedState = await _deployed.TowerStateAsync(towerId, cancellationToken);
+        var sight = await PreflightControlTowerAccessAsync(session, preview, requireAnchoringSkill: true, cancellationToken,
+            requireInteractionDistance: unlockedState != TowerAnchoring, requireConfigurationRole: false, operation: "anchor");
+
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken) is not { Kind: ControlTowerKind } record)
             throw Refuse("That control tower is not in space.");
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
-        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: true, cancellationToken,
-            requireInteractionDistance: state != TowerAnchoring, requireConfigurationRole: false,
-            operation: "anchor", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, record, sight, requireConfigurationRole: false, operation: "anchor",
+            connection, transaction, cancellationToken);
         if (state == TowerAnchoring)
         {
             await transaction.CommitAsync(cancellationToken);
@@ -325,35 +331,30 @@ public sealed partial class SpaceContainers
             inRange.Add(candidate.Tower);
         }
 
+        if (inRange.Count == 0)
+            throw Refuse("A starbase structure must be anchored within range of its corporation's anchored control tower.");
+        // the nearest tower in range is checked before any row lock is taken: its position comes from the simulation
+        var towerSight = await PreflightControlTowerAccessAsync(session, inRange[0], requireAnchoringSkill: false, cancellationToken,
+            requireInteractionDistance: false, requireConfigurationRole: false, operation: "anchor");
+
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        DeployedRecord? associatedTower = null;
-        DeployedRecord? module = null;
-        foreach (var candidate in inRange)
-        {
-            if (await _deployed.LockAndGetAsync(connection, transaction, candidate.DeployableId, cancellationToken) is not { Kind: ControlTowerKind } tower)
-                continue;
-            var lockedModule = await _deployed.LockAndGetAsync(connection, transaction, moduleId, cancellationToken);
-            if (lockedModule is not { Kind: StarbaseModuleKind } || lockedModule.SolarSystemId != reference.SolarSystemId ||
-                lockedModule.CorporationId != reference.CorporationId || lockedModule.OwnerId != reference.OwnerId)
-                throw Refuse("That starbase structure is not in space.");
-            module = lockedModule;
-            var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, cancellationToken);
-            if (state is TowerAnchoring or TowerOffline or TowerOnline or TowerOnlining)
-            {
-                await transaction.CommitAsync(cancellationToken);
-                return;
-            }
-            if (state != TowerUnanchored)
-                throw Refuse("That starbase structure is not fully unanchored.");
-
-            await RequireControlTowerAccessAsync(session, tower, requireAnchoringSkill: false, cancellationToken,
-                requireInteractionDistance: false, requireConfigurationRole: false, operation: "anchor", connection: connection, transaction: transaction);
-            associatedTower = tower;
-            break;
-        }
-        if (associatedTower is null || module is null)
+        // the tower row is locked before the module row, the order every starbase path takes
+        if (await _deployed.LockAndGetAsync(connection, transaction, inRange[0].DeployableId, cancellationToken) is not { Kind: ControlTowerKind } associatedTower)
             throw Refuse("A starbase structure must be anchored within range of its corporation's anchored control tower.");
+        if (await _deployed.LockAndGetAsync(connection, transaction, moduleId, cancellationToken) is not { Kind: StarbaseModuleKind } module ||
+            module.SolarSystemId != reference.SolarSystemId || module.CorporationId != reference.CorporationId || module.OwnerId != reference.OwnerId)
+            throw Refuse("That starbase structure is not in space.");
+        var lockedState = await _deployed.TowerStateAsync(connection, transaction, moduleId, cancellationToken);
+        if (lockedState is TowerAnchoring or TowerOffline or TowerOnline or TowerOnlining)
+        {
+            await transaction.CommitAsync(cancellationToken);
+            return;
+        }
+        if (lockedState != TowerUnanchored)
+            throw Refuse("That starbase structure is not fully unanchored.");
+        await RequireTowerAccessUnderLockAsync(session, associatedTower, towerSight, requireConfigurationRole: false, operation: "anchor",
+            connection, transaction, cancellationToken);
 
         if (await _space.PositionOfAsync(session, moduleId, cancellationToken) is not { } modulePosition ||
             await _space.PositionOfAsync(session, session.GetInt("shipid")!.Value, cancellationToken) is not { } shipPosition ||
@@ -419,6 +420,11 @@ public sealed partial class SpaceContainers
         if (await _deployed.GetAsync(moduleId, cancellationToken) is not { Kind: StarbaseModuleKind, ControlTowerId: > 0 } reference)
             throw Refuse("That starbase structure is not associated with a control tower.");
 
+        // the tower's pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(reference.ControlTowerId, cancellationToken) is not { Kind: ControlTowerKind } towerPreview)
+            throw Refuse("That starbase structure is not associated with an available control tower.");
+        var towerSight = await PreflightControlTowerAccessAsync(session, towerPreview, requireAnchoringSkill: false, cancellationToken,
+            requireConfigurationRole: false, operation: "online");
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         // Lock the tower first, matching production-cycle transitions and serializing CPU/power reservations.
@@ -428,8 +434,8 @@ public sealed partial class SpaceContainers
             module.SolarSystemId != tower.SolarSystemId)
             throw Refuse("That starbase structure is not associated with an available control tower.");
 
-        await RequireControlTowerAccessAsync(session, tower, requireAnchoringSkill: false, cancellationToken,
-            requireConfigurationRole: false, operation: "online", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, tower, towerSight, requireConfigurationRole: false, operation: "online",
+            connection, transaction, cancellationToken);
         var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, cancellationToken);
         if (state is TowerOnlining or TowerOnline)
         {
@@ -473,6 +479,11 @@ public sealed partial class SpaceContainers
         if (await _deployed.GetAsync(moduleId, cancellationToken) is not { Kind: StarbaseModuleKind, ControlTowerId: > 0 } reference)
             throw Refuse("That starbase structure is not associated with a control tower.");
 
+        // the tower's pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(reference.ControlTowerId, cancellationToken) is not { Kind: ControlTowerKind } towerPreview)
+            throw Refuse("That starbase structure is not associated with an available control tower.");
+        var towerSight = await PreflightControlTowerAccessAsync(session, towerPreview, requireAnchoringSkill: false, cancellationToken,
+            requireConfigurationRole: false, operation: "offline");
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, reference.ControlTowerId, cancellationToken) is not { Kind: ControlTowerKind } tower ||
@@ -480,8 +491,8 @@ public sealed partial class SpaceContainers
             module.ControlTowerId != tower.DeployableId || module.OwnerId != tower.OwnerId || module.CorporationId != tower.CorporationId)
             throw Refuse("That starbase structure is not associated with an available control tower.");
 
-        await RequireControlTowerAccessAsync(session, tower, requireAnchoringSkill: false, cancellationToken,
-            requireConfigurationRole: false, operation: "offline", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, tower, towerSight, requireConfigurationRole: false, operation: "offline",
+            connection, transaction, cancellationToken);
         var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, cancellationToken);
         if (state is not (TowerOnline or TowerOnlining))
         {
@@ -737,12 +748,17 @@ public sealed partial class SpaceContainers
     {
         if (_deployed is null || _scheduler is null || _source is null)
             throw Refuse("Control tower online operations are not available on this server.");
+        // the pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } preview)
+            throw Refuse("That control tower is not in space.");
+        var sight = await PreflightControlTowerAccessAsync(session, preview, requireAnchoringSkill: false, cancellationToken,
+            requireConfigurationRole: false, operation: "online");
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken) is not { Kind: ControlTowerKind } record)
             throw Refuse("That control tower is not in space.");
-        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: false, cancellationToken,
-            requireConfigurationRole: false, operation: "online", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, record, sight, requireConfigurationRole: false, operation: "online",
+            connection, transaction, cancellationToken);
         if (record.ActivateAtMs == NeverAnchored || record.ActivateAtMs > _nowUnixMs())
             throw Refuse("The control tower must finish anchoring before it can be put online.");
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
@@ -786,12 +802,17 @@ public sealed partial class SpaceContainers
     {
         if (_deployed is null || _scheduler is null || _source is null)
             throw Refuse("Control tower online operations are not available on this server.");
+        // the pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } preview)
+            throw Refuse("That control tower is not in space.");
+        var sight = await PreflightControlTowerAccessAsync(session, preview, requireAnchoringSkill: false, cancellationToken,
+            requireConfigurationRole: false, operation: "offline");
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken) is not { Kind: ControlTowerKind } record)
             throw Refuse("That control tower is not in space.");
-        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: false, cancellationToken,
-            requireConfigurationRole: false, operation: "offline", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, record, sight, requireConfigurationRole: false, operation: "offline",
+            connection, transaction, cancellationToken);
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
         if (state == TowerOffline)
         {
@@ -812,9 +833,14 @@ public sealed partial class SpaceContainers
         _scheduler.Wake();
     }
 
-    private async Task RequireControlTowerAccessAsync(ClientSession session, DeployedRecord record, bool requireAnchoringSkill, CancellationToken cancellationToken,
-        bool requireInteractionDistance = true, bool requireConfigurationRole = true, string? operation = null,
-        NpgsqlConnection? connection = null, NpgsqlTransaction? transaction = null)
+    /// <summary>What the simulation said about a pilot's ship and a control tower, read before any row lock is taken. The tower's system and owners are kept, so
+    /// the locked check can confirm that the row it locks is still the tower that was seen.</summary>
+    internal readonly record struct ControlTowerSight(int SolarSystemId, long OwnerId, long CorporationId, long AllianceId, double SurfaceDistance);
+
+    /// <summary>The cheap pilot checks: logged in with a corporation, in the tower's system and in space, the corporation the operation needs and the role it
+    /// needs. Takes no row lock and makes no simulation call.</summary>
+    private (bool SameCorporation, bool HasConfigurationRole) CheckPilotOnTower(ClientSession session, DeployedRecord record, bool requireConfigurationRole,
+        string? operation)
     {
         var characterId = session.CharacterId ?? 0;
         var corporationId = session.GetInt("corpid") ?? session.GetInt("corporationid") ?? 0;
@@ -836,23 +862,19 @@ public sealed partial class SpaceContainers
         var hasConfigurationRole = sameCorporation && (isCeo || (roles & (DirectorRole | StarbaseConfigRole)) != 0);
         if (requireConfigurationRole && !hasConfigurationRole)
             throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
-        if (!requireConfigurationRole && operation is not null && !hasConfigurationRole)
-        {
-            if (connection is null || _deployed is null)
-                throw new InvalidOperationException("A transaction is required to check persisted control tower deployment permissions.");
-            var rawConfiguration = await _deployed.TowerConfigurationAsync(connection, transaction, record.DeployableId, cancellationToken);
-            var configuration = rawConfiguration is null ? new PosMgrTowerConfiguration() :
-                JsonSerializer.Deserialize<PosMgrTowerConfiguration>(rawConfiguration, PosMgrJson) ?? new PosMgrTowerConfiguration();
-            var permission = Normalize(configuration).DeployFlags.GetValueOrDefault(operation);
-            var allianceId = session.GetInt("allianceid") ?? session.GetInt("allianceID") ?? 0;
-            var sameAlliance = record.AllianceId > 0 && allianceId == record.AllianceId;
-            var permitted = permission == 1 && sameCorporation || permission == 2 && (sameCorporation || sameAlliance);
-            if (!permitted)
-                throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
-        }
+        return (sameCorporation, hasConfigurationRole);
+    }
 
+    /// <summary>The checks that run before a caller's transaction takes any row lock: the cheap pilot checks, the simulation's position of the tower and the
+    /// ship, the interaction range and the anchoring skill. The locked check is <see cref="RequireTowerAccessUnderLockAsync"/>.</summary>
+    private async Task<ControlTowerSight> PreflightControlTowerAccessAsync(ClientSession session, DeployedRecord record, bool requireAnchoringSkill,
+        CancellationToken cancellationToken, bool requireInteractionDistance = true, bool requireConfigurationRole = true, string? operation = null)
+    {
+        CheckPilotOnTower(session, record, requireConfigurationRole, operation);
+        var characterId = session.CharacterId ?? 0;
+        var shipId = session.GetInt("shipid") ?? 0;
         if (await _space.PositionOfAsync(session, record.DeployableId, cancellationToken) is null ||
-            await _space.PositionOfAsync(session, shipId, cancellationToken) is not { } shipPosition || shipPosition.SolarSystemId != systemId)
+            await _space.PositionOfAsync(session, shipId, cancellationToken) is not { } shipPosition || shipPosition.SolarSystemId != record.SolarSystemId)
             throw Refuse("The control tower is not visible in the current space scene.");
         var shipRadius = Math.Max(0, shipPosition.Radius ?? 0);
         if (shipRadius <= 0 && await _ships.LoadAsync(characterId, cancellationToken) is { } snapshot && snapshot.Ship.Id == shipId)
@@ -864,6 +886,42 @@ public sealed partial class SpaceContainers
         if (requireAnchoringSkill && await _ships.MissingSkillAsync(characterId,
             new Dictionary<int, double> { [182] = AnchoringSkillTypeId, [277] = 1 }, cancellationToken) is not null)
             throw Refuse("Anchoring skill I is required to anchor a control tower.");
+        return new ControlTowerSight(record.SolarSystemId, record.OwnerId, record.CorporationId, record.AllianceId, surfaceDistance);
+    }
+
+    /// <summary>The check under a tower's row lock. The locked row must still be the tower the preflight saw, the cheap pilot checks must hold, and an operation
+    /// the corporation's deploy flags grant passes. No simulation call is made while the lock is held.</summary>
+    private async Task RequireTowerAccessUnderLockAsync(ClientSession session, DeployedRecord record, ControlTowerSight sight, bool requireConfigurationRole,
+        string? operation, NpgsqlConnection connection, NpgsqlTransaction transaction, CancellationToken cancellationToken)
+    {
+        var (sameCorporation, hasConfigurationRole) = CheckPilotOnTower(session, record, requireConfigurationRole, operation);
+        if (record.SolarSystemId != sight.SolarSystemId || record.OwnerId != sight.OwnerId || record.CorporationId != sight.CorporationId ||
+            record.AllianceId != sight.AllianceId)
+            throw Refuse("The control tower changed while it was being checked. Try again.");
+        if (!requireConfigurationRole && operation is not null && !hasConfigurationRole)
+        {
+            if (_deployed is null)
+                throw new InvalidOperationException("A transaction is required to check persisted control tower deployment permissions.");
+            var rawConfiguration = await _deployed.TowerConfigurationAsync(connection, transaction, record.DeployableId, cancellationToken);
+            var configuration = rawConfiguration is null ? new PosMgrTowerConfiguration() :
+                JsonSerializer.Deserialize<PosMgrTowerConfiguration>(rawConfiguration, PosMgrJson) ?? new PosMgrTowerConfiguration();
+            var permission = Normalize(configuration).DeployFlags.GetValueOrDefault(operation);
+            var allianceId = session.GetInt("allianceid") ?? session.GetInt("allianceID") ?? 0;
+            var sameAlliance = record.AllianceId > 0 && allianceId == record.AllianceId;
+            var permitted = permission == 1 && sameCorporation || permission == 2 && (sameCorporation || sameAlliance);
+            if (!permitted)
+                throw MachoErrors.ThrowUserError("CrpAccessDenied", ("reason", Py.Tuple(new PyInt(101), new PyStr("UI/Corporations/AccessRestrictions/InsufficientRoles"))));
+        }
+    }
+
+    /// <summary>The pilot checks for a caller that holds no row lock and needs no deployment permission: the preflight alone.</summary>
+    private async Task RequireControlTowerAccessAsync(ClientSession session, DeployedRecord record, bool requireAnchoringSkill, CancellationToken cancellationToken,
+        bool requireInteractionDistance = true, bool requireConfigurationRole = true, string? operation = null)
+    {
+        if (operation is not null)
+            throw new InvalidOperationException("A transaction is required to check persisted control tower deployment permissions.");
+        await PreflightControlTowerAccessAsync(session, record, requireAnchoringSkill, cancellationToken,
+            requireInteractionDistance, requireConfigurationRole, null).ConfigureAwait(false);
     }
 
     private async Task<TowerResources?> ReadTowerResourcesAsync(
@@ -1044,6 +1102,13 @@ public sealed partial class SpaceContainers
     {
         if (_deployed is null || _scheduler is null || _source is null)
             throw Refuse("Control tower unanchoring is not available on this server.");
+        // the pilot checks and the simulation's position come before any row lock
+        if (await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } preview)
+            throw Refuse("That control tower is not in space.");
+        var unlockedState = await _deployed.TowerStateAsync(towerId, cancellationToken);
+        var sight = await PreflightControlTowerAccessAsync(session, preview, requireAnchoringSkill: false, cancellationToken,
+            requireInteractionDistance: unlockedState != TowerUnanchoring, requireConfigurationRole: false, operation: "unanchor");
+
         await using var connection = await _source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
         if (await _deployed.LockAndGetAsync(connection, transaction, towerId, cancellationToken) is not { Kind: ControlTowerKind } record)
@@ -1051,9 +1116,8 @@ public sealed partial class SpaceContainers
         if (record.ActivateAtMs == NeverAnchored || record.ActivateAtMs > _nowUnixMs())
             throw Refuse("The control tower is not anchored yet.");
         var state = await _deployed.TowerStateAsync(connection, transaction, towerId, cancellationToken);
-        await RequireControlTowerAccessAsync(session, record, requireAnchoringSkill: false, cancellationToken,
-            requireInteractionDistance: state != TowerUnanchoring, requireConfigurationRole: false,
-            operation: "unanchor", connection: connection, transaction: transaction);
+        await RequireTowerAccessUnderLockAsync(session, record, sight, requireConfigurationRole: false, operation: "unanchor",
+            connection, transaction, cancellationToken);
         if (state == TowerUnanchoring)
         {
             await transaction.CommitAsync(cancellationToken);

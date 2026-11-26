@@ -86,6 +86,73 @@ public partial class HostServerTests
         Assert.Equal(new PyInt(25), WireField(row, "groupID"));
     }
 
+    [PgFact]
+    public async Task Static_site_of_the_dungeon_runtime_reaches_the_pilot_through_the_real_scanmgr_registration()
+    {
+        const int systemId = 30_000_142;
+        const long characterId = 90_000_811;
+        await using var rig = await AbyssalHostFlowTests.Rig.Create();
+        var composition = typeof(CharacterServicesComposition);
+        void SetCompositionField(string name, object value) =>
+            composition.GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(rig.Host, value);
+        SetCompositionField("now", (Func<long>)(() => rig.Now));
+        SetCompositionField("incursionAnomalyReadModel", new PersistenceIncursionAnomalyReadModel(
+            (_, _, _) => Task.FromResult<IReadOnlyList<Eve.Content.ContentInstance>>([]),
+            (table, _) => Task.FromResult(table == "dungeonRuntimeState"
+                ? JsonNode.Parse(DungeonRuntimeWithStaticSites(systemId))!.AsObject()
+                : new JsonObject()),
+            () => rig.Now));
+        SetCompositionField("signalTrackerRegistrationProvider", new SignalTrackerRegistrationProvider(rig.Sessions));
+        var service = (IService)composition.GetMethod("ScanMgrRpc", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(rig.Host, null)!;
+        Start(
+            configure: registry => registry.Register(service),
+            sessionOpened: session =>
+            {
+                session.CharacterId = characterId;
+                session.Set("solarsystemid2", new PyInt(systemId));
+                rig.Sessions.Enter(characterId, session);
+            });
+
+        var (front, open) = await OpenFrontAsync();
+        var binding = Assert.IsType<PySubStruct>(await HostRpcAsync(front, open, 1, "scanMgr", "GetSystemScanMgr"));
+        var objectId = BoundObjects.ExtractName(binding)!;
+        var state = Assert.IsType<PyList>(
+            await HostBoundRpcAsync(front, open, 2, objectId, "GetFullState", new PyTuple([])));
+        AssertOnlyStaticSite9001(Assert.IsType<PyDict>(state.Items[2]));
+        Assert.Empty(Assert.IsType<PyDict>(state.Items[3]).Entries);
+
+        Assert.Same(PyNone.Instance,
+            await HostRpcAsync(front, open, 3, "scanMgr", "SignalTrackerRegister"));
+        var notification = Assert.IsType<Send>(await front.ReceiveAsync());
+        var packet = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(notification.Payload)));
+        Assert.Equal(MachoMessage.Notification, packet.Type);
+        Assert.Equal("OnSignalTrackerFullState", packet.Dest.BroadcastId);
+        var registrationArgs = NotificationArguments(packet);
+        Assert.Equal(2, registrationArgs.Count);
+        Assert.Equal(new PyInt(systemId), registrationArgs[0]);
+        AssertOnlyStaticSite9001(Assert.IsType<PyDict>(Assert.IsType<PyList>(registrationArgs[1]).Items[2]));
+    }
+
+    private static void AssertOnlyStaticSite9001(PyDict staticSites)
+    {
+        var (siteKey, siteValue) = Assert.Single(staticSites.Entries);
+        Assert.Equal(new PyInt(9_001), siteKey);
+        var site = Assert.IsType<PyObject>(siteValue);
+        Assert.Equal([1.5, 2.5, -3.0], Assert.IsType<PyList>(WireField(site, "position")).Items.Select(value => Assert.IsType<PyReal>(value).Value).ToArray());
+        Assert.Equal(new PyInt(777), WireField(site, "dungeonNameID"));
+        Assert.Equal(new PyInt(500_019), WireField(site, "factionID"));
+    }
+
+    /// <summary>Two static instances of the dungeon runtime: one in the requested system (listed), one in another system (not listed).</summary>
+    private static string DungeonRuntimeWithStaticSites(long systemId) => """
+        {"instancesByID": {
+          "1": {"siteKind": "static", "lifecycleState": "active", "solarSystemID": SYSTEM, "siteID": 9001, "position": [1.5, 2.5, -3.0], "dungeonNameID": 777, "factionID": 500019},
+          "2": {"siteKind": "static", "lifecycleState": "active", "solarSystemID": OTHER, "siteID": 9002, "position": [0, 0, 0], "dungeonNameID": 778, "factionID": 500019}
+        }}
+        """.Replace("SYSTEM", systemId.ToString(System.Globalization.CultureInfo.InvariantCulture))
+            .Replace("OTHER", (systemId + 1).ToString(System.Globalization.CultureInfo.InvariantCulture));
+
     [Fact]
     public async Task ScanMgr_full_state_and_registration_include_the_current_signature_map_over_host_wire()
     {

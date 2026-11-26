@@ -176,6 +176,63 @@ public sealed class IncursionAnomalyServiceTests
     }
 
     [Fact]
+    public async Task Scan_manager_full_state_lists_static_sites_with_a_dungeon_name_for_the_requested_system()
+    {
+        const long systemId = 30000142;
+        long requestedSystem = 0;
+        var landmarks = new[]
+        {
+            Json("""
+            {
+              "siteID": 8001,
+              "solarSystemID": 30000142,
+              "position": [10.5, -2.0, 3.25],
+              "dungeonNameID": 555,
+              "factionID": 500020
+            }
+            """),
+            Json("""
+            {
+              "siteID": 8002,
+              "solarSystemID": 30000142,
+              "position": [0, 0, 0]
+            }
+            """),
+            Json("""
+            {
+              "siteID": 8003,
+              "solarSystemID": 30000143,
+              "position": [1, 1, 1],
+              "dungeonNameID": 556
+            }
+            """)
+        };
+        var service = new IncursionAnomalyService(
+            "scanMgr",
+            _ => ValueTask.FromResult<IReadOnlyList<JsonObject>>([]),
+            (_, _) => ValueTask.FromResult<IReadOnlyList<JsonObject>>([]),
+            readStaticSites: (requested, _) =>
+            {
+                requestedSystem = requested;
+                return ValueTask.FromResult<IReadOnlyList<JsonObject>>(landmarks);
+            });
+        var (call, _) = Request("GetFullState", systemId);
+
+        var state = Assert.IsType<PyList>(await service.CallAsync(call));
+        Assert.Equal(systemId, requestedSystem);
+        Assert.Equal(4, state.Items.Count);
+        var staticSites = Assert.IsType<PyDict>(state.Items[2]);
+        var (siteKey, siteValue) = Assert.Single(staticSites.Entries);
+        Assert.Equal(8001L, Int(siteKey));
+        var fields = Fields(Assert.IsType<PyObject>(siteValue));
+        Assert.Equal(3, fields.Count);
+        Assert.Equal([10.5, -2.0, 3.25], List(fields["position"]).Select(Real).ToArray());
+        Assert.Equal(555L, Int(fields["dungeonNameID"]));
+        Assert.Equal(500020L, Int(fields["factionID"]));
+        Assert.Empty(Assert.IsType<PyDict>(state.Items[3]).Entries);
+    }
+
+    [Fact]
     public async Task Missing_incursion_and_anomaly_state_returns_exact_empty_read_shapes()
     {
         var empty = NewService("map");

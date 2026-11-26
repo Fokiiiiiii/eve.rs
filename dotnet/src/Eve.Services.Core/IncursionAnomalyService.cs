@@ -26,6 +26,9 @@ public sealed class IncursionAnomalyService : IService
     private readonly Func<string, ServiceCall, ValueTask<PyValue>>? _probeScans;
     private readonly Func<long, CancellationToken, ValueTask<PyDict>>? _readSignatures;
 
+    /// <summary>The static sites (landmarks) of a system, one JSON row each (siteID, solarSystemID, position, dungeonNameID, factionID). Absent: no static sites.</summary>
+    private readonly Func<long, CancellationToken, ValueTask<IReadOnlyList<JsonObject>>>? _readStaticSites;
+
     public IncursionAnomalyService(
         string serviceName,
         Func<CancellationToken, ValueTask<IReadOnlyList<JsonObject>>> readIncursions,
@@ -35,11 +38,13 @@ public sealed class IncursionAnomalyService : IService
         Func<ServiceCall, PyValue, ValueTask<PyValue>>? signalTrackerRegister = null,
         Func<ClientSession, long, CancellationToken, ValueTask>? recallProbe = null,
         Func<string, ServiceCall, ValueTask<PyValue>>? probeScans = null,
-        Func<long, CancellationToken, ValueTask<PyDict>>? readSignatures = null)
+        Func<long, CancellationToken, ValueTask<PyDict>>? readSignatures = null,
+        Func<long, CancellationToken, ValueTask<IReadOnlyList<JsonObject>>>? readStaticSites = null)
     {
         _recallProbe = recallProbe;
         _probeScans = probeScans;
         _readSignatures = readSignatures;
+        _readStaticSites = readStaticSites;
         if (serviceName is not (MapName or TaleManagerName or ScanManagerName))
             throw new ArgumentOutOfRangeException(nameof(serviceName), serviceName, "Unsupported incursion/anomaly service.");
         ArgumentNullException.ThrowIfNull(readIncursions);
@@ -171,10 +176,33 @@ public sealed class IncursionAnomalyService : IService
             ? await readSignatures(systemId, cancellationToken)
             : new PyDict([]);
 
+        var staticSites = new List<KeyValuePair<PyValue, PyValue>>();
+        var landmarks = systemId > 0 && _readStaticSites is { } readStaticSites
+            ? await readStaticSites(systemId, cancellationToken)
+            : Array.Empty<JsonObject>();
+        foreach (var landmark in landmarks)
+        {
+            var landmarkSystemId = Positive(landmark["solarSystemID"]);
+            if (landmarkSystemId > 0 && landmarkSystemId != systemId)
+                continue;
+
+            var landmarkId = Positive(landmark["siteID"]);
+            // The client names a static site by its dungeon name, so a row without one is not listed (EVE.js keeps only the named ones).
+            var dungeonNameId = Positive(landmark["dungeonNameID"]);
+            if (landmarkId <= 0 || dungeonNameId <= 0)
+                continue;
+
+            var factionId = Positive(landmark["factionID"]);
+            staticSites.Add(new(Py.Number(landmarkId), Py.KeyVal(
+                ("position", MarshalRealVector(landmark["position"])),
+                ("dungeonNameID", Py.Number(dungeonNameId)),
+                ("factionID", factionId > 0 ? Py.Number(factionId) : PyNone.Instance))));
+        }
+
         return new PyList([
             new PyDict(anomalies),
             signatures,
-            new PyDict([]),
+            new PyDict(staticSites),
             new PyDict([]),
         ]);
     }

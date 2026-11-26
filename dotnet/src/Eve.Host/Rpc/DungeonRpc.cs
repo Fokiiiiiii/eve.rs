@@ -88,7 +88,8 @@ internal sealed partial class CharacterServicesComposition
             signalTrackerRegister: signalTrackerRegistrationProvider.RegisterAsync,
             readSignatures: (systemId, token) => spaceSessions?.ProbeScans is { } scans
                 ? scans.ReadSignalTrackerSignaturesAsync(systemId, token)
-                : ValueTask.FromResult(new PyDict([])));
+                : ValueTask.FromResult(new PyDict([])),
+            readStaticSites: incursionAnomalyReadModel.ReadStaticSitesAsync);
         signalTrackerRegistrationProvider.ReadFullState = service.ReadFullStateForSystemAsync;
         return service;
     }

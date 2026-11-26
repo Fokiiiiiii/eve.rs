@@ -117,6 +117,49 @@ public sealed class PersistenceIncursionAnomalyReadModel(
         return result.OrderBy(entry => entry.Key).Select(entry => entry.Value).ToArray();
     }
 
+    /// <summary>
+    /// The static sites (landmarks) of a system: the dungeon runtime instances of the static kind that are active there, as rows of siteID, solarSystemID,
+    /// position, dungeonNameID and factionID. eve.rs writes no static instance yet, so this is empty until a static spawn writer exists.
+    /// </summary>
+    public async ValueTask<IReadOnlyList<JsonObject>> ReadStaticSitesAsync(
+        long solarSystemId,
+        CancellationToken cancellationToken)
+    {
+        var sites = new List<JsonObject>();
+        if (solarSystemId <= 0)
+            return sites;
+
+        var dungeonState = await readGameStoreTable("dungeonRuntimeState", cancellationToken);
+        if (dungeonState["instancesByID"] is not JsonObject instancesById)
+            return sites;
+        foreach (var (_, node) in instancesById)
+        {
+            if (node is not JsonObject instance ||
+                !ActiveDungeonStates.Contains(Text(instance["lifecycleState"])) ||
+                !string.Equals(Text(instance["siteKind"]), "static", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (Positive(Integer(instance["solarSystemID"])) != solarSystemId)
+                continue;
+            var siteId = Positive(Integer(MetadataField(instance, "siteID")));
+            if (siteId <= 0 || instance["position"] is null)
+                continue;
+
+            sites.Add(new JsonObject
+            {
+                ["siteID"] = siteId,
+                ["solarSystemID"] = solarSystemId,
+                ["position"] = instance["position"]!.DeepClone(),
+                ["dungeonNameID"] = Positive(Integer(MetadataField(instance, "dungeonNameID"))),
+                ["factionID"] = Positive(Integer(MetadataField(instance, "factionID"))),
+            });
+        }
+        return sites.OrderBy(site => Positive(Integer(site["siteID"]))).ToArray();
+    }
+
+    /// <summary>A dungeon instance field, read from the instance or, when absent there, from its metadata.</summary>
+    private static JsonNode? MetadataField(JsonObject instance, string name) =>
+        instance[name] ?? (instance["metadata"] as JsonObject)?[name];
+
     private static JsonObject? ParseObject(string json)
     {
         try

@@ -60,6 +60,40 @@ public sealed class SignalTrackerRegistrationProviderTests
         Assert.Empty(staleSink.Packets);
     }
 
+    [Fact]
+    public async Task Refresh_sends_a_full_state_that_replaces_old_sites_when_a_static_site_changes()
+    {
+        const long systemId = 30_000_142;
+        var sessions = new CharacterSessions();
+        var sink = new RecordingSink();
+        var session = CreateSession(sessions, 42, systemId, sink);
+        var provider = new SignalTrackerRegistrationProvider(sessions);
+        var current = FullStateWithStaticSite(8001);
+        provider.ReadFullState = (_, _) => ValueTask.FromResult<PyValue>(current);
+
+        await provider.RegisterAsync(RegisterCall(session), current);
+        session.RunAfterResponse();
+        AssertSignalTrackerNotification(Assert.Single(sink.Packets), systemId, shouldRemoveOldSites: null);
+
+        current = FullStateWithStaticSite(8002);
+        await provider.RefreshAsync();
+
+        Assert.Equal(2, sink.Packets.Count);
+        AssertSignalTrackerNotification(sink.Packets[1], systemId, shouldRemoveOldSites: true);
+    }
+
+    private static PyList FullStateWithStaticSite(long siteId) => new([
+        new PyDict([]),
+        new PyDict([]),
+        new PyDict([
+            new KeyValuePair<PyValue, PyValue>(new PyLong(siteId), Py.KeyVal(
+                ("position", new PyList([new PyReal(1), new PyReal(2), new PyReal(3)])),
+                ("dungeonNameID", new PyInt(555)),
+                ("factionID", PyNone.Instance))),
+        ]),
+        new PyDict([]),
+    ]);
+
     private static ClientSession CreateSession(CharacterSessions sessions, long characterId, long systemId, RecordingSink sink)
     {
         var session = new ClientSession(sink) { UserId = 7, CharacterId = characterId };

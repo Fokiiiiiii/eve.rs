@@ -1383,3 +1383,97 @@ fn a_deployable_reaches_a_pilot_that_comes_into_its_view_and_leaves_with_it() {
     let gone = format!("{:?}", scene.reconcile_deployables(t + 4 * SECOND));
     assert!(gone.contains("RemoveBalls"), "the pilot that leaves the box is told the point is gone: {gone}");
 }
+
+/// A lifetime too long for the clock ends at the last tick instead of overflowing, in a restored field, a bridge and a placed deployable.
+#[test]
+fn a_lifetime_too_long_for_the_clock_ends_at_the_last_tick_and_does_not_overflow() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let field_id = DEPLOYABLE_ID_BASE + 900;
+    let placement = crate::link::DeployedPlacement {
+        solar_system_id: scene.solar_system_id(),
+        deployable_id: field_id,
+        name: "Cynosural Field".to_string(),
+        type_id: 21_094,
+        group_id: 2_020,
+        position: [a.x, a.y, a.z],
+        radius: 250.0,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: scene.pilots[&A].ship.spec.ship_id,
+        lifetime_ms: 1.0e300,
+    };
+    scene.restore_field(placement, t);
+    assert_eq!(scene.deployables[&field_id].ends_at, i64::MAX, "the restored field lives to the last tick");
+    assert!(scene.place_bridge(A, 1, 30_000_001, 1.0e300, 2_500.0, t), "the bridge is placed");
+    assert!(
+        scene
+            .deployables
+            .values()
+            .any(|d| matches!(d.role, Role::JumpBridge { .. }) && d.ends_at == i64::MAX),
+        "the bridge lives to the last tick"
+    );
+    let effect = module(MODULE, Action::CynoField { ball: PROBE_SPEC(), lifetime_ms: 1.0 }, 0.0);
+    let (probe_id, _) =
+        scene.place_deployable(A, &effect, PROBE_SPEC(), Role::WarpSource { range: 1.0 }, None, 1.0e300, t);
+    assert_eq!(
+        scene.deployables[&probe_id].ends_at,
+        i64::MAX,
+        "the placed deployable lives to the last tick"
+    );
+}
+
+/// A restored id at the top of the range leaves no id for a later placement, which is refused rather than overflowing the id.
+#[test]
+fn a_placement_past_the_last_deployable_id_is_refused() {
+    let (mut scene, t) = crowd();
+    let a = scene.pilots[&A].ship.position;
+    let placement = crate::link::DeployedPlacement {
+        solar_system_id: scene.solar_system_id(),
+        deployable_id: i64::MAX,
+        name: "Cynosural Field".to_string(),
+        type_id: 21_094,
+        group_id: 2_020,
+        position: [a.x, a.y, a.z],
+        radius: 250.0,
+        owner_id: 4_242,
+        corporation_id: 0,
+        alliance_id: 0,
+        ship_id: scene.pilots[&A].ship.spec.ship_id,
+        lifetime_ms: 1_000.0,
+    };
+    scene.restore_field(placement, t);
+    assert!(
+        !scene.place_bridge(A, 1, 30_000_001, 1_000.0, 2_500.0, t),
+        "a bridge past the last id is refused"
+    );
+    assert_eq!(scene.deployables.len(), 1, "only the restored field is in space");
+}
+
+/// A link that completes near the last tick holds the ship without overflowing the link's status tail.
+#[test]
+fn a_link_that_completes_near_the_last_tick_holds_without_overflow() {
+    let (mut scene, t) = crowd();
+    let idle = AnalysisBeaconState {
+        active: true,
+        activate_at: 0,
+        deployed_at: t,
+        activation_seconds: 20,
+        link_state: 1,
+        link_complete_at: 0,
+        linked_ship_id: 0,
+    };
+    scene.place_analysis_beacon(crab_placement(&scene, idle), t);
+    let ship = scene.pilots[&A].ship.spec.ship_id;
+    scene.set_analysis_beacon_state(
+        CRAB,
+        AnalysisBeaconState { link_state: 2, link_complete_at: i64::MAX - 10, linked_ship_id: ship, ..idle },
+        t,
+    );
+    let goto = Command::GotoDirection(eve_destiny::Vec3::new(1.0, 0.0, 0.0));
+    assert!(
+        format!("{:?}", scene.command(A, goto, t)).contains("LINK_HOLD"),
+        "the ship is held during the link"
+    );
+}

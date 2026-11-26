@@ -302,7 +302,10 @@ fn a_move_the_scene_settles_is_stopped_at_the_field_and_its_order_is_cancelled()
     assert_eq!(harmonic(&scene, SESSION), NO_HARMONIC);
     let told: Vec<String> = scene.backlog.iter().flat_map(action_names).collect();
     assert!(told.iter().any(|name| name == "Stop"), "the cancel is told to the clients: {told:?}");
-    assert!(told.iter().any(|name| name == "SetBallPosition"), "the correction is told to the clients: {told:?}");
+    assert!(
+        told.iter().any(|name| name == "SetBallPosition"),
+        "the correction is told to the clients: {told:?}"
+    );
 }
 
 #[test]
@@ -392,9 +395,18 @@ fn a_ship_admitted_inside_that_leaves_the_field_loses_its_harmonic_and_the_host_
 /// A pilot admitted inside the field by its corporation loses the harmonic when its ship is given again without that corporation (the pilot left it while flying):
 /// the host is told, and the field no longer admits the pilot.
 #[test]
-fn a_pilot_who_leaves_the_admitting_corporation_inside_the_field_loses_its_harmonic_when_its_ship_is_given_again() {
+fn a_pilot_who_leaves_the_admitting_corporation_inside_the_field_loses_its_harmonic_when_its_ship_is_given_again()
+ {
     let mut scene = field_scene();
-    scene.set_force_field_access(TOWER, Access { corporation_id: PILOT_CORPORATION, alliance_id: 0, allow_corporation: true, allow_alliance: false });
+    scene.set_force_field_access(
+        TOWER,
+        Access {
+            corporation_id: PILOT_CORPORATION,
+            alliance_id: 0,
+            allow_corporation: true,
+            allow_alliance: false,
+        },
+    );
     scene.pilots.get_mut(&SESSION).unwrap().ship.position = point(-50.0);
     scene.refresh_force_field_harmonic(SESSION, NOON);
     assert_eq!(harmonic(&scene, SESSION), TOWER);
@@ -403,7 +415,11 @@ fn a_pilot_who_leaves_the_admitting_corporation_inside_the_field_loses_its_harmo
     let mut spec = scene.pilots.get(&SESSION).unwrap().ship.spec.clone();
     spec.corporation_id = PILOT_CORPORATION + 1;
     let told = scene.respec(SESSION, spec, NOON);
-    assert_eq!(harmonic(&scene, SESSION), NO_HARMONIC, "the corporation that admitted the pilot is no longer its own");
+    assert_eq!(
+        harmonic(&scene, SESSION),
+        NO_HARMONIC,
+        "the corporation that admitted the pilot is no longer its own"
+    );
     assert!(told_harmonic(&told, NO_HARMONIC), "the host is told the harmonic is gone");
 }
 

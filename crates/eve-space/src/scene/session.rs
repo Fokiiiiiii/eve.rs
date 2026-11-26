@@ -629,7 +629,8 @@ impl Scene {
         let signature_radius_changed = new.signature_radius != old.signature_radius;
         let max_locked_targets_changed = new.max_locked_targets != old.max_locked_targets;
         // a pilot whose corporation or alliance changed is judged by the fields again: its harmonic follows what they admit now
-        let affiliation_changed = new.corporation_id != old.corporation_id || new.alliance_id != old.alliance_id;
+        let affiliation_changed =
+            new.corporation_id != old.corporation_id || new.alliance_id != old.alliance_id;
         let targeting_attributes_changed = scan_resolution_changed
             || signature_radius_changed
             || max_locked_targets_changed

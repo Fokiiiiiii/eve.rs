@@ -53,7 +53,11 @@ impl Scene {
     /// a client-visible deployable. None when the course has no such target, or the scene does not hold it (a body is not one of these).
     pub(crate) fn course_target_of(&self, session: SessionId) -> Option<Target> {
         let target = match self.pilots.get(&session).map(|pilot| pilot.ship.course) {
-            Some(Course::Follow { target, .. } | Course::Orbit { target, .. }) if self.system.body(target).is_none() => target,
+            Some(Course::Follow { target, .. } | Course::Orbit { target, .. })
+                if self.system.body(target).is_none() =>
+            {
+                target
+            }
             _ => return None,
         };
         if let Some(other) = self.session_of(target).filter(|other| *other != session) {

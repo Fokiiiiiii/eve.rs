@@ -3,10 +3,14 @@
 
 use super::tests::{A, B, BATTERY, SECOND, battery_placement, beside_a, crowd, obo_of, ship_id};
 use super::*;
+use crate::flight::Flight;
+use crate::visibility::CloakState;
 
 const TOWER: i64 = 1_060_000_001;
 const OWNER_CORPORATION: i64 = 98_000_001;
 const RIVAL_CORPORATION: i64 = 98_000_002;
+const OWNER_ALLIANCE: i64 = 99_000_001;
+const OTHER_TOWER: i64 = 1_060_000_002;
 
 fn policy(standing: Option<f64>, security_status: Option<f64>) -> SentryPolicy {
     SentryPolicy {
@@ -213,4 +217,164 @@ fn a_sentry_pilot_whose_ship_has_left_is_dropped_when_the_batteries_settle() {
         !scene.sentry_pilots.contains_key(&(TOWER, ship_id(B) + 1000)),
         "a pilot that left is still known"
     );
+}
+
+/// Two named pilots at different distances: the battery locks the nearer one, and only that one, while it holds it.
+#[test]
+fn the_nearest_of_two_named_pilots_is_locked_and_only_it() {
+    let (mut scene, now) = sentry_scene(2);
+    scene.set_sentry_policy(policy(Some(0.0), None));
+    scene.set_sentry_pilot(TOWER, Some(pilot(ship_id(A), -2.0)));
+    scene.set_sentry_pilot(TOWER, Some(pilot(ship_id(B), -2.0)));
+    let at = scene.batteries[&BATTERY].position;
+    let (near_distance, far_distance) =
+        (distance(at, scene.pilots[&A].ship.position), distance(at, scene.pilots[&B].ship.position));
+    assert_ne!(near_distance, far_distance, "the two pilots must be at different distances");
+    let nearest = if near_distance < far_distance { ship_id(A) } else { ship_id(B) };
+    settle_twice(&mut scene, now);
+    assert_eq!(
+        scene.batteries[&BATTERY].targeting.targets(),
+        vec![nearest],
+        "only the nearest named pilot is locked"
+    );
+}
+
+/// An owner alliance is never named, and a pilot in no alliance is named when the owner has no alliance.
+#[test]
+fn an_owner_alliance_is_never_named_and_a_pilot_in_no_alliance_is_named_when_the_owner_has_none() {
+    let (mut scene, now) = sentry_scene(2);
+    scene.set_sentry_policy(SentryPolicy { owner_alliance_id: OWNER_ALLIANCE, ..policy(Some(0.0), None) });
+    scene.set_sentry_pilot(
+        TOWER,
+        Some(SentryPilot { alliance_id: OWNER_ALLIANCE, ..pilot(ship_id(A), -2.0) }),
+    );
+    scene.set_sentry_pilot(TOWER, Some(pilot(ship_id(B), -2.0)));
+    settle_twice(&mut scene, now);
+    assert_eq!(
+        scene.batteries[&BATTERY].targeting.targets(),
+        vec![ship_id(B)],
+        "the owner's alliance was named"
+    );
+
+    let (mut open, now) = sentry_scene(1);
+    open.set_sentry_policy(policy(Some(0.0), None));
+    open.set_sentry_pilot(TOWER, Some(pilot(ship_id(A), -2.0)));
+    settle_twice(&mut open, now);
+    assert_eq!(
+        open.batteries[&BATTERY].targeting.targets(),
+        vec![ship_id(A)],
+        "a pilot in no alliance was not named when the owner has none"
+    );
+}
+
+/// The war flag names a pilot at war only when the policy is at war: at peace a pilot at war is not shot, and at war the pilot at war is shot while
+/// the pilot not at war is not.
+#[test]
+fn the_war_flag_names_a_pilot_at_war_only_when_the_policy_is_at_war() {
+    let (mut peace, now) = sentry_scene(2);
+    peace.set_sentry_policy(policy(None, None));
+    peace.set_sentry_pilot(TOWER, Some(SentryPilot { at_war: true, ..pilot(ship_id(A), 0.0) }));
+    peace.set_sentry_pilot(TOWER, Some(SentryPilot { at_war: true, ..pilot(ship_id(B), 0.0) }));
+    settle_twice(&mut peace, now);
+    assert!(peace.batteries[&BATTERY].targeting.is_empty(), "a pilot at war was shot at peace");
+
+    let (mut war, now) = sentry_scene(2);
+    war.set_sentry_policy(SentryPolicy { war: true, ..policy(None, None) });
+    war.set_sentry_pilot(TOWER, Some(pilot(ship_id(A), 0.0)));
+    war.set_sentry_pilot(TOWER, Some(SentryPilot { at_war: true, ..pilot(ship_id(B), 0.0) }));
+    settle_twice(&mut war, now);
+    assert_eq!(
+        war.batteries[&BATTERY].targeting.targets(),
+        vec![ship_id(B)],
+        "at war, only the pilot at war is named"
+    );
+}
+
+/// A standing or a security status exactly at its threshold is not named, the comparison being strict; one a little below is.
+#[test]
+fn a_standing_or_security_status_exactly_at_its_threshold_is_not_named() {
+    let (mut standing, now) = sentry_scene(2);
+    standing.set_sentry_policy(policy(Some(0.0), None));
+    standing.set_sentry_pilot(TOWER, Some(pilot(ship_id(A), 0.0)));
+    standing.set_sentry_pilot(TOWER, Some(pilot(ship_id(B), -0.01)));
+    settle_twice(&mut standing, now);
+    assert_eq!(
+        standing.batteries[&BATTERY].targeting.targets(),
+        vec![ship_id(B)],
+        "a standing at the threshold was shot"
+    );
+
+    let (mut security, now) = sentry_scene(2);
+    security.set_sentry_policy(policy(None, Some(0.0)));
+    security
+        .set_sentry_pilot(TOWER, Some(SentryPilot { security_status: Some(0.0), ..pilot(ship_id(A), 0.0) }));
+    security.set_sentry_pilot(
+        TOWER,
+        Some(SentryPilot { security_status: Some(-0.01), ..pilot(ship_id(B), 0.0) }),
+    );
+    settle_twice(&mut security, now);
+    assert_eq!(
+        security.batteries[&BATTERY].targeting.targets(),
+        vec![ship_id(B)],
+        "a security status at the threshold was shot"
+    );
+}
+
+/// A pilot the host knows toward another tower is not named for this one, and forgetting this tower's pilots keeps the other tower's.
+#[test]
+fn a_pilot_of_another_tower_is_not_named_here_and_forgetting_this_tower_keeps_the_others() {
+    let (mut scene, now) = sentry_scene(2);
+    scene.set_sentry_policy(policy(Some(0.0), None));
+    scene.set_sentry_pilot(OTHER_TOWER, Some(pilot(ship_id(B), -2.0)));
+    settle_twice(&mut scene, now);
+    assert!(scene.batteries[&BATTERY].targeting.is_empty(), "a pilot of another tower was named here");
+    scene.set_sentry_pilot(TOWER, None);
+    assert!(
+        scene.sentry_pilots.contains_key(&(OTHER_TOWER, ship_id(B))),
+        "forgetting this tower's pilots forgot another tower's pilot"
+    );
+}
+
+/// A pilot the policy names is not locked when it is out of range, warping or cloaked: the battery refuses it as it refuses any target.
+#[test]
+fn a_named_pilot_out_of_range_warping_or_cloaked_is_not_locked() {
+    let cases: [fn(&mut Scene, i64); 3] = [
+        |scene, _| {
+            // 50 200 m from the battery: its gap of 50 093 m is past the 50 000 m range but the pilot is still in view
+            let at = scene.batteries[&BATTERY].position;
+            scene.pilots.get_mut(&B).unwrap().ship.position = Vec3::new(at.x + 50_200.0, at.y, at.z);
+        },
+        |scene, now| {
+            scene.pilots.get_mut(&B).unwrap().flight =
+                Some(Flight::begin(now, Vec3::new(1.0e9, 0.0, 0.0), 0.0))
+        },
+        |scene, _| scene.pilots.get_mut(&B).unwrap().cloak = CloakState::Cloaked,
+    ];
+    for (case, change) in cases.iter().enumerate() {
+        let (mut scene, now) = sentry_scene(2);
+        scene.set_sentry_policy(policy(Some(0.0), None));
+        scene.set_sentry_pilot(TOWER, Some(pilot(ship_id(B), -2.0)));
+        change(&mut scene, now);
+        settle_twice(&mut scene, now);
+        assert!(
+            scene.batteries[&BATTERY].targeting.is_empty(),
+            "case {case}: {:?}",
+            scene.batteries[&BATTERY].targeting.targets()
+        );
+        assert_eq!(scene.batteries[&BATTERY].firing, None, "case {case}");
+    }
+}
+
+/// A binding for a battery that is not in the scene binds no battery that is: the battery in the scene keeps no tower.
+#[test]
+fn a_binding_for_a_battery_not_in_the_scene_binds_no_other_battery() {
+    let (mut scene, _) = crowd(2);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, 0, true)).expect("the battery is placed");
+    scene.bind_sentry_battery(BATTERY + 1, TOWER);
+    assert_eq!(
+        scene.batteries[&BATTERY].sentry_tower, None,
+        "a binding for an absent battery bound the one in the scene"
+    );
+    assert!(!scene.batteries.contains_key(&(BATTERY + 1)), "a binding created a battery");
 }

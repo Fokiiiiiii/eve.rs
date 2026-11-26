@@ -3,9 +3,11 @@ use std::sync::Arc;
 use eve_marshal::Value;
 
 use super::*;
+use crate::flight::Flight;
 use crate::scene::tests::{NOON, STATION, spec, system};
 use crate::scene::{Command, Departure};
 use crate::ship::ShipSpec;
+use crate::visibility::CloakState;
 use crate::world::{Body, BodyKind, Detail};
 
 pub(super) const A: SessionId = 7;
@@ -1411,6 +1413,29 @@ fn battery_lock_settles_into_an_add_told_to_its_holder_only() {
     assert!(obo_of(&told).is_empty(), "{told:?}");
 }
 
+/// A battery's lock takes its scan time: it is still pending before that time has passed, and is had only once it has.
+#[test]
+fn a_battery_lock_is_pending_until_its_scan_time_has_passed() {
+    let (mut scene, now) = crowd(2);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, A, true)).expect("the battery is placed");
+    let target = ship_id(B);
+    scene.battery_order(BATTERY, BatteryOrder::Lock(target), now);
+    let early = scene.settle_batteries(now + SECOND);
+    assert!(obo_of(&early).is_empty(), "the lock was had before its scan time had passed: {early:?}");
+    assert_eq!(
+        scene.batteries[&BATTERY].targeting.pending_targets(),
+        vec![target],
+        "the lock is not pending"
+    );
+    let later = scene.settle_batteries(now + 200 * SECOND);
+    assert_eq!(
+        obo_of(&later),
+        vec![(A, vec![word("add"), id(BATTERY), id(target), Value::None])],
+        "{later:?}"
+    );
+}
+
 #[test]
 fn battery_refuses_a_target_beyond_its_range_or_that_cannot_be_targeted() {
     let (mut scene, now) = crowd(2);
@@ -1427,6 +1452,54 @@ fn battery_refuses_a_target_beyond_its_range_or_that_cannot_be_targeted() {
     assert_eq!(itself.reason, Some("TARGET_NOT_FOUND"), "{itself:?}");
     let (missing, _) = scene.battery_order(BATTERY, BatteryOrder::Lock(999_999_999), now);
     assert_eq!(missing.reason, Some("TARGET_NOT_FOUND"), "{missing:?}");
+}
+
+/// A battery refuses a target that is protected, warping or cloaked, each with its own reason, and holds none of them.
+#[test]
+fn a_protected_warping_or_cloaked_ship_is_refused_as_a_battery_target() {
+    type Change = fn(&mut Scene, i64);
+    let cases: [(Change, &str); 3] = [
+        (
+            |scene, now| scene.pilots.get_mut(&B).unwrap().protected_until = now + 60 * SECOND,
+            "TARGET_INVULNERABLE",
+        ),
+        (
+            |scene, now| {
+                scene.pilots.get_mut(&B).unwrap().flight =
+                    Some(Flight::begin(now, Vec3::new(1.0e6, 0.0, 0.0), 0.0))
+            },
+            "TARGET_WARPING",
+        ),
+        (|scene, _| scene.pilots.get_mut(&B).unwrap().cloak = CloakState::Cloaked, "TARGET_NOT_FOUND"),
+    ];
+    for (case, (change, reason)) in cases.iter().enumerate() {
+        let (mut scene, now) = crowd(2);
+        let at = beside_a(&scene, 1_000.0);
+        scene.place_battery(battery_placement(at, A, true)).expect("the battery is placed");
+        change(&mut scene, now);
+        let (answer, told) = scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(B)), now);
+        assert_eq!(answer.reason, Some(*reason), "case {case}: {answer:?}");
+        assert!(!answer.pending && obo_of(&told).is_empty(), "case {case}: {told:?}");
+    }
+}
+
+/// The range is measured between the surfaces: a gap equal to the battery's range is out of it, and a metre less is within it.
+#[test]
+fn a_battery_range_is_the_gap_between_the_surfaces_and_a_gap_equal_to_it_is_out() {
+    let (mut scene, now) = crowd(2);
+    scene.place_battery(battery_placement(Vec3::ZERO, A, true)).expect("the battery is placed");
+    let range = 50_000.0;
+    let surfaces = 60.0 + spec().radius;
+    scene.pilots.get_mut(&B).unwrap().ship.position = Vec3::new(range + surfaces, 0.0, 0.0);
+    let (answer, _) = scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(B)), now);
+    assert_eq!(
+        answer.reason,
+        Some("TARGET_OUT_OF_RANGE"),
+        "a gap equal to the range is out of it: {answer:?}"
+    );
+    scene.pilots.get_mut(&B).unwrap().ship.position = Vec3::new(range + surfaces - 1.0, 0.0, 0.0);
+    let (answer, _) = scene.battery_order(BATTERY, BatteryOrder::Lock(ship_id(B)), now);
+    assert_eq!(answer.reason, None, "a gap a metre within the range is refused: {answer:?}");
 }
 
 #[test]
@@ -1508,6 +1581,56 @@ fn battery_cancel_remove_and_clear_tell_the_holder_what_let_go() {
     );
 }
 
+/// A battery that fires at one target refuses a start at a second one, and the first stays the target it fires at.
+#[test]
+fn a_battery_refuses_a_second_target_while_it_fires_at_the_first() {
+    let (mut scene, now) = crowd(3);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, A, true)).expect("the battery is placed");
+    let (b, c) = (ship_id(B), ship_id(C));
+    scene.battery_order(BATTERY, BatteryOrder::Lock(b), now);
+    scene.battery_order(BATTERY, BatteryOrder::Lock(c), now);
+    let later = now + 200 * SECOND;
+    scene.settle_batteries(later);
+    let (started, _) = scene.battery_fire(BATTERY, BatteryFire::Start(b), later);
+    assert_eq!((started.reason, started.target), (None, b), "{started:?}");
+    let (refused, _) = scene.battery_fire(BATTERY, BatteryFire::Start(c), later);
+    assert_eq!(refused.reason, Some("MODULE_ALREADY_ACTIVE"), "{refused:?}");
+    assert_eq!((refused.active, refused.target), (true, b), "{refused:?}");
+}
+
+/// Clearing the battery's locks lets go of the fire at them.
+#[test]
+fn clearing_the_locks_lets_go_of_the_fire() {
+    let (mut scene, now) = crowd(2);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, A, true)).expect("the battery is placed");
+    let target = ship_id(B);
+    scene.battery_order(BATTERY, BatteryOrder::Lock(target), now);
+    let later = now + 200 * SECOND;
+    scene.settle_batteries(later);
+    scene.battery_fire(BATTERY, BatteryFire::Start(target), later);
+    assert_eq!(scene.batteries[&BATTERY].firing, Some(target), "the fire did not start");
+    scene.battery_order(BATTERY, BatteryOrder::Clear, later);
+    assert_eq!(scene.batteries[&BATTERY].firing, None, "a clear left the fire on");
+}
+
+/// A change of holder lets go of the fire with the locks.
+#[test]
+fn a_holder_change_lets_go_of_the_fire() {
+    let (mut scene, now) = crowd(2);
+    let at = beside_a(&scene, 1_000.0);
+    scene.place_battery(battery_placement(at, A, true)).expect("the battery is placed");
+    let target = ship_id(B);
+    scene.battery_order(BATTERY, BatteryOrder::Lock(target), now);
+    let later = now + 200 * SECOND;
+    scene.settle_batteries(later);
+    scene.battery_fire(BATTERY, BatteryFire::Start(target), later);
+    assert_eq!(scene.batteries[&BATTERY].firing, Some(target), "the fire did not start");
+    scene.place_battery(battery_placement(at, B, true)).expect("the battery is placed");
+    assert_eq!(scene.batteries[&BATTERY].firing, None, "a change of holder left the fire on");
+}
+
 #[test]
 fn battery_drops_a_lock_whose_target_leaves_its_range() {
     let (mut scene, now) = crowd(2);
@@ -1570,5 +1693,22 @@ fn battery_placement_refuses_numbers_it_cannot_use() {
     let mut not_finite = battery_placement(at, A, true);
     not_finite.position[0] = f64::NAN;
     assert_eq!(scene.place_battery(not_finite), Err("BAD_BATTERY"));
+    assert!(scene.batteries.is_empty());
+}
+
+/// A battery's scan resolution, target range and lock limit are not negative: a negative one is refused and takes no place.
+#[test]
+fn battery_placement_refuses_a_negative_scan_resolution_target_range_or_lock_limit() {
+    let (mut scene, _) = crowd(1);
+    let at = beside_a(&scene, 1_000.0);
+    let mut scan = battery_placement(at, A, true);
+    scan.scan_resolution = -1.0;
+    assert_eq!(scene.place_battery(scan), Err("BAD_BATTERY"));
+    let mut range = battery_placement(at, A, true);
+    range.max_target_range = -1.0;
+    assert_eq!(scene.place_battery(range), Err("BAD_BATTERY"));
+    let mut limit = battery_placement(at, A, true);
+    limit.max_locked_targets = -1;
+    assert_eq!(scene.place_battery(limit), Err("BAD_BATTERY"));
     assert!(scene.batteries.is_empty());
 }

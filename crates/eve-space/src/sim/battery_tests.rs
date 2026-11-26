@@ -2,6 +2,7 @@ use super::*;
 use crate::link::BatteryPlacement;
 
 const BATTERY: i64 = 1_050_000_001;
+const TOWER: i64 = 1_060_000_001;
 
 /// A battery placed on the ship, held by its pilot, is answered over the simulation: its lock is told to the holder only, and an
 /// order for a battery that is not in the system is refused.
@@ -253,4 +254,101 @@ fn a_stop_is_always_accepted_for_an_offline_unheld_or_absent_battery() {
         matches!(&refused[..], [Message::BatteryFired { request_id: 45, reason, active: false, .. }] if reason == "BATTERY_OFFLINE"),
         "{refused:?}"
     );
+}
+
+/// The orders 4 (cancel) and 3 (clear) are answered through the simulation: a cancel gives up a lock that is going and leaves a held one, and a clear
+/// lets go of every lock and tells the holder.
+#[test]
+fn the_cancel_and_clear_orders_are_answered_through_the_simulation() {
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([(*system()).clone()])));
+    sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+    let at = sim.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&SESSION].ship.position;
+    let placement = BatteryPlacement {
+        battery_id: BATTERY,
+        solar_system_id: SYSTEM,
+        type_id: 16_631,
+        group_id: 1_000,
+        display_name: "Test battery".to_string(),
+        holder_session: SESSION,
+        position: [at.x, at.y, at.z],
+        radius: 60.0,
+        scan_resolution: 400.0,
+        max_target_range: 50_000.0,
+        max_locked_targets: 2,
+        online: true,
+    };
+    sim.handle(Message::PlaceBattery(Box::new(placement)), NOON).unwrap();
+    let order = |request_id: u64, order: u8| Message::BatteryTarget {
+        request_id,
+        battery_id: BATTERY,
+        solar_system_id: SYSTEM,
+        order,
+        target: STATION,
+    };
+    let answer_of = |messages: &[Message], id: u64| {
+        messages
+            .iter()
+            .find_map(|message| match message {
+                Message::BatteryTargets { request_id, reason, pending, targets, .. } if *request_id == id => {
+                    Some((reason.clone(), *pending, targets.clone()))
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no answer to request {id}: {messages:?}"))
+    };
+
+    // a lock that is going, then cancelled: nothing is held
+    let locked = sim.handle(order(50, 1), NOON).unwrap();
+    assert_eq!(answer_of(&locked, 50), (String::new(), true, Vec::new()), "{locked:?}");
+    let cancelled = sim.handle(order(51, 4), NOON).unwrap();
+    assert_eq!(answer_of(&cancelled, 51), (String::new(), false, Vec::new()), "{cancelled:?}");
+
+    // a lock that is had, then cancelled: a cancel gives up only a lock that is going, so the held one stays
+    sim.handle(order(52, 1), NOON).unwrap();
+    sim.poll(NOON + 200 * SECOND);
+    let held = sim.handle(order(53, 4), NOON + 200 * SECOND).unwrap();
+    assert_eq!(answer_of(&held, 53), (String::new(), false, vec![STATION]), "{held:?}");
+
+    // a clear lets go of every lock and tells the holder
+    let cleared = sim.handle(order(54, 3), NOON + 200 * SECOND).unwrap();
+    assert_eq!(answer_of(&cleared, 54), (String::new(), false, Vec::new()), "{cleared:?}");
+    assert!(
+        cleared
+            .iter()
+            .any(|message| matches!(message, Message::Notify { name, .. } if name == "OnTargetOBO")),
+        "the holder was not told the clear: {cleared:?}"
+    );
+}
+
+/// A sentry binding sent for a battery the scene does not hold creates no battery, and the scene's own battery is left as it is.
+#[test]
+fn a_sentry_binding_for_a_battery_not_in_the_scene_creates_none() {
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([(*system()).clone()])));
+    sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+    let at = sim.scenes[&SceneKey::solar_system(SYSTEM)].pilots[&SESSION].ship.position;
+    let placement = BatteryPlacement {
+        battery_id: BATTERY,
+        solar_system_id: SYSTEM,
+        type_id: 16_631,
+        group_id: 1_000,
+        display_name: "Test battery".to_string(),
+        holder_session: 0,
+        position: [at.x, at.y, at.z],
+        radius: 60.0,
+        scan_resolution: 400.0,
+        max_target_range: 50_000.0,
+        max_locked_targets: 2,
+        online: true,
+    };
+    sim.handle(Message::PlaceBattery(Box::new(placement)), NOON).unwrap();
+    let told = sim
+        .handle(
+            Message::SentryBattery { battery_id: BATTERY + 1, solar_system_id: SYSTEM, tower_id: TOWER },
+            NOON,
+        )
+        .unwrap();
+    assert!(told.is_empty(), "{told:?}");
+    let scene = &sim.scenes[&SceneKey::solar_system(SYSTEM)];
+    assert!(!scene.batteries.contains_key(&(BATTERY + 1)), "a sentry binding created a battery");
+    assert!(scene.batteries.contains_key(&BATTERY), "the battery in the scene was lost");
 }

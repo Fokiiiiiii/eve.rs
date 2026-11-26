@@ -2380,6 +2380,35 @@ public class ControlTowerHostTests
         Assert.Equal(refusedShort.Error.Payload, refusedLong.Error.Payload);
     }
 
+    /// <summary>A sentry threshold that is not a number is refused as invalid settings, the same refusal as an out-of-range threshold.</summary>
+    [PgFact]
+    public async Task A_sentry_threshold_that_is_not_a_number_is_refused_as_invalid_settings_like_an_out_of_range_one()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        var outOfRange = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.CallAsync("SetTowerSentrySettings",
+            new PyLong(fixture.Tower), new PyReal(11.0), new PyReal(-2.5), PyBool.False, PyBool.False, PyBool.False));
+        var notANumber = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.CallAsync("SetTowerSentrySettings",
+            new PyLong(fixture.Tower), new PyStr("standing"), new PyReal(-2.5), PyBool.False, PyBool.False, PyBool.False));
+        Assert.Equal(outOfRange.Error.Payload, notANumber.Error.Payload);
+    }
+
+    /// <summary>A usage count too large for an int is refused as invalid settings, the same refusal as a count out of the 0 to 3 range.</summary>
+    [PgFact]
+    public async Task A_usage_count_too_large_for_an_int_is_refused_as_invalid_settings_like_one_out_of_range()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig, grant: false);
+        PyValue Usage(long viewPut) => Py.Rowset(["structureID", "viewput", "viewputtake", "use"],
+            [Py.List(new PyLong(fixture.Tower), new PyLong(viewPut), new PyInt(0), new PyInt(0))]);
+        var deploy = Py.Dict(("anchor", new PyInt(0)), ("unanchor", new PyInt(0)), ("online", new PyInt(0)), ("offline", new PyInt(0)));
+        var outOfRange = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.CallAsync("SetStarbasePermissions",
+            new PyLong(fixture.Tower), deploy, Usage(9)));
+        var tooLarge = await Assert.ThrowsAsync<MachoWrappedException>(() => fixture.Holder.CallAsync("SetStarbasePermissions",
+            new PyLong(fixture.Tower), deploy, Usage(1L << 40)));
+        Assert.Equal(outOfRange.Error.Payload, tooLarge.Error.Payload);
+    }
+
     [PgFact]
     public async Task Relinquishing_a_battery_takes_its_holder_out_of_the_simulation_so_its_sentry_may_take_it_again()
     {

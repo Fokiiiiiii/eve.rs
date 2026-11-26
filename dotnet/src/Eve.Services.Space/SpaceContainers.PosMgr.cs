@@ -1094,7 +1094,10 @@ public sealed partial class SpaceContainers
                 !TryInteger(Column("viewput", 1), out var viewPut) ||
                 !TryInteger(Column("viewputtake", 2), out var viewPutTake) || !TryInteger(Column("use", 3), out var use))
                 throw SettingsInvalid();
-            result.Add(new TowerUsage(id, checked((int)viewPut), checked((int)viewPutTake), checked((int)use)));
+            // a count outside the int range is refused as the settings are, before any cast
+            if (viewPut is < int.MinValue or > int.MaxValue || viewPutTake is < int.MinValue or > int.MaxValue || use is < int.MinValue or > int.MaxValue)
+                throw SettingsInvalid();
+            result.Add(new TowerUsage(id, (int)viewPut, (int)viewPutTake, (int)use));
         }
         // Some client serializers send just the row list rather than a Rowset object.
         if (result.Count == 0 && value is PyList or PyTuple)
@@ -1168,7 +1171,8 @@ public sealed partial class SpaceContainers
         PyReal real when double.IsFinite(real.Value) => real.Value,
         PyInt integer => integer.Value,
         PyLong integer => integer.Value,
-        _ => double.NaN,
+        // anything else (a string, a non-finite real) is not a number: refused, never sent as NaN
+        _ => throw SettingsInvalid(),
     };
 
     private static long ReadPositiveId(PyValue? value) => TryInteger(value, out var id) && id > 0 ? id : 0;

@@ -1049,37 +1049,61 @@ public sealed partial class SpaceContainers
         CompleteControlTowerUnanchorAsync(towerId, null, null, null, cancellationToken);
 
     public async Task CompleteControlTowerUnanchorAsync(long towerId, NpgsqlConnection? connection,
-        NpgsqlTransaction? transaction, Eve.Events.EventBus? events, CancellationToken cancellationToken = default)
+        NpgsqlTransaction? transaction, Eve.Events.EventBus? events, CancellationToken cancellationToken = default,
+        Action<Func<Task>>? afterCommit = null)
     {
         if (_deployed is null || await _deployed.GetAsync(towerId, cancellationToken) is not { Kind: ControlTowerKind } record
             || await _deployed.TowerStateAsync(towerId, cancellationToken) != TowerUnanchoring)
         {
             return;
         }
-        _sim.RemoveDeployed(towerId);
-        if (await _items.GetAsync(towerId, cancellationToken) is null)
+        // a missing item (a manual removal) has nothing to drop; otherwise the item stays where the tower was
+        if (await _items.GetAsync(towerId, cancellationToken) is not null)
         {
-            // the item is gone (a manual removal): there is nothing to drop
-            await RemoveTowerAsync();
-            return;
+            await _ships.SetCustomInfoAsync(towerId, StructureUnanchorDrop.HullMarker(towerId), cancellationToken);
+            await _spaceItems.SaveAsync(new SpaceItem(
+                towerId, record.SolarSystemId, record.Position, [1.0, 0.0, 0.0], record.Radius, record.GroupId, record.ShipId,
+                record.OwnerId, record.CorporationId, record.AllianceId, 0, NeverExpires), cancellationToken);
+            await PlaceUnanchorDropAsync(towerId, StructureUnanchorDrop.HullMarker(towerId), cancellationToken);
         }
-        await _ships.SetCustomInfoAsync(towerId, StructureUnanchorDrop.HullMarker(towerId), cancellationToken);
-        await _spaceItems.SaveAsync(new SpaceItem(
-            towerId, record.SolarSystemId, record.Position, [1.0, 0.0, 0.0], record.Radius, record.GroupId, record.ShipId,
-            record.OwnerId, record.CorporationId, record.AllianceId, 0, NeverExpires), cancellationToken);
-        await PlaceUnanchorDropAsync(towerId, StructureUnanchorDrop.HullMarker(towerId), cancellationToken);
-        await RemoveTowerAsync();
+        var released = await RemoveTowerRecordAsync(connection, transaction, events, record, cancellationToken);
+        // the simulation hears of the removal only after the commit, so a removal the database refuses leaves the tower in the scene
+        Func<Task> tellSimulation = () => TellSimulationOfRemovalAsync(towerId, released);
+        if (afterCommit is null)
+            await tellSimulation();
+        else
+            afterCommit(tellSimulation);
+    }
 
-        async Task RemoveTowerAsync()
+    /// <summary>
+    /// Removes an unanchoring tower's record in one transaction with its modules' battery grants: the grants are released, the modules are taken offline and
+    /// the tower row is deleted. Without a caller transaction this opens and commits its own.
+    /// </summary>
+    private async Task<IReadOnlyList<(long BatteryId, long CharacterId)>> RemoveTowerRecordAsync(NpgsqlConnection? connection,
+        NpgsqlTransaction? transaction, Eve.Events.EventBus? events, DeployedRecord record, CancellationToken cancellationToken)
+    {
+        if (connection is null || transaction is null)
         {
-            if (connection is null || transaction is null || events is null)
-            {
-                await _deployed.RemoveAsync(towerId, cancellationToken);
-                return;
-            }
-            if (await _deployed.RemoveAsync(connection, transaction, towerId, cancellationToken) && record.CorporationId > 0)
-                await events.PublishInTransactionAsync(connection, transaction, ControlTowerEligibilityChangedTopic,
-                    new ControlTowerEligibilityChanged(record.CorporationId), $"tower:{towerId}", cancellationToken);
+            await using var ownConnection = await _source!.OpenConnectionAsync(cancellationToken);
+            await using var ownTransaction = await ownConnection.BeginTransactionAsync(cancellationToken);
+            var ownReleased = await RemoveTowerRecordAsync(ownConnection, ownTransaction, events, record, cancellationToken);
+            await ownTransaction.CommitAsync(cancellationToken);
+            return ownReleased;
         }
+        var released = await _deployed!.ReleaseBatteryControlsOfTowerAsync(connection, transaction, record.DeployableId, cancellationToken);
+        await OfflineStarbaseModulesAsync(connection, transaction, record.DeployableId, cancellationToken);
+        if (await _deployed.RemoveAsync(connection, transaction, record.DeployableId, cancellationToken) && record.CorporationId > 0 && events is not null)
+            await events.PublishInTransactionAsync(connection, transaction, ControlTowerEligibilityChangedTopic,
+                new ControlTowerEligibilityChanged(record.CorporationId), $"tower:{record.DeployableId}", cancellationToken);
+        return released;
+    }
+
+    /// <summary>The simulation's side of a removed tower: the tower leaves the scene, and its modules, now offline, are told offline with no holder.</summary>
+    private async Task TellSimulationOfRemovalAsync(long towerId, IReadOnlyList<(long BatteryId, long CharacterId)> released)
+    {
+        _sim.RemoveDeployed(towerId);
+        await OfflineBatteriesAsync(towerId).ConfigureAwait(false);
+        if (released.Count > 0)
+            _log?.Invoke($"control tower {towerId} unanchored: released {released.Count} battery grant(s)");
     }
 }

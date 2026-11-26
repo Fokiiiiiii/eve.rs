@@ -201,6 +201,23 @@ public sealed class PgDeployedStore
         return released;
     }
 
+    /// <summary>Releases the POS battery control grants of a control tower's modules in the caller's transaction. Returns each released battery with the pilot
+    /// that held it, so the caller can tell the simulation after the commit.</summary>
+    public async Task<IReadOnlyList<(long BatteryId, long CharacterId)>> ReleaseBatteryControlsOfTowerAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,
+        long controlTowerId, CancellationToken cancellationToken = default)
+    {
+        await using var command = new NpgsqlCommand(
+            $"WITH released AS (DELETE FROM {_schema}.starbase_battery_control c USING {_schema}.deployed d " +
+            "WHERE d.deployable_id = c.deployable_id AND d.control_tower_id = $1 RETURNING c.deployable_id, c.character_id) " +
+            "SELECT deployable_id, character_id FROM released", connection, transaction);
+        command.Parameters.Add(new NpgsqlParameter { Value = controlTowerId });
+        var released = new List<(long BatteryId, long CharacterId)>();
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+        while (await reader.ReadAsync(cancellationToken))
+            released.Add((reader.GetInt64(0), reader.GetInt64(1)));
+        return released;
+    }
+
     /// <summary>The start time of an in-progress control-tower state transition, or null when the state has no timer.</summary>
     public async Task<long?> TowerStateStartedAtMsAsync(long deployableId, CancellationToken cancellationToken = default)
     {

@@ -609,7 +609,8 @@ internal sealed partial class CharacterServicesComposition
             });
             foundations.Scheduler.Register(Eve.Services.Space.SpaceContainers.ControlTowerUnanchorJob, async (context, token) =>
                 await spaceContainers.CompleteControlTowerUnanchorAsync(context.Payload<Eve.Services.Space.SpaceContainers.ControlTowerUnanchorDue>()!.DeployableId,
-                    context.Connection, context.Transaction, foundations.Events, token));
+                    context.Connection, context.Transaction, foundations.Events, token,
+                    afterCommit: publish => context.AfterCommit(_ => publish())));
             spaceSessions.ControlTowerUnanchor = spaceContainers.UnanchorControlTowerAsync;
             spaceSessions.ControlTowerAnchor = spaceContainers.AnchorControlTowerAsync;
             spaceSessions.ControlTowerModuleOperation = spaceContainers.ControlTowerModuleOperationAsync;

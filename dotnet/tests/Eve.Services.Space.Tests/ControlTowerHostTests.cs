@@ -2302,6 +2302,23 @@ public class ControlTowerHostTests
         Assert.DoesNotContain(rig.Sim.Heard.Skip(released.Value).OfType<SimPlaceBattery>(), placed => placed.HolderSession == holder);
     }
 
+    /// <summary>Completing a control tower's unanchor takes its modules offline: their battery grants are released, and the simulation is told each battery is
+    /// offline with no holder.</summary>
+    [PgFact]
+    public async Task Completing_a_tower_unanchor_releases_its_batteries_grants_and_tells_the_simulation_they_are_offline()
+    {
+        await using var rig = await Rig.CreateAsync();
+        await using var fixture = await OnlineBatteryAsync(rig);
+        Assert.Equal(fixture.Session.CharacterId, await HeldByAsync(rig, fixture.Battery));
+        await rig.Deployed.SetTowerStateAsync(fixture.Tower, "unanchoring");
+
+        await rig.Containers.CompleteControlTowerUnanchorAsync(fixture.Tower, CancellationToken.None);
+
+        Assert.Null(await HeldByAsync(rig, fixture.Battery));
+        var placed = rig.Sim.Heard.OfType<SimPlaceBattery>().Last(battery => battery.BatteryId == fixture.Battery);
+        Assert.Equal((false, 0UL), (placed.Online, placed.HolderSession));
+    }
+
     [PgFact]
     public async Task Relinquishing_a_battery_takes_its_holder_out_of_the_simulation_so_its_sentry_may_take_it_again()
     {

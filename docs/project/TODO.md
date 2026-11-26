@@ -7,6 +7,11 @@
 - **Ansiblex movement:** the registered `CmdJumpThroughStructureStargate` Host path, durable fuel/fee settlement, notifications, retry and concurrency behavior are covered by PostgreSQL Host wire tests. Anchoring/setup, initial scene alignment, and a headless or graphical travel walk remain open.
 - See [space-world gap implementation](space-world-gaps-implementation.md), [compatibility deviations](../reference/compat/DEVIATIONS.md), and [the short audit summary](audit-summary-short.md) for evidence and test results.
 
+## Scoop and contract search checks (2026-11-26)
+
+- Mobile Depot scoop: a depot that does not fit the Mobile Depot Hold now gets the named notice `There is not enough room in the Mobile Depot Hold.`, and a pilot who is not in space gets `Unable to scoop this item.` instead of a silent success. Covered by `ShipScoopingHostTests` (8 of 8 pass on PostgreSQL). Mobile Tractor Unit retrieval is not built; EveJS's answers for it are recorded only in the scoop audit.
+- Contract search: `ContractSearchReadModelTests` seeds PostgreSQL and checks every filter, the sort columns and direction, `startNum` paging and the 100-row page cap against hand-computed results (11 of 11 pass). No read-model defect was found.
+
 ## Project status
 
 The assorted service audit rows RPC-00780–RPC-02778 are recorded in [implement-assorted-services.md](implement-assorted-services.md). `ship.LaunchFromContainer` now covers hull maintenance bays and POS arrays in groups 363 and 397, including persistent tower association, access checks, space restoration, notifications and the next `Board` transition. Abyssal content-authoring calls preserve EveJS's rejected `None` response; they do not generate content. No graphical V24 client verification was run.

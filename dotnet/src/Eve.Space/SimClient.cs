@@ -76,12 +76,28 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     {
     }
 
+    /// <summary>A client whose requests wait for an answer for at most <paramref name="requestTimeout"/> (20 seconds by default).</summary>
+    public SimClient(Func<CancellationToken, Task<Stream>> connect, Action<string>? log, TimeSpan requestTimeout)
+        : this(connect, log, null, requestTimeout)
+    {
+    }
+
     internal SimClient(Func<CancellationToken, Task<Stream>> connect, Action<string>? log, Action? afterConnectionCheck)
+        : this(connect, log, afterConnectionCheck, DefaultRequestTimeout)
+    {
+    }
+
+    internal SimClient(Func<CancellationToken, Task<Stream>> connect, Action<string>? log, Action? afterConnectionCheck, TimeSpan requestTimeout)
     {
         _connect = connect;
         _log = log;
         _afterConnectionCheck = afterConnectionCheck;
+        _requestTimeout = requestTimeout;
     }
+
+    /// <summary>How long a request waits for the simulation's answer by default.</summary>
+    public static readonly TimeSpan DefaultRequestTimeout = TimeSpan.FromSeconds(20);
+    private readonly TimeSpan _requestTimeout;
 
     /// <summary>A client of the simulation listening on a Unix socket.</summary>
     public static SimClient ToUnixSocket(string path, Action<string>? log = null) => ToUnixSocket(path, log, null);
@@ -415,17 +431,17 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 });
                 break;
             case SimPosition:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             case SimScanTargets scan when _answered.TryRemove((scan.SessionId, scan.Command), out var scanning):
                 scanning.TrySetResult(new CommandReply(true, 0, null) { ScanTargets = scan.Targets });
                 break;
             case SimScanTargets:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             case SimDirectionalTargets directional when _answered.TryRemove((directional.SessionId, directional.Command), out var sweeping):
                 sweeping.TrySetResult(new CommandReply(true, 0, null) { DirectionalTargets = directional.Targets });
                 break;
             case SimDirectionalTargets:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             case SimRefused refused when _answered.TryRemove((refused.SessionId, refused.Command), out var refusing):
                 refusing.TrySetResult(new CommandReply(false, 0, refused.Reason));
                 break;
@@ -433,47 +449,47 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 approach.TrySetResult(new CommandReply(false, 0, null, approaching.Distance));
                 break;
             case SimApproaching:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             case SimJumping jumping when _answered.TryRemove((jumping.SessionId, jumping.Command), out var jump):
                 jump.TrySetResult(new CommandReply(true, 0, null, null, jumping.DestinationSystem, jumping.DestinationGate));
                 break;
             case SimJumping:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             case SimTargets targets when _answered.TryRemove((targets.SessionId, targets.Command), out var answering):
                 answering.TrySetResult(new CommandReply(true, 0, null) { Targets = targets.Targets, Pending = targets.Pending });
                 break;
             case SimTargets:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             case SimConditionReply reply when _answered.TryRemove((reply.SessionId, reply.Command), out var asked):
                 asked.TrySetResult(new CommandReply(true, 0, null) { Condition = reply.Condition });
                 break;
             case SimConditionReply:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             case SimTargetRefused refused when _answered.TryRemove((refused.SessionId, refused.Command), out var refusing):
                 refusing.TrySetResult(new CommandReply(false, 0, refused.Reason) { TargetType = refused.TargetType, DesiredRange = refused.DesiredRange, ActualDistance = refused.ActualDistance });
                 break;
             case SimTargetRefused:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             case SimContainerPlaced placed when _answered.TryRemove((placed.SessionId, SimCommands.PlaceContainer), out var placing):
                 placing.TrySetResult(new CommandReply(true, 0, null) { Position = placed.Position, Direction = placed.Direction });
                 break;
             case SimContainerPlaced:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             case SimDroneResults results when _answered.TryRemove((results.SessionId, SimDroneCommands.Key(results.Command)), out var droning):
                 droning.TrySetResult(new CommandReply(true, 0, null) { Drones = results.Results });
                 break;
             case SimDroneResults:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             case SimFighterResults fighters when _answered.TryRemove((fighters.SessionId, SimFighterOrders.Key(fighters.Command)), out var ordering):
                 ordering.TrySetResult(new CommandReply(true, 0, null) { Fighters = fighters.Results });
                 break;
             case SimFighterResults:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             case SimMeasured measured when _answered.TryRemove((measured.SessionId, measured.Command), out var measuring):
                 measuring.TrySetResult(new CommandReply(true, 0, null) { Distance = measured.Distance });
                 break;
             case SimMeasured:
-                break; // nobody is waiting for it
+                Unmatched(message); break; // nobody is waiting for it
             default:
                 Received?.Invoke(message);
                 break;
@@ -818,13 +834,40 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                     FailOverloadedLink(failure, sessionToCancel);
                 throw failure;
             }
-            return await completion.Task.ConfigureAwait(false);
+            try
+            {
+                // only the limit is timed here: a caller's cancellation still reaches the request through its registration, as before
+                return await completion.Task.WaitAsync(_requestTimeout).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                // no answer within the limit: the request leaves the pending map as a cancel does, and the wait ends as unavailable
+                CancelPending(_pendingGate, pending, session, completion, completion, cancellationToken);
+                var seconds = _requestTimeout.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+                _log?.Invoke($"{request.GetType().Name} for session {session} got no answer within {seconds} seconds; " +
+                    $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}");
+                throw new SimUnavailableException($"{request.GetType().Name} got no answer from the simulation within {seconds} seconds");
+            }
         }
         finally
         {
             registration.Dispose();
         }
     }
+
+    /// <summary>The name of the last answer that matched no pending request: it is written to the log when a request times out.</summary>
+    private volatile string? _lastUnmatchedAnswer;
+
+    private void Unmatched(SimMessage message) => _lastUnmatchedAnswer = message.GetType().Name;
+
+    /// <summary>How many requests are waiting for an answer, across every kind.</summary>
+    private int PendingRequestCount() =>
+        _answered.Count + _entering.Count + _spawning.Count + _abyssal.Count + _abyssalParticipantPoses.Count + _sceneBodies.Count + _deploymentBalls.Count +
+        _batteryPlacements.Count + _batteryTargets.Count + _batteryFires.Count + _forceFieldPlacements.Count + _forceFieldRemovals.Count +
+        _publicEnters.Count + _publicMoves.Count + _cutoffReads.Count + _cutoffRegistrations.Count + _cutoffReleases.Count +
+        _metricsRegistrations.Count + _metricsReads.Count + _metricsV2Reads.Count + _metricsReleases.Count + _tournamentWreckQueries.Count +
+        _tournamentWreckRemovals.Count + _unpilotedShipRemovals.Count + _publishingAbyssalTraces.Count + _removingAbyssalTraces.Count +
+        _removingAbyssalParticipants.Count;
 
     private void CompleteAbyssal(SimEnsureAbyssalSceneReply reply) =>
         CompleteAbyssal(reply.RequestId, typeof(SimEnsureAbyssalSceneReply), reply.Error);

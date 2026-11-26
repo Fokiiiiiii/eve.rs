@@ -60,10 +60,10 @@ fn force_field_kinds_are_the_protocol_104_codes_in_the_180_range() {
 
 #[test]
 fn force_field_frames_refuse_a_non_finite_radius_or_position() {
-    let radius = ForceFieldPlacement { radius: f64::NAN, ..placement() };
-    assert!(Message::decode(&Message::PlaceForceField(Box::new(radius)).encode()[4..]).is_err());
-    let position = ForceFieldPlacement { position: [f64::INFINITY, 2.0, 3.0], ..placement() };
-    assert!(Message::decode(&Message::PlaceForceField(Box::new(position)).encode()[4..]).is_err());
+    // the encoder makes no frame with a non-finite number, so the number is set in the bytes of a valid frame
+    let frame = Message::PlaceForceField(Box::new(placement())).encode();
+    assert!(Message::decode(&with_f64_from_end(frame.clone(), 8, f64::NAN)[4..]).is_err());
+    assert!(Message::decode(&with_f64_from_end(frame, 24, f64::INFINITY)[4..]).is_err());
 }
 
 /// The decoder refuses a field or tower id that is zero or negative, as the placement refuses it.
@@ -87,6 +87,21 @@ fn force_field_frames_refuse_a_radius_above_a_billion_metres() {
     assert!(Message::decode(&Message::PlaceForceField(Box::new(too_large)).encode()[4..]).is_err());
     let largest = ForceFieldPlacement { radius: 1.0e9, ..placement() };
     assert!(Message::decode(&Message::PlaceForceField(Box::new(largest)).encode()[4..]).is_ok());
+}
+
+/// The frame with the eight bytes `from_end` bytes before its end set to `value`: how a frame with a non-finite number is made, since the encoder makes none.
+fn with_f64_from_end(mut frame: Vec<u8>, from_end: usize, value: f64) -> Vec<u8> {
+    let at = frame.len() - from_end;
+    frame[at..at + 8].copy_from_slice(&value.to_le_bytes());
+    frame
+}
+
+/// The encoder makes no force field frame with a non-finite number, as the C# encoder refuses it.
+#[test]
+#[should_panic(expected = "finite")]
+fn force_field_placement_with_a_non_finite_number_is_not_encoded() {
+    let radius = ForceFieldPlacement { radius: f64::NAN, ..placement() };
+    let _ = Message::PlaceForceField(Box::new(radius)).encode();
 }
 
 #[test]

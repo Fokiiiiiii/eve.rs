@@ -61,3 +61,23 @@ fn sentry_frames_refuse_a_flag_that_is_not_a_boolean_and_a_non_finite_number() {
     frame[58] = 9;
     assert!(Message::decode(&frame[4..]).is_err(), "a war flag of 9 is refused");
 }
+
+/// The encoder makes no sentry pilot or policy with a non-finite standing, as the C# encoder refuses a sentry pilot's.
+#[test]
+#[should_panic(expected = "finite")]
+fn a_sentry_pilot_with_a_non_finite_standing_is_not_encoded() {
+    let mut message = pilot();
+    let Message::SentryPilot { standing, .. } = &mut message else { panic!("not a sentry pilot") };
+    *standing = f64::NAN;
+    let _ = message.encode();
+}
+
+/// The encoder makes no sentry policy with a non-finite threshold, as the decoder refuses one.
+#[test]
+#[should_panic(expected = "finite")]
+fn a_sentry_policy_with_a_non_finite_threshold_is_not_encoded() {
+    let mut message = policy();
+    let Message::SentryPolicy { standing, .. } = &mut message else { panic!("not a sentry policy") };
+    *standing = Some(f64::NAN);
+    let _ = message.encode();
+}

@@ -9,8 +9,8 @@
 
 ## Scoop and contract search checks (2026-11-26)
 
-- Mobile Depot scoop: a depot that does not fit the Mobile Depot Hold now gets the named notice `There is not enough room in the Mobile Depot Hold.`, and a pilot who is not in space gets `Unable to scoop this item.` instead of a silent success. Covered by `ShipScoopingHostTests` (8 of 8 pass on PostgreSQL). Mobile Tractor Unit retrieval is not built; EveJS's answers for it are recorded only in the scoop audit.
-- Contract search: `ContractSearchReadModelTests` seeds PostgreSQL and checks every filter, the sort columns and direction, `startNum` paging and the 100-row page cap against hand-computed results (11 of 11 pass). No read-model defect was found.
+- Mobile Depot scoop: a depot that does not fit the Mobile Depot Hold now gets the named notice `There is not enough room in the Mobile Depot Hold.`, and a pilot who is not in space gets `Unable to scoop this item.` instead of a silent success. Covered by `ShipScoopingHostTests` (12 of 12 pass on PostgreSQL). Mobile Tractor Unit retrieval is not built; EveJS's answers for it are recorded only in the scoop audit.
+- Contract search: `ContractSearchReadModelTests` seeds PostgreSQL and checks every filter, the sort columns and direction, `startNum` paging and the 100-row page cap against hand-computed results (12 of 12 pass). One read-model defect was found and fixed: availability matched public rows through a zero alliance id, so alliance and corporation availability now match only a non-zero id.
 
 ## Project status
 

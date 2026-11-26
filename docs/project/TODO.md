@@ -2885,3 +2885,4 @@ Security review follow-up: `officeManager.GetMyCorporationsOffices` now consumes
 ## Economy audit follow-up (2026-11-13)
 
 - The C-01 bounty/industry operation-key, M-01 corporate-contract wallet, and H-05 courier-location findings are confirmed. Evidence, fixes, test-first reproductions, final validation, and remaining parity gaps are recorded in [economy audit fixes](audit-fix-economy.md).
+- POS Host review fixes (haiku10, 2026-11-26): H2, H1, H5, H6, H3 (force field gate), H8, H7, H10 and H11 are fixed with a failing test each; see [pos-force-field-and-modules](pos-force-field-and-modules.md#review-fixes-on-haiku10-host-pos-tower-defects). Open: H4 (anchor lock order), H9 (sim position call under the tower row lock), the H3 password save serialization with the pilot rematch, the force field items inside the unanchor transaction, and the unbounded `AdjustChargeAsync` wait.

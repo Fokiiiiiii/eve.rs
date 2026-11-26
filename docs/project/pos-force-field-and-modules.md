@@ -365,3 +365,14 @@ Not checked:
 - Graphical V24 acceptance, a POS-specific headless-client walk, and a complete paired EveJS/eve.rs POS run.
 - Force-field ball lifecycle/admission, OBO targeting, sentry control, bunker placement, and hub-upgrade power/fuel behavior; these remain open as listed above.
 - Repository-wide CI for the uncommitted worktree.
+
+## Review fixes on haiku10 (Host POS tower defects)
+
+- Sentry and battery holder (H2, H1): the sentry reconcile reads the battery grant and the online state inside the battery gate; `AssumeStructureControl` takes the same gate, commits, releases it and then reconciles the tower's sentry. `BatteryTargetingAsync` and `BatteryFireAsync` read the holder and the online state inside the gate.
+- Unanchor (H5): completing an unanchor releases the battery grants of the tower's modules, takes the modules offline and deletes the tower row in one transaction. The simulation is told after the commit (the tower is removed, each module is placed offline with no holder). Decision: the modules are kept as offline records of the removed tower and are not deleted; this was not verified against EveJS (no EveJS read was done in this change).
+- Module offline (H6): taking one battery's module offline clears its grant in the transaction and tells the simulation after the commit through `OfflineBatteriesAsync`.
+- Force field (H3): the reconcile of one tower runs under a per-tower gate, so a placement decided earlier reaches the scene before a later removal.
+- Password (H8, H7, H10): the pilot is authorized before the tower password is validated or hashed; non-numeric sentry thresholds and out-of-int usage counts are refused as invalid settings; a pilot's starbase password attempts are limited to five a minute, then blocked for a growing time up to an hour.
+- Simulation requests (H11): a request waits for its answer for 20 seconds by default (a `SimClient` constructor parameter). At the limit the request is cancelled as `CancelPending` does, `SimUnavailableException` names the request and the limit, and the Host log gets the request, the pending count and the last unmatched answer.
+
+Still open after this change: H4 (the anchor lock order: tower row before module row), H9 (the sim position call under the tower row lock in the read, update and assume paths), the H3 password save with the pilot rematch serialized per system, the force field item rows and item updates inside the unanchor transaction, and the `AdjustChargeAsync` wait, which has no time limit yet.

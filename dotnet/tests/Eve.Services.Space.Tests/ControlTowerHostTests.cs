@@ -2240,8 +2240,8 @@ public class ControlTowerHostTests
         await online;
         Assert.Equal(ModuleResult.Done, await offline);
 
-        // the simulation is told the removal last, and the database holds no field of the tower
-        Assert.IsType<SimRemoveForceField>(rig.Sim.Heard.Last());
+        // the simulation is told the removal last of the tower's field messages (its sentry pass may follow), and the database holds no field of the tower
+        Assert.IsType<SimRemoveForceField>(rig.Sim.Heard.Last(message => message is SimPlaceForceField or SimRemoveForceField));
         Assert.Empty(await ForceFieldItemsAsync(rig));
         Assert.Equal("offline", await rig.Deployed.TowerStateAsync(tower));
     }

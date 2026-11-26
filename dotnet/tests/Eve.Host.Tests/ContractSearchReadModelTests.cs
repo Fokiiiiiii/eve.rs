@@ -123,6 +123,19 @@ public sealed class ContractSearchReadModelTests
     }
 
     [Fact]
+    public async Task Availability_never_matches_public_rows_through_a_zero_alliance_id()
+    {
+        await using var fixture = await SearchFixture.CreateAsync();
+        await fixture.SeedCorporationContractWithoutAssigneeAsync();
+        // A pilot in no alliance has AllianceId 0, and public rows carry assignee 0: neither is an alliance contract.
+        var noAlliance = Search() with { AllianceId = 0 };
+
+        Assert.Empty(Ids(await SearchAsync(fixture, noAlliance with { Availability = 3 })));
+        // Row 22 is a corporation row with no assignee, so it is not visible to a pilot in no alliance either.
+        Assert.Equal(new long[] { 21, 17, 15, 14, 13, 12, 11, 10 }, Ids(await SearchAsync(fixture, noAlliance)));
+    }
+
+    [Fact]
     public async Task Contract_type_filter_matches_one_kind_or_the_item_exchange_and_auction_group()
     {
         await using var fixture = await SearchFixture.CreateAsync();
@@ -339,6 +352,18 @@ public sealed class ContractSearchReadModelTests
                      collateral_isk, title, description)
                 SELECT 1000 + g, 500, 0, false, 0, 0, 1, 0, 0, 6001, 0, 0, @future, 0, 0, @now, g + 1, 0, 0, 'Bulk', 'bulk'
                 FROM generate_series(0, 104) AS g;
+                """, [("now", Now), ("future", Future)]);
+        }
+
+        public async Task SeedCorporationContractWithoutAssigneeAsync()
+        {
+            await ExecuteAsync("""
+                INSERT INTO "@@SCHEMA@@".contract_records
+                    (contract_id, issuer_id, issuer_corporation_id, is_corporation_issued, acceptor_id, assignee_id,
+                     contract_type, status, availability, start_station_id, end_station_id, date_accepted_filetime,
+                     date_expired_filetime, num_days, reward_escrow, created_at_filetime, price_isk, reward_isk,
+                     collateral_isk, title, description)
+                VALUES (22, 109, 200, true, 0, 0, 1, 0, 2, 6001, 0, 0, @future, 0, 0, @now, 30, 0, 0, 'Corp open', 'no assignee');
                 """, [("now", Now), ("future", Future)]);
         }
 

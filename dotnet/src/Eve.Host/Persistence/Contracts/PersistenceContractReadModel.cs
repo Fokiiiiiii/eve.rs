@@ -598,11 +598,11 @@ public sealed class PersistenceContractReadModel : IContractReadModel
                 ) AS volume_data ON TRUE
                 WHERE c.status = 0 AND c.date_expired_filetime >= @now
                   AND (
-                        (@availability IS NULL AND (c.availability = 0 OR c.assignee_id IN (@character, @corporation, @alliance)))
+                        (@availability IS NULL AND (c.availability = 0 OR c.assignee_id IN (@character, NULLIF(@corporation, 0), NULLIF(@alliance, 0))))
                      OR (@availability = 0 AND c.availability = 0)
                      OR (@availability = 1 AND (c.issuer_id = @character OR c.issuer_corporation_id = @character OR c.acceptor_id = @character OR c.assignee_id = @character))
                      OR (@availability = 2 AND (c.issuer_id = @corporation OR c.issuer_corporation_id = @corporation OR c.acceptor_id = @corporation OR c.assignee_id = @corporation))
-                     OR (@availability = 3 AND c.assignee_id = @alliance)
+                     OR (@availability = 3 AND c.assignee_id = NULLIF(@alliance, 0))
                   )
                   AND (@contractType IN (0, 11) OR (@contractType = 10 AND c.contract_type IN (1, 2)) OR c.contract_type = @contractType)
                   AND (@issuer = 0 OR c.issuer_id = @issuer OR c.issuer_corporation_id = @issuer)

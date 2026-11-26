@@ -7,6 +7,26 @@ public sealed partial class SpaceSessions
     private readonly object _harmonicSync = new();
     private Task _harmonicWork = Task.CompletedTask;
 
+    /// <summary>One saved-password change per system at a time. Its save, the pilot rematch and the access send run under the system's gate, so the
+    /// simulation hears them in commit order and an older rematch cannot overwrite a newer one. The gate is taken on its own: an action must not take
+    /// another gated operation while it holds this one.</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, SemaphoreSlim> _systemPasswordGates = new();
+
+    /// <summary>Runs one saved-password change for a system under that system's gate.</summary>
+    public async Task<T> RunInSystemPasswordGateAsync<T>(int systemId, Func<Task<T>> action, CancellationToken cancellationToken)
+    {
+        var gate = _systemPasswordGates.GetOrAdd(systemId, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await action().ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
     /// <summary>
     /// Matches a ship password digest against every control tower of the system and returns each tower's answer. The simulation is told each answer and
     /// decides the ship's harmonic from them and from where the ship is in the field (protocol 105); the Host does not choose a harmonic itself.

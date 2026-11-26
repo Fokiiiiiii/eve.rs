@@ -170,27 +170,32 @@ public sealed partial class SpaceContainers
             throw SettingsInvalid();
 
         var access = (Corporation: false, Alliance: false);
-        var updated = await UpdateTowerConfigurationAsync(call, towerId, (record, configuration) =>
+        // the save, the rematch and the access send run under the system's gate, so two saves reach the simulation in their commit order
+        await _space.RunInSystemPasswordGateAsync((int)authorized.SolarSystemId, async () =>
         {
-            var nextAllowCorp = allowCorp ?? configuration.AllowCorp;
-            var nextAllowAlliance = allowAlliance ?? configuration.AllowAlliance;
-            if (allowAlliance is true && record.AllianceId <= 0)
-                throw MachoErrors.ThrowUserError("STARBASE_ALLIANCE_REQUIRED");
-            access = (nextAllowCorp, nextAllowAlliance);
-            return configuration with
+            var updated = await UpdateTowerConfigurationAsync(call, towerId, (record, configuration) =>
             {
-                AllowCorp = nextAllowCorp,
-                AllowAlliance = nextAllowAlliance,
-                PasswordSalt = passwordSalt ?? configuration.PasswordSalt,
-                PasswordHash = passwordHash ?? configuration.PasswordHash,
-            };
-        }).ConfigureAwait(false);
-        // a changed password is matched again for the pilots holding a ship password here (after the commit, so a refused change matches nothing)
-        if (passwordHash is not null)
-            await _space.RematchShipPasswordsAsync(updated.SolarSystemId, call.Cancellation).ConfigureAwait(false);
-        // the simulation admits by the access the tower now saves (after the commit, so a refused change is never told)
-        _sim.SetForceFieldAccess(new SimSetForceFieldAccess(towerId, updated.SolarSystemId, updated.CorporationId, updated.AllianceId,
-            access.Corporation, access.Alliance));
+                var nextAllowCorp = allowCorp ?? configuration.AllowCorp;
+                var nextAllowAlliance = allowAlliance ?? configuration.AllowAlliance;
+                if (allowAlliance is true && record.AllianceId <= 0)
+                    throw MachoErrors.ThrowUserError("STARBASE_ALLIANCE_REQUIRED");
+                access = (nextAllowCorp, nextAllowAlliance);
+                return configuration with
+                {
+                    AllowCorp = nextAllowCorp,
+                    AllowAlliance = nextAllowAlliance,
+                    PasswordSalt = passwordSalt ?? configuration.PasswordSalt,
+                    PasswordHash = passwordHash ?? configuration.PasswordHash,
+                };
+            }).ConfigureAwait(false);
+            // a changed password is matched again for the pilots holding a ship password here (after the commit, so a refused change matches nothing)
+            if (passwordHash is not null)
+                await _space.RematchShipPasswordsAsync(updated.SolarSystemId, call.Cancellation).ConfigureAwait(false);
+            // the simulation admits by the access the tower now saves (after the commit, so a refused change is never told)
+            _sim.SetForceFieldAccess(new SimSetForceFieldAccess(towerId, updated.SolarSystemId, updated.CorporationId, updated.AllianceId,
+                access.Corporation, access.Alliance));
+            return PyNone.Instance;
+        }, call.Cancellation).ConfigureAwait(false);
         return PyNone.Instance;
     }
 

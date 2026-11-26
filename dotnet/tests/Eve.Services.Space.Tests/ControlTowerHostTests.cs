@@ -1870,6 +1870,8 @@ public class ControlTowerHostTests
         await holder.CallAsync("AnchorStructure", new PyLong(battery), new PyTuple(position.Select(value => (PyValue)new PyReal(value)).ToArray()));
         rig.Now += AnchoringMs;
         await rig.Scheduler.RunDueAsync();
+        // a battery is online only under an online tower: the sentry places it offline otherwise
+        await rig.Deployed.SetTowerStateAsync(tower, "online");
         await rig.Deployed.SetTowerStateAsync(battery, "online");
         if (grant)
         {

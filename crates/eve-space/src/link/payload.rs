@@ -1028,6 +1028,10 @@ impl Message {
                 out.extend_from_slice(&to_gate.to_le_bytes());
             }
             Self::PlaceForceField(field) => {
+                assert!(
+                    field.position.iter().all(|value| value.is_finite()) && field.radius.is_finite(),
+                    "a force field placement must have finite numbers"
+                );
                 out.extend_from_slice(&field.field_id.to_le_bytes());
                 out.extend_from_slice(&field.tower_id.to_le_bytes());
                 out.extend_from_slice(&field.solar_system_id.to_le_bytes());
@@ -1069,6 +1073,11 @@ impl Message {
             } => {
                 out.extend_from_slice(&tower_id.to_le_bytes());
                 out.extend_from_slice(&solar_system_id.to_le_bytes());
+                assert!(
+                    standing.as_ref().is_none_or(|value| value.is_finite())
+                        && security_status.as_ref().is_none_or(|value| value.is_finite()),
+                    "a sentry policy's thresholds must be finite"
+                );
                 out.push(u8::from(*online));
                 out.push(u8::from(standing.is_some()));
                 out.extend_from_slice(&standing.unwrap_or(0.0).to_le_bytes());
@@ -1095,6 +1104,10 @@ impl Message {
                 at_war,
             } => {
                 out.extend_from_slice(&tower_id.to_le_bytes());
+                assert!(
+                    standing.is_finite() && security_status.as_ref().is_none_or(|value| value.is_finite()),
+                    "a sentry pilot's standing must be finite"
+                );
                 out.extend_from_slice(&solar_system_id.to_le_bytes());
                 out.extend_from_slice(&ship_id.to_le_bytes());
                 out.extend_from_slice(&corporation_id.to_le_bytes());
@@ -1119,6 +1132,13 @@ impl Message {
                 put_text(&mut out, reason);
             }
             Self::PlaceBattery(battery) => {
+                assert!(
+                    battery.position.iter().all(|value| value.is_finite())
+                        && battery.radius.is_finite()
+                        && battery.scan_resolution.is_finite()
+                        && battery.max_target_range.is_finite(),
+                    "a battery placement must have finite numbers"
+                );
                 out.extend_from_slice(&battery.battery_id.to_le_bytes());
                 out.extend_from_slice(&battery.solar_system_id.to_le_bytes());
                 out.extend_from_slice(&battery.type_id.to_le_bytes());
@@ -1137,6 +1157,7 @@ impl Message {
                 put_text(&mut out, reason);
             }
             Self::BatteryTarget { request_id, battery_id, solar_system_id, order, target } => {
+                assert!((1..=4).contains(order), "a battery order must be one to four");
                 out.extend_from_slice(&request_id.to_le_bytes());
                 out.extend_from_slice(&battery_id.to_le_bytes());
                 out.extend_from_slice(&solar_system_id.to_le_bytes());
@@ -2153,6 +2174,7 @@ impl Message {
 
 /// A CRAB's state as the host sends it (protocol 61): the activation flag, the two FILETIME times, the wait in seconds, the link state, the link's end and the ship.
 fn put_text(out: &mut Vec<u8>, text: &str) {
+    assert!(text.len() <= usize::from(u16::MAX), "text is longer than a u16 length allows");
     out.extend_from_slice(&(text.len() as u16).to_le_bytes());
     out.extend_from_slice(text.as_bytes());
 }

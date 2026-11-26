@@ -218,3 +218,130 @@ fn removing_a_missing_field_and_placing_in_an_unknown_system_are_refused() {
         vec![Message::ForceFieldPlaced { field_id: FIELD, reason: "SYSTEM_UNKNOWN".to_string() }]
     );
 }
+
+/// The last pilot leaving keeps the scene that holds a tower's field: the field is the tower's and stays with the scene.
+#[test]
+fn the_last_pilot_leaving_keeps_a_scene_that_holds_a_tower_field() {
+    let mut sim = new_sim();
+    sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    sim.handle(Message::Leave { session_id: SESSION, why: 1 }, NOON).unwrap();
+    assert!(sim.scenes.contains_key(&SceneKey::solar_system(SYSTEM)), "the scene with the field was deleted");
+    assert_eq!(fields_of(&sim, TOWER), [(FIELD, 1_000.0)]);
+}
+
+/// The access the host set for a tower and its sentry policy are kept when the last pilot leaves, as the scene keeps them for a pilot who comes later.
+#[test]
+fn the_last_pilot_leaving_keeps_a_scene_with_tower_access_and_policy() {
+    let mut sim = new_sim();
+    let access = Message::SetForceFieldAccess {
+        tower_id: TOWER,
+        solar_system_id: SYSTEM,
+        corporation_id: 98_000_001,
+        alliance_id: 0,
+        allow_corporation: true,
+        allow_alliance: false,
+    };
+    sim.handle(access, NOON).unwrap();
+    let policy = Message::SentryPolicy {
+        tower_id: TOWER,
+        solar_system_id: SYSTEM,
+        online: true,
+        standing: Some(0.0),
+        security_status: None,
+        war: false,
+        high_security: false,
+        owner_corporation_id: 98_000_001,
+        owner_alliance_id: 0,
+    };
+    sim.handle(policy, NOON).unwrap();
+    sim.handle(Message::Leave { session_id: SESSION, why: 1 }, NOON).unwrap();
+    let scene = sim
+        .scenes
+        .get(&SceneKey::solar_system(SYSTEM))
+        .expect("the scene with the tower's access was deleted");
+    assert_eq!(scene.force_field_access.get(&TOWER).map(|access| access.corporation_id), Some(98_000_001));
+    assert!(scene.sentry_policies.contains_key(&TOWER));
+}
+
+/// A sentry pilot with no ship id is not a pilot the host names: it changes nothing, and the tower's other pilots are kept.
+#[test]
+fn a_sentry_pilot_with_no_ship_id_changes_nothing() {
+    let mut sim = new_sim();
+    let key = SceneKey::solar_system(SYSTEM);
+    let ship = sim.scenes[&key].pilots[&SESSION].ship.spec.ship_id;
+    sim.scenes.get_mut(&key).unwrap().set_sentry_pilot(
+        TOWER,
+        Some(crate::targeting::SentryPilot {
+            ship_id: ship,
+            corporation_id: 98_000_002,
+            alliance_id: 0,
+            security_status: Some(0.0),
+            standing: 0.0,
+            at_war: false,
+        }),
+    );
+    let told = sim
+        .handle(
+            Message::SentryPilot {
+                tower_id: TOWER,
+                solar_system_id: SYSTEM,
+                ship_id: 0,
+                corporation_id: 0,
+                alliance_id: 0,
+                security_status: None,
+                standing: 0.0,
+                at_war: false,
+            },
+            NOON,
+        )
+        .unwrap();
+    assert!(told.is_empty());
+    assert!(
+        sim.scenes[&key].sentry_pilots.contains_key(&(TOWER, ship)),
+        "a sentry pilot with no ship id cleared the tower"
+    );
+}
+
+/// A field and its tower are named by positive ids: a zero or negative one is refused and takes no place.
+#[test]
+fn a_field_or_tower_without_a_positive_id_is_refused_and_takes_no_place() {
+    let mut sim = new_sim();
+    let answer = sim.handle(Message::PlaceForceField(Box::new(placement(0, TOWER, 1_000.0))), NOON).unwrap();
+    assert_eq!(
+        answer,
+        vec![Message::ForceFieldPlaced { field_id: 0, reason: "FORCE_FIELD_ID_INVALID".to_string() }]
+    );
+    let answer =
+        sim.handle(Message::PlaceForceField(Box::new(placement(-FIELD, TOWER, 1_000.0))), NOON).unwrap();
+    assert_eq!(
+        answer,
+        vec![Message::ForceFieldPlaced { field_id: -FIELD, reason: "FORCE_FIELD_ID_INVALID".to_string() }]
+    );
+    let answer = sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, 0, 1_000.0))), NOON).unwrap();
+    assert_eq!(
+        answer,
+        vec![Message::ForceFieldPlaced { field_id: FIELD, reason: "FORCE_FIELD_TOWER_INVALID".to_string() }]
+    );
+    assert!(fields_of(&sim, TOWER).is_empty());
+    assert!(fields_of(&sim, 0).is_empty());
+}
+
+/// A field's radius is at most one billion metres: a larger one is refused and takes no place, and the largest one is placed.
+#[test]
+fn a_field_with_a_radius_above_a_billion_metres_is_refused() {
+    let mut sim = new_sim();
+    let answer =
+        sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1.0e9 + 1.0))), NOON).unwrap();
+    assert_eq!(
+        answer,
+        vec![Message::ForceFieldPlaced {
+            field_id: FIELD,
+            reason: "FORCE_FIELD_RADIUS_TOO_LARGE".to_string()
+        }]
+    );
+    assert!(fields_of(&sim, TOWER).is_empty());
+    let answer =
+        sim.handle(Message::PlaceForceField(Box::new(placement(FIELD, TOWER, 1.0e9))), NOON).unwrap();
+    assert_eq!(answer, vec![Message::ForceFieldPlaced { field_id: FIELD, reason: String::new() }]);
+    assert_eq!(fields_of(&sim, TOWER), [(FIELD, 1.0e9)]);
+}

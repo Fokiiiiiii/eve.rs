@@ -11,6 +11,9 @@
 use super::battery::apply_fire;
 use super::*;
 
+/// How many sentry bindings may wait for a battery that is not in the scene yet.
+const SENTRY_BINDING_LIMIT: usize = 256;
+
 /// A tower's stored sentry policy as the scene needs it. `online` is false when the tower is offline or out of fuel.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct SentryPolicy {
@@ -61,9 +64,17 @@ impl Scene {
         self.sentry_policies.insert(policy.tower_id, policy);
     }
 
-    /// Binds a battery to a tower's policy; `tower_id` 0 unbinds it. A battery that is not in the scene is not bound.
+    /// Binds a battery to a tower's policy; `tower_id` 0 unbinds it. A battery not in the scene yet keeps its binding (bounded) until it is placed, and an
+    /// unbinding drops it.
     pub(crate) fn bind_sentry_battery(&mut self, battery_id: i64, tower_id: i64) {
         let Some(battery) = self.batteries.get_mut(&battery_id) else {
+            if tower_id == 0 {
+                self.pending_sentry_bindings.remove(&battery_id);
+            } else if self.pending_sentry_bindings.contains_key(&battery_id)
+                || self.pending_sentry_bindings.len() < SENTRY_BINDING_LIMIT
+            {
+                self.pending_sentry_bindings.insert(battery_id, tower_id);
+            }
             return;
         };
         battery.sentry_tower = (tower_id != 0).then_some(tower_id);
@@ -149,6 +160,21 @@ impl Scene {
                 apply_fire(battery, BatteryFire::Start(target));
             }
         }
+    }
+
+    /// Forgets what the host knows of pilots whose ship is no longer a pilot of the scene.
+    pub(crate) fn prune_sentry_pilots(&mut self) {
+        let ships: std::collections::BTreeSet<i64> =
+            self.pilots.values().map(|pilot| pilot.ship.spec.ship_id).collect();
+        self.sentry_pilots.retain(|(_, ship), _| ships.contains(ship));
+    }
+
+    /// Forgets a tower that is out of space: its policy, the access of its field and what the host knows of its pilots (a field removed alone keeps
+    /// its access, which applies to a field placed later).
+    pub(crate) fn forget_tower(&mut self, tower_id: i64) {
+        self.sentry_policies.remove(&tower_id);
+        self.force_field_access.remove(&tower_id);
+        self.sentry_pilots.retain(|(tower, _), _| *tower != tower_id);
     }
 
     /// Lets go of a sentry battery's locks and its fire, silently. A battery with a holder is left alone.

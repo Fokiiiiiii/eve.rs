@@ -157,6 +157,9 @@ pub struct Deployable {
     pub slim_fields: BTreeMap<String, SlimValue>,
 }
 
+/// The largest radius a force field may have, in metres: a larger one's square overflows the test of what lies inside it.
+pub(crate) const FORCE_FIELD_MAX_RADIUS: f64 = 1.0e9;
+
 fn ticks(milliseconds: f64) -> i64 {
     (milliseconds * (TICKS_PER_SECOND as f64) / 1000.0).round() as i64
 }
@@ -426,13 +429,17 @@ impl Scene {
         range_meters: f64,
         at: i64,
     ) -> bool {
+        if !self.pilots.contains_key(&session) {
+            return false;
+        }
+        let Some(id) = self.next_deployable_id() else { return false };
         let Some(pilot) = self.pilots.get(&session) else { return false };
         let bridge = Deployable {
-            id: DEPLOYABLE_ID_BASE + self.deployable_sequence as i64,
+            id,
             spec: Spec { charge_type_id: 0, group_id: 0, name: "Jump Bridge".to_string(), radius: 0.0 },
             role: Role::JumpBridge { field_id, destination_system, range_meters },
             position: pilot.ship.position,
-            ends_at: at + ticks(lifetime_ms),
+            ends_at: at.saturating_add(ticks(lifetime_ms)),
             launcher: session,
             ship_id: pilot.ship.spec.ship_id,
             owner_id: self.combat_owner(session),
@@ -443,7 +450,6 @@ impl Scene {
             watchers: BTreeSet::new(),
             slim_fields: BTreeMap::new(),
         };
-        self.deployable_sequence += 1;
         self.deployables.insert(bridge.id, bridge);
         true
     }
@@ -464,14 +470,13 @@ impl Scene {
         let (position, ship_id) = (position.unwrap_or(pilot.ship.position), pilot.ship.spec.ship_id);
         let (corporation_id, alliance_id) = (pilot.ship.spec.corporation_id, pilot.ship.spec.alliance_id);
         let owner_id = self.combat_owner(session);
-        let deployable_id = DEPLOYABLE_ID_BASE + self.deployable_sequence as i64;
-        self.deployable_sequence += 1;
+        let Some(deployable_id) = self.next_deployable_id() else { return (0, Vec::new()) };
         let deployable = Deployable {
             id: deployable_id,
             spec,
             role,
             position,
-            ends_at: at + ticks(lifetime_ms),
+            ends_at: at.saturating_add(ticks(lifetime_ms)),
             launcher: session,
             ship_id,
             owner_id,
@@ -483,6 +488,15 @@ impl Scene {
             slim_fields: BTreeMap::new(),
         };
         (deployable_id, self.insert_deployable(deployable, at))
+    }
+
+    /// The next deployable id, numbered from `DEPLOYABLE_ID_BASE`; `None` when it would overflow, and the sequence is then left as it is.
+    fn next_deployable_id(&mut self) -> Option<i64> {
+        let id = i64::try_from(self.deployable_sequence)
+            .ok()
+            .and_then(|sequence| DEPLOYABLE_ID_BASE.checked_add(sequence))?;
+        self.deployable_sequence += 1;
+        Some(id)
     }
 
     /// Puts a made deployable into the scene: it is kept, and those who can see its place are told of it.
@@ -548,7 +562,7 @@ impl Scene {
     /// The record of a field that was lit by `session`'s ship at `at`, for the host (`DeployedLit`): its life is what is left of it at `at`, the whole of it.
     fn field_lit(&self, deployable_id: i64, session: SessionId, at: i64) -> Vec<Out> {
         let Some(d) = self.deployables.get(&deployable_id) else { return Vec::new() };
-        let lifetime_ms = (d.ends_at - at) as f64 / (TICKS_PER_SECOND as f64 / 1000.0);
+        let lifetime_ms = d.ends_at.saturating_sub(at) as f64 / (TICKS_PER_SECOND as f64 / 1000.0);
         let placement = crate::link::DeployedPlacement {
             solar_system_id: self.solar_system_id(),
             deployable_id: d.id,
@@ -977,8 +991,8 @@ impl Scene {
             return Vec::new();
         }
         if placement.deployable_id >= DEPLOYABLE_ID_BASE {
-            let next = (placement.deployable_id - DEPLOYABLE_ID_BASE) as u64 + 1;
-            self.deployable_sequence = self.deployable_sequence.max(next);
+            let past = u64::try_from(placement.deployable_id - DEPLOYABLE_ID_BASE).unwrap_or(u64::MAX);
+            self.deployable_sequence = self.deployable_sequence.max(past.saturating_add(1));
         }
         let [x, y, z] = placement.position;
         let deployable = Deployable {
@@ -991,7 +1005,7 @@ impl Scene {
             },
             role: Role::CynoField,
             position: Vec3::new(x, y, z),
-            ends_at: now + ticks(lifetime_ms),
+            ends_at: now.saturating_add(ticks(lifetime_ms)),
             launcher: 0,
             ship_id: placement.ship_id,
             owner_id: placement.owner_id,
@@ -1031,8 +1045,17 @@ impl Scene {
         placement: crate::link::ForceFieldPlacement,
         now: i64,
     ) -> Result<Vec<Out>, &'static str> {
+        if placement.field_id <= 0 {
+            return Err("FORCE_FIELD_ID_INVALID");
+        }
+        if placement.tower_id <= 0 {
+            return Err("FORCE_FIELD_TOWER_INVALID");
+        }
         if !(placement.radius.is_finite() && placement.radius > 0.0) {
             return Err("FORCE_FIELD_RADIUS_INVALID");
+        }
+        if placement.radius > FORCE_FIELD_MAX_RADIUS {
+            return Err("FORCE_FIELD_RADIUS_TOO_LARGE");
         }
         let tower_id = placement.tower_id;
         let holds_it =
@@ -1158,6 +1181,9 @@ impl Scene {
 
     /// A deployable is taken out of the scene: a bomb's explosion is played, and the pilots who were told of it are told it is gone.
     fn depart(&mut self, deployable: &Deployable, explode: bool, now: i64) -> Vec<Out> {
+        if matches!(deployable.role, Role::ControlTower { .. }) {
+            self.forget_tower(deployable.id);
+        }
         let stamp = self.next_stamp(now);
         let mut actions = Vec::new();
         if explode {
@@ -1549,7 +1575,7 @@ impl Scene {
         }) else {
             return false;
         };
-        let status_until = link.link_complete_at + ticks(60_000.0);
+        let status_until = link.link_complete_at.saturating_add(ticks(60_000.0));
         match command {
             Command::GotoDirection(_)
             | Command::AlignTo { .. }

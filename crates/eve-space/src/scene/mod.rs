@@ -937,6 +937,8 @@ pub struct Scene {
     pub(crate) sentry_policies: BTreeMap<i64, crate::targeting::SentryPolicy>,
     /// What the Host knows of each pilot toward each tower (protocol 106), by (tower id, ship id).
     pub(crate) sentry_pilots: BTreeMap<(i64, i64), crate::targeting::SentryPilot>,
+    /// Sentry bindings the host sent for batteries not in the scene yet (battery id, tower id): applied when the battery is placed (bounded).
+    pub(crate) pending_sentry_bindings: BTreeMap<i64, i64>,
     /// Host-authoritative mechanics for a private Abyssal room scene.
     pub(crate) abyssal: Option<AbyssalSceneSpec>,
     /// NPCs materialized by stable content/run/ship identity, retained as tombstones after destruction.
@@ -1018,6 +1020,7 @@ impl Scene {
             batteries: BTreeMap::new(),
             sentry_policies: BTreeMap::new(),
             sentry_pilots: BTreeMap::new(),
+            pending_sentry_bindings: BTreeMap::new(),
             abyssal: None,
             abyssal_npc_spawn_receipts: HashMap::new(),
             abyssal_participant_deaths: HashMap::new(),
@@ -1178,6 +1181,16 @@ impl Scene {
             && self.pilots.keys().all(|session| crate::npc::is_npc_session(*session))
             && self.abyssal_traces.is_empty()
             && !self.system.bodies.iter().any(|body| body.kind == BodyKind::Wormhole)
+            // POS state outlives its pilots: the batteries, the tower policies and sentry pilots, the access of the fields, and the fields and towers themselves
+            && self.batteries.is_empty()
+            && self.sentry_policies.is_empty()
+            && self.sentry_pilots.is_empty()
+            && self.force_field_access.is_empty()
+            && self.structure_modules.is_empty()
+            && self.control_lease_generations.is_empty()
+            && !self.deployables.values().any(|deployable| {
+                matches!(deployable.role, crate::deployable::Role::ForceField { .. } | crate::deployable::Role::ControlTower { .. })
+            })
     }
 
     /// The wreck with this item id, if it is in the scene.

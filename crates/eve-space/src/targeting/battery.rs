@@ -214,6 +214,9 @@ impl Scene {
         battery.max_locked_targets = placement.max_locked_targets;
         battery.online = placement.online;
         battery.holder = holder;
+        if let Some(tower_id) = self.pending_sentry_bindings.remove(&battery_id) {
+            battery.sentry_tower = Some(tower_id);
+        }
         self.batteries.insert(battery_id, battery);
         Ok(out)
     }
@@ -332,8 +335,10 @@ impl Scene {
                 return Err(Refusal::battery_refused("TARGET_NOT_FOUND"));
             }
         }
-        let apart = (distance(battery.position, subject.position) - battery.radius - subject.radius).max(0.0);
-        if battery.max_target_range <= 0.0 || apart >= battery.max_target_range {
+        let apart = super::lock::gap_or_infinity(
+            distance(battery.position, subject.position) - battery.radius - subject.radius,
+        );
+        if battery.max_target_range <= 0.0 || !super::lock::in_range(apart, battery.max_target_range) {
             return Err(Refusal {
                 reason: "TARGET_OUT_OF_RANGE",
                 target_type: subject.type_id,
@@ -490,6 +495,7 @@ impl Scene {
         for battery_id in ids {
             out.extend(self.settle_battery(battery_id, now));
         }
+        self.prune_sentry_pilots();
         self.sentry_pass(now);
         out
     }

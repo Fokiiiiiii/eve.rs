@@ -3146,6 +3146,16 @@ fn commands_are_read_from_their_codes_and_arguments() {
     }
 }
 
+/// A speed fraction or a direction that is not finite is no command, as the other motion codes refuse it.
+#[test]
+fn a_speed_fraction_or_a_direction_that_is_not_finite_is_no_command() {
+    assert_eq!(command_of(1, &[f64::NAN]), None);
+    assert_eq!(command_of(1, &[f64::INFINITY]), None);
+    assert_eq!(command_of(2, &[f64::NAN, 0.0, 0.0]), None);
+    assert_eq!(command_of(2, &[1.0, f64::INFINITY, 0.0]), None);
+    assert_eq!(command_of(2, &[1.0, 0.0, f64::NEG_INFINITY]), None);
+}
+
 #[test]
 fn a_command_the_scene_cannot_take_is_refused_with_the_reason() {
     let mut sim = undocked();

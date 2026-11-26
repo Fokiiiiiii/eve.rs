@@ -285,30 +285,27 @@ public sealed partial class SpaceContainers
             throw Refuse("A starbase structure can only be anchored by a pilot in space.");
 
         var now = _nowUnixMs();
-        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
-        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        if (await _deployed.LockAndGetAsync(connection, transaction, moduleId, cancellationToken) is not { Kind: StarbaseModuleKind } module)
+        // the module is read unlocked only to choose its tower; then the tower row is locked before the module row, the order every starbase path takes,
+        // and the module's state is checked under its own lock
+        if (await _deployed.GetAsync(moduleId, cancellationToken) is not { Kind: StarbaseModuleKind } reference)
             throw Refuse("That starbase structure is not in space.");
-        var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, cancellationToken);
-        if (state is TowerAnchoring or TowerOffline or TowerOnline or TowerOnlining)
-        {
-            await transaction.CommitAsync(cancellationToken);
+        var unlockedState = await _deployed.TowerStateAsync(moduleId, cancellationToken);
+        if (unlockedState is TowerAnchoring or TowerOffline or TowerOnline or TowerOnlining)
             return;
-        }
-        if (state != TowerUnanchored)
+        if (unlockedState != TowerUnanchored)
             throw Refuse("That starbase structure is not fully unanchored.");
 
-        await _statics.EnsureTypesAsync([module.TypeId], cancellationToken);
-        var moduleType = _statics.Type(module.TypeId)
-            ?? throw new InvalidOperationException($"SDE type {module.TypeId} for starbase structure {moduleId} is missing.");
+        await _statics.EnsureTypesAsync([reference.TypeId], cancellationToken);
+        var moduleType = _statics.Type(reference.TypeId)
+            ?? throw new InvalidOperationException($"SDE type {reference.TypeId} for starbase structure {moduleId} is missing.");
         if (await _ships.MissingSkillAsync(characterId, new Dictionary<int, double> { [182] = AnchoringSkillTypeId, [277] = 1 }, cancellationToken) is not null)
             throw Refuse("Anchoring skill I is required to anchor a starbase structure.");
 
         var candidates = new List<(DeployedRecord Tower, double Distance)>();
-        foreach (var candidate in await _deployed.InSystemAsync(module.SolarSystemId, cancellationToken))
+        foreach (var candidate in await _deployed.InSystemAsync(reference.SolarSystemId, cancellationToken))
         {
-            if (candidate.Kind != ControlTowerKind || candidate.CorporationId != module.CorporationId ||
-                candidate.OwnerId != module.OwnerId || candidate.ActivateAtMs == NeverAnchored || candidate.ActivateAtMs > now)
+            if (candidate.Kind != ControlTowerKind || candidate.CorporationId != reference.CorporationId ||
+                candidate.OwnerId != reference.OwnerId || candidate.ActivateAtMs == NeverAnchored || candidate.ActivateAtMs > now)
                 continue;
             var towerState = await _deployed.TowerStateAsync(candidate.DeployableId, cancellationToken);
             if (towerState is TowerUnanchored or TowerAnchoring or TowerUnanchoring)
@@ -317,7 +314,7 @@ public sealed partial class SpaceContainers
             candidates.Add((candidate, distance));
         }
         var maximumDistanceAttribute = _statics.AttributeId("maxStructureDistance") ?? 650;
-        DeployedRecord? associatedTower = null;
+        var inRange = new List<DeployedRecord>();
         foreach (var candidate in candidates.OrderBy(entry => entry.Distance).ThenBy(entry => entry.Tower.DeployableId))
         {
             await _statics.EnsureTypesAsync([candidate.Tower.TypeId], cancellationToken);
@@ -325,14 +322,37 @@ public sealed partial class SpaceContainers
             var maximumDistance = towerType?.Attributes.GetValueOrDefault(maximumDistanceAttribute) ?? 300_000;
             if (maximumDistance <= 0 || candidate.Distance > maximumDistance)
                 continue;
-            associatedTower = await _deployed.LockAndGetAsync(connection, transaction, candidate.Tower.DeployableId, cancellationToken);
-            if (associatedTower is not { Kind: ControlTowerKind })
+            inRange.Add(candidate.Tower);
+        }
+
+        await using var connection = await _source.OpenConnectionAsync(cancellationToken);
+        await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+        DeployedRecord? associatedTower = null;
+        DeployedRecord? module = null;
+        foreach (var candidate in inRange)
+        {
+            if (await _deployed.LockAndGetAsync(connection, transaction, candidate.DeployableId, cancellationToken) is not { Kind: ControlTowerKind } tower)
                 continue;
-            await RequireControlTowerAccessAsync(session, associatedTower, requireAnchoringSkill: false, cancellationToken,
+            var lockedModule = await _deployed.LockAndGetAsync(connection, transaction, moduleId, cancellationToken);
+            if (lockedModule is not { Kind: StarbaseModuleKind } || lockedModule.SolarSystemId != reference.SolarSystemId ||
+                lockedModule.CorporationId != reference.CorporationId || lockedModule.OwnerId != reference.OwnerId)
+                throw Refuse("That starbase structure is not in space.");
+            module = lockedModule;
+            var state = await _deployed.TowerStateAsync(connection, transaction, moduleId, cancellationToken);
+            if (state is TowerAnchoring or TowerOffline or TowerOnline or TowerOnlining)
+            {
+                await transaction.CommitAsync(cancellationToken);
+                return;
+            }
+            if (state != TowerUnanchored)
+                throw Refuse("That starbase structure is not fully unanchored.");
+
+            await RequireControlTowerAccessAsync(session, tower, requireAnchoringSkill: false, cancellationToken,
                 requireInteractionDistance: false, requireConfigurationRole: false, operation: "anchor", connection: connection, transaction: transaction);
+            associatedTower = tower;
             break;
         }
-        if (associatedTower is null)
+        if (associatedTower is null || module is null)
             throw Refuse("A starbase structure must be anchored within range of its corporation's anchored control tower.");
 
         if (await _space.PositionOfAsync(session, moduleId, cancellationToken) is not { } modulePosition ||

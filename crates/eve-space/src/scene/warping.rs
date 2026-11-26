@@ -217,6 +217,11 @@ impl Scene {
             return Some((wreck.position, entity_stop_distance(wreck.radius)));
         }
 
+        // a mineable rock of a belt is a live ball the client can select and warp to (EveJS resolves any live entity id)
+        if let Some(asteroid) = self.asteroids.get(&target_id) {
+            return Some((asteroid.position, entity_stop_distance(asteroid.radius)));
+        }
+
         self.pilots
             .values()
             .find(|target| target.ship.spec.ship_id == target_id)

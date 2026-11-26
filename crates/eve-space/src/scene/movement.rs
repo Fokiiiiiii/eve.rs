@@ -148,6 +148,11 @@ impl Scene {
                     })
                 })
                 .or_else(|| {
+                    self.asteroids
+                        .get(&target_id)
+                        .map(|asteroid| (asteroid.position, None, Some(asteroid.radius)))
+                })
+                .or_else(|| {
                     self.deployables.get(&target_id).and_then(|deployable| match &deployable.role {
                         crate::deployable::Role::DeadspacePocket
                         | crate::deployable::Role::JumpBridge { .. } => None,

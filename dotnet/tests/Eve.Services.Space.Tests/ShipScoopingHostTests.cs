@@ -227,6 +227,32 @@ public sealed class ShipScoopingHostTests
         Assert.Empty(Events.Of(session));
     }
 
+    [PgFact]
+    public async Task ScoopToMobileDepotHold_names_the_refusal_when_the_pilot_is_not_in_space()
+    {
+        await using var rig = await Rig.CreateAsync();
+        rig.UseShipInventoryService();
+        var depotType = (await rig.Statics.TypesInGroupsAsync(["Mobile Depot"]))
+            .First(type => type.Name == "Mobile Depot");
+        var character = await rig.NewCharacterAsync("Docked scoop pilot", shipTypeId: 77114);
+        var session = await rig.SessionAsync(character);
+        var bound = await rig.BindShipAsync(session);
+        // A docked session has no solar system; the depot only needs a system id, and the pilot is refused as not in space.
+        const int systemId = 30000142;
+        var depotId = await MakeMobileDepotAsync(rig, character.CharacterId, character.ShipId, systemId,
+            depotType.TypeId, depotType.GroupId);
+        Events.Of(session);
+
+        var error = await Assert.ThrowsAsync<MachoWrappedException>(() => rig.RegisteredCallAsync(
+            session, bound, "ScoopToMobileDepotHold", new PyLong(depotId)));
+
+        Assert.Equal("CustomNotify", error.Error.UserErrorMessage);
+        Assert.Equal("Unable to scoop this item.", NoticeOf(error));
+        Assert.NotNull(await rig.SpaceItems.GetAsync(depotId));
+        Assert.NotNull(await rig.Deployed.GetAsync(depotId));
+        Assert.Empty(Events.Of(session));
+    }
+
     private static async Task<(ClientSession Session, string Bound, long Can, long Cargo, int System, long Character, long Ship)>
         MakeSpaceCanAsync(Rig rig, bool withCargo = false, int shipTypeId = 587)
     {

@@ -24,9 +24,11 @@ public sealed partial class SpaceContainers
     /// </summary>
     public async Task ScoopToHoldAsync(ClientSession session, long itemId, int destinationFlag, string? password, CancellationToken cancellationToken)
     {
-        if (session.CharacterId is not { } characterId || session.GetInt("shipid") is not { } shipId ||
-            !_space.IsInSpace(session) || _space.SolarSystemOf(session) is not { } systemId)
+        if (session.CharacterId is not { } characterId || session.GetInt("shipid") is not { } shipId)
             return;
+        // A pilot who is not in space is told the scoop failed, not left with a silent success.
+        if (!_space.IsInSpace(session) || _space.SolarSystemOf(session) is not { } systemId)
+            throw UnableToScoop();
         if (itemId <= 0 || !CharacterShips.IsShipHoldFlag(destinationFlag))
             throw UnableToScoop();
 

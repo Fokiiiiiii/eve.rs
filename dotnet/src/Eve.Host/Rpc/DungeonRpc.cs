@@ -90,8 +90,10 @@ internal sealed partial class CharacterServicesComposition
                 ? scans.ReadSignalTrackerSignaturesAsync(systemId, token)
                 : ValueTask.FromResult(new PyDict([])),
             readStaticSites: incursionAnomalyReadModel.ReadStaticSitesAsync,
-            readStructures: (systemId, token) => new ValueTask<IReadOnlyList<JsonObject>>(
-                SignalTrackerStructureSites.ReadAsync(source, structureStore, sde, systemId, token)));
+            // A composition that never opened the structure store or the SDE (a partial test host) lists no structures.
+            readStructures: (systemId, token) => structureStore is null || sde is null
+                ? ValueTask.FromResult<IReadOnlyList<JsonObject>>([])
+                : new ValueTask<IReadOnlyList<JsonObject>>(SignalTrackerStructureSites.ReadAsync(source, structureStore, sde, systemId, token)));
         signalTrackerRegistrationProvider.ReadFullState = service.ReadFullStateForSystemAsync;
         return service;
     }

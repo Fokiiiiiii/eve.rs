@@ -116,6 +116,7 @@ jobs:
         shell: pwsh
         env:
           EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve_reference
+          EVE_IDENTITY_SCHEMA: identity
           EVE_LIVE_HOST: 127.0.0.1:26000
           EVE_LIVE_STRICT_PASSWORDS: "1"
         run: |

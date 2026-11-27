@@ -264,6 +264,30 @@ async fn the_host_can_push_to_a_session_and_disconnect_it() {
 }
 
 #[tokio::test]
+async fn a_client_that_is_still_sending_when_cut_off_reads_why() {
+    let mut host = fake_host().await;
+    let front = start_front(&host, ServeConfig::default()).await;
+    let mut client = connect(&front, "pilot").await;
+    let _ = next_seen(&mut host).await;
+    let Seen::Open { session_id, .. } = next_seen(&mut host).await else { panic!() };
+
+    host.push.send(Message::Disconnect { session_id, reason: "ACCOUNTBANNED".into() }).unwrap();
+    assert!(matches!(next_seen(&mut host).await, Seen::Close { session_id: closed } if closed == session_id));
+    // a closed socket would answer this with a reset, which on Windows throws the reason away
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let late = client.session.call_packet(1, "machoNet", "GetTime", vec![]);
+    client.send(&late).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let closing = decode_bytes(&client.frame().await).unwrap();
+    assert!(
+        matches!(&closing, Value::CPickled(pickle) if String::from_utf8_lossy(pickle).contains("ACCOUNTBANNED")),
+        "{closing:?}"
+    );
+    assert!(client.reader.next().await.unwrap().is_none(), "then the connection closes");
+}
+
+#[tokio::test]
 async fn many_clients_at_once_each_get_only_their_own_answers() {
     let host = fake_host().await;
     let front = Arc::new(start_front(&host, ServeConfig::default()).await);

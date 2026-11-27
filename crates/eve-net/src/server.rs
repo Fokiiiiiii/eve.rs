@@ -17,6 +17,8 @@ use crate::handshake::{self, Environment, HandshakeError, SessionIds};
 use crate::host::{ClientOut, HostLink, client_queue};
 
 const MAX_PENDING_HANDSHAKES: usize = 256;
+/// How long a cut-off client's input is still read, so that closing does not reset the connection.
+const CLOSE_LINGER: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone)]
 pub struct ServeConfig {
@@ -126,12 +128,18 @@ async fn connection(
             }
         }
     };
-    tokio::select! {
-        () = relay => {}
-        _ = &mut writer => {}
-    }
+    let cut_off = tokio::select! {
+        () = relay => false,
+        _ = &mut writer => true,
+    };
     link.close_session(session_id).await;
     writer.abort();
+    if cut_off {
+        // Closing with unread input resets the connection, and Windows then discards the
+        // close reason before the client has read it.
+        let drain = async { while let Ok(Some(_)) = reader.next().await {} };
+        let _ = tokio::time::timeout(CLOSE_LINGER, drain).await;
+    }
 }
 
 /// Writes what the host sends for this client, batching what has piled up into one write.

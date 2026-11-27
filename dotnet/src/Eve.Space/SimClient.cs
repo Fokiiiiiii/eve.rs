@@ -242,7 +242,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         {
             while (true)
             {
-                await DispatchAsync(await ReadAsync(stream, session.Token));
+                var message = await ReadAsync(stream, session.Token);
+                var name = message.GetType().Name;
+                _readState = new ReadState(name, Environment.TickCount64, Handling: true);
+                await DispatchAsync(message);
+                _readState = new ReadState(name, Environment.TickCount64, Handling: false);
                 if (writer.IsFaulted)
                 {
                     await writer;
@@ -716,7 +720,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         {
             var seconds = _requestTimeout.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
             _log?.Invoke($"{message.GetType().Name} was not written to the simulation within {seconds} seconds; " +
-                $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}");
+                $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}; read loop: {ReadLoopState()}");
             throw new SimUnavailableException($"{message.GetType().Name} was not written to the simulation within {seconds} seconds");
         }
     }
@@ -856,7 +860,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 CancelPending(_pendingGate, pending, session, completion, completion, cancellationToken);
                 var seconds = _requestTimeout.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
                 _log?.Invoke($"{request.GetType().Name} for session {session} got no answer within {seconds} seconds; " +
-                    $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}");
+                    $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}; read loop: {ReadLoopState()}");
                 throw new SimUnavailableException($"{request.GetType().Name} got no answer from the simulation within {seconds} seconds");
             }
         }
@@ -870,6 +874,18 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private volatile string? _lastUnmatchedAnswer;
 
     private void Unmatched(SimMessage message) => _lastUnmatchedAnswer = message.GetType().Name;
+
+    private sealed record ReadState(string Message, long Since, bool Handling);
+
+    /// <summary>What the read loop did last: a stalled handler and a silent simulation leave different entries.</summary>
+    private volatile ReadState? _readState;
+
+    private string ReadLoopState()
+    {
+        if (_readState is not { } state) return "nothing read yet";
+        var age = ((Environment.TickCount64 - state.Since) / 1000.0).ToString("0.#", System.Globalization.CultureInfo.InvariantCulture);
+        return state.Handling ? $"still handling {state.Message} after {age} seconds" : $"last handled {state.Message} {age} seconds ago";
+    }
 
     /// <summary>How many requests are waiting for an answer, across every kind.</summary>
     private int PendingRequestCount() =>
@@ -1265,7 +1281,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
                 CancelPending(_pendingGate, _adjusting, request.RequestId, pending, completion, cancellationToken);
                 var seconds = _requestTimeout.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
                 _log?.Invoke($"{request.GetType().Name} for request {request.RequestId} got no answer within {seconds} seconds; " +
-                    $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}");
+                    $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}; read loop: {ReadLoopState()}");
                 throw new SimUnavailableException($"{request.GetType().Name} got no answer from the simulation within {seconds} seconds");
             }
         }

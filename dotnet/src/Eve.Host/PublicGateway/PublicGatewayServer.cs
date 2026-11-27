@@ -266,6 +266,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         }
         else if (!routes.Handlers.TryGetValue(request.TypeName, out var handler))
         {
+            Console.Error.WriteLine($"eve-host: public gateway unregistered request {request.TypeName}");
             answer = new GatewayAnswer(404, $"no public gateway answer for {request.TypeName}", "", []);
         }
         else
@@ -276,8 +277,8 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {
-                // Keep exception details and request data out of logs.
-                Console.Error.WriteLine("eve-host: public gateway handler failed");
+                // Exception messages may contain request data or credentials.
+                Console.Error.WriteLine($"eve-host: public gateway handler {request.TypeName} failed: {error.GetType().FullName}\n{error.StackTrace}");
                 answer = new GatewayAnswer(500, "internal error", "", []);
             }
         }

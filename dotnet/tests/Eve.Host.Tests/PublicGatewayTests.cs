@@ -558,12 +558,16 @@ public sealed class PublicGatewayTests
             await using var server = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, routes);
             var answer = await SendOneAsync(server.Port, "eve_public.test.ThrowRequest", null, [], authorization: token);
             Assert.Equal(500u, answer.Status);
+            var missing = await SendOneAsync(server.Port, "eve_public.test.MissingRequest", null, [], authorization: token);
+            Assert.Equal(404u, missing.Status);
         }
         finally
         {
             Console.SetError(originalError);
         }
         Assert.DoesNotContain(token, logs.ToString(), StringComparison.Ordinal);
+        Assert.Contains("eve_public.test.ThrowRequest failed: System.InvalidOperationException", logs.ToString(), StringComparison.Ordinal);
+        Assert.Contains("eve_public.test.MissingRequest", logs.ToString(), StringComparison.Ordinal);
     }
 
     [PgFact]

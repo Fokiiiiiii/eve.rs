@@ -7,12 +7,12 @@ namespace Eve.Universe.Tests;
 public sealed class WormholeTypeCatalogTests
 {
     [PgFact]
-    public async Task The_catalog_holds_the_129_wormhole_types_with_their_dogma_numbers()
+    public async Task The_catalog_holds_the_131_wormhole_types_with_their_dogma_numbers()
     {
         await using var source = NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var types = await WormholeTypeCatalog.LoadAsync(new SdeReader(source));
 
-        Assert.Equal(129, types.Count);
+        Assert.Equal(131, types.Count);
         Assert.False(types.ContainsKey(30831), "K162 is the generic exit and carries no wormhole mass attribute");
         Assert.Equal(new WormholeType(30661, 2, 960, 1_000_000_000, 0, 62_000_000, 297), types[30661]);
         Assert.Equal(new WormholeType(30579, 1, 960, 100_000_000, 0, 62_000_000, 296), types[30579]);

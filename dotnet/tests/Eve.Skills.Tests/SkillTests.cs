@@ -127,8 +127,8 @@ public class SkillCatalogTests
         foreach (var race in new[] { 1, 2, 4, 8 })
         {
             var start = catalog.StartingSkills(race);
-            Assert.Equal(52, start.Count);
-            Assert.Equal(3, start.Count(s => s.Level == 0));
+            Assert.Equal(60, start.Count);
+            Assert.Equal(11, start.Count(s => s.Level == 0));
             Assert.NotNull(catalog.StartingSet(race)); // every one of them is a skill of the catalog
         }
         Assert.Empty(catalog.StartingSkills(16)); // the Jove cannot be played

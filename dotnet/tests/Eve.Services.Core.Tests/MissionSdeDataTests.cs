@@ -6,7 +6,7 @@ using Npgsql;
 namespace Eve.Services.Core.Tests;
 
 /// <summary>
-/// and the mission build (<c>sde_mission</c>, build 3405148) for the catalog. Both need PostgreSQL and the data loaded
+/// and the pinned mission build (<c>sde_mission</c>) for the catalog. Both need PostgreSQL and the data loaded
 /// (<c>eve-sde ensure</c>, and <c>eve-sde ensure --missions</c>).
 /// </summary>
 public sealed class MissionSdeDataTests
@@ -56,7 +56,7 @@ public sealed class MissionSdeDataTests
         await using var source = Source();
         var catalog = await MissionStaticCatalog.LoadAsync(new SdeReader(source, MissionStaticCatalog.DefaultSchema));
         Assert.True(catalog.IsLoaded, catalog.UnavailableReason);
-        Assert.Equal(3405148, catalog.Build);
+        Assert.Equal(SdeBuildPin.Missions, catalog.Build);
         Assert.Equal(2892, catalog.Missions.Count);
         Assert.Equal(21, catalog.EpicArcs.Count);
         for (var id = 17179L; id <= 17190; id++)

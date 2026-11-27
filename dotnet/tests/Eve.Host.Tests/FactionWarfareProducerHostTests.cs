@@ -89,7 +89,7 @@ public sealed class FactionWarfareProducerHostTests
             await using var scheduler = new DurableScheduler(source, () => now, new SchedulerOptions { Concurrency = 1 }, schedulerSchema);
             var events = new EventBus(source, scheduler, schema: eventSchema);
             var sde = new SdeReader(source);
-            Assert.Equal(3_396_210L, await sde.BuildAsync());
+            Assert.Equal(SdeBuildPin.Standard, await sde.BuildAsync());
             var statics = await DogmaStatic.LoadAsync(sde);
 
             await events.PumpAsync(); // establish the durable capture subscriber before the damage event

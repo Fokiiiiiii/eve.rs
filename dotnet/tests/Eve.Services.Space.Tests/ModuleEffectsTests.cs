@@ -410,7 +410,7 @@ public class ModuleEffectsTests
         var sde = new SdeReader(source);
         var catalogBuild = await sde.BuildAsync()
             ?? throw new InvalidOperationException("The test SDE schema must expose its actual build number.");
-        Assert.Equal(3396210, catalogBuild);
+        Assert.Equal(SdeBuildPin.Standard, catalogBuild);
 
         var statics = await DogmaStatic.LoadAsync(sde);
         await statics.EnsureTypesAsync([587, 12344, 230, 439]);
@@ -909,6 +909,11 @@ public class ModuleEffectsTests
             "cloneRespawnBay",
             "microJumpPortalDrive",
             "microJumpPortalDriveCapital",
+            "moduleAberrantCapRechargerBonusEffectActivationPostAssignment",
+            "moduleAberrantDroneNavigationComputerBonusEffectActivation",
+            "moduleAberrantOverdriveInjectorSystemActiveSpeedBurstEffect",
+            "moduleAberrantShieldBoostAmplifierShieldBoosterBonusEffectActivation",
+            "moduleBonusBreacherPodDamageControl",
             "moduleTitanEffectGenerator",
         ];
         // Reconcile the manifest against the catalog this test actually opened. A newer unhandled

@@ -39,7 +39,7 @@ internal sealed class Rig : IAsyncDisposable
 {
     public static readonly string? Url = Environment.GetEnvironmentVariable("EVE_PG_URL");
 
-    public const long PinnedSdeBuild = 3396210;
+    public static long PinnedSdeBuild => SdeBuildPin.Standard;
     public const long Station = 60015249;
 
     public static void AssertPinnedSdeBuild(long? actualBuild) =>

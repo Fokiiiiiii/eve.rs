@@ -222,7 +222,7 @@ public partial class HostServerTests
             [
                 "agentID", "agentTypeID", "divisionID", "level", "stationID", "corporationID",
                 "isLocatorAgent", "isInSpace", "careerID", "importantMission", "missionKind",
-                "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID",
+                "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID", "solarsystemID", "factionID",
             ],
             [
                 new PyList([
@@ -230,12 +230,14 @@ public partial class HostServerTests
                     new PyInt(60_000_001), new PyInt(1_000_036), PyBool.False, PyBool.False,
                     new PyInt(17), PyBool.False, new PyStr("courier"), new PyStr("UI/Agents/MissionTypes/Courier"),
                     new PyInt(18), new PyInt(1_531), new PyInt(1),
+                    new PyInt(30_000_165), PyNone.Instance,
                 ]),
                 new PyList([
                     new PyInt(AgentRpcSecondAgent), new PyInt(8), new PyInt(24), new PyInt(3),
                     new PyInt(60_000_001), new PyInt(1_000_036), PyBool.False, PyBool.False,
                     new PyInt(17), PyBool.False, new PyStr("encounter"), new PyStr("UI/Agents/MissionTypes/Courier"),
                     new PyInt(18), new PyInt(1_531), new PyInt(1),
+                    new PyInt(30_000_165), PyNone.Instance,
                 ]),
             ])));
         Assert.Equal(expectedAgents, agents);

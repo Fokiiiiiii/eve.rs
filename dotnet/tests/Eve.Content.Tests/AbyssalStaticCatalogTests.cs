@@ -354,7 +354,7 @@ public sealed class AbyssalStaticCatalogTests
         var abyssal = new AbyssalContentRuntime(rig.Content, rig.Bus, rig.Scheduler);
         await rig.Ready();
 
-        Assert.Equal(AbyssalStaticCatalog.RequiredSdeBuild, catalog.SdeBuildNumber);
+        Assert.Equal(SdeBuildPin.Standard, catalog.SdeBuildNumber);
         Assert.Equal(3436472, catalog.EnvironmentSourceClientBuild);
         Assert.Equal(3396210, catalog.TargetClientBuild);
         Assert.Equal(35, catalog.FilamentsByTypeId.Count);

@@ -625,13 +625,14 @@ public sealed class AgentMissionServiceTests
         [
             "agentID", "agentTypeID", "divisionID", "level", "stationID", "corporationID",
             "isLocatorAgent", "isInSpace", "careerID", "importantMission", "missionKind",
-              "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID",
+            "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID", "solarsystemID", "factionID",
         ],
         [
             new PyList([
                 new PyInt(7004), new PyInt(8), new PyInt(24), new PyInt(3), PyNone.Instance,
                 new PyInt(1000036), PyBool.False, PyBool.True, new PyInt(17), PyBool.False,
-                  new PyStr(""), new PyStr(""), new PyInt(18), new PyInt(1531), new PyInt(1),
+                new PyStr(""), new PyStr(""), new PyInt(18), new PyInt(1531), new PyInt(1),
+                new PyInt(30000165), PyNone.Instance,
             ]),
         ]), rowset);
         Assert.Equal(new PyInt(30000165),

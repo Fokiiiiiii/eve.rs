@@ -156,7 +156,7 @@ public class AnalysisBeaconRulesTests
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
-        Assert.Equal(3396210L, await sde.BuildAsync());
+        Assert.Equal(SdeBuildPin.Standard, await sde.BuildAsync());
         var blueprints = await sde.ReadAsync("blueprints", [60514, 92182]);
 
         foreach (var blueprint in blueprints)

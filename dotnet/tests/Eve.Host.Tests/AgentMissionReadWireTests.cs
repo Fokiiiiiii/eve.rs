@@ -77,13 +77,14 @@ public sealed class AgentMissionReadWireTests
             [
                 "agentID", "agentTypeID", "divisionID", "level", "stationID", "corporationID",
                 "isLocatorAgent", "isInSpace", "careerID", "importantMission", "missionKind",
-                "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID",
+                "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID", "solarsystemID", "factionID",
             ],
             [
                 new PyList([
                     new PyInt(AgentId), new PyInt(8), new PyInt(24), new PyInt(3), PyNone.Instance,
                     new PyInt(1000036), PyBool.False, PyBool.True, new PyInt(17), PyBool.False,
                     new PyStr(""), new PyStr(""), new PyInt(18), new PyInt(1531), new PyInt(1),
+                    new PyInt(SolarSystemId), PyNone.Instance,
                 ]),
             ]),
             await Call(1, "GetAgents"));

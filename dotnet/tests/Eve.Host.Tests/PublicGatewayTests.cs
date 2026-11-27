@@ -295,7 +295,7 @@ public sealed class PublicGatewayTests
         Assert.Equal("https://127.0.0.1/elysian-eve/map-tags/latest.maptags", url);
         var version = SkillPlanWire.Message(checkpoint, 2) ?? throw new InvalidOperationException("no checkpoint version");
         Assert.Equal(1L, SkillPlanWire.VarintOf(version, 1));
-        Assert.Equal(new[] { "3396210" }, ProtoReader.Fields(version).Where(field => field.Number == 5)
+        Assert.Equal(new[] { SdeBuildPin.Standard.ToString(System.Globalization.CultureInfo.InvariantCulture) }, ProtoReader.Fields(version).Where(field => field.Number == 5)
             .Select(field => System.Text.Encoding.UTF8.GetString(field.Bytes.Span)));
         var checksum = SkillPlanWire.Message(checkpoint, 3) ?? throw new InvalidOperationException("no checkpoint checksum");
         Assert.Equal(2739352333L, SkillPlanWire.VarintOf(checksum, 1));

@@ -20,8 +20,8 @@ public class HullDataTests
     /// <summary>Published hulls the SDE gives no skill requirement: the two capsules, Echelon and Primae (SF-9; no skill is required to fly them, as the SDE says).</summary>
     private static readonly int[] HullsWithoutSkill = [670, 33328, 3532, 2863];
 
-    /// <summary>The one published hull the SDE gives no type bonus, and no dogma effect either (the Opux Luxury Yacht, SF-9).</summary>
-    private const int HullWithoutTypeBonus = 635;
+    /// <summary>The Opux Luxury Yacht (SF-9) has no dogma effects in the SDE.</summary>
+    private const int HullWithoutEffects = 635;
 
     private static async Task<List<(int TypeId, int GroupId, JsonElement Doc)>> PublishedHullsAsync(SdeReader sde)
     {
@@ -39,7 +39,7 @@ public class HullDataTests
         await using var rig = await Rig.CreateAsync();
         var sde = new SdeReader(rig.Source);
         var hulls = await PublishedHullsAsync(sde);
-        Assert.Equal(423, hulls.Count);
+        Assert.Equal(430, hulls.Count);
         await rig.Statics.EnsureTypesAsync(hulls.Select(h => h.TypeId));
 
         var withoutCapacity = new List<int>();
@@ -78,7 +78,7 @@ public class HullDataTests
         var withoutBonus = hulls.Where(h => !typeBonuses.Contains(h.TypeId)).Select(h => h.TypeId).ToList();
 
         Assert.Equal(HullsWithoutSkill.Order(), withoutSkill.Order());
-        Assert.Equal([HullWithoutTypeBonus], withoutBonus);
-        Assert.Empty(rig.Statics.Type(HullWithoutTypeBonus)!.EffectIds);
+        Assert.Empty(withoutBonus);
+        Assert.Empty(rig.Statics.Type(HullWithoutEffects)!.EffectIds);
     }
 }

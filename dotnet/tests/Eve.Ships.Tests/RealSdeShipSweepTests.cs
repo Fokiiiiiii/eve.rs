@@ -19,7 +19,7 @@ public sealed class RealSdeShipSweepTests
     private const int DamageControlI = 2046, Afterburner = 21857, EnergyNeutralizer = 533;
     private const int SmallRig = 26929, MediumRig = 4395, LargeRig = 4397, CapitalRig = 33303;
     private const int StrategicCruiserGroup = 963, ModeGroup = 1306;
-    private const int PublishedShips = 423, PublishedSubsystems = 48, ModeItems = 18;
+    private const int PublishedShips = 430, PublishedSubsystems = 48, ModeItems = 18;
     private const int LowSlots = 12, MediumSlots = 13, HighSlots = 14, RigSlots = 1137, MaxSubsystems = 1367, SubsystemSlot = 1366, RigSize = 1547;
     private const int HighModifier = 1374, MediumModifier = 1375, LowModifier = 1376;
 

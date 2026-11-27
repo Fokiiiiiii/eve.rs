@@ -14,7 +14,7 @@ public class TournamentPotentialMetricsTests
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
-        Assert.Equal(3396210, await sde.BuildAsync());
+        Assert.Equal(SdeBuildPin.Standard, await sde.BuildAsync());
         var statics = await DogmaStatic.LoadAsync(sde);
         await statics.EnsureTypesAsync([587, 458, 246]);
         const long character = 70201, shipId = 70202, laser = 1, crystal = 3;

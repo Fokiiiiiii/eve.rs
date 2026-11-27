@@ -111,7 +111,7 @@ public class MachoNetServiceTests
         Assert.Equal("/Carbon/MachoNet/ServerStatus/OK", Text(label.Items[0]));
         var details = Assert.IsType<PyDict>(status.Items[1]).Entries.ToDictionary(e => Text(e.Key)!, e => e.Value);
         Assert.Equal(new PyInt(496), details["macho_version"]);
-        Assert.Equal(new PyInt(3_396_210), details["boot_build"]);
+        Assert.Equal(new PyInt(ServerBuildInfo.BootBuild), details["boot_build"]);
         Assert.Equal(new PyInt(1), details["cluster_usercount"]);
         Assert.Equal("OK", Text(details["status"]));
     }

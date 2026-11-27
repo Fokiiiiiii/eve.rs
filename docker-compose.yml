@@ -41,7 +41,7 @@ services:
   init:
     <<: *eve
     restart: "no"
-    command: ["sh", "-c", "eve-sde ensure --missions && eve-sde ensure && env -u EVE_PG_URL eve-sde ensure"]
+    command: ["sh", "-c", "eve-sde ensure --missions && eve-sde ensure"]
     depends_on:
       db:
         condition: service_healthy

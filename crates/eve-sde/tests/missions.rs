@@ -1,7 +1,7 @@
 //! The mission build: its pin and all mission and SKINR tables the server reads.
 //!
 //!   EVE_PG_URL=postgres://postgres@127.0.0.1:5432/eve cargo test -p eve-sde --test missions
-//!   EVE_SDE_MISSION_DIR=<extracted build 3405148> ... (opt-in: loads the real tables into a scratch schema)
+//!   EVE_SDE_MISSION_DIR=<extracted mission pin> ... (opt-in: loads the real tables into a scratch schema)
 //!
 //! The database tests use scratch schemas and skip (loudly) when EVE_PG_URL is not set. The fixtures
 //! are written here: tiny synthetic rows, not CCP data.
@@ -15,8 +15,8 @@ use postgres::{Client, NoTls};
 mod common;
 use common::{Scratch, file_url, make_zip, mini_archive, names_in, options, sde_meta};
 
-const MISSION_BUILD: u64 = 3405148;
-const PINNED_BUILD: u64 = 3396210;
+const MISSION_BUILD: u64 = 3720952;
+const OTHER_BUILD: u64 = 3396210;
 
 fn connect() -> Option<Client> {
     match std::env::var("EVE_PG_URL") {
@@ -75,27 +75,22 @@ fn mission_archive(path: &std::path::Path, build: u64) -> String {
 }
 
 #[test]
-fn the_mission_pin_is_a_second_build_and_the_pinned_build_is_unchanged() {
+fn the_mission_and_full_pins_point_to_the_same_verified_archive() {
     let mission = fetch::mission_pinned().unwrap();
+    let pinned = fetch::pinned().unwrap();
     assert_eq!(mission.build, MISSION_BUILD);
+    assert_eq!(pinned.build, mission.build);
     assert_eq!(
         mission.sha256.as_deref(),
-        Some("3d8c75d4533d53739b7cf547b4532673c7b895650bb474f57ccf4499f14afe77")
+        Some("67c37d1149df4bb4187edf07dc99ead3623d6daa76338afa346c8f424b892b73")
     );
-    assert_eq!(mission.sources.len(), 1, "only CCP's host is recorded for the mission build");
-    assert!(
-        mission.sources[0].ends_with("eve-online-static-data-3405148-jsonl.zip"),
-        "{:?}",
-        mission.sources
-    );
-
-    let pinned = fetch::pinned().unwrap();
-    assert_eq!(pinned.build, PINNED_BUILD);
+    assert_eq!(pinned.sha256, mission.sha256);
+    assert_eq!(mission.sources.len(), 1);
     assert_eq!(
-        pinned.sha256.as_deref(),
-        Some("17ae0c7f00fec4c2b79f785a9c35debdc5ae9edde558d18dc26d51cf87279b3e")
+        mission.sources[0],
+        "https://developers.eveonline.com/static-data/tranquility/eve-online-static-data-3720952-jsonl.zip"
     );
-    assert_eq!(pinned.sources.len(), 2, "the client build keeps its two sources");
+    assert_eq!(pinned.sources, mission.sources);
 }
 
 #[test]
@@ -202,12 +197,12 @@ fn the_mission_build_refuses_an_archive_of_another_build() {
     drop_schema(&mut client, &schema);
     let scratch = Scratch::new("missions-mismatch");
     let archive = scratch.path("wrong.zip");
-    mission_archive(&archive, PINNED_BUILD);
+    mission_archive(&archive, OTHER_BUILD);
     let mut wanted = options(&scratch, MISSION_BUILD, vec![], Expect::Unchecked);
     wanted.archive = Some(archive);
     let error = ensure::ensure_tables_into(&mut client, &wanted, &schema, MISSION_TABLES).unwrap_err();
     assert!(
-        matches!(error, EnsureError::BuildMismatch { wanted: MISSION_BUILD, found: Some(3396210) }),
+        matches!(error, EnsureError::BuildMismatch { wanted: MISSION_BUILD, found: Some(build) } if build == OTHER_BUILD as i64),
         "{error}"
     );
     assert_eq!(ensure::loaded_build(&mut client, &schema).unwrap(), None);
@@ -226,7 +221,7 @@ fn a_missing_mission_archive_is_a_fetch_error_and_loads_nothing() {
     assert_eq!(ensure::loaded_build(&mut client, &schema).unwrap(), None);
 }
 
-/// Opt-in: the real build 3405148, extracted (`eve-sde ensure --missions` writes it under the cache).
+/// Opt-in: the shared mission build extracted by `eve-sde ensure`.
 /// Loads the server mission and SKINR tables into a scratch schema and checks mission counts.
 #[test]
 fn the_real_mission_build_has_the_tables_and_ids_the_server_reads() {
@@ -284,7 +279,7 @@ fn fake_full_build(path: &std::path::Path, build: u64) -> String {
 }
 
 #[test]
-fn the_loader_keeps_only_the_named_tables_and_leaves_no_copy_of_the_build_on_disk() {
+fn the_loader_cleans_up_its_subset_and_preserves_the_full_extract_of_the_same_build() {
     let Some(mut client) = connect() else { return };
     let schema = scratch_schema("discard");
     drop_schema(&mut client, &schema);
@@ -292,10 +287,10 @@ fn the_loader_keeps_only_the_named_tables_and_leaves_no_copy_of_the_build_on_dis
     let source = scratch.path("source.zip");
     let hash = fake_full_build(&source, MISSION_BUILD);
     let cache = scratch.path("cache");
-    let earlier = cache.join(fetch::archive_name(MISSION_BUILD));
-    std::fs::create_dir_all(&earlier).unwrap();
-    std::fs::write(earlier.join("types.jsonl"), "{\"_key\":1}\n").unwrap();
-
+    let mut full = options(&scratch, MISSION_BUILD, vec![], Expect::Sha256(hash.clone()));
+    full.archive = Some(source.clone());
+    let earlier = fetch::ensure_extracted(&full).unwrap().dir;
+    let before = names_in(&earlier);
     let wanted = options(&scratch, MISSION_BUILD, vec![file_url(&source)], Expect::Sha256(hash));
     let outcome = ensure::ensure_tables_into(&mut client, &wanted, &schema, MISSION_TABLES).unwrap();
     assert!(
@@ -306,7 +301,10 @@ fn the_loader_keeps_only_the_named_tables_and_leaves_no_copy_of_the_build_on_dis
     assert_eq!(count(&mut client, &schema, "epicArcs"), 1);
     assert!(table_exists(&mut client, &schema, "types"), "the server reads the mission-build type catalog");
     assert!(!table_exists(&mut client, &schema, "npcCharacters"), "an unnamed table must not be loaded");
-    assert_eq!(names_in(&cache), Vec::<String>::new(), "nothing of the build may remain under the cache");
+    assert_eq!(names_in(&cache), vec![fetch::archive_name(MISSION_BUILD)]);
+    assert_eq!(names_in(&earlier), before);
+    assert!(earlier.join(".complete").is_file());
+    assert!(earlier.join("npcCharacters.jsonl").is_file());
     drop_schema(&mut client, &schema);
 }
 

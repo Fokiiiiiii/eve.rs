@@ -197,13 +197,17 @@ public sealed class XmppLocalRoomTests
             var systemId = 10_000 + index;
             session.Set("solarsystemid2", new PyInt(systemId));
             client.OnStanza(Parse($"<presence to='local_{systemId}@conference.chat.example/Pilot'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
-            Assert.Contains(output, item => item.Contains($"local_{systemId}@conference.chat.example/Pilot", StringComparison.Ordinal));
+            Assert.Contains(output, item => item.Contains($"from='local_{systemId}@conference.chat.example/Pilot'", StringComparison.Ordinal)
+                && item.Contains("status code='110'", StringComparison.Ordinal));
         }
 
         const long excessSystem = 20_000;
         session.Set("solarsystemid2", new PyInt(excessSystem));
         client.OnStanza(Parse($"<presence to='local_{excessSystem}@conference.chat.example/Pilot'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
-        Assert.DoesNotContain(output, item => item.Contains($"local_{excessSystem}@conference.chat.example/Pilot", StringComparison.Ordinal));
+        var rejection = Parse(Assert.Single(output, item => item.Contains(
+            $"from='local_{excessSystem}@conference.chat.example/Pilot'", StringComparison.Ordinal)));
+        Assert.Equal("error", rejection.Attribute("type"));
+        Assert.NotNull(rejection.Child("error")?.Child("not-authorized"));
     }
 
     private static ClientSession Character(long characterId, string token, long systemId)

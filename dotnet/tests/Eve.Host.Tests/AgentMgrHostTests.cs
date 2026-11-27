@@ -14,7 +14,7 @@ public partial class HostServerTests
         {
             new AgentMissionAgentData(
                 7004, 8, 24, 3, null, 1000036, false, true, 17, false, "", "",
-                18, 1531, 1, 30000165, 416, 4239, 20520),
+                18, 1531, 1, 30000165, 416, 4239, 20520, FactionId: 500001),
             new AgentMissionAgentData(
                 7002, 8, 24, 2, 600001, 1000036, true, false, null, false, "", "",
                 null, 1531, null, 30000142, null, null, null),
@@ -41,18 +41,20 @@ public partial class HostServerTests
         [
             "agentID", "agentTypeID", "divisionID", "level", "stationID", "corporationID",
             "isLocatorAgent", "isInSpace", "careerID", "importantMission", "missionKind",
-            "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID",
+            "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID", "solarsystemID", "factionID",
         ],
         [
             new PyList([
                 new PyInt(7002), new PyInt(8), new PyInt(24), new PyInt(2), new PyInt(600001),
                 new PyInt(1000036), PyBool.True, PyBool.False, PyNone.Instance, PyBool.False,
                 new PyStr(""), new PyStr(""), PyNone.Instance, new PyInt(1531), PyNone.Instance,
+                new PyInt(30000142), PyNone.Instance,
             ]),
             new PyList([
                 new PyInt(7004), new PyInt(8), new PyInt(24), new PyInt(3), PyNone.Instance,
                 new PyInt(1000036), PyBool.False, PyBool.True, new PyInt(17), PyBool.False,
                 new PyStr(""), new PyStr(""), new PyInt(18), new PyInt(1531), new PyInt(1),
+                new PyInt(30000165), new PyInt(500001),
             ]),
         ]);
 

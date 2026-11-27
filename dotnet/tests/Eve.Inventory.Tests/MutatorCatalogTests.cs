@@ -46,14 +46,14 @@ public class MutatorCatalogTests
         var publishedPairs = rows.Sum(row => row.Doc.GetProperty("inputOutputMapping").EnumerateArray()
             .Sum(mapping => mapping.GetProperty("applicableTypes").EnumerateArray().Count(t => published.Contains(t.GetInt64()))));
 
-        Assert.Equal(413, rows.Count);
-        Assert.Equal(413, catalog.MutatorCount);
-        Assert.Equal(89, catalog.OutputTypeCount);
-        Assert.Equal(5665, allPairs);
-        Assert.Equal(5227, publishedPairs);
+        Assert.Equal(441, rows.Count);
+        Assert.Equal(441, catalog.MutatorCount);
+        Assert.Equal(97, catalog.OutputTypeCount);
+        Assert.Equal(5994, allPairs);
+        Assert.Equal(5556, publishedPairs);
         Assert.Equal(438, allPairs - publishedPairs);
         Assert.Equal(publishedPairs, catalog.PairCount);
-        Assert.Equal(945, catalog.InputTypeCount);
+        Assert.Equal(1029, catalog.InputTypeCount);
     }
 
     [PgFact]

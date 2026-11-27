@@ -48,7 +48,7 @@ public partial class HostServerTests
             await EventBus.MigrateAsync(source, eventSchema);
 
             var sde = new SdeReader(source);
-            Assert.Equal(3_396_210L, await sde.BuildAsync());
+            Assert.Equal(SdeBuildPin.Standard, await sde.BuildAsync());
             var dogma = await DogmaStatic.LoadAsync(sde);
             var rules = await StructureRulesSource.LoadAsync(sde);
             var moon = Assert.Single(await sde.ReadAsync("mapMoons", [moonId]));

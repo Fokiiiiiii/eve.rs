@@ -194,7 +194,7 @@ public class CatalogTests
     {
         var (_, source) = await LoadAsync();
         var reader = new SdeReader(source);
-        Assert.Equal(3396210L, await reader.BuildAsync());
+        Assert.Equal(SdeBuildPin.Standard, await reader.BuildAsync());
 
         var rows = await reader.ReadByFieldAsync("types", "groupID", [6, 7, 8, 9]);
 
@@ -207,7 +207,7 @@ public class CatalogTests
                 56082, 56083, 56084, 56085, 56086, 56097, 56098, 73909, 73911, 78350,
             },
             rows.Select(row => row.Key).ToArray());
-        Assert.Equal("aa5747bbf7b6af43e7022ceeaa504ea121cc7f805c1a5043d8e6bceb13d81b14", SdeRowsSha256(rows));
+        Assert.Equal("268016a0ba8704aef38e2cf12dc1111b9de896aae7d56de5f2500f8f43f57678", SdeRowsSha256(rows));
         Assert.Equal(
             (6L, 6L, "Sun G5 (Yellow)"),
             (
@@ -221,7 +221,7 @@ public class CatalogTests
     {
         var (_, source) = await LoadAsync();
         var reader = new SdeReader(source);
-        Assert.Equal(3396210L, await reader.BuildAsync());
+        Assert.Equal(SdeBuildPin.Standard, await reader.BuildAsync());
 
         var rows = await reader.ReadContainingAsync("typeDogma", """{"dogmaEffects":[{"effectID":101}]}""");
 
@@ -240,10 +240,10 @@ public class CatalogTests
                 33442, 33446, 33448, 33450, 33452, 33453, 33454, 33455, 33456, 33457, 33458, 33459, 33461, 33462,
                 33463, 33464, 33465, 33466, 34290, 34292, 34294, 35921, 35922, 35923, 37288, 37292, 37293, 37294,
                 37295, 41174, 41175, 41176, 41180, 41181, 41182, 41223, 41224, 44102, 44109, 47298, 47303, 47323,
-                47325, 85021, 85023, 85084, 85085, 92453,
+                47325, 85021, 85023, 85084, 85085, 92453, 95888, 97319,
             },
             rows.Select(row => row.Key).ToArray());
-        Assert.Equal("9adb44301d7db8f159dd8ea68ce671829f098e94cbb71bf162125d37b197379d", SdeRowsSha256(rows));
+        Assert.Equal("4f50f9a9765794241ff46cff3e5068590d00029b97e54b7b798b3edd26337fa4", SdeRowsSha256(rows));
         Assert.Equal(499L, rows[0].Key);
         Assert.Equal(
             new[] { (12, false), (16, false), (40, false), (101, true), (3001, false) },
@@ -257,14 +257,14 @@ public class CatalogTests
     {
         var (_, source) = await LoadAsync();
         var reader = new SdeReader(source);
-        Assert.Equal(3396210L, await reader.BuildAsync());
+        Assert.Equal(SdeBuildPin.Standard, await reader.BuildAsync());
 
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var summaries = await reader.ReadTypeSummariesAsync();
         timer.Stop();
 
-        Assert.Equal(52_591, summaries.Count);
-        Assert.Equal("306238ad691fee3ccc4117c2a687204d7535dee76c3936cda4e33183e7a24ffe", TypeSummariesSha256(summaries));
+        Assert.Equal(53_941, summaries.Count);
+        Assert.Equal("dbbc5b94220b3811d2417c3b20c8a15ab1d808525b406faf76a6b62dcc02b990", TypeSummariesSha256(summaries));
         Assert.Equal(
             new[]
             {

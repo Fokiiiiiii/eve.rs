@@ -31,7 +31,7 @@ public partial class HostServerTests
         Assert.False(string.IsNullOrWhiteSpace(connectionString));
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(connectionString!));
         var sde = new SdeReader(source);
-        Assert.Equal(3_396_210L, await sde.BuildAsync());
+        Assert.Equal(SdeBuildPin.Standard, await sde.BuildAsync());
         var statics = await DogmaStatic.LoadAsync(sde);
         var suffix = Guid.NewGuid().ToString("N")[..10];
         var schemas = new[] { $"onlinecap_c_{suffix}", $"onlinecap_i_{suffix}", $"onlinecap_s_{suffix}", $"onlinecap_m_{suffix}" };

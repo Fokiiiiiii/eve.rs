@@ -14,7 +14,7 @@ public class TournamentAncillaryRepairTests
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
         var sde = new SdeReader(source);
-        Assert.Equal(3396210, await sde.BuildAsync());
+        Assert.Equal(SdeBuildPin.Standard, await sde.BuildAsync());
         var statics = await DogmaStatic.LoadAsync(sde);
         await statics.EnsureTypesAsync([587, 32774, 33076, 41476, 41480, 28668]);
         const long character = 82301, shipId = 82302, moduleId = 82303, target = 82304;

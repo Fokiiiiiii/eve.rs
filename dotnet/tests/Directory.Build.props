@@ -1,0 +1,8 @@
+<Project>
+  <Import Project="../Directory.Build.props" />
+  <ItemGroup>
+    <Compile Include="$(MSBuildThisFileDirectory)SdeBuildPin.cs" Link="SdeBuildPin.cs" />
+    <EmbeddedResource Include="$(MSBuildThisFileDirectory)../../sde/lock.json" LogicalName="Eve.Testing.SdeLock.json" />
+    <Using Include="Eve.Testing" />
+  </ItemGroup>
+</Project>

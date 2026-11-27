@@ -25,7 +25,7 @@ public partial class HostServerTests
         Assert.False(string.IsNullOrWhiteSpace(connectionString));
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(connectionString!));
         var sde = new SdeReader(source);
-        Assert.Equal(3_396_210L, await sde.BuildAsync());
+        Assert.Equal(SdeBuildPin.Standard, await sde.BuildAsync());
         var statics = await DogmaStatic.LoadAsync(sde);
         var suffix = Guid.NewGuid().ToString("N")[..12];
         var charactersSchema = "dogma_ship_char_" + suffix;

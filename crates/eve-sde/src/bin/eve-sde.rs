@@ -90,7 +90,13 @@ fn ensure_command(args: &[String]) -> Result<ExitCode, Failure> {
                 (ensure::ensure_loaded(&mut client, &options)?, load::DEFAULT_SCHEMA)
             };
             match outcome {
-                Outcome::AlreadyLoaded => eprintln!("SDE build {build} is already loaded in {schema}"),
+                Outcome::AlreadyLoaded => {
+                    eprintln!("SDE build {build} is already loaded in {schema}");
+                    if !missions {
+                        // PostgreSQL and the simulator's on-disk cache can be reset independently.
+                        fetch::ensure_extracted(&options)?;
+                    }
+                }
                 Outcome::Loaded { origin, tables, records } => {
                     eprintln!(
                         "loaded SDE build {build} into {schema} ({}): {tables} tables, {records} records",

@@ -16,7 +16,7 @@ public class TournamentDroneMetricsTests
     public async Task Real_drones_use_bandwidth_cap_and_do_not_double_count_deployed_items()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
-        var sde = new SdeReader(source); Assert.Equal(3396210, await sde.BuildAsync());
+        var sde = new SdeReader(source); Assert.Equal(SdeBuildPin.Standard, await sde.BuildAsync());
         var statics = await DogmaStatic.LoadAsync(sde);
         await statics.EnsureTypesAsync([587, 2454, 2183, 2444, 10246, 23711]);
         const long characterId = 83001, shipId = 83002; const int system = 30000142;

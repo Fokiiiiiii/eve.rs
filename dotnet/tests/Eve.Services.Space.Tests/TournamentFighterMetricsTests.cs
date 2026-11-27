@@ -15,7 +15,7 @@ public class TournamentFighterMetricsTests
     public async Task Real_templar_tube_and_native_squadron_size_use_primary_and_secondary()
     {
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(Environment.GetEnvironmentVariable("EVE_PG_URL")!));
-        var sde = new SdeReader(source); Assert.Equal(3396210, await sde.BuildAsync());
+        var sde = new SdeReader(source); Assert.Equal(SdeBuildPin.Standard, await sde.BuildAsync());
         var statics = await DogmaStatic.LoadAsync(sde); await statics.EnsureTypesAsync([587, 23055, 23069, 37599]);
         const long characterId = 83101, shipId = 83102, fighterId = 83103; const int system = 30000142;
         var character = new Character(characterId, 1, "Pilot", 0, 1, 1, 1, 1, 1373, 1, null, null, 1, 1, system, 1, 1, shipId, DateTimeOffset.UtcNow, null, null);

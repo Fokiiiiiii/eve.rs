@@ -39,8 +39,9 @@ public partial class HostServerTests
             Assert.IsType<PyNone>(Result(MarshalCodec.Decode(response.Payload)));
         }
 
+        // The client telemetry session ID is distinct from the transport session ID (24.02 capture).
         await SendCall(1, "LogClientStats", new PyTuple([
-            new PyLong(sessionId), new PyInt(30_100_041),
+            new PyLong(sessionId + 1), new PyInt(30_100_041),
             new PyList([new PyList([new PyStr("periodic")])]), new PyList([]),
         ]), TransportKwargs());
         await SendCall(2, "LogClientStats", new PyTuple([
@@ -99,7 +100,7 @@ public partial class HostServerTests
             new PyLong(sessionId), PyNone.Instance, new PyList([]),
         ]), ShutdownFalseKwargs()), "CLIENT_STATS_LOCATION_INVALID");
         AssertUserError(await SendCall(2, "LogClientStats", new PyTuple([
-            new PyLong(sessionId + 1), new PyInt(30_100_041), new PyList([]),
+            new PyLong(-1), new PyInt(30_100_041), new PyList([]),
         ]), TransportKwargs()), "CLIENT_STATS_SESSION_INVALID");
         AssertUserError(await SendCall(3, "LogClientEvent", new PyTuple([]), TransportKwargs()), "CLIENT_EVENT_ARGUMENTS_INVALID");
         Assert.Empty(records);

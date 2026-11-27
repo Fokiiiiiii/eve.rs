@@ -170,14 +170,23 @@ jobs:
         with:
           python-version: "3.12"
       - id: sde-build
-        run: echo "build=$(sed -n 's/^PINNED_BUILD=//p' sde/fetch.sh)" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "${{ matrix.test_file }}" = test_login_to_character.py ]; then
+            echo "build=$(jq -er .referencePinned sde/lock.json)" >> "$GITHUB_OUTPUT"
+            echo "cache=.cache/sde-reference" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=$(jq -er .pinned sde/lock.json)" >> "$GITHUB_OUTPUT"
+            echo "cache=.cache/sde" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .cache/sde
-          key: sde-${{ steps.sde-build.outputs.build }}-${{ hashFiles('sde/lock.json') }}
+          path: ${{ steps.sde-build.outputs.cache }}
+          key: ${{ matrix.test_file == 'test_login_to_character.py' && 'sde-reference' || format('sde-{0}', steps.sde-build.outputs.build) }}-${{ hashFiles('sde/lock.json') }}
       - name: Load pinned SDE and mission data
         run: |
-          cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
+          dir="$(cargo run -q -p eve-sde -- ensure --build "${{ steps.sde-build.outputs.build }}" --cache "${{ steps.sde-build.outputs.cache }}" --pg "$EVE_PG_URL")"
+          dir="$(realpath -e "$dir")"
+          echo "EVE_SDE_DIR=$dir" >> "$GITHUB_ENV"
           cargo run -q -p eve-sde -- ensure --missions --pg "$EVE_PG_URL"
       - name: A PostgreSQL client for the harness (it drops its scratch schemas)
         run: command -v psql >/dev/null || sudo apt-get install -y --no-install-recommends postgresql-client

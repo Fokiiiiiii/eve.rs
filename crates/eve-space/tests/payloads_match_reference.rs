@@ -2,19 +2,14 @@
 mod support;
 
 use eve_space::payload;
-use eve_space::sde::Sde;
 use eve_space::world::World;
 use serde_json::{Value, json};
 use support::*;
 
 const SYSTEM: i32 = 30100032;
 
-fn world() -> Option<World> {
-    let Some(sde) = Sde::locate() else {
-        eprintln!("no static data found (EVE_SDE_DIR or .cache/sde): skipped");
-        return None;
-    };
-    Some(World::load(sde).expect("the static data loads"))
+fn world() -> World {
+    World::load(reference_sde()).expect("the static data loads")
 }
 
 #[test]
@@ -54,7 +49,7 @@ fn the_ship_is_added_as_the_reference_added_it() {
 
 #[test]
 fn the_state_is_what_the_reference_sent_apart_from_what_only_it_adds() {
-    let Some(world) = world() else { return };
+    let world = world();
     let recording = fixture("undock.json");
     let race = &recording["races"][0];
     let bind = step(race, "bind the ballpark");

@@ -8,7 +8,6 @@ use std::sync::Arc;
 use eve_destiny::Vec3;
 use eve_space::gate;
 use eve_space::scene::{Command, Out, Scene};
-use eve_space::sde::Sde;
 use eve_space::ship::ShipSpec;
 use eve_space::world::{SolarSystem, World};
 use serde_json::Value;
@@ -30,23 +29,19 @@ struct Recorded {
     destination: Arc<SolarSystem>,
 }
 
-fn recorded() -> Option<Recorded> {
-    let Some(sde) = Sde::locate() else {
-        eprintln!("no static data found (EVE_SDE_DIR or .cache/sde): skipped");
-        return None;
-    };
-    let world = World::load(sde).expect("the static data loads");
+fn recorded() -> Recorded {
+    let world = World::load(reference_sde()).expect("the static data loads");
     let race = fixture("jump.json")["races"][0].clone();
     let (_, _, buffer) = initial_ship_addition(&race);
     let mut ship = recorded_ship(&race, &buffer, recorded_direction(&race));
     ship.spec.warp_speed_au = 3.0;
-    Some(Recorded {
+    Recorded {
         race,
         spec: ship.spec,
         start: ship.position,
         source: Arc::new(world.system(SOURCE).unwrap()),
         destination: Arc::new(world.system(DESTINATION).unwrap()),
-    })
+    }
 }
 
 fn gap(a: Vec3, b: Vec3) -> f64 {
@@ -70,7 +65,7 @@ fn recorded_ship_position(step: &Value, ship_id: i64) -> Vec3 {
 
 #[test]
 fn the_recorded_ship_came_to_rest_by_the_gate_where_our_rule_lets_a_ship_come_to_rest() {
-    let Some(r) = recorded() else { return };
+    let r = recorded();
     let gate = r.source.body(GATE).unwrap();
     let warp = step(&r.race, "warp to the stargate");
     let (_, _, aim) = destiny_actions(warp).into_iter().find(|(_, name, _)| name == "WarpTo").unwrap();
@@ -108,7 +103,7 @@ fn the_recorded_ship_came_to_rest_by_the_gate_where_our_rule_lets_a_ship_come_to
 
 #[test]
 fn the_recorded_ship_appeared_in_the_cone_in_front_of_the_gate_where_our_rule_puts_a_ship() {
-    let Some(r) = recorded() else { return };
+    let r = recorded();
     let gate = r.destination.body(ARRIVAL_GATE).unwrap();
     let appeared = recorded_ship_position(step(&r.race, "look at the state there"), r.spec.ship_id);
     let apart = gap(appeared, gate.position);
@@ -152,7 +147,7 @@ fn by_the_gate(r: &Recorded) -> (Scene, i64) {
 
 #[test]
 fn a_jump_is_told_as_the_reference_told_it_and_the_ship_leaves_when_the_reference_s_did() {
-    let Some(r) = recorded() else { return };
+    let r = recorded();
     let (mut scene, t) = by_the_gate(&r);
     let out = scene.command(SESSION, Command::Jump { gate_id: GATE, destination_gate: ARRIVAL_GATE }, t);
     assert_eq!(out.len(), 2, "the update, and the word that the ship is going: {out:?}");
@@ -186,7 +181,7 @@ fn a_jump_is_told_as_the_reference_told_it_and_the_ship_leaves_when_the_referenc
 
 #[test]
 fn the_ship_that_has_jumped_is_bound_in_the_other_system_as_the_reference_bound_it() {
-    let Some(r) = recorded() else { return };
+    let r = recorded();
     let (mut scene, t) = by_the_gate(&r);
     scene.command(SESSION, Command::Jump { gate_id: GATE, destination_gate: ARRIVAL_GATE }, t);
     let traveller = scene.due_jumps(t + 4 * SECOND).0.pop().unwrap();

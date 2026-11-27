@@ -1,6 +1,7 @@
 //! Usage: eve-sde ensure|info|load|verify ...
 //! `EVE_SDE_CACHE` sets the default cache; `EVE_SDE_BASE_URL` overrides the SDE host.
-//! `--missions` loads `missions` and `epicArcs` into `sde_mission`, then removes the archive and extracted build.
+//! `--missions` loads the mission subset into `sde_mission`.
+//! `--reference` uses the recording's build in a separate cache and, with PostgreSQL, in `sde_reference`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -15,7 +16,7 @@ type Failure = Box<dyn std::error::Error>;
 fn usage() -> ExitCode {
     eprintln!(
         "usage: eve-sde ensure [--build N|latest] [--cache DIR] [--pg URL] [--source URL]... [--archive FILE] \
-         [--sha256 HEX|skip] [--keep-archive] [--missions]\n       \
+         [--sha256 HEX|skip] [--keep-archive] [--missions|--reference]\n       \
          eve-sde info <dir> | load <dir> --pg <url> | verify <dir> --pg <url>"
     );
     ExitCode::from(2)
@@ -35,7 +36,17 @@ fn values<'a>(args: &'a [String], flag: &str) -> Vec<&'a String> {
 
 fn ensure_command(args: &[String]) -> Result<ExitCode, Failure> {
     let missions = args.iter().any(|arg| arg == "--missions");
-    let pin = if missions { fetch::mission_pinned()? } else { fetch::pinned()? };
+    let reference = args.iter().any(|arg| arg == "--reference");
+    if reference && (missions || value(args, "--build").is_some()) {
+        return Err("--reference cannot be combined with --missions or --build".into());
+    }
+    let pin = if missions {
+        fetch::mission_pinned()?
+    } else if reference {
+        fetch::reference_pinned()?
+    } else {
+        fetch::pinned()?
+    };
     let base = std::env::var("EVE_SDE_BASE_URL").ok().filter(|base| !base.is_empty());
     let official = base.as_deref().unwrap_or(fetch::OFFICIAL_BASE);
 
@@ -60,10 +71,13 @@ fn ensure_command(args: &[String]) -> Result<ExitCode, Failure> {
         Some(hash) => Expect::Sha256(hash.to_owned()),
         None => known.sha256.map_or(Expect::Unchecked, Expect::Sha256),
     };
+    let default_cache = if reference { ".cache/sde-reference" } else { ".cache/sde" };
     let cache_dir = value(args, "--cache")
         .cloned()
-        .or_else(|| std::env::var("EVE_SDE_CACHE").ok().filter(|dir| !dir.is_empty()))
-        .unwrap_or_else(|| ".cache/sde".to_owned());
+        .or_else(|| {
+            if reference { None } else { std::env::var("EVE_SDE_CACHE").ok().filter(|dir| !dir.is_empty()) }
+        })
+        .unwrap_or_else(|| default_cache.to_owned());
     let options = FetchOptions {
         build,
         cache_dir: PathBuf::from(cache_dir),
@@ -87,7 +101,8 @@ fn ensure_command(args: &[String]) -> Result<ExitCode, Failure> {
             let (outcome, schema) = if missions {
                 (ensure::ensure_missions(&mut client, &options)?, ensure::MISSION_SCHEMA)
             } else {
-                (ensure::ensure_loaded(&mut client, &options)?, load::DEFAULT_SCHEMA)
+                let schema = if reference { "sde_reference" } else { load::DEFAULT_SCHEMA };
+                (ensure::ensure_loaded_into(&mut client, &options, schema)?, schema)
             };
             match outcome {
                 Outcome::AlreadyLoaded => {

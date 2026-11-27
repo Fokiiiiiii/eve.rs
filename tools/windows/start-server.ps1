@@ -19,12 +19,16 @@
 
 .PARAMETER Strict
   Sets EVE_STRICT_RPC=1 (implies -Dev).
+
+.PARAMETER ReferenceSde
+  Use the recording's SDE in an isolated test database whose name ends in _reference.
 #>
 [CmdletBinding()]
 param(
     [switch]$Dev,
     [switch]$Trace,
-    [switch]$Strict
+    [switch]$Strict,
+    [switch]$ReferenceSde
 )
 
 $ErrorActionPreference = 'Stop'
@@ -197,6 +201,7 @@ try {
     $pgUri = [Uri]$env:EVE_PG_URL
     $dbName = $pgUri.AbsolutePath.TrimStart('/')
     if ($dbName -notmatch '^[A-Za-z0-9_]+$') { throw "database name '$dbName' must be letters, digits and underscores" }
+    if ($ReferenceSde -and $dbName -notmatch '_reference$') { throw '-ReferenceSde requires a dedicated database ending in _reference.' }
     $pgPort = if ($pgUri.Port -gt 0) { $pgUri.Port } else { 5432 }
     $userPart = if ($pgUri.UserInfo) { $pgUri.UserInfo + '@' } else { '' }
     $adminUrl = "postgres://$userPart$($pgUri.Host):$pgPort/postgres$($pgUri.Query)"
@@ -221,11 +226,21 @@ try {
     }
 
     # The static data: a no-op when the database already holds the pinned build
-    Write-Step 'loading the static data (eve-sde ensure; the pinned build is downloaded on the first start)'
+    Write-Step 'loading the static data (eve-sde ensure)'
     Push-Location $root
     try {
-        & (Join-Path $releaseDir ('eve-sde' + $exeSuffix)) ensure --pg $env:EVE_PG_URL
-        if ($LASTEXITCODE -ne 0) { throw 'eve-sde ensure failed' }
+        $sde = Join-Path $releaseDir ('eve-sde' + $exeSuffix)
+        if ($ReferenceSde) {
+            $pin = (Get-Content -Raw -LiteralPath 'sde/lock.json' | ConvertFrom-Json).referencePinned
+            $referenceDir = & $sde ensure --build $pin --cache '.cache/sde-reference' --pg $env:EVE_PG_URL
+            if ($LASTEXITCODE -ne 0 -or -not $referenceDir) { throw 'Reference SDE loading failed.' }
+            $env:EVE_SDE_DIR = (Resolve-Path -LiteralPath $referenceDir).Path
+            & $sde ensure --missions --pg $env:EVE_PG_URL
+            if ($LASTEXITCODE -ne 0) { throw 'Mission data loading failed.' }
+        } else {
+            & $sde ensure --pg $env:EVE_PG_URL
+            if ($LASTEXITCODE -ne 0) { throw 'eve-sde ensure failed' }
+        }
     }
     finally { Pop-Location }
 

@@ -112,6 +112,19 @@ jobs:
         run: |
           cargo run -q -p eve-sde -- ensure --pg "$EVE_PG_URL"
           cargo run -q -p eve-sde -- ensure --missions --pg "$EVE_PG_URL"
+      - if: inputs.rust == 'tests' || inputs.rust == 'all' || inputs.dotnet_projects == 'all' || contains(inputs.dotnet_projects, 'Eve.Dogma.Tests')
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/sde-reference
+          key: sde-reference-${{ hashFiles('sde/lock.json') }}
+      - name: Prepare the reference SDE
+        if: inputs.rust == 'tests' || inputs.rust == 'all' || inputs.dotnet_projects == 'all' || contains(inputs.dotnet_projects, 'Eve.Dogma.Tests')
+        run: |
+          if [ "${{ inputs.dotnet_projects == 'all' || contains(inputs.dotnet_projects, 'Eve.Dogma.Tests') }}" = true ]; then
+            cargo run -q -p eve-sde -- ensure --reference --pg "$EVE_PG_URL"
+          else
+            env -u EVE_PG_URL cargo run -q -p eve-sde -- ensure --reference
+          fi
       - name: Install the headless client
         if: inputs.live_tests != ''
         run: |

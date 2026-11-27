@@ -4,9 +4,25 @@
 use std::path::PathBuf;
 
 use eve_destiny::Vec3;
+use eve_sde::{SdeManifest, fetch};
 use eve_space::health::{Condition, Resonances, Vitals};
+use eve_space::sde::Sde;
 use eve_space::ship::{Course, ModuleSpec, Ship, ShipSpec};
 use serde_json::{Value, json};
+
+pub fn reference_sde() -> Sde {
+    let build = fetch::reference_pinned().expect("the reference SDE is pinned in sde/lock.json").build;
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.cache/sde-reference")
+        .join(fetch::archive_name(build));
+    assert!(
+        dir.join(".complete").is_file(),
+        "recorded comparisons require SDE {build}; run `cargo run -p eve-sde -- ensure --reference` first"
+    );
+    let manifest = SdeManifest::read(&dir).expect("the reference SDE manifest loads");
+    assert_eq!(manifest.build_number, i64::try_from(build).ok(), "the SDE matches the reference pin");
+    Sde::open(dir)
+}
 
 pub fn fixture(name: &str) -> Value {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../oracle/fixtures/scenarios").join(name);

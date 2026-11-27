@@ -41,6 +41,8 @@ Invoke-Step 'rust' {
     $env:EVE_PG_URL = $pgUrl
     cargo "+$toolchain" run -q -p eve-sde -- ensure
     if ($LASTEXITCODE -ne 0) { throw 'eve-sde ensure failed' }
+    cargo "+$toolchain" run -q -p eve-sde -- ensure --reference --pg $pgUrl
+    if ($LASTEXITCODE -ne 0) { throw 'Reference SDE preparation failed.' }
     cargo "+$toolchain" test --workspace
 }
 Invoke-Step 'dotnet' {
@@ -48,6 +50,8 @@ Invoke-Step 'dotnet' {
     $env:EVE_PG_URL = $pgUrl
     cargo "+$toolchain" run -q -p eve-sde -- ensure --pg $pgUrl
     if ($LASTEXITCODE -ne 0) { throw 'eve-sde ensure failed' }
+    cargo "+$toolchain" run -q -p eve-sde -- ensure --reference --pg $pgUrl
+    if ($LASTEXITCODE -ne 0) { throw 'Reference SDE preparation failed.' }
     Push-Location (Join-Path $root 'dotnet')
     try {
         cargo "+$toolchain" run -q -p eve-sde -- ensure --missions --pg $pgUrl

@@ -182,8 +182,6 @@ def test_known_error_allowlist_is_exact_and_tracks_the_live_fix_jobs():
     allowlist = load_allowlist(DEFAULT_ALLOWLIST)
     signatures = {(entry["service"], entry["method"], entry["reason"]) for entry in allowlist}
     assert signatures == {
-        ("alert", "SendClientStackTraceAlert", "ALERT_ARGUMENTS_INVALID"),
-        ("eventLog", "LogClientStats", "CLIENT_STATS_SESSION_INVALID"),
         ("corpFittingMgr", "GetFittings", "SessionRpcBudgetExceeded"),
         ("corpFittingMgr", "GetCommunityFittings", "SessionRpcBudgetExceeded"),
     }

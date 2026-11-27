@@ -72,7 +72,7 @@ public class ReferenceTests
 
     private static async Task<(DogmaWorld World, Recorded1 Expected, DogmaStatic Statics)> BuildAsync(int raceId)
     {
-        var sde = await PgFactAttribute.SdeAsync();
+        var sde = await PgFactAttribute.ReferenceSdeAsync();
         var statics = await DogmaStatic.LoadAsync(sde);
         var skills = await SkillCatalog.LoadAsync(sde);
         var expected = Races().Single(r => r.RaceId == raceId);

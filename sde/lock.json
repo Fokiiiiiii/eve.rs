@@ -274,5 +274,6 @@
   },
   "missionPinned": "3720952",
   "note": "SDE builds fetched for development. The data itself is never committed.",
-  "pinned": "3720952"
+  "pinned": "3720952",
+  "referencePinned": "3396210"
 }

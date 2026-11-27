@@ -102,12 +102,21 @@ pub fn pinned() -> Result<Pin, FetchError> {
 /// The mission build of the compiled-in lock file (`missionPinned`): a second build, newer than
 /// the client's, that carries the tables the client's build does not have. See [`pinned`].
 pub fn mission_pinned() -> Result<Pin, FetchError> {
+    named_pin("missionPinned")
+}
+
+/// The SDE used to record the EveJS comparisons.
+pub fn reference_pinned() -> Result<Pin, FetchError> {
+    named_pin("referencePinned")
+}
+
+fn named_pin(key: &str) -> Result<Pin, FetchError> {
     let lock: Value = serde_json::from_str(LOCK).map_err(|error| FetchError::Lock(error.to_string()))?;
     let build = lock
-        .get("missionPinned")
+        .get(key)
         .and_then(Value::as_str)
         .and_then(|text| text.parse().ok())
-        .ok_or_else(|| FetchError::Lock("no \"missionPinned\" build".to_owned()))?;
+        .ok_or_else(|| FetchError::Lock(format!("no {key:?} build")))?;
     pin_from(LOCK, Some(build))
 }
 

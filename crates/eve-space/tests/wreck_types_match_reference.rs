@@ -1,18 +1,16 @@
 //! The wreck a ship of some type leaves is the one the reference's `resolveShipWreckType` gave for the same type (`oracle/fixtures/wrecks/ship_wrecks.json`,
 //! made by `tools/dev/gen-ship-wrecks-fixture.js` for every ship type of the static data).
+mod support;
+
 use std::path::PathBuf;
 
-use eve_space::sde::Sde;
 use eve_space::wreck_types::WreckCatalog;
 use serde_json::Value;
+use support::reference_sde;
 
 #[test]
 fn every_ship_type_leaves_the_wreck_the_reference_gave_it() {
-    let Some(sde) = Sde::locate() else {
-        eprintln!("no static data found (EVE_SDE_DIR or .cache/sde): skipped");
-        return;
-    };
-    let catalog = WreckCatalog::from_sde(&sde).expect("the static data loads");
+    let catalog = WreckCatalog::from_sde(&reference_sde()).expect("the static data loads");
     let path =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../oracle/fixtures/wrecks/ship_wrecks.json");
     let fixture: Value =

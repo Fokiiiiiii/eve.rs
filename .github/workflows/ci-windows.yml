@@ -77,6 +77,10 @@ jobs:
         with:
           path: .cache/sde
           key: sde-${{ steps.sde-build.outputs.build }}-${{ hashFiles('sde/lock.json') }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/sde-reference
+          key: sde-reference-${{ hashFiles('sde/lock.json') }}
       - name: Rust format and lint
         run: |
           cargo fmt --all --check
@@ -87,6 +91,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'SDE loading failed.' }
           cargo run -q -p eve-sde -- ensure --missions --pg $env:EVE_PG_URL
           if ($LASTEXITCODE -ne 0) { throw 'Mission data loading failed.' }
+          cargo run -q -p eve-sde -- ensure --reference
+          if ($LASTEXITCODE -ne 0) { throw 'Reference SDE preparation failed.' }
           cargo test --workspace
       - name: Build .NET solution
         working-directory: dotnet
@@ -108,6 +114,10 @@ jobs:
         run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/windows/run-headless.ps1 -PytestArgs tests/test_marshal_golden.py tests/test_handshake_mock.py
       - name: Start server and walk the Windows client path
         shell: pwsh
+        env:
+          EVE_PG_URL: postgres://postgres:postgres@127.0.0.1:5432/eve_reference
+          EVE_LIVE_HOST: 127.0.0.1:26000
+          EVE_LIVE_STRICT_PASSWORDS: "1"
         run: |
           $serverState = Join-Path $PWD '.cache/server'
           $serverLogs = Join-Path $serverState 'logs'
@@ -115,7 +125,7 @@ jobs:
           $stdout = Join-Path $serverState 'windows-start.stdout.log'
           $stderr = Join-Path $serverState 'windows-start.stderr.log'
           $start = Join-Path $PWD 'tools/windows/start-server.ps1'
-          $server = Start-Process -FilePath 'powershell.exe' -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' + $start + '"') -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+          $server = Start-Process -FilePath 'powershell.exe' -ArgumentList ('-NoProfile -ExecutionPolicy Bypass -File "' + $start + '" -ReferenceSde') -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
           try {
             $deadline = (Get-Date).AddMinutes(10)
             $ready = $false

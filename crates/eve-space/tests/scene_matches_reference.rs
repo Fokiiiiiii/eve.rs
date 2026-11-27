@@ -6,7 +6,6 @@ use std::sync::Arc;
 use eve_destiny::Vec3;
 use eve_space::health::Condition;
 use eve_space::scene::{Command, Out, Scene, stamp_at};
-use eve_space::sde::Sde;
 use eve_space::world::World;
 use serde_json::{Value, json};
 use support::*;
@@ -46,16 +45,12 @@ impl Recorded {
 
 #[test]
 fn recorded_scene_comparisons_require_static_data() {
-    assert!(
-        Sde::locate().is_some(),
-        "recorded scene comparisons require the pinned SDE; run `cargo run -p eve-sde -- ensure` first"
-    );
+    reference_sde();
 }
 
 /// The scene the recording was made in, with the recorded ship in space at `now`.
 fn scene_at(now: i64) -> (Scene, Recorded) {
-    let sde = Sde::locate().expect("recorded scene comparisons require the pinned SDE");
-    let world = World::load(sde).expect("the static data loads");
+    let world = World::load(reference_sde()).expect("the static data loads");
     let recorded = Recorded { recording: fixture("undock.json") };
     let race = recorded.race().clone();
     let (_, _, ball) = initial_ship_addition(&race);

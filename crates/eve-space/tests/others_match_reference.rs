@@ -7,7 +7,6 @@ use std::sync::Arc;
 
 use eve_destiny::Vec3;
 use eve_space::scene::{Command, Out, Scene};
-use eve_space::sde::Sde;
 use eve_space::ship::ShipSpec;
 use eve_space::world::World;
 use serde_json::{Value, json};
@@ -26,12 +25,8 @@ struct Recording {
     world: Arc<eve_space::world::SolarSystem>,
 }
 
-fn recording() -> Option<Recording> {
-    let Some(sde) = Sde::locate() else {
-        eprintln!("no static data found (EVE_SDE_DIR or .cache/sde): skipped");
-        return None;
-    };
-    let world = World::load(sde).expect("the static data loads");
+fn recording() -> Recording {
+    let world = World::load(reference_sde()).expect("the static data loads");
     let race = fixture("others.json")["races"][0].clone();
 
     // A system bind now sends `SetState`, whose free-ball stream contains the pilot's ball;
@@ -47,7 +42,7 @@ fn recording() -> Option<Recording> {
     let mut actor = recorded_ship(&actor_race, &actor_ball, Vec3::new(1.0, 0.0, 0.0)).spec;
     actor.warp_speed_au = 3.0;
 
-    Some(Recording { race, watcher, actor, world: Arc::new(world.system(SYSTEM).unwrap()) })
+    Recording { race, watcher, actor, world: Arc::new(world.system(SYSTEM).unwrap()) }
 }
 
 fn recorded_undock(race: &Value, pilot: &str) -> Value {
@@ -181,7 +176,7 @@ fn scene_with_both(r: &Recording) -> Scene {
 
 #[test]
 fn the_watcher_is_shown_the_actor_that_undocks_as_the_reference_showed_it() {
-    let Some(r) = recording() else { return };
+    let r = recording();
     let mut scene = scene_with_both(&r);
     let station = r.race["stationID"].as_i64().unwrap();
     let told = scene.undock(ACTOR, r.actor.clone(), station, T0 + 8 * SECOND).unwrap();
@@ -235,7 +230,7 @@ fn the_watcher_is_shown_the_actor_that_undocks_as_the_reference_showed_it() {
 
 #[test]
 fn the_actor_that_binds_is_given_both_ships_and_the_numbers_of_both_as_the_reference_gave_them() {
-    let Some(r) = recording() else { return };
+    let r = recording();
     let mut scene = scene_with_both(&r);
     let station = r.race["stationID"].as_i64().unwrap();
     scene.undock(ACTOR, r.actor.clone(), station, T0 + 8 * SECOND).unwrap();
@@ -327,7 +322,7 @@ fn the_actor_that_binds_is_given_both_ships_and_the_numbers_of_both_as_the_refer
         sentry_counts, reference_sentry_counts,
         "visible active sentries in this recorded system view"
     );
-    let sde = Sde::locate().expect("the pinned SDE is required for the reference comparison");
+    let sde = reference_sde();
     let groups = sde.table("groups").expect("SDE groups load");
     let types_sde = sde.table("types").expect("SDE types load");
     assert_eq!(groups[&99]["categoryID"], 11);
@@ -346,7 +341,7 @@ fn the_actor_that_binds_is_given_both_ships_and_the_numbers_of_both_as_the_refer
 
 #[test]
 fn the_watcher_is_told_of_each_order_as_the_reference_told_it() {
-    let Some(r) = recording() else { return };
+    let r = recording();
     let mut scene = scene_with_both(&r);
     let station = r.race["stationID"].as_i64().unwrap();
     scene.undock(ACTOR, r.actor.clone(), station, T0 + 8 * SECOND).unwrap();
@@ -412,7 +407,7 @@ fn the_watcher_is_told_of_each_order_as_the_reference_told_it() {
 
 #[test]
 fn a_ship_that_docks_is_shown_as_the_reference_showed_it_and_is_gone_when_it_has_docked() {
-    let Some(r) = recording() else { return };
+    let r = recording();
     let mut world = (*r.world).clone();
     // the recorded station is 70 km across: a ship that has just come out is within docking range
     let station = r.race["stationID"].as_i64().unwrap();
@@ -460,7 +455,7 @@ fn a_ship_that_docks_is_shown_as_the_reference_showed_it_and_is_gone_when_it_has
 
 #[test]
 fn a_warp_is_shown_to_the_watcher_and_the_ship_is_taken_from_view_when_it_has_gone_far_enough() {
-    let Some(r) = recording() else { return };
+    let r = recording();
     let mut scene = scene_with_both(&r);
     let station = r.race["stationID"].as_i64().unwrap();
     scene.undock(ACTOR, r.actor.clone(), station, T0 + 8 * SECOND).unwrap();

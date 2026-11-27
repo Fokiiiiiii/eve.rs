@@ -1,23 +1,18 @@
 //! The bodies of a solar system, built from the static data, hold to what the reference sent the client for it.
 mod support;
 
-use eve_space::sde::Sde;
 use eve_space::world::{BodyKind, World};
 use support::*;
 
 const SYSTEM: i32 = 30100032;
 
-fn world() -> Option<World> {
-    let Some(sde) = Sde::locate() else {
-        eprintln!("no static data found (EVE_SDE_DIR or .cache/sde): skipped");
-        return None;
-    };
-    Some(World::load(sde).expect("the static data loads"))
+fn world() -> World {
+    World::load(reference_sde()).expect("the static data loads")
 }
 
 #[test]
 fn the_bodies_are_the_balls_the_reference_sent_in_the_same_order() {
-    let Some(world) = world() else { return };
+    let world = world();
     let recording = fixture("undock.json");
     let race = &recording["races"][0];
     let state = set_state(step(race, "bind the ballpark"));
@@ -51,7 +46,7 @@ fn the_bodies_are_the_balls_the_reference_sent_in_the_same_order() {
 
 #[test]
 fn the_names_and_kinds_are_the_ones_the_reference_gave_each_body() {
-    let Some(world) = world() else { return };
+    let world = world();
     let recording = fixture("undock.json");
     let state = set_state(step(&recording["races"][0], "bind the ballpark"));
     let system = world.system(SYSTEM).unwrap();
@@ -74,7 +69,7 @@ fn the_names_and_kinds_are_the_ones_the_reference_gave_each_body() {
 
 #[test]
 fn a_stargate_faces_the_way_the_reference_turned_it() {
-    let Some(world) = world() else { return };
+    let world = world();
     let recording = fixture("undock.json");
     let state = set_state(step(&recording["races"][0], "bind the ballpark"));
     let system = world.system(SYSTEM).unwrap();

@@ -24,6 +24,15 @@ public sealed class PgFactAttribute : FactAttribute
         Assert.True(await reader.BuildAsync() is not null, "no SDE is loaded: run `cargo run -p eve-sde -- ensure --pg $EVE_PG_URL`");
         return reader;
     }
+
+    public static async Task<SdeReader> ReferenceSdeAsync()
+    {
+        var reader = new SdeReader(NpgsqlDataSource.Create(PgConnection.ForTest(Url!)), "sde_reference");
+        var build = await reader.BuildAsync();
+        Assert.True(build == SdeBuildPin.Reference,
+            $"Reference SDE {SdeBuildPin.Reference} is required (found {build}); run `cargo run -p eve-sde -- ensure --reference --pg <url>`.");
+        return reader;
+    }
 }
 
 /// <summary>Reads what the reference sent, as the recorder wrote it (<c>{"$tuple": …}</c>, <c>{"$dict": [[k, v], …]}</c>, <c>{"$long": n}</c>).</summary>

@@ -695,6 +695,7 @@ def _client_skill_totals(race):
     client_total = _character_skill_points(_client_skill_oracle(all_skills))
     return int(recorded_total), client_total
 
+@pytest.mark.reference_sde
 @pytest.mark.parametrize("race", SKILLS["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_character_has_the_skills_the_reference_gives(race):
     run = run_token()
@@ -1086,6 +1087,7 @@ def _client_charisma_events(described, character_id):
         return {key: _client_charisma_events(value, character_id) for key, value in described.items()}
     return described
 
+@pytest.mark.reference_sde
 @pytest.mark.parametrize("race", DOGMA["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_a_new_characters_dogma_is_that_of_the_reference(race):
     run = run_token()
@@ -1323,6 +1325,7 @@ def speed_of(client: Client) -> float:
     attributes = dict(describe(client.call("skillHandler", "GetAttributes"))["$dict"])
     return attributes[165] / 20
 
+@pytest.mark.reference_sde
 @pytest.mark.parametrize("race", TRAINING["races"], ids=lambda r: f"race-{r['raceID']}")
 def test_the_skill_queue_is_what_the_reference_does(race):
     run = run_token()

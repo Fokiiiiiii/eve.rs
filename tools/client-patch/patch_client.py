@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Point a local, unmodified EVE Online client (build 3396210) at an eve.rs server.
+"""Point a local EVE Online client (build 3396210 or 3724492) at an eve.rs server.
 
 The tool changes exactly one file: <client-dir>/start.ini, the client's own
 settings file, where it sets the server address and the crypto pack. It never
@@ -7,9 +7,8 @@ writes anything under bin64/ or ResFiles. Before the first change the original
 bytes are saved to start.ini.eve-rs-backup; --restore copies them back and
 removes that backup.
 
-It refuses to act unless start.ini says build 3396210 and bin64/exefile.exe is
-the unmodified build-3396210 executable (size and SHA-256 below). Python 3
-standard library only; runs on Windows and Linux.
+It checks the build in start.ini and the corresponding executable fingerprint.
+Python 3 standard library only; runs on Windows and Linux.
 """
 
 import argparse
@@ -21,6 +20,7 @@ import sys
 
 SUPPORTED_BUILD = "3396210"
 EXE_RELPATH = os.path.join("bin64", "exefile.exe")
+BUILD_3724492_EXE = (1003184, "b6f98f15bf4c578df70fa69ed2f7f7929fd3b78ef3364f0a82b1c9983dc9fcb7")
 EXE_SIZE = 1003152
 EXE_SHA256 = "2aaf7a9a8dfcde85e4adb50c1eccd3756a4d29aeb854dfe69629846ba56ee979"
 BACKUP_NAME = "start.ini.eve-rs-backup"
@@ -109,17 +109,20 @@ def sha256_file(path):
 
 
 def check_client(client_dir, lines):
-    """Refuse anything other than the unmodified build-3396210 client."""
+    """Refuse builds and executable fingerprints not in the supported profiles."""
     builds = [value for _, value in ini_values(lines, ("build",))]
-    if builds != [SUPPORTED_BUILD]:
-        raise ClientError("start.ini must contain exactly one 'build = %s' line (found: %s)."
-                          % (SUPPORTED_BUILD, builds or "none"))
+    profiles = {SUPPORTED_BUILD: (EXE_SIZE, EXE_SHA256), "3724492": BUILD_3724492_EXE}
+    if len(builds) != 1 or builds[0] not in profiles:
+        raise ClientError("start.ini must contain exactly one supported build (found: %s)."
+                          % (builds or "none"))
+    build = builds[0]
+    expected_size, expected_hash = profiles[build]
     exe = os.path.join(client_dir, EXE_RELPATH)
     if not os.path.isfile(exe):
         raise ClientError("missing %s" % exe)
-    if os.path.getsize(exe) != EXE_SIZE or sha256_file(exe) != EXE_SHA256:
-        raise ClientError("%s is not the unmodified build %s executable (size or SHA-256 differs). "
-                          "A patched or different client is refused." % (exe, SUPPORTED_BUILD))
+    if os.path.getsize(exe) != expected_size or sha256_file(exe) != expected_hash:
+        raise ClientError("%s does not match the build %s executable fingerprint (size or SHA-256 differs)."
+                          % (exe, build))
 
 
 def write_atomic(path, data):
@@ -140,7 +143,7 @@ def _ini_path(client_dir):
     return ini
 
 
-def apply(client_dir, host, port, dry_run=False):
+def apply(client_dir, host, port, dry_run=False, backup_dir=None):
     ini = _ini_path(client_dir)
     raw, lines = load_ini(ini)
     check_client(client_dir, lines)
@@ -159,7 +162,9 @@ def apply(client_dir, host, port, dry_run=False):
     if dry_run:
         print("[dry-run] no file was changed.")
         return 0
-    backup = os.path.join(client_dir, BACKUP_NAME)
+    backup = os.path.join(backup_dir or client_dir, BACKUP_NAME)
+    if backup_dir:
+        os.makedirs(backup_dir, exist_ok=True)
     if not os.path.exists(backup):
         write_atomic(backup, raw)
         print("[backup] %s" % backup)
@@ -171,9 +176,9 @@ def apply(client_dir, host, port, dry_run=False):
     return 0
 
 
-def restore(client_dir, dry_run=False):
+def restore(client_dir, dry_run=False, backup_dir=None):
     ini = _ini_path(client_dir)
-    backup = os.path.join(client_dir, BACKUP_NAME)
+    backup = os.path.join(backup_dir or client_dir, BACKUP_NAME)
     if not os.path.isfile(backup):
         raise ClientError("no %s; nothing to restore" % backup)
     if dry_run:
@@ -194,13 +199,14 @@ def main(argv=None):
     parser.add_argument("--server", default=DEFAULT_SERVER, metavar="HOST[:PORT]",
                         help="IPv4 address of the eve.rs front (default %(default)s)")
     parser.add_argument("--dry-run", action="store_true", help="show the plan and verify, change nothing")
+    parser.add_argument("--backup-dir", help="directory for the start.ini backup")
     parser.add_argument("--restore", action="store_true", help="restore start.ini from the backup")
     args = parser.parse_args(argv)
     try:
         if args.restore:
-            return restore(args.client_dir, args.dry_run)
+            return restore(args.client_dir, args.dry_run, args.backup_dir)
         host, port = parse_server(args.server)
-        return apply(args.client_dir, host, port, args.dry_run)
+        return apply(args.client_dir, host, port, args.dry_run, args.backup_dir)
     except ClientError as error:
         print("[error] %s" % error, file=sys.stderr)
         return 1

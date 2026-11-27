@@ -128,6 +128,19 @@ class PatchClientTests(unittest.TestCase):
         self.assertEqual(original, self.read_bytes(self.ini))
         self.assertFalse(os.path.exists(self.backup))
 
+    def test_build_3724492_fingerprint_and_backup_directory(self):
+        saved = pc.BUILD_3724492_EXE
+        pc.BUILD_3724492_EXE = (len(FAKE_EXE), hashlib.sha256(FAKE_EXE).hexdigest())
+        self.addCleanup(setattr, pc, "BUILD_3724492_EXE", saved)
+        self.write_ini(START_INI.replace("3396210", "3724492"))
+        original = self.read_bytes(self.ini)
+        backup_dir = os.path.join(self.tmp.name, "backup")
+        self.assertEqual(0, quiet(pc.apply, self.client, "127.0.0.1", 26200, backup_dir=backup_dir))
+        self.assertEqual(original, self.read_bytes(os.path.join(backup_dir, pc.BACKUP_NAME)))
+        self.assertIn(b"server = 127.0.0.1", self.read_bytes(self.ini))
+        self.assertEqual(0, quiet(pc.restore, self.client, backup_dir=backup_dir))
+        self.assertEqual(original, self.read_bytes(self.ini))
+
     def test_server_argument_rules(self):
         self.assertEqual(("127.0.0.1", 26000), pc.parse_server("127.0.0.1"))
         self.assertEqual(("192.0.2.5", 26100), pc.parse_server("192.0.2.5:26100"))

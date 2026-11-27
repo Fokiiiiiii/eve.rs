@@ -1,5 +1,21 @@
 # Client preparation for eve.rs
 
+## Local XMPP chat with Docker Compose
+
+The default compose setup publishes the chat listener at `127.0.0.1:5222`.
+For a client profile dedicated to this local server, close the client and set
+`chatserver_disable_tls=1` in that profile's `settings/prefs.ini` under
+`%LOCALAPPDATA%/CCP/EVE`. Keep the chat endpoint on the same machine. The
+client otherwise starts TLS immediately, while this local listener uses plain
+XMPP with a per-session chat token. Set `EVE_XMPP_ENABLED=false` to disable the
+compose listener. Use a trusted XMPP certificate for deployments that require TLS.
+
+## Build 3724492
+
+Build 3724492 (V24.02) is also accepted using the executable size and SHA-256
+observed in the locally supplied client. This script only edits start.ini. Use `--backup-dir PATH` on both apply and restore to store
+the original start.ini in a separate directory.
+
 This folder points **your own** EVE Online client, build 3396210 (V24.01), at a
 local or LAN eve.rs server. It contains scripts and documentation only. It does
 not contain, download or modify any CCP binary, resource or cache file, and it

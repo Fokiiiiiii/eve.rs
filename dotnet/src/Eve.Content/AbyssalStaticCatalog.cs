@@ -179,9 +179,9 @@ public sealed class AbyssalStaticCatalog
         ArgumentNullException.ThrowIfNull(sde);
 
         var build = await sde.BuildAsync(cancellationToken);
-        if (build != RuntimeSdeBuild)
+        if (build != RuntimeSdeBuild && build != RequiredSdeBuild)
         {
-            throw new InvalidDataException($"Abyssal catalog requires SDE build {RuntimeSdeBuild}; loaded build was {build?.ToString(CultureInfo.InvariantCulture) ?? "none"}.");
+            throw new InvalidDataException($"Abyssal catalog requires SDE build {RuntimeSdeBuild} or {RequiredSdeBuild}; loaded build was {build?.ToString(CultureInfo.InvariantCulture) ?? "none"}.");
         }
 
         using var embedded = ReadEmbeddedData();

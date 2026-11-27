@@ -165,7 +165,10 @@ internal static class HostConfiguration
             : System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12FromFile(
                 path,
                 Environment.GetEnvironmentVariable("EVE_PUBLIC_GATEWAY_CERT_PASSWORD"),
-                System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet);
+                // Windows TLS (SChannel) cannot serve with a key that is only in memory: the handshake ends with no bytes.
+                OperatingSystem.IsWindows()
+                    ? System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.DefaultKeySet
+                    : System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.EphemeralKeySet);
     }
 
     /// <summary>The accounts EVE_AUTO_RELOAD_ACCOUNTS names. An entry that is not an account id stops the host: a typo must not switch a client's reload on or off unnoticed.</summary>

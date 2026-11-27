@@ -65,6 +65,25 @@ public sealed class PublicGatewayTests
     }
 
 
+    /// <summary>The certificate through the Host's own loading of EVE_PUBLIC_GATEWAY_CERT_PATH, which TLS on Windows depends on.</summary>
+    private static System.Security.Cryptography.X509Certificates.X509Certificate2 LoadedAsTheHostLoadsIt(
+        System.Security.Cryptography.X509Certificates.X509Certificate2 created)
+    {
+        var path = Path.GetTempFileName();
+        var previous = Environment.GetEnvironmentVariable("EVE_PUBLIC_GATEWAY_CERT_PATH");
+        try
+        {
+            File.WriteAllBytes(path, created.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pkcs12));
+            Environment.SetEnvironmentVariable("EVE_PUBLIC_GATEWAY_CERT_PATH", path);
+            return Eve.Host.HostConfiguration.PublicGatewayCertificate()!;
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("EVE_PUBLIC_GATEWAY_CERT_PATH", previous);
+            File.Delete(path);
+        }
+    }
+
     [Fact]
     public async Task Gateway_serves_http2_over_tls_with_a_local_certificate()
     {
@@ -74,7 +93,8 @@ public sealed class PublicGatewayTests
             key,
             System.Security.Cryptography.HashAlgorithmName.SHA256,
             System.Security.Cryptography.RSASignaturePadding.Pkcs1);
-        using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+        using var created = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+        using var certificate = LoadedAsTheHostLoadsIt(created);
         var routes = new PublicGatewayRoutes(
             new Dictionary<string, GatewayHandler>(),
             new NoticeHub(),
@@ -323,7 +343,8 @@ public sealed class PublicGatewayTests
         var certificateRequest = new System.Security.Cryptography.X509Certificates.CertificateRequest(
             "CN=localhost", key, System.Security.Cryptography.HashAlgorithmName.SHA256,
             System.Security.Cryptography.RSASignaturePadding.Pkcs1);
-        using var certificate = certificateRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+        using var created = certificateRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+        using var certificate = LoadedAsTheHostLoadsIt(created);
         await using var cdn = await PublicGatewayServer.StartAsync(IPAddress.Loopback, 0, rig.Gateway, certificate: certificate);
         using var httpHandler = new SocketsHttpHandler();
         httpHandler.SslOptions.RemoteCertificateValidationCallback = (_, _, _, _) => true;

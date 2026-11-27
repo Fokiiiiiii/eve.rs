@@ -106,7 +106,9 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         }
         catch (Exception error) when (error is not OperationCanceledException)
         {
-            Console.Error.WriteLine($"eve-host: public gateway request failed ({error.GetType().Name})");
+            // Only a transport failure's message is safe to write: others may quote request data.
+            var detail = error is IOException ? $": {error.Message}" : "";
+            Console.Error.WriteLine($"eve-host: public gateway {context.Request.Path} failed ({error.GetType().Name}{detail})");
             throw;
         }
     }
@@ -114,7 +116,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
     private static async Task Send(HttpContext context, PublicGatewayRoutes routes)
     {
         await StartGrpc(context);
-        var identity = routes.Authority.IdentityOf(context.Request.Headers["authorization"]);
+        var identity = routes.Authority.IdentityOf(context.Request.Headers["authorization"], context.Connection.RemoteIpAddress);
         var pending = new List<byte>();
         var reader = context.Request.BodyReader;
         while (true)
@@ -162,7 +164,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
 
     private static async Task PublishEvents(HttpContext context, PublicGatewayRoutes routes)
     {
-        if (routes.Authority.IdentityOf(context.Request.Headers["authorization"]) is null)
+        if (routes.Authority.IdentityOf(context.Request.Headers["authorization"], context.Connection.RemoteIpAddress) is null)
         {
             await RefuseGrpc(context, StatusUnauthenticated);
             return;
@@ -193,7 +195,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
     /// </summary>
     private static async Task Consume(HttpContext context, PublicGatewayRoutes routes)
     {
-        var identity = routes.Authority.IdentityOf(context.Request.Headers["authorization"]);
+        var identity = routes.Authority.IdentityOf(context.Request.Headers["authorization"], context.Connection.RemoteIpAddress);
         if (identity is not { } verified)
         {
             await RefuseGrpc(context, StatusUnauthenticated);

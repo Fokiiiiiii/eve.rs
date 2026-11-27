@@ -123,6 +123,8 @@ internal static class HostConfiguration
     //   EVE_PUBLIC_GATEWAY_CERT_PATH     optional PKCS#12 certificate for the gateway's TLS listener (default h2c)
     //   EVE_PUBLIC_GATEWAY_CERT_PASSWORD password for that PKCS#12 file (default empty)
     //   EVE_PUBLIC_GATEWAY_TOKEN_KEY     optional base64 HMAC key (at least 32 bytes) for gateway user tokens; unset: process-random
+    //   EVE_DEV_PUBLIC_GATEWAY_CLIENT_TOKENS  1 takes the token a client started without a launcher makes for itself, from a
+    //                          loopback address only. It proves nothing about the account: local development only (default 0)
     //   EVE_AUTO_RELOAD_ACCOUNTS  the account ids (comma-separated) of bots with no client UI: the host reloads their guns from the hold
     //                          when the rounds run out. Every other account reloads its own guns (default none)
 

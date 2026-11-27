@@ -94,6 +94,43 @@ internal static class GatewayTokens
         }
     }
 
+    /// <summary>
+    /// The account named by the token the client makes for itself when no launcher gave it one
+    /// (<c>fabricate_local_dev_user_token</c>: tier <c>dev</c>, region <c>local</c>). Anyone with a copy of the client can make such a
+    /// token for any account, so it proves nothing and the caller decides from where it is taken.
+    /// </summary>
+    public static bool TryReadClientDevIdentity(string? authorization, out GatewayTokenIdentity identity)
+    {
+        identity = default;
+        if (string.IsNullOrWhiteSpace(authorization))
+            return false;
+        var token = authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) ? authorization[7..].Trim() : authorization.Trim();
+        var parts = token.Split('.');
+        if (parts.Length != 3)
+            return false;
+        try
+        {
+            using var payload = JsonDocument.Parse(Base64UrlDecode(parts[1]));
+            var claims = payload.RootElement;
+            if (claims.ValueKind != JsonValueKind.Object
+                || Text(claims, "tier") != "dev" || Text(claims, "region") != "local"
+                || Text(claims, "sub") is not { } subject
+                || !subject.StartsWith(SubjectPrefix, StringComparison.Ordinal)
+                || !long.TryParse(subject.AsSpan(SubjectPrefix.Length), NumberStyles.None, CultureInfo.InvariantCulture, out var accountId)
+                || accountId <= 0)
+                return false;
+            identity = new GatewayTokenIdentity(accountId, null);
+            return true;
+        }
+        catch (Exception error) when (error is FormatException or JsonException or ArgumentException)
+        {
+            return false;
+        }
+
+        static string? Text(JsonElement claims, string name) =>
+            claims.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    }
+
     public static bool TryReadAccount(string? authorization, DateTimeOffset now, out long accountId)
     {
         accountId = 0;

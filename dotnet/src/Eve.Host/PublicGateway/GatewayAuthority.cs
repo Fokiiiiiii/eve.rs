@@ -4,13 +4,23 @@ namespace Eve.Host.PublicGateway;
 /// Who a public gateway request is for. The identity the client puts in the request (the active character) is not trusted on its own: the
 /// account is the subject of the bearer token the client sends (the login JWT, <c>USER:EVE:&lt;account&gt;</c>, the subject the client's own
 /// token decoder reads), and the active character must belong to that account. Host-issued tokens have a verified HMAC signature and expiry.
-
+/// A real client started without a launcher sends a token it made itself; it is taken only when the Host is told to and the caller is on
+/// this machine (<paramref name="acceptClientDevTokens"/>).
 /// </summary>
-internal sealed class GatewayAuthority(Func<long, CancellationToken, Task<long?>> accountOfCharacter, Func<DateTimeOffset> now)
+internal sealed class GatewayAuthority(
+    Func<long, CancellationToken, Task<long?>> accountOfCharacter,
+    Func<DateTimeOffset> now,
+    bool acceptClientDevTokens = false)
 {
-    /// <summary>The verified identity in a bearer token, or null when the token is absent, invalid, forged, or expired.</summary>
-    public GatewayTokenIdentity? IdentityOf(string? authorization) =>
-        GatewayTokens.TryReadIdentity(authorization, now(), out var identity) ? identity : null;
+    /// <summary>The identity in a bearer token, or null when the token is absent, invalid, forged, or expired.</summary>
+    public GatewayTokenIdentity? IdentityOf(string? authorization, System.Net.IPAddress? caller = null)
+    {
+        if (GatewayTokens.TryReadIdentity(authorization, now(), out var identity)) return identity;
+        return acceptClientDevTokens && caller is not null && System.Net.IPAddress.IsLoopback(caller)
+            && GatewayTokens.TryReadClientDevIdentity(authorization, out identity)
+            ? identity
+            : null;
+    }
 
     /// <summary>The account of a valid bearer token.</summary>
     public long? AccountOf(string? authorization) => IdentityOf(authorization)?.AccountId;

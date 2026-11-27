@@ -28,3 +28,7 @@ export EVE_PUBLIC_GATEWAY_CERT_PATH=/tmp/eve-gateway-local.pfx
 OpenSSL prompts for a PKCS#12 password; provide the same value through `EVE_PUBLIC_GATEWAY_CERT_PASSWORD` when starting the Host. The certificate and key stay outside the repository. A self-signed certificate is suitable for exercising the TLS listener with a test client configured to trust it. The V24.01 local address override always selects h2c, so it does not test TLS certificate validation. The tier-discovery TLS path requires a certificate chain trusted by the client's CA bundle and a matching host name.
 
 Gateway tokens use HS256. Set `EVE_PUBLIC_GATEWAY_TOKEN_KEY` to a base64-encoded key of at least 32 bytes to keep token verification stable across Host restarts and instances. When unset, the Host creates a random process-local key; tokens from a previous process then stop verifying after restart.
+
+## A graphical client started without a launcher
+
+Such a client sends a bearer token it makes itself (`tier: dev`, `region: local`, `sub: USER:EVE:<account>`), which the Host cannot verify, so every request is answered 401 and the client retries without pause. Set `EVE_DEV_PUBLIC_GATEWAY_CLIENT_TOKENS=1` on the Host to take these tokens from loopback addresses. Anyone who can reach the listener from the same machine can then name any account: never set it on a shared or remote server.

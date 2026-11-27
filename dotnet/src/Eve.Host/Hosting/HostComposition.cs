@@ -329,7 +329,8 @@ internal static class HostComposition
             // a request's character counts only when the token's account owns it (the login JWT names the account)
             var gatewayCharacters = new Eve.Characters.PgCharacterStore(source, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
             var authority = new PublicGateway.GatewayAuthority(
-                async (character, token) => (await gatewayCharacters.GetAsync(character, token))?.AccountId, () => DateTimeOffset.UtcNow);
+                async (character, token) => (await gatewayCharacters.GetAsync(character, token))?.AccountId, () => DateTimeOffset.UtcNow,
+                Flag("EVE_DEV_PUBLIC_GATEWAY_CLIENT_TOKENS", false));
             publicGateway = new PublicGateway.PublicGatewayRoutes(gateway, notices, authority)
             {
                 CharacterTitleRewards = new PublicGateway.CharacterTitleRewardService(titleStore, titles, notices),

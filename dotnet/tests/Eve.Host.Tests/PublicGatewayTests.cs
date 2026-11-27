@@ -26,6 +26,25 @@ public sealed class PublicGatewayTests
     private static string OtherUserToken => GatewayTokens.Issue(2, null, DateTimeOffset.UtcNow);
 
     [Fact]
+    public void A_token_the_client_made_itself_is_taken_only_when_asked_and_only_from_this_machine()
+    {
+        static string Part(string json) =>
+            Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(json)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        static string Token(string tier) => Part("""{"alg":"HS256","typ":"JWT"}""") + "."
+            + Part($$"""{"tier":"{{tier}}","region":"local","sub":"USER:EVE:7","tenant":"x"}""") + ".c2ln";
+        static Task<long?> NoCharacter(long character, CancellationToken token) => Task.FromResult<long?>(null);
+        var asked = new GatewayAuthority(NoCharacter, () => DateTimeOffset.UtcNow, acceptClientDevTokens: true);
+
+        Assert.Equal(new GatewayTokenIdentity(7, null), asked.IdentityOf("Bearer " + Token("dev"), IPAddress.Loopback));
+        Assert.Equal(new GatewayTokenIdentity(7, null), asked.IdentityOf(Token("dev"), IPAddress.IPv6Loopback));
+        Assert.Null(asked.IdentityOf(Token("dev"), IPAddress.Parse("192.0.2.1")));
+        Assert.Null(asked.IdentityOf(Token("dev")));
+        Assert.Null(asked.IdentityOf(Token("prod"), IPAddress.Loopback));
+        Assert.Null(asked.IdentityOf("a.b.c", IPAddress.Loopback));
+        Assert.Null(new GatewayAuthority(NoCharacter, () => DateTimeOffset.UtcNow).IdentityOf(Token("dev"), IPAddress.Loopback));
+    }
+
+    [Fact]
     public async Task User_tokens_verify_signature_expiry_and_character_scope()
     {
         var now = DateTimeOffset.FromUnixTimeSeconds(1_800_000_000);

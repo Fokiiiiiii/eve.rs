@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bytes::Bytes;
 use eve_marshal::{MarshalError, Value, decode_bytes, encode_packet};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::sync::Notify;
 
 use crate::frame::FrameReader;
 use crate::hostlink::{AuthCredentialKind, AuthOutcome, SsoToken};
@@ -278,6 +279,25 @@ where
     W: AsyncWrite + Unpin,
     A: Authenticator,
 {
+    perform_noting_queue_check(reader, writer, auth, env, address, now_ms, &Notify::new()).await
+}
+
+/// [`perform`], telling `queue_checked` when a queue check has been answered: the client's login
+/// screen sends one and keeps the connection until the player presses Connect.
+pub async fn perform_noting_queue_check<R, W, A>(
+    reader: &mut FrameReader<R>,
+    writer: &mut W,
+    auth: &A,
+    env: &Environment,
+    address: &str,
+    now_ms: u64,
+    queue_checked: &Notify,
+) -> Result<Login, HandshakeError>
+where
+    R: AsyncRead + Unpin,
+    W: AsyncWrite + Unpin,
+    A: Authenticator,
+{
     loop {
         send(writer, &version_exchange(env)).await?;
         let version = receive(reader).await?;
@@ -289,6 +309,7 @@ where
             Value::Tuple(items) if items.len() == 3 => break,
             Value::Tuple(items) if items.len() == 2 => {
                 send(writer, &Value::Int(0)).await?;
+                queue_checked.notify_one();
             }
             other => return Err(protocol(format!("expected a command tuple, got {other:?}"))),
         }

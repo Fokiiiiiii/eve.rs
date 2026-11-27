@@ -369,6 +369,46 @@ async fn losing_the_host_ends_the_server_and_closes_the_clients() {
     assert!(matches!(end, Ok(None) | Err(_)));
 }
 
+/// What the client's login screen does when it opens: it takes the server's version and asks about
+/// the queue, then keeps the connection for the login.
+async fn check_queue<R, W>(reader: &mut FrameReader<R>, writer: &mut W)
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let version = decode_bytes(&reader.next().await.unwrap().unwrap()).unwrap();
+    for value in [version, Value::Tuple(vec![Value::None, Value::str("QC")])] {
+        writer.write_all(&eve_marshal::encode_packet(&value).unwrap()).await.unwrap();
+    }
+    let position = decode_bytes(&reader.next().await.unwrap().unwrap()).unwrap();
+    assert_eq!(int_of(&position), Some(0));
+}
+
+#[tokio::test]
+async fn a_player_may_stay_on_the_login_screen_longer_than_the_handshake_limit() {
+    let host = fake_host().await;
+    let limit = Duration::from_millis(200);
+    let front = start_front(&host, ServeConfig { handshake_timeout: limit, ..ServeConfig::default() }).await;
+    let (read, mut writer) = TcpStream::connect(&front.address).await.unwrap().into_split();
+    let mut reader = FrameReader::new(read, MAX_FRAME);
+    check_queue(&mut reader, &mut writer).await;
+    tokio::time::sleep(limit * 3).await;
+    client::login(&mut reader, &mut writer, "pilot", &[0x5A; 20], "EN").await.unwrap();
+}
+
+#[tokio::test]
+async fn a_login_screen_that_is_left_alone_is_dropped_in_the_end() {
+    let host = fake_host().await;
+    let config = ServeConfig { login_screen_timeout: Duration::from_millis(200), ..ServeConfig::default() };
+    let front = start_front(&host, config).await;
+    let (read, mut writer) = TcpStream::connect(&front.address).await.unwrap().into_split();
+    let mut reader = FrameReader::new(read, MAX_FRAME);
+    check_queue(&mut reader, &mut writer).await;
+    let _version_again = reader.next().await.unwrap().unwrap();
+    let end = tokio::time::timeout(Duration::from_secs(5), reader.next()).await.expect("not dropped");
+    assert!(matches!(end, Ok(None) | Err(_)));
+}
+
 #[tokio::test]
 async fn a_client_that_never_finishes_the_handshake_is_dropped() {
     let host = fake_host().await;

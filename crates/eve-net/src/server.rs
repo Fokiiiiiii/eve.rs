@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore};
 
 use crate::frame::{FrameReader, MAX_FRAME, put_frame};
 use crate::handshake::{self, Environment, HandshakeError, SessionIds};
@@ -26,11 +26,18 @@ pub struct ServeConfig {
     pub node_id: u32,
     /// How long a client has to complete the handshake.
     pub handshake_timeout: Duration,
+    /// How long it has instead once its queue check is answered: the client logs in on the
+    /// connection its login screen opened, whenever the player presses Connect.
+    pub login_screen_timeout: Duration,
 }
 
 impl Default for ServeConfig {
     fn default() -> Self {
-        Self { node_id: crate::profile::PROXY_NODE_ID, handshake_timeout: Duration::from_secs(30) }
+        Self {
+            node_id: crate::profile::PROXY_NODE_ID,
+            handshake_timeout: Duration::from_secs(30),
+            login_screen_timeout: Duration::from_secs(15 * 60),
+        }
     }
 }
 
@@ -89,8 +96,29 @@ async fn connection(
         session_ids,
     };
     let address = peer.ip().to_string();
-    let attempt = handshake::perform(&mut reader, &mut write, &*link, &environment, &address, now_ms());
-    let login = match tokio::time::timeout(config.handshake_timeout, attempt).await {
+    let mut limit = config.handshake_timeout;
+    let outcome = {
+        let queue_checked = Notify::new();
+        let attempt = handshake::perform_noting_queue_check(
+            &mut reader,
+            &mut write,
+            &*link,
+            &environment,
+            &address,
+            now_ms(),
+            &queue_checked,
+        );
+        tokio::pin!(attempt);
+        tokio::select! {
+            outcome = &mut attempt => Ok(outcome),
+            () = tokio::time::sleep(limit) => Err(()),
+            () = queue_checked.notified() => {
+                limit = config.login_screen_timeout;
+                tokio::time::timeout(limit, &mut attempt).await.map_err(|_| ())
+            }
+        }
+    };
+    let login = match outcome {
         Ok(Ok(login)) => login,
         Ok(Err(HandshakeError::Closed)) => return,
         Ok(Err(error)) => {
@@ -98,7 +126,7 @@ async fn connection(
             return;
         }
         Err(_) => {
-            eprintln!("eve-net: {peer}: the handshake did not finish in {:?}", config.handshake_timeout);
+            eprintln!("eve-net: {peer}: the handshake did not finish in {limit:?}");
             return;
         }
     };

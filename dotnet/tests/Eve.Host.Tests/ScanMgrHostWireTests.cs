@@ -95,7 +95,7 @@ public partial class HostServerTests
         var provider = new SignalTrackerRegistrationProvider(sessions);
         var signatures = new PyDict([
             new KeyValuePair<PyValue, PyValue>(new PyLong(601), Py.KeyVal(
-                ("position", new PyList([new PyReal(1), new PyReal(2), new PyReal(3)])),
+                ("position", new PyTuple([new PyReal(1), new PyReal(2), new PyReal(3)])),
                 ("targetID", new PyStr("ABC-123")),
                 ("difficulty", new PyInt(2)),
                 ("dungeonID", PyNone.Instance),

@@ -361,7 +361,9 @@ public sealed class IncursionAnomalyService : IService
             z = coordinates["z"];
         }
 
-        return new PyList([
+        // A point is a tuple: the client's scan results take a list for several candidate points and
+        // average them, which fails on three bare numbers.
+        return new PyTuple([
             new PyReal(Number(x)),
             new PyReal(Number(y)),
             new PyReal(Number(z)),

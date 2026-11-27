@@ -111,7 +111,7 @@ public sealed class SpaceProbeScans
             new KeyValuePair<PyValue, PyValue>(
                 new PyLong(site.TargetId),
                 Py.KeyVal(
-                    ("position", new PyList([.. site.Position.Select(value => (PyValue)new PyReal(value))])),
+                    ("position", new PyTuple([.. site.Position.Select(value => (PyValue)new PyReal(value))])),
                     ("targetID", new PyStr(site.Code ?? "")),
                     ("difficulty", new PyInt(site.Difficulty)),
                     ("dungeonID", PyNone.Instance),

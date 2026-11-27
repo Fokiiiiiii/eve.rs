@@ -170,7 +170,7 @@ public sealed class IncursionAnomalyServiceTests
         Assert.Equal("scene-anomaly:30000142:7001", Str(fields["targetID"]));
         Assert.Equal(5164L, Int(fields["dungeonID"]));
         Assert.Equal(30000142L, Int(fields["solarSystemID"]));
-        Assert.Equal([1.25, 2.5, -4.0], List(fields["position"]).Select(Real).ToArray());
+        Assert.Equal([1.25, 2.5, -4.0], Assert.IsType<PyTuple>(fields["position"]).Items.Select(Real).ToArray());
         Assert.Equal([12L, 13L], List(fields["allowedTypes"]).Select(Int).ToArray());
         Assert.All(state.Items.Skip(1), dict => Assert.Empty(Assert.IsType<PyDict>(dict).Entries));
     }

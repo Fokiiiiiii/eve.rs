@@ -539,6 +539,7 @@ internal static class HostComposition
             registry.RegisterAlias("skillMgr", "skillHandler");
             registry.RegisterAlias("tradeMgr", "trademgr");
             registry.RegisterAlias("standing2", "standingMgr");
+            registry.RegisterAlias("monolithTaskTrackerMgr", "achievementTrackerMgr");
         }
         if (space is not null)
         {

@@ -92,9 +92,14 @@ public sealed class XmppLocalRoomTests
         var output = new List<string>();
         var client = Connect(hub, 42, "token", output);
 
+        var beforeInitialPresence = output.Count;
+        client.OnStanza(Parse("<presence><show/></presence>"));
+        Assert.Equal(beforeInitialPresence, output.Count);
+
         client.OnStanza(Parse("<presence from='42@chat.example/r' to='local_30000143@conference.chat.example/Alpha'><x xmlns='http://jabber.org/protocol/muc'/></presence>"));
 
         Assert.Contains(output, item => item.Contains("type='error'", StringComparison.Ordinal)
+            && item.Contains("from='local_30000143@conference.chat.example/Alpha'", StringComparison.Ordinal)
             && item.Contains("not-authorized", StringComparison.Ordinal));
     }
 

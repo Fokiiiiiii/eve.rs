@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -155,6 +156,7 @@ public sealed class AchievementTrackerMgrService(
         call.Cancellation.ThrowIfCancellationRequested();
         if (call.Kwargs is not PyNone)
             throw MachoErrors.ThrowUserError("ACHIEVEMENT_ARGUMENTS_INVALID");
+        PyDict? normalizedCompleted = null;
         switch (call.Method)
         {
             case "HasEverWarped":
@@ -166,7 +168,7 @@ public sealed class AchievementTrackerMgrService(
             case "UpdateClientAchievmentsAndCounters":
                 if (call.Args.Count != 2 || call.Arg(0) is not PyDict completed || call.Arg(1) is not PyDict eventCounts)
                     throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_INVALID");
-                ValidateState(completed, eventCounts);
+                normalizedCompleted = ValidateState(completed, eventCounts);
                 break;
         }
 
@@ -201,8 +203,8 @@ public sealed class AchievementTrackerMgrService(
         if (call.Method == "UpdateClientAchievmentsAndCounters")
         {
             if (writeState is not null && call.Session.GetInt("charid") is { } writer && writer > 0
-                && call.Arg(0) is PyDict completed && call.Arg(1) is PyDict eventCounts)
-                await writeState(writer, completed, eventCounts, call.Cancellation);
+                && normalizedCompleted is not null && call.Arg(1) is PyDict eventCounts)
+                await writeState(writer, normalizedCompleted, eventCounts, call.Cancellation);
             return PyNone.Instance;
         }
 
@@ -221,13 +223,24 @@ public sealed class AchievementTrackerMgrService(
 
     private static KeyValuePair<PyValue, PyValue> Entry(PyValue key, PyValue value) => new(key, value);
 
-    private static void ValidateState(PyDict completed, PyDict eventCounts)
+    private static PyDict ValidateState(PyDict completed, PyDict eventCounts)
     {
         if (completed.Entries.Count > MaxStateEntries || eventCounts.Entries.Count > MaxStateEntries)
             throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_TOO_LARGE");
 
-        foreach (var (key, value) in completed.Entries)
+        KeyValuePair<PyValue, PyValue>[]? normalized = null;
+        for (var index = 0; index < completed.Entries.Count; index++)
         {
+            var (key, value) = completed.Entries[index];
+            if (value is PyBigUnsigned { Bytes.Length: > 0 and <= sizeof(long) } encoded)
+            {
+                var filetime = new BigInteger(encoded.Bytes, isUnsigned: true);
+                if (filetime <= long.MaxValue)
+                {
+                    value = new PyLong((long)filetime);
+                    (normalized ??= completed.Entries.ToArray())[index] = new(key, value);
+                }
+            }
             var achievementId = key switch { PyInt i => i.Value, PyLong l => l.Value, _ => 0 };
             var completedAt = value switch { PyInt i => i.Value, PyLong l => l.Value, _ => -1 };
             if (achievementId is <= 0 or > int.MaxValue || completedAt < 0)
@@ -242,6 +255,7 @@ public sealed class AchievementTrackerMgrService(
                 || Encoding.UTF8.GetByteCount(name) > MaxEventNameBytes || count < 0)
                 throw MachoErrors.ThrowUserError("ACHIEVEMENT_STATE_INVALID");
         }
+        return normalized is null ? completed : new PyDict(normalized);
     }
 
     private static string? EventName(PyValue key)

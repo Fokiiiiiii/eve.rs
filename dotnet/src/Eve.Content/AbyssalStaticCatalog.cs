@@ -81,6 +81,7 @@ public sealed record AbyssalEnvironmentalObjectDefinition(string Key, string Pro
 public sealed class AbyssalStaticCatalog
 {
     public const long RequiredSdeBuild = 3396210;
+    public const long RuntimeSdeBuild = 3720952;
 
     private static readonly int[] EnvironmentalTypeIds = [47436, 47437, 47438, 47439, 47440, 47441, 47467, 47468, 47469, 47470, 47472, 47473, 47620];
     public IReadOnlyDictionary<int, AbyssalEnvironmentalTypeDefinition> EnvironmentalTypesById { get; private init; } = null!;
@@ -178,9 +179,9 @@ public sealed class AbyssalStaticCatalog
         ArgumentNullException.ThrowIfNull(sde);
 
         var build = await sde.BuildAsync(cancellationToken);
-        if (build != RequiredSdeBuild)
+        if (build != RuntimeSdeBuild)
         {
-            throw new InvalidDataException($"Abyssal catalog requires SDE build {RequiredSdeBuild}; loaded build was {build?.ToString(CultureInfo.InvariantCulture) ?? "none"}.");
+            throw new InvalidDataException($"Abyssal catalog requires SDE build {RuntimeSdeBuild}; loaded build was {build?.ToString(CultureInfo.InvariantCulture) ?? "none"}.");
         }
 
         using var embedded = ReadEmbeddedData();

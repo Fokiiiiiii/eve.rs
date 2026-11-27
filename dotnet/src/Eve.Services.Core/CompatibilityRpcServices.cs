@@ -5,8 +5,8 @@ namespace Eve.Services.Core;
 
 public static class ServerBuildInfo
 {
-    public const double BootVersion = 24.01;
-    public const int BootBuild = 3_396_210;
+    public const double BootVersion = 24.02;
+    public const int BootBuild = 3_724_492;
 }
 
 // Compatibility-only manual IService stubs. Do not register these in CoreServices.Create;

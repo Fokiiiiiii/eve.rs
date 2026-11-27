@@ -190,7 +190,7 @@ public class MembershipTests
     }
 
     [PgFact]
-    public async Task Eve_owners_are_util_rows_in_owner_header_order()
+    public async Task Eve_owners_are_packed_rows_in_owner_header_order()
     {
         await using var rig = await Rig.CreateAsync();
         var founder = await rig.CharacterAsync("Founder One");
@@ -205,21 +205,16 @@ public class MembershipTests
             Args = [],
             Session = new Eve.Services.ClientSession { CharacterId = founder },
         }));
-        var rows = result.Items.Select(value => Assert.IsType<Eve.Marshal.PyObject>(value)).ToArray();
+        var rows = Assert.IsType<Eve.Marshal.PyList>(Eve.Marshal.MarshalCodec.Decode(Eve.Marshal.MarshalCodec.Encode(result)))
+            .Items.Select(value => Assert.IsType<Eve.Marshal.PyPackedRow>(value)).ToArray();
         Assert.Equal(2,rows.Length);
         var actualIDs = new List<long>();
         foreach (var row in rows)
         {
-            Assert.Equal("util.Row",Assert.IsType<Eve.Marshal.PyStr>(row.Name).Value);
-            var fields = Assert.IsType<Eve.Marshal.PyDict>(row.Args);
-            Eve.Marshal.PyValue Field(string name) => fields.Entries.Single(entry =>
-                Assert.IsType<Eve.Marshal.PyStr>(entry.Key).Value == name).Value;
-            var header = Assert.IsType<Eve.Marshal.PyTuple>(Field("header")).Items
-                .Select(value => Assert.IsType<Eve.Marshal.PyStr>(value).Value).ToArray();
-            Assert.Equal(new[] { "ownerID","ownerName","typeID","gender","ownerNameID" },header);
-
-            var line = Assert.IsType<Eve.Marshal.PyTuple>(Field("line")).Items;
-            var characterID = Assert.IsType<Eve.Marshal.PyInt>(line[0]).Value;
+            Assert.Equal(new[] { "ownerID","ownerName","typeID","gender","ownerNameID" },
+                row.Descriptor.Columns.Select(column => column.Name));
+            var line = row.Values;
+            var characterID = checked((long)Eve.Macho.JsSemantics.NumberValue(line[0]));
             actualIDs.Add(characterID);
             Assert.Equal(characterID == founder ? "Founder One" : "Member One",
                 Assert.IsType<Eve.Marshal.PyWString>(line[1]).Value);

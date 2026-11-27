@@ -78,7 +78,7 @@ public sealed class ClientStartupServicesTests
         ServiceCall Call(int hash) => new()
         {
             Method = "SendClientStackTraceAlert",
-            Args = [new PyTuple([new PyInt(hash), new PyStr("stack-key")]), new PyStr("trace"), new PyStr("Error")],
+            Args = [new PyTuple([new PyInt(hash), new PyBytes(Enumerable.Repeat((byte)'k', 1_602).ToArray())]), new PyStr("trace"), new PyStr("Error"), PyNone.Instance],
             Session = new ClientSession(),
         };
         var first = Assert.IsType<PyTuple>(service.SendClientStackTraceAlert(Call(123)));
@@ -117,6 +117,11 @@ public sealed class ClientStartupServicesTests
         {
             Method = "SendClientStackTraceAlert", Session = session,
             Args = [new PyTuple([new PyInt(1), new PyStr("key")]), new PyBytes(new byte[16_385]), new PyStr("Error")],
+        });
+        await Refused(new ServiceCall
+        {
+            Method = "SendClientStackTraceAlert", Session = session,
+            Args = [new PyTuple([new PyInt(1), new PyBytes(new byte[4_097])]), new PyStr("trace"), new PyStr("Error")],
         });
         await Refused(new ServiceCall
         {

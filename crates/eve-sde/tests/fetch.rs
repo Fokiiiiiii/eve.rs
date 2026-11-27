@@ -235,14 +235,14 @@ fn latest_build_is_the_sde_record_of_latest_jsonl() {
 #[test]
 fn the_compiled_in_lock_pins_a_build_with_a_hash_and_sources() {
     let pin = fetch::pinned().unwrap();
-    assert_eq!(pin.build, 3_396_210);
+    assert_eq!(pin.build, 3_720_952);
     let hash = pin.sha256.expect("the pinned build has a hash");
     assert_eq!(hash.len(), 64);
     assert!(hash.bytes().all(|byte| byte.is_ascii_hexdigit()));
     assert!(pin.sources.iter().all(|url| url.starts_with("https://")), "{:?}", pin.sources);
     assert_eq!(
         pin.sources[0],
-        fetch::official_url(fetch::OFFICIAL_BASE, 3_396_210),
+        fetch::official_url(fetch::OFFICIAL_BASE, 3_720_952),
         "CCP's host comes first"
     );
 }

@@ -194,6 +194,9 @@ public static class ResponseBuilder
             : Array.Empty<PyValue>();
         var timings = new PyList([
             .. receivedTimes,
+            // Ping diagnostics expect both sides of the proxy handoff. They share the Host's dispatch clock here.
+            new PyTuple([new PyLong(now), new PyLong(now), new PyStr("proxy::writing")]),
+            new PyTuple([new PyLong(now), new PyLong(now), new PyStr("proxy::handle_message")]),
             new PyTuple([new PyLong(now), new PyLong(now), new PyStr("proxy::turnaround")]),
         ]);
         return Packet(PingRspClass,

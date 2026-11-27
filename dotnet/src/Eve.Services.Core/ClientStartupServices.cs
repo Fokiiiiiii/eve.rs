@@ -228,7 +228,7 @@ public sealed partial class AlertService
             PyList list => list.Items,
             _ => [],
         };
-        if (stackId.Count != 2 || !StableKeyAllowed(stackId[0]) || !BoundedText(stackId[1], 256)
+        if (stackId.Count != 2 || !StableKeyAllowed(stackId[0]) || !BoundedText(stackId[1], 4_096)
             || !BoundedText(call.Arg(1), 16_384) || !BoundedText(call.Arg(2), 32)
             || (call.Args.Count == 4 && call.Arg(3) is not PyNone && !StableKeyAllowed(call.Arg(3))))
             throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");

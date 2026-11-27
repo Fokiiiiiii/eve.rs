@@ -16,7 +16,8 @@ public sealed partial class EventLogRpcService(Action<string>? log = null)
         call.Cancellation.ThrowIfCancellationRequested();
         if (call.Args.Count is < 3 or > 4)
             throw MachoErrors.ThrowUserError("CLIENT_STATS_ARGUMENTS_INVALID");
-        if (ReadNonNegativeId(call.Arg(0)) != call.Session.SessionId)
+        // The client reports its own telemetry session ID; the authenticated transport owns identity.
+        if (ReadNonNegativeId(call.Arg(0)) is null && call.Arg(0) is not PyBigUnsigned { Bytes.Length: > 0 and <= sizeof(ulong) })
             throw MachoErrors.ThrowUserError("CLIENT_STATS_SESSION_INVALID");
 
         var isShutdown = call.Kwargs is PyDict candidate &&

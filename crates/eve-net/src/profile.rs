@@ -5,9 +5,9 @@ pub const BIRTHDAY: i64 = 170_472;
 /// MachoNet protocol version.
 pub const MACHO_VERSION: i64 = 496;
 /// The client version and build this server targets.
-pub const BOOT_VERSION: f64 = 24.01;
-pub const BOOT_BUILD: i64 = 3_396_210;
-pub const PROJECT_VERSION: &str = "V24.01@ccp";
+pub const BOOT_VERSION: f64 = 24.02;
+pub const BOOT_BUILD: i64 = 3_724_492;
+pub const PROJECT_VERSION: &str = "V24.02@ccp";
 pub const PROJECT_CODENAME: &str = "eve.rs";
 pub const PROJECT_REGION: &str = "ccp";
 /// The proxy node the front answers as (0xFFAA), the default node id.

@@ -19,7 +19,8 @@ public static class AgentCatalog
         IReadOnlyList<SdeRow> npcCharacters,
         IEnumerable<SdeRow> agentsInSpace,
         Func<long, AgentStationPlace?> station,
-        Func<long, bool> solarSystemExists)
+        Func<long, bool> solarSystemExists,
+        Func<long, long?>? factionForCorporation = null)
     {
         ArgumentNullException.ThrowIfNull(npcCharacters);
         ArgumentNullException.ThrowIfNull(station);
@@ -34,6 +35,7 @@ public static class AgentCatalog
                 var agent = row.Doc.GetProperty("agent");
 
                 var missionClass = AgentMissionKindRules.Classify(AgentSdeInteger(agent, "agentTypeID"), AgentSdeInteger(agent, "divisionID"));
+                var corporationId = AgentSdeInteger(row.Doc, "corporationID");
                 var locationId = AgentSdeInteger(row.Doc, "locationID");
                 var place = locationId > 0 ? station(locationId) : null;
                 JsonElement? inSpace = inSpaceById.TryGetValue(row.Key, out var inSpaceRow)
@@ -60,7 +62,7 @@ public static class AgentCatalog
                     AgentSdeInteger(agent, "divisionID"),
                     AgentSdeInteger(agent, "level") is > 0 and var level ? level : 1,
                     isInSpace ? null : AgentSdeOptionalInteger(row.Doc, "locationID"),
-                    AgentSdeInteger(row.Doc, "corporationID"),
+                    corporationId,
                     AgentSdeBoolean(agent, "isLocator"),
                     isInSpace,
                     AgentSdeOptionalInteger(row.Doc, "careerID"),
@@ -81,7 +83,8 @@ public static class AgentCatalog
                     isInSpace && inSpace is { } spaceSpawn ? AgentSdeOptionalInteger(spaceSpawn, "spawnPointID") : null,
                     isInSpace && inSpace is { } spaceType ? AgentSdeOptionalInteger(spaceType, "typeID") : null,
                     AgentSdeOptionalInteger(row.Doc, "locationID"),
-                    row.Doc.TryGetProperty("name", out var ownerName) ? AgentSdeText(ownerName, "en") : "");
+                    row.Doc.TryGetProperty("name", out var ownerName) ? AgentSdeText(ownerName, "en") : "",
+                    FactionId: factionForCorporation?.Invoke(corporationId));
             })
             .OrderBy(agent => agent.AgentId)
             .ToArray();

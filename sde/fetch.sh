@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Fetch an EVE static data export (JSONL) into .cache/sde/ and record it in sde/lock.json.
 #
-#   sde/fetch.sh            the pinned build (3396210, the client build this project targets)
+#   sde/fetch.sh            the pinned SDE build (3720952, for client build 3724492)
 #   sde/fetch.sh latest     whatever CCP currently publishes
 #   sde/fetch.sh 3400000    a specific build
 #
@@ -14,7 +14,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BASE="${SDE_BASE_URL:-https://developers.eveonline.com/static-data}"
-PINNED_BUILD=3396210
+PINNED_BUILD=3720952
 CACHE="$HERE/.cache/sde"
 LOCK="$HERE/sde/lock.json"
 

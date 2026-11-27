@@ -68,14 +68,24 @@ public sealed class EventLogHostTests
                 Assert.IsType<PyNone>(response);
                 Assert.Equal(["LogClientStats location=30100041 rows=1"], records);
 
-                var refused = new EventLogRpcService(records.Add);
-                var wrongSession = await Assert.ThrowsAsync<MachoWrappedException>(() => refused.LogClientStats(new ServiceCall
+                const ulong largeSessionId = 0xFEDCBA9876543210UL;
+                var largeWireId = MarshalCodec.Decode(MarshalCodec.Encode(new PyBigUnsigned(BitConverter.GetBytes(largeSessionId))));
+                Assert.IsType<PyBigUnsigned>(largeWireId);
+                Assert.IsType<PyNone>(await registered.CallAsync(new ServiceCall
                 {
                     Method = "LogClientStats",
-                    Args = [new PyLong(99), new PyInt(30_100_041), new PyList([])],
+                    Args = [largeWireId, new PyInt(30_100_041), new PyList([]), new PyList([])],
+                    Session = session,
+                }));
+
+                var refused = new EventLogRpcService(records.Add);
+                var malformedSession = await Assert.ThrowsAsync<MachoWrappedException>(() => refused.LogClientStats(new ServiceCall
+                {
+                    Method = "LogClientStats",
+                    Args = [new PyLong(-1), new PyInt(30_100_041), new PyList([])],
                     Session = session,
                 }).AsTask());
-                Assert.Equal("CLIENT_STATS_SESSION_INVALID", wrongSession.Error.UserErrorMessage);
+                Assert.Equal("CLIENT_STATS_SESSION_INVALID", malformedSession.Error.UserErrorMessage);
                 var oversized = await Assert.ThrowsAsync<MachoWrappedException>(() => refused.LogClientStats(new ServiceCall
                 {
                     Method = "LogClientStats",

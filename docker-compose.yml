@@ -3,7 +3,7 @@
 #   docker compose up --build        PostgreSQL 18, the static data (fetched once), eve-sim, eve-host and eve-net
 #   (point the client at <this machine>:26000)
 #
-# The processes talk over Unix sockets in the `run` volume; only eve-net's port is published. EVE_MARKET_SEED is skip
+# The processes talk over Unix sockets in the `run` volume; XMPP chat is published only on the loopback address. EVE_MARKET_SEED is skip
 # here: the host's first-start seed of the NPC market from CCP's ESI is not yet reliable (set it to auto to try it).
 name: eve-rs
 
@@ -41,7 +41,7 @@ services:
   init:
     <<: *eve
     restart: "no"
-    command: ["eve-sde", "ensure"]
+    command: ["sh", "-c", "eve-sde ensure --missions && eve-sde ensure && env -u EVE_PG_URL eve-sde ensure"]
     depends_on:
       db:
         condition: service_healthy
@@ -61,6 +61,12 @@ services:
   host:
     <<: *eve
     command: ["dotnet", "/opt/eve-host/eve-host.dll"]
+    environment:
+      <<: *environment
+      EVE_XMPP_ENABLED: ${EVE_XMPP_ENABLED:-true}
+      EVE_XMPP_BIND_ADDRESS: 0.0.0.0
+    ports:
+      - "127.0.0.1:5222:5222"
     depends_on:
       init:
         condition: service_completed_successfully

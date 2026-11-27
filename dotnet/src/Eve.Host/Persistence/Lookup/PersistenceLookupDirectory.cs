@@ -96,7 +96,7 @@ public sealed class PersistenceLookupDirectory(
             .Select(type => new Eve.Services.Core.LookupType(type.TypeId, type.Name))
             .ToArray();
 
-    private static async Task<IReadOnlyDictionary<long, long>> LoadNpcFactionIdsAsync(
+    internal static async Task<IReadOnlyDictionary<long, long>> LoadNpcFactionIdsAsync(
         Eve.Sde.SdeReader sde,
         CancellationToken cancellationToken) =>
         (await sde.ReadAsync("npcCorporations", cancellationToken: cancellationToken))

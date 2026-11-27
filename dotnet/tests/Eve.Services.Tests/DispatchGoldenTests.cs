@@ -134,15 +134,23 @@ public class DispatchGoldenTests
                 : Array.Empty<PyValue>();
         var responsePayload = Assert.IsType<PyTuple>(response.Payload);
         var responseTimes = Assert.IsType<PyList>(responsePayload.Items[0]);
-        Assert.Equal(requestTimes.Count + 1, responseTimes.Items.Count);
+        Assert.Equal(requestTimes.Count + 3, responseTimes.Items.Count);
         Assert.Equal(requestTimes, responseTimes.Items.Take(requestTimes.Count));
 
-        var turnaround = Assert.IsType<PyTuple>(responseTimes.Items[^1]);
-        Assert.Equal(3, turnaround.Items.Count);
         var fixedTime = new PyLong(Py.FileTimeFromUnixMs(FixedNowMs));
-        Assert.Equal(fixedTime, turnaround.Items[0]);
-        Assert.Equal(fixedTime, turnaround.Items[1]);
-        Assert.Equal("proxy::turnaround", JsSemantics.StringValue(turnaround.Items[2]));
+        Assert.Collection(responseTimes.Items.Skip(requestTimes.Count),
+            timing => CheckTiming(timing, "proxy::writing"),
+            timing => CheckTiming(timing, "proxy::handle_message"),
+            timing => CheckTiming(timing, "proxy::turnaround"));
+
+        void CheckTiming(PyValue timing, string label)
+        {
+            var sample = Assert.IsType<PyTuple>(timing);
+            Assert.Equal(3, sample.Items.Count);
+            Assert.Equal(fixedTime, sample.Items[0]);
+            Assert.Equal(fixedTime, sample.Items[1]);
+            Assert.Equal(label, JsSemantics.StringValue(sample.Items[2]));
+        }
     }
 
     [Theory]

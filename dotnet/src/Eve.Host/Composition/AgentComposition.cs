@@ -55,10 +55,12 @@ internal sealed partial class CharacterServicesComposition
             }
         }
 
+        var factionByCorporation = await PersistenceLookupDirectory.LoadNpcFactionIdsAsync(sde, CancellationToken.None);
         agentMissionAgentRows = AgentCatalog.Build(
             npcCharacterRows,
             agentsInSpaceById.Values,
             id => stations.Get(id) is { } station ? new AgentStationPlace(station.TypeId, station.SolarSystemId) : null,
-            id => solarSystems.Get((int)id) is not null).ToArray();
+            id => solarSystems.Get((int)id) is not null,
+            id => factionByCorporation.TryGetValue(id, out var factionId) ? factionId : null).ToArray();
     }
 }

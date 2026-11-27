@@ -29,7 +29,8 @@ public sealed record AgentMissionAgentData(
     long? SpawnPointId,
     long? TypeId,
     long? BaseLocationId = null,
-    string? AgentName = null);
+    string? AgentName = null,
+    long? FactionId = null);
 
 public sealed record AgentMissionTravelTarget(long SolarSystemId, long? ItemId, double? X, double? Y, double? Z);
 
@@ -70,7 +71,7 @@ public sealed class AgentMissionService(
     [
         "agentID", "agentTypeID", "divisionID", "level", "stationID", "corporationID",
         "isLocatorAgent", "isInSpace", "careerID", "importantMission", "missionKind",
-          "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID",
+        "missionTypeLabel", "specialityID", "stationTypeID", "bloodlineID", "solarsystemID", "factionID",
     ];
 
     public string Name => "agentMgr";
@@ -756,6 +757,8 @@ public sealed class AgentMissionService(
         OptionalPositive(agent.SpecialityId),
         OptionalPositive(agent.StationTypeId),
         OptionalPositive(agent.BloodlineId),
+        OptionalPositive(agent.SolarSystemId),
+        OptionalPositive(agent.FactionId),
     ]);
 
     private static IEnumerable<long> PositiveIds(PyValue? value)

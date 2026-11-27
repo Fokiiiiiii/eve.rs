@@ -88,7 +88,7 @@ public partial class HostServerTests
         Assert.Equal(new PyLong(3), DictField(DictField(state, "eventDict"), "client_openMap"));
         Assert.Equal(new PyLong(134273341290000000), DictField(DictField(state, "completedDict"), 9));
 
-        var completedUpdate = new PyDict([Entry(15, new PyLong(134273341290000123))]);
+        var completedUpdate = new PyDict([Entry(15, new PyBigUnsigned(BitConverter.GetBytes(134273341290000123UL)))]);
         var eventUpdate = new PyDict([Entry("client_dock", new PyLong(5))]);
         Assert.Same(PyNone.Instance, await HostRpcAsync(front, open, 2, "achievementTrackerMgr",
             "UpdateClientAchievmentsAndCounters", completedUpdate, eventUpdate));
@@ -106,6 +106,12 @@ public partial class HostServerTests
             "UpdateClientAchievmentsAndCounters", new PyDict([]), invalidEventUpdate));
         var errorArgs = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(error.Header).Items[1]).Items;
         Assert.Equal("ACHIEVEMENT_STATE_INVALID", WireText(errorArgs[0]));
+
+        var overflow = new PyDict([Entry(15, new PyBigUnsigned(BitConverter.GetBytes(ulong.MaxValue)))]);
+        var overflowError = Assert.IsType<PyObjectEx>(await HostErrorRpcAsync(front, open, 5, "achievementTrackerMgr",
+            "UpdateClientAchievmentsAndCounters", overflow, eventUpdate));
+        var overflowArgs = Assert.IsType<PyTuple>(Assert.IsType<PyTuple>(overflowError.Header).Items[1]).Items;
+        Assert.Equal("ACHIEVEMENT_STATE_INVALID", WireText(overflowArgs[0]));
         Assert.Equal(1, writeCount);
     }
 

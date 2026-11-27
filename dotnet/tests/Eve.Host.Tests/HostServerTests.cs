@@ -2016,7 +2016,8 @@ public partial class HostServerTests : IAsyncLifetime
         var ping = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(pong.Payload)));
         Assert.Equal(MachoMessage.PingRsp, ping.Type);
         var times = Assert.IsType<PyList>(Assert.IsType<PyTuple>(ping.Payload).Items[0]);
-        var turnaround = Assert.IsType<PyTuple>(Assert.Single(times.Items));
+        Assert.Equal(3, times.Items.Count);
+        var turnaround = Assert.IsType<PyTuple>(times.Items[^1]);
         Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)), turnaround.Items[0]);
         Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)), turnaround.Items[1]);
         Assert.Equal("proxy::turnaround", JsSemantics.StringValue(turnaround.Items[2]));
@@ -2028,7 +2029,7 @@ public partial class HostServerTests : IAsyncLifetime
     }
 
     [Fact]
-    public async Task A_ping_response_keeps_the_request_times_and_appends_the_proxy_turnaround()
+    public async Task A_ping_response_keeps_the_request_times_and_appends_the_proxy_timings()
     {
         Start();
         var front = await Handshaken(await ConnectAsync());
@@ -2043,16 +2044,25 @@ public partial class HostServerTests : IAsyncLifetime
         var ping = Assert.IsType<MachoPacket>(MachoPacket.Decode(MarshalCodec.Decode(response.Payload)));
         Assert.Equal(MachoMessage.PingRsp, ping.Type);
         var times = Assert.IsType<PyList>(Assert.IsType<PyTuple>(ping.Payload).Items[0]);
-        Assert.Equal(2, times.Items.Count);
+        Assert.Equal(4, times.Items.Count);
         var returnedStart = Assert.IsType<PyTuple>(times.Items[0]);
         Assert.Equal(new PyLong(1234), returnedStart.Items[0]);
         Assert.Equal(new PyLong(5678), returnedStart.Items[1]);
         Assert.Equal("client::start", JsSemantics.StringValue(returnedStart.Items[2]));
-        var turnaround = Assert.IsType<PyTuple>(times.Items[1]);
-        Assert.Equal(3, turnaround.Items.Count);
-        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)), turnaround.Items[0]);
-        Assert.Equal(new PyLong(Py.FileTimeFromUnixMs(FixedNowMs)), turnaround.Items[1]);
-        Assert.Equal("proxy::turnaround", JsSemantics.StringValue(turnaround.Items[2]));
+        var fixedTime = new PyLong(Py.FileTimeFromUnixMs(FixedNowMs));
+        Assert.Collection(times.Items.Skip(1),
+            timing => CheckTiming(timing, "proxy::writing"),
+            timing => CheckTiming(timing, "proxy::handle_message"),
+            timing => CheckTiming(timing, "proxy::turnaround"));
+
+        void CheckTiming(PyValue timing, string label)
+        {
+            var sample = Assert.IsType<PyTuple>(timing);
+            Assert.Equal(3, sample.Items.Count);
+            Assert.Equal(fixedTime, sample.Items[0]);
+            Assert.Equal(fixedTime, sample.Items[1]);
+            Assert.Equal(label, JsSemantics.StringValue(sample.Items[2]));
+        }
     }
 
     [Fact]

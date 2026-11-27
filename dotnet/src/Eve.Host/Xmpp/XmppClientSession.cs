@@ -76,7 +76,11 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
 
     private void OnPresence(XmppElement stanza)
     {
-        if (_link is not { } link || !TryRoomAddress(stanza.Attribute("to"), out var room, out var nickname, requireNickname: true))
+        var target = stanza.Attribute("to");
+        if (target is null && stanza.Attribute("type") is null or "unavailable")
+            return; // Initial availability is not a room join.
+
+        if (_link is not { } link || !TryRoomAddress(target, out var room, out var nickname, requireNickname: true))
         {
             StanzaError(stanza, "cancel", "item-not-found");
             return;
@@ -150,9 +154,10 @@ internal sealed class XmppClientSession(XmppChatHub hub, Action<string> send, Ac
     {
         var id = stanza.Attribute("id");
         var idAttribute = id is null ? "" : $" id='{XmppXml.Escape(id)}'";
-        var from = stanza.Attribute("from");
+        var source = XmppXml.Escape(stanza.Attribute("to") ?? hub.Settings.Domain);
+        var from = _link?.Jid;
         var fromAttribute = from is null ? "" : $" to='{XmppXml.Escape(from)}'";
-        send($"<{stanza.Name} type='error'{idAttribute}{fromAttribute}><error type='{errorType}'><{condition} xmlns='{XmppXml.StanzasNamespace}'/></error></{stanza.Name}>");
+        send($"<{stanza.Name} type='error' from='{source}'{idAttribute}{fromAttribute}><error type='{errorType}'><{condition} xmlns='{XmppXml.StanzasNamespace}'/></error></{stanza.Name}>");
     }
 
     /// <summary>Called once the stream ends, after the connection is gone: the character's link (if bound) is released.</summary>

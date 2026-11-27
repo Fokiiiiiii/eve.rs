@@ -21,7 +21,7 @@ public sealed class AgentCatalogHostWireTests
         const long nowMs = 1_790_646_377_000;
         var agent = new AgentMissionAgentData(
             agentId, 2, 22, 3, 60000001, 1000001, false, false, null, false,
-            "courier", "UI/Agents/StandardMission/Courier", null, 1531, null, 30000001, null, null, null);
+            "courier", "UI/Agents/StandardMission/Courier", null, 1531, null, 30000001, null, null, null, FactionId: 500001);
         var service = new AgentMissionService(
             (_, _) => ValueTask.FromResult<JsonObject?>(null),
             (_, _, _) => ValueTask.FromResult<IReadOnlyDictionary<long, JsonObject>>(new Dictionary<long, JsonObject>()),
@@ -78,6 +78,13 @@ public sealed class AgentCatalogHostWireTests
             var agentRow = Assert.IsType<PyList>(Assert.Single(Assert.IsType<PyList>(fields["lines"]).Items));
             Assert.Equal(new PyInt(agentId), agentRow.Items[0]);
             Assert.Equal(new PyInt(22), agentRow.Items[2]);
+            Assert.Equal(headers.Length, agentRow.Items.Count);
+            var solarSystemColumn = Array.IndexOf(headers, "solarsystemID");
+            Assert.True(solarSystemColumn >= 0);
+            Assert.Equal(new PyInt(30000001), agentRow.Items[solarSystemColumn]);
+            var factionColumn = Array.IndexOf(headers, "factionID");
+            Assert.True(factionColumn >= 0);
+            Assert.Equal(new PyInt(500001), agentRow.Items[factionColumn]);
 
             var cachedMessages = Assert.IsType<PyObject>(await CallAgentMgr(2, "GetMessagesForEpicArcMissions"));
             Assert.Equal("carbon.common.script.net.objectCaching.CachedMethodCallResult", JsSemantics.StringValue(cachedMessages.Name));

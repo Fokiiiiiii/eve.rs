@@ -186,7 +186,9 @@ public sealed partial class CharacterHostTests
 
         await rig.RestartAsync();
         service = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("achievementTrackerMgr"));
-        var state = Assert.IsType<PyDict>(await CallAsync(service, "GetCompletedAchievementsAndClientEventCount", session));
+        var renamedService = Assert.IsAssignableFrom<IService>(rig.Registry.Lookup("monolithTaskTrackerMgr"));
+        Assert.Same(service, renamedService);
+        var state = Assert.IsType<PyDict>(await CallAsync(renamedService, "GetCompletedAchievementsAndClientEventCount", session));
         Assert.Equal(completed, Field(state, "completedDict"));
         Assert.Equal(new PyDict([new(new PyStr("client_openMap"), new PyLong(3))]), Field(state, "eventDict"));
     }

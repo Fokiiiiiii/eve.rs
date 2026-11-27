@@ -195,6 +195,9 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
             (holding.ShareholderId,holding.CorporationId,holding.Shares)));
     }
 
+    private static readonly Descriptor EveOwnerDescriptor = CorporationWire.DescriptorOf(
+        ("ownerID",20),("ownerName",130),("typeID",3),("gender",3),("ownerNameID",3));
+
     [Method("GetEveOwners")]
     public async ValueTask<PyValue> GetEveOwners(ServiceCall call)
     {
@@ -207,16 +210,13 @@ public sealed partial class CorpRegistryService(CorporationStore store,PgCharact
         {
             var character = await characters.GetAsync(member.CharacterId,call.Cancellation);
             var ownerName = string.IsNullOrEmpty(character?.Name) ? $"Character {member.CharacterId}" : character.Name;
-            rows.Add(new PyObject(new PyStr("util.Row"),Py.Dict(
-                ("header",Py.Tuple([
-                    new PyStr("ownerID"),new PyStr("ownerName"),new PyStr("typeID"),
-                    new PyStr("gender"),new PyStr("ownerNameID")
-                ])),
-                ("line",Py.Tuple([
-                    new PyInt(member.CharacterId),new PyWString(ownerName),
-                    new PyInt(character is { TypeId: > 0 } ? character.TypeId : 1373),
-                    new PyInt(character?.Gender ?? 0),PyNone.Instance
-                ])))));
+            // The client reads both owner.ownerID and the five values in column order.
+            rows.Add(new PyPackedRow(EveOwnerDescriptor,
+            [
+                new PyInt(member.CharacterId),new PyWString(ownerName),
+                new PyInt(character is { TypeId: > 0 } ? character.TypeId : 1373),
+                new PyInt(character?.Gender ?? 0),PyNone.Instance
+            ]));
         }
         return Py.List([.. rows]);
     }

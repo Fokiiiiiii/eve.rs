@@ -190,9 +190,9 @@ async fn a_login_completes_and_the_client_sees_what_the_evecli_tests_expect() {
     assert_eq!(int_of(&session.server_version[0]), Some(profile::BIRTHDAY));
     assert_eq!(int_of(&session.server_version[1]), Some(profile::MACHO_VERSION));
     assert_eq!(int_of(&session.server_version[2]), Some(3), "cluster user count");
-    assert_eq!(session.server_version[3], Value::Real(24.01));
+    assert_eq!(session.server_version[3], Value::Real(24.02));
     assert_eq!(int_of(&session.server_version[4]), Some(profile::BOOT_BUILD));
-    assert_eq!(text_of(&session.server_version[5]).as_deref(), Some("V24.01@ccp"));
+    assert_eq!(text_of(&session.server_version[5]).as_deref(), Some("V24.02@ccp"));
 
     // what the acknowledgement carries
     assert_eq!(session.user_id, 42);
@@ -457,9 +457,9 @@ fn version_tuple() -> Value {
         Value::Int(170_472),
         Value::Int(496),
         Value::Int(0),
-        Value::Real(24.01),
-        Value::Int(3_396_210),
-        Value::str("V24.01@ccp"),
+        Value::Real(24.02),
+        Value::Int(3_724_492),
+        Value::str("V24.02@ccp"),
         Value::None,
     ])
 }

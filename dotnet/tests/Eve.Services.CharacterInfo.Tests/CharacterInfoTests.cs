@@ -417,6 +417,12 @@ public class CharMgrTests
         Assert.Equal(1, writtenStatus);
         Assert.Equal("134000000000000000", writtenExtraInfo);
 
+        // the 24.02 client sends the FILETIME as an unsigned variable-width integer
+        var fileTime = new System.Numerics.BigInteger(134_402_856_966_922_320L).ToByteArray(isUnsigned: true, isBigEndian: false);
+        await Rig.CallAsync(service, session, "SetActivityStatus", new PyInt(1), new PyBigUnsigned(fileTime));
+        Assert.Equal("134402856966922320", writtenExtraInfo);
+        await Rig.CallAsync(service, session, "SetActivityStatus", new PyInt(1), new PyLong(134_000_000_000_000_000L));
+
         var refusal = await Assert.ThrowsAsync<Eve.Services.MachoWrappedException>(() =>
             Rig.CallAsync(service, session, "SetActivityStatus", new PyInt(1), new PyWString(new string('x', 33))));
         Assert.Equal(MachoErrors.UserErrorClass, refusal.Error.ClassName);

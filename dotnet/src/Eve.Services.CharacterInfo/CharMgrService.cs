@@ -684,6 +684,10 @@ public sealed partial class CharMgrService(
             PyInt number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
             PyLong number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
             PyReal number => number.Value.ToString("G", System.Globalization.CultureInfo.InvariantCulture),
+            // a FILETIME arrives from the client as one of these: it does not fit a JavaScript safe integer
+            PyBigUnsigned number => new System.Numerics.BigInteger(number.Bytes, isUnsigned: true)
+                .ToString(System.Globalization.CultureInfo.InvariantCulture),
+            PyBigInteger number => number.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
             _ => Eve.Macho.JsSemantics.StringValue(value) ?? value.ToString(),
         };
     }

@@ -2192,10 +2192,10 @@ public partial class HostServerTests : IAsyncLifetime
 
     /// <summary>
     /// The owner rows of <c>config.GetMultiOwnersEx</c> through the host, with the client's row layout: the header the client's
-    /// <c>cfg.EveOwners</c> reads (eveCfg.py:1188-1201), one row per known owner, and no placeholder row for an unknown id.
+    /// <c>cfg.EveOwners</c> reads (eveCfg.py:1188-1201), including a placeholder row for an unknown id.
     /// </summary>
     [PgFact]
-    public async Task The_owner_rows_reach_the_client_through_the_host_and_an_unknown_id_has_no_row()
+    public async Task The_owner_rows_reach_the_client_through_the_host_and_an_unknown_id_has_a_placeholder_row()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = Npgsql.NpgsqlDataSource.Create(Eve.Data.PgConnection.ForTest(url));
@@ -2234,14 +2234,19 @@ public partial class HostServerTests : IAsyncLifetime
             var header = Assert.IsType<PyTuple>(tupleSet.Items[0]).Items.Select(item => T(item) ?? "").ToArray();
             Assert.Equal(["ownerID", "ownerName", "typeID", "gender", "ownerNameID"], header);
             var rows = Assert.IsType<PyTuple>(tupleSet.Items[1]).Items.Select(item => Assert.IsType<PyTuple>(item).Items).ToArray();
-            Assert.Equal(2, rows.Length);
+            Assert.Equal(3, rows.Length);
             Assert.All(rows, row => Assert.Equal(header.Length, row.Count));
             Assert.Equal(1400000001, Number(rows[0][0]));
             Assert.Equal("Test Corporation", T(rows[0][1]));
             Assert.Equal(2, Number(rows[0][2]));
-            Assert.Equal(1500000001, Number(rows[1][0]));
-            Assert.Equal("Test Alliance", T(rows[1][1]));
-            Assert.Equal(16159, Number(rows[1][2]));
+            Assert.Equal(999999999, Number(rows[1][0]));
+            Assert.Equal("Item 999999999", T(rows[1][1]));
+            Assert.Equal(0, Number(rows[1][2]));
+            Assert.Equal(0, Number(rows[1][3]));
+            Assert.IsType<PyNone>(rows[1][4]);
+            Assert.Equal(1500000001, Number(rows[2][0]));
+            Assert.Equal("Test Alliance", T(rows[2][1]));
+            Assert.Equal(16159, Number(rows[2][2]));
         }
         finally
         {

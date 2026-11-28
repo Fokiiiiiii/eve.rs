@@ -9,34 +9,38 @@ public sealed partial class ConfigService
 
     [Method("GetOwnersEx")]
     public ValueTask<PyValue> GetOwnersEx(ServiceCall call) =>
-        GetMultiOwnersEx(BulkCall(call, "GetMultiOwnersEx", SingleId(call)));
+        GetMultiOwnersEx(BulkCall(call));
 
     [Method("GetCorpTickerNamesEx")]
     public ValueTask<PyValue> GetCorpTickerNamesEx(ServiceCall call) =>
-        GetMultiCorpTickerNamesEx(BulkCall(call, "GetMultiCorpTickerNamesEx", SingleId(call)));
+        GetMultiCorpTickerNamesEx(BulkCall(call));
 
     [Method("GetAllianceShortNamesEx")]
     public ValueTask<PyValue> GetAllianceShortNamesEx(ServiceCall call) =>
-        GetMultiAllianceShortNamesEx(BulkCall(call, "GetMultiAllianceShortNamesEx", SingleId(call)));
+        GetMultiAllianceShortNamesEx(BulkCall(call));
 
     [Method("GetLocationsEx")]
     public ValueTask<PyValue> GetLocationsEx(ServiceCall call) =>
-        GetMultiLocationsEx(BulkCall(call, "GetMultiLocationsEx", SingleId(call, includeZero: true)));
+        GetMultiLocationsEx(BulkCall(call));
 
     [Method("GetLocationsLocal")]
     public ValueTask<PyValue> GetLocationsLocal(ServiceCall call) => GetMultiLocationsEx(call);
 
     [Method("GetPositionEx")]
     public PyValue GetPositionEx(ServiceCall call) =>
-        GetPositionsEx(BulkCall(call, "GetPositionsEx", SingleId(call)));
+        GetPositionsEx(BulkCall(call));
 
     [Method("GetPositionsEx")]
     public PyValue GetPositionsEx(ServiceCall call)
     {
-        var rows = RequestedIds(call.Arg(0))
-            .Select(PositionRow)
-            .Where(row => row is not null)
-            .Cast<PyTuple>();
+        var rows = new List<PyTuple>();
+        foreach (var id in RequestedIds(call))
+        {
+            if (PositionRow(id) is { } row)
+                rows.Add(row);
+            else
+                LogRejectedIdentifiers(call.Method, [PyValue.Of(id)]);
+        }
         return TupleSet(PositionColumns, rows);
     }
 
@@ -53,23 +57,10 @@ public sealed partial class ConfigService
         Row(PyValue.Of(id), PyValue.Of(x), PyValue.Of(y), PyValue.Of(z),
             PyNone.Instance, PyNone.Instance, PyNone.Instance);
 
-    private static PyValue SingleId(ServiceCall call, bool includeZero = false)
+    private static ServiceCall BulkCall(ServiceCall call) => new()
     {
-        var id = call.Arg(0) switch
-        {
-            PyInt integer => (long)integer.Value,
-            PyLong integer => integer.Value,
-            _ => throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_INVALID"),
-        };
-        if (id < 0 || id == 0 && !includeZero)
-            throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_INVALID");
-        return PyValue.Of(id);
-    }
-
-    private static ServiceCall BulkCall(ServiceCall call, string method, PyValue id) => new()
-    {
-        Method = method,
-        Args = [new PyList([id])],
+        Method = call.Method,
+        Args = [new PyList([call.Arg(0)])],
         Kwargs = call.Kwargs,
         Session = call.Session,
         Cancellation = call.Cancellation,

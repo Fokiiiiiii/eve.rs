@@ -45,7 +45,10 @@ public sealed partial class ConfigService(
             _ => 0,
         };
         if (ownerId <= 0)
+        {
+            LogRejectedIdentifiers(call.Method, [call.Arg(0)]);
             return new PyList([]);
+        }
 
         var rows = stations.All
             .Where(station => station.OwnerId == ownerId && station.SolarSystemId > 0)
@@ -95,12 +98,12 @@ public sealed partial class ConfigService(
         return new PyDict(entries);
     }
 
-    /// <summary>Agent owners use their pinned SDE name, character type and gender; unknown IDs have no row.</summary>
+    /// <summary>Known owners use authoritative data; unknown integer IDs receive a neutral owner row.</summary>
     [Method("GetMultiOwnersEx")]
     public async ValueTask<PyValue> GetMultiOwnersEx(ServiceCall call)
     {
-        var ids = RequestedIds(call.Arg(0));
-        var nonAgentIds = agentOwners is null ? ids : ids.Where(id => !agentOwners.ContainsKey(id)).ToArray();
+        var ids = RequestedIds(call, includeNonPositive: true);
+        var nonAgentIds = ids.Where(id => id > 0 && (agentOwners is null || !agentOwners.ContainsKey(id))).ToArray();
         var corporationById = nonAgentIds.Length == 0
             ? new Dictionary<long, Corporation>()
             : (await (readCorporations is null
@@ -159,6 +162,11 @@ public sealed partial class ConfigService(
                     PyValue.Of(0L),
                     PyNone.Instance));
             }
+            else
+            {
+                LogRejectedIdentifiers(call.Method, [PyValue.Of(id)]);
+                rows.Add(Row(PyValue.Of(id), new PyStr($"Item {id}"), PyValue.Of(0L), PyValue.Of(0L), PyNone.Instance));
+            }
         }
 
         return TupleSet(OwnerColumns, rows);
@@ -168,7 +176,7 @@ public sealed partial class ConfigService(
     [Method("GetMultiCorpTickerNamesEx")]
     public async ValueTask<PyValue> GetMultiCorpTickerNamesEx(ServiceCall call)
     {
-        var ids = RequestedIds(call.Arg(0));
+        var ids = RequestedIds(call);
         var corporationById = ids.Length == 0
             ? new Dictionary<long, Corporation>()
             : (await (readCorporations is null
@@ -179,6 +187,7 @@ public sealed partial class ConfigService(
         {
             if (!corporationById.TryGetValue(id, out var corporation) || corporation.Deleted)
             {
+                LogRejectedIdentifiers(call.Method, [PyValue.Of(id)]);
                 continue;
             }
             rows.Add(Row(
@@ -199,7 +208,7 @@ public sealed partial class ConfigService(
     [Method("GetMultiAllianceShortNamesEx")]
     public async ValueTask<PyValue> GetMultiAllianceShortNamesEx(ServiceCall call)
     {
-        var ids = RequestedIds(call.Arg(0));
+        var ids = RequestedIds(call);
         var alliances = ids.Length == 0
             ? new Dictionary<long, Alliance>()
             : (await (readAlliances is null
@@ -211,6 +220,9 @@ public sealed partial class ConfigService(
             .Where(alliances.ContainsKey)
             .Select(id => Row(PyValue.Of(id), PyValue.Of(alliances[id].ShortName)))
             .ToArray();
+        var missing = ids.Where(id => !alliances.ContainsKey(id)).Select(id => PyValue.Of(id)).ToArray();
+        if (missing.Length > 0)
+            LogRejectedIdentifiers(call.Method, missing);
         return TupleSet(["allianceID", "shortName"], rows);
     }
 
@@ -222,7 +234,7 @@ public sealed partial class ConfigService(
     [Method("GetMultiLocationsEx")]
     public async ValueTask<PyValue> GetMultiLocationsEx(ServiceCall call)
     {
-        var ids = RequestedIds(call.Arg(0), includeZero: true);
+        var ids = RequestedIds(call, includeZero: true);
         var structureIds = ids.Where(id => id > 0 && stations.Get(id) is null &&
             (id > int.MaxValue || solarSystems.Get((int)id) is null)).ToArray();
         var structureNames = readStructureNames is null || structureIds.Length == 0
@@ -253,42 +265,63 @@ public sealed partial class ConfigService(
                 await dogma.EnsureTypesAsync([item.TypeId], call.Cancellation);
                 var name = item.CustomName ?? dogma.Type(item.TypeId)?.Name;
                 if (string.IsNullOrWhiteSpace(name))
+                {
+                    LogRejectedIdentifiers(call.Method, [PyValue.Of(id)]);
                     continue;
+                }
                 if (stations.Get(item.LocationId) is { } itemStation)
                     rows.Add(LocationRow(id, name, itemStation.SolarSystemId, itemStation.X, itemStation.Y, itemStation.Z));
                 else if (item.LocationId <= int.MaxValue && solarSystems.Get((int)item.LocationId) is { } itemSystem)
                     rows.Add(LocationRow(id, name, itemSystem.Id));
+                else
+                    LogRejectedIdentifiers(call.Method, [PyValue.Of(id)]);
             }
+            else
+                LogRejectedIdentifiers(call.Method, [PyValue.Of(id)]);
         }
 
         return TupleSet(LocationColumns, rows);
     }
 
     private static long[] RequestedIds(
-        PyValue value,
-        bool includeZero = false)
+        ServiceCall call,
+        bool includeZero = false,
+        bool includeNonPositive = false)
     {
+        var value = call.Arg(0);
         var items = value switch
         {
             PyList list => list.Items,
             PyTuple tuple => tuple.Items,
-            _ => throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_LIST_INVALID"),
+            _ => null,
         };
-        var ids = new long[items.Count];
-        for (var index = 0; index < items.Count; index++)
+        if (items is null)
         {
-            var id = items[index] switch
+            LogRejectedIdentifiers(call.Method, [value]);
+            throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_LIST_INVALID");
+        }
+        var ids = new List<long>(items.Count);
+        var rejected = new List<PyValue>();
+        foreach (var item in items)
+        {
+            long? id = item switch
             {
                 PyInt number => number.Value,
                 PyLong number => number.Value,
-                _ => throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_INVALID"),
+                _ => null,
             };
-            if (id < 0 || id == 0 && !includeZero)
-                throw MachoErrors.ThrowUserError("CONFIG_IDENTIFIER_INVALID");
-            ids[index] = id;
+            if (id is null || (!includeNonPositive && (id < 0 || id == 0 && !includeZero)))
+                rejected.Add(item);
+            else
+                ids.Add(id.Value);
         }
+        if (rejected.Count > 0)
+            LogRejectedIdentifiers(call.Method, rejected);
         return ids.Distinct().ToArray();
     }
+
+    private static void LogRejectedIdentifiers(string method, IEnumerable<PyValue> values) =>
+        Console.Error.WriteLine($"config.{method}: unusable identifiers: {string.Join(", ", values.Select(value => value.ToString()?.Replace("\r", "\\r").Replace("\n", "\\n")))}");
 
     private static PyTuple LocationRow(long id, string name, int? solarSystemId, double x = 0, double y = 0, double z = 0, int? nameId = null) =>
         Row(

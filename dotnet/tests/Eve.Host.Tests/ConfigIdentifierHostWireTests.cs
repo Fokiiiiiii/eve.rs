@@ -11,7 +11,7 @@ namespace Eve.Host.Tests;
 public partial class HostServerTests
 {
     [Fact]
-    public async Task Config_identifier_errors_keep_the_user_error_code_through_host_wire()
+    public async Task Config_invalid_identifiers_do_not_fail_host_wire_calls()
     {
         var config = new ConfigService(null!, null!, new StationCatalog([]), new SolarSystemCatalog([]));
         Start(strictRpc: true, configure: registry => registry.Register(config));
@@ -55,7 +55,7 @@ public partial class HostServerTests
             "GetMultiLocationsEx", "GetPositionsEx",
         ];
         foreach (var method in multiMethods)
-            Assert.Equal("CONFIG_IDENTIFIER_INVALID", UserErrorCode(await Call(method, new PyList([PyNone.Instance]))));
+            Assert.Equal(MachoMessage.CallRsp, MachoPacket.Decode(await Call(method, new PyList([PyNone.Instance])))!.Type);
 
         Assert.Equal("CONFIG_IDENTIFIER_LIST_INVALID",
             UserErrorCode(await Call("GetMultiOwnersEx", new PyInt(42))));
@@ -65,7 +65,7 @@ public partial class HostServerTests
             "GetOwnersEx", "GetCorpTickerNamesEx", "GetAllianceShortNamesEx", "GetLocationsEx", "GetPositionEx",
         ];
         foreach (var method in singleMethods)
-            Assert.Equal("CONFIG_IDENTIFIER_INVALID", UserErrorCode(await Call(method, PyNone.Instance)));
+            Assert.Equal(MachoMessage.CallRsp, MachoPacket.Decode(await Call(method, PyNone.Instance))!.Type);
 
         var stationReply = await Call("GetStationSolarSystemsByOwner", PyNone.Instance);
         Assert.Equal(MachoMessage.CallRsp, MachoPacket.Decode(stationReply)!.Type);

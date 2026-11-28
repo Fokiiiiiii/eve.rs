@@ -23,7 +23,7 @@ public sealed class ConfigServicePgFactAttribute : FactAttribute
 public sealed class ConfigServiceTests
 {
     [Fact]
-    public async Task Config_bulk_lookups_refuse_wrong_shapes_and_invalid_ids()
+    public async Task Config_bulk_lookups_refuse_wrong_shapes()
     {
         var service = new ConfigService(null!, null!, null!, null!);
         var session = new ClientSession();
@@ -37,14 +37,44 @@ public sealed class ConfigServiceTests
         {
             await Assert.ThrowsAsync<MachoWrappedException>(async () => await method(PyNone.Instance));
         }
-        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetMultiOwnersEx(new ServiceCall
+    }
+
+    [Fact]
+    public async Task Owner_lookup_keeps_known_and_unknown_integer_ids_when_other_values_are_invalid()
+    {
+        var service = new ConfigService(null!, null!, null!, null!,
+            agentOwners: new Dictionary<long, AgentOwnerInfo> { [42] = new("Known", 1) },
+            readCorporations: (_, _) => Task.FromResult<IReadOnlyList<Eve.Corporations.Corporation>>([]),
+            readAlliances: (_, _) => Task.FromResult<IReadOnlyList<Eve.Corporations.Alliance>>([]),
+            readCharacters: (_, _) => Task.FromResult<IReadOnlyList<Eve.Characters.Character>>([]));
+        var result = await service.GetMultiOwnersEx(new ServiceCall
         {
-            Method = "GetMultiOwnersEx", Args = [new PyList([new PyStr("bad")])], Session = session,
-        }));
-        await Assert.ThrowsAsync<MachoWrappedException>(async () => await service.GetMultiOwnersEx(new ServiceCall
+            Method = "GetMultiOwnersEx", Session = new ClientSession(),
+            Args = [new PyList([new PyInt(42), new PyInt(-1), new PyInt(0), new PyInt(99), new PyStr("bad")])],
+        });
+        var rows = Rows(result, ["ownerID", "ownerName", "typeID", "gender", "ownerNameID"]);
+        Assert.Equal([42L, -1L, 0L, 99L], rows.Select(row => Integer(row[0])).ToArray());
+        Assert.Equal("Known", Text(rows[0][1]));
+        foreach (var row in rows.Skip(1))
         {
-            Method = "GetMultiOwnersEx", Args = [new PyList([new PyInt(-1)])], Session = session,
-        }));
+            Assert.Equal($"Item {Integer(row[0])}", Text(row[1]));
+            Assert.Equal(0, Integer(row[2]));
+            Assert.Equal(0, Integer(row[3]));
+            Assert.Same(PyNone.Instance, row[4]);
+        }
+    }
+
+    [Fact]
+    public async Task Location_lookup_skips_invalid_values_and_preserves_zero_and_valid_rows()
+    {
+        var service = new ConfigService(null!, null!, new StationCatalog([Station(123, 1, 30000142)]), new SolarSystemCatalog([]));
+        var result = await service.GetMultiLocationsEx(new ServiceCall
+        {
+            Method = "GetMultiLocationsEx", Session = new ClientSession(),
+            Args = [new PyTuple([new PyInt(-1), new PyStr("bad"), new PyInt(0), new PyInt(123)])],
+        });
+        var rows = Rows(result, ["locationID", "locationName", "solarSystemID", "x", "y", "z", "locationNameID"]);
+        Assert.Equal([0L, 123L], rows.Select(row => Integer(row[0])).ToArray());
     }
 
     [Fact]
@@ -151,7 +181,7 @@ public sealed class ConfigServiceTests
     }
 
     [ConfigServicePgFact]
-    public async Task Owners_answer_characters_corporations_and_alliances_and_leave_unknown_ids_out()
+    public async Task Owners_answer_characters_corporations_alliances_and_unknown_ids()
     {
         var url = Environment.GetEnvironmentVariable("EVE_PG_URL")!;
         await using var source = NpgsqlDataSource.Create(PgConnection.ForTest(url));
@@ -172,14 +202,15 @@ public sealed class ConfigServiceTests
             var rows = Rows(
                 await service.GetMultiOwnersEx(Call("GetMultiOwnersEx", requested, new ClientSession())),
                 ["ownerID", "ownerName", "typeID", "gender", "ownerNameID"]);
-            Assert.Equal([1400000001L, 1500000001L], rows.Select(row => Integer(row[0])).ToArray());
+            Assert.Equal(requested, rows.Select(row => Integer(row[0])).ToArray());
             var corporation = rows[0];
             Assert.Equal("Test Corporation", Text(corporation[1]));
             Assert.Equal(2, Integer(corporation[2]));
             var alliance = rows[1];
             Assert.Equal("Test Alliance", Text(alliance[1]));
             Assert.Equal(16159, Integer(alliance[2]));
-            Assert.DoesNotContain(rows, row => Text(row[1]).StartsWith("Item ", StringComparison.Ordinal));
+            Assert.Equal("Item 1500000002", Text(rows[2][1]));
+            Assert.Equal("Item 999999999", Text(rows[3][1]));
         }
         finally
         {

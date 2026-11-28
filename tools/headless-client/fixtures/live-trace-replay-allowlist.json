@@ -1,18 +1,3 @@
 {
-  "known_failures": [
-    {
-      "service": "corpFittingMgr",
-      "method": "GetFittings",
-      "reason": "SessionRpcBudgetExceeded",
-      "owner_job": "60-fix-live-*",
-      "note": "Observed in the owner's first-400-record trace; remove when the live corporation fittings fix lands."
-    },
-    {
-      "service": "corpFittingMgr",
-      "method": "GetCommunityFittings",
-      "reason": "SessionRpcBudgetExceeded",
-      "owner_job": "60-fix-live-*",
-      "note": "Observed in the owner's first-400-record trace; remove when the live corporation fittings fix lands."
-    }
-  ]
+  "known_failures": []
 }

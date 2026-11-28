@@ -178,14 +178,8 @@ def test_legacy_notification_replay_uses_its_recorded_broadcast_address():
     assert address == p.broadcast_address(62001)
 
 
-def test_known_error_allowlist_is_exact_and_tracks_the_live_fix_jobs():
-    allowlist = load_allowlist(DEFAULT_ALLOWLIST)
-    signatures = {(entry["service"], entry["method"], entry["reason"]) for entry in allowlist}
-    assert signatures == {
-        ("corpFittingMgr", "GetFittings", "SessionRpcBudgetExceeded"),
-        ("corpFittingMgr", "GetCommunityFittings", "SessionRpcBudgetExceeded"),
-    }
-    assert all(entry["owner_job"] == "60-fix-live-*" for entry in allowlist)
+def test_known_error_allowlist_is_empty():
+    assert load_allowlist(DEFAULT_ALLOWLIST) == []
 
 
 def test_scenario_character_names_are_unique_and_fit_the_client_limit():

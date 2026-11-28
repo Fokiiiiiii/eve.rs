@@ -273,7 +273,7 @@ jobs:
             proj="tests/$ONLY/$ONLY.csproj"
             dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --list-tests > /tmp/test-list.txt
             filter="$(python3 ../tools/dev/shard-dotnet-tests.py /tmp/test-list.txt "$SHARD_INDEX" "$SHARD_COUNT" --split-methods)"
-            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --filter "$filter" --results-directory test-results --logger "trx;LogFileName=$ONLY-$SHARD_INDEX.trx" || status=1
+            dotnet test "$proj" -c Release --no-build -nologo --verbosity minimal -nodeReuse:false --blame --filter "$filter" --results-directory test-results --logger "trx;LogFileName=$ONLY-$SHARD_INDEX.trx" || status=1
           else
             projects="$(python3 ../tools/dev/shard-dotnet-projects.py "$SHARD_INDEX" "$SHARD_COUNT" tests/*/*.csproj)"
             for name in $projects; do

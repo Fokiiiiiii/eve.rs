@@ -128,6 +128,9 @@ public sealed class StoreOffersService(
             var visible = (JsonObject)offer.DeepClone();
             if (!visible.ContainsKey("imageUrl"))
                 visible["imageUrl"] = null;
+            // the client indexes offer["label"] and takes None for an offer without one
+            if (!visible.ContainsKey("label"))
+                visible["label"] = null;
             visible["canPurchase"] = Purchasable(state, storeId, offer);
             return ToPyValue(visible);
         })]);

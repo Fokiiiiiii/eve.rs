@@ -43,6 +43,7 @@ public sealed class StoreOffersServiceTests
         var imageUrl = offer.Entries.Single(entry => entry.Key.Equals(new PyStr("imageUrl"))).Value;
 
         Assert.Equal(PyNone.Instance, imageUrl);
+        Assert.Equal(PyNone.Instance, offer.Entries.Single(entry => entry.Key.Equals(new PyStr("label"))).Value);
     }
 
     [Fact]

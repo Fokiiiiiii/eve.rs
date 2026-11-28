@@ -324,6 +324,8 @@ impl Brains {
     /// One poll: calls, timers and ball callbacks that are due, the messages that wait, and, when it is time, a tick of every tree. What the scene
     /// has to tell the host is given back.
     pub(crate) fn run(&mut self, scene: &mut Scene, now: i64) -> Vec<Out> {
+        let started = std::time::Instant::now();
+        let system_id = scene.system().id;
         let mut out = Vec::new();
         let Brains { shared, brains, trees, next_tick, state, .. } = self;
         shared.now = now;
@@ -334,7 +336,10 @@ impl Brains {
             shared.pending.push(Delivery::Call { observer: notification.observer, args: Vec::new() });
         }
         world.tell_what_happened(shared);
+        let events_done = std::time::Instant::now();
         deliver_pending(shared, brains, trees, &mut world);
+        let delivery_done = std::time::Instant::now();
+        let mut ticks_done = delivery_done;
         if now >= *next_tick {
             *next_tick = now + TICK;
             for brain in brains.values_mut() {
@@ -342,7 +347,19 @@ impl Brains {
                     fault(brain, shared, &mut world, error);
                 }
             }
+            ticks_done = std::time::Instant::now();
             deliver_pending(shared, brains, trees, &mut world);
+        }
+        let done = std::time::Instant::now();
+        if (done - started).as_secs() >= 1 {
+            eprintln!(
+                "eve-sim: NPC brains in system {system_id} ({} trees): events {:.2} s, delivery {:.2} s, tree ticks {:.2} s, post-tick delivery {:.2} s",
+                brains.len(),
+                (events_done - started).as_secs_f64(),
+                (delivery_done - events_done).as_secs_f64(),
+                (ticks_done - delivery_done).as_secs_f64(),
+                (done - ticks_done).as_secs_f64(),
+            );
         }
         out
     }

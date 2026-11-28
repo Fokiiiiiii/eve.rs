@@ -775,6 +775,7 @@ impl Scene {
         }
         laps.mark("docking");
         told.extend(self.note_drone_threats(now));
+        laps.mark("drone threats");
         told.extend(self.tick_brains(now));
         laps.mark("brains");
         told.extend(self.settle_targets(now));

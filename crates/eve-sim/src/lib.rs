@@ -4,13 +4,13 @@
 
 use std::io;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use eve_net::frame::FrameReader;
 use eve_space::link::{Message, PROTOCOL_VERSION};
 use eve_space::sim::{POLL_HZ, Sim, Universe};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, Interval, MissedTickBehavior};
 
 /// The largest frame accepted (a ship's numbers are a few hundred bytes; this is generous).
 const MAX_FRAME: usize = 1 << 20;
@@ -87,14 +87,22 @@ where
                 note_slow(started, || format!("writing the replies to kind {kind}"));
             }
             _ = poll.tick() => {
-                let started = Instant::now();
+                let poll_started = Instant::now();
                 let due = sim.poll(clock());
-                note_slow(started, || "the poll".to_owned());
+                note_slow(poll_started, || "the poll".to_owned());
                 let started = Instant::now();
                 write_all(&mut writer, &due).await?;
                 note_slow(started, || "writing the poll's messages".to_owned());
+                give_host_time_after_poll(&mut poll, poll_started);
             }
         }
+    }
+}
+
+fn give_host_time_after_poll(poll: &mut Interval, started: Instant) {
+    // Skip still leaves one overdue tick ready, which can put another slow poll ahead of waiting Host frames.
+    if started.elapsed() >= poll.period() {
+        poll.reset();
     }
 }
 
@@ -111,6 +119,27 @@ fn note_slow(started: Instant, what: impl FnOnce() -> String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn an_overrun_leaves_time_for_a_waiting_host_frame() {
+        let period = Duration::from_millis(1000 / u64::from(POLL_HZ));
+        let mut poll = tokio::time::interval(period);
+        poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        poll.tick().await;
+        let started = Instant::now();
+        tokio::time::advance(period * 3).await;
+
+        give_host_time_after_poll(&mut poll, started);
+
+        let (mut host, reader) = tokio::io::duplex(16);
+        let mut frames = FrameReader::new(reader, MAX_FRAME);
+        host.write_all(&[1, 0, 0, 0, 42]).await.unwrap();
+        tokio::select! {
+            biased;
+            _ = poll.tick() => panic!("an overdue poll ran before a queued host frame"),
+            frame = frames.next() => assert_eq!(frame.unwrap().unwrap().as_ref(), &[42]),
+        }
+    }
 
     #[tokio::test]
     async fn a_partial_sim_frame_survives_select_cancellation() {

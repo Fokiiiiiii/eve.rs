@@ -247,7 +247,16 @@ impl Scene {
             return Vec::new();
         }
         let mut out = brains.run(self, now);
+        let repairs_started = std::time::Instant::now();
         out.extend(self.sync_npc_self_repairs(now, &brains));
+        let repairs_elapsed = repairs_started.elapsed();
+        if repairs_elapsed.as_secs() >= 1 {
+            eprintln!(
+                "eve-sim: NPC self-repair sync in system {} took {:.2} s",
+                self.system().id,
+                repairs_elapsed.as_secs_f64()
+            );
+        }
         if let Some(spawned) = self.brains.replace(brains).filter(|spawned| !spawned.is_empty())
             && let Some(mine) = self.brains.as_mut()
         {

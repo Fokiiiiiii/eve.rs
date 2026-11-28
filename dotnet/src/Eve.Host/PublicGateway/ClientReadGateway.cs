@@ -27,7 +27,8 @@ internal static class ClientReadGateway
             ["eve_public.achievement.category.api.GetRequest"] = CharacterEmpty("eve_public.achievement.category.api.GetResponse"),
             ["eve_public.achievement.reward.api.GetUnclaimedRequest"] = CharacterEmpty("eve_public.achievement.reward.api.GetUnclaimedResponse"),
             ["eve_public.corporationgoal.api.GetMineWithRewardsRequest"] = CharacterEmpty("eve_public.corporationgoal.api.GetMineWithRewardsResponse"),
-            ["eve_public.pirate.corruption.api.GetSystemInfoRequest"] = CharacterEmpty("eve_public.pirate.corruption.api.GetSystemInfoResponse"),
+            ["eve_public.pirate.corruption.api.GetSystemInfoRequest"] = SystemInfo("eve_public.pirate.corruption.api.GetSystemInfoResponse", false),
+            ["eve_public.pirate.suppression.api.GetSystemInfoRequest"] = SystemInfo("eve_public.pirate.suppression.api.GetSystemInfoResponse", true),
             ["eve_public.pirate.suppression.api.GetStageThresholdsRequest"] = StageThresholds("eve_public.pirate.suppression.api.GetStageThresholdsResponse"),
             ["eve_public.pirate.corruption.api.GetStageThresholdsRequest"] = StageThresholds("eve_public.pirate.corruption.api.GetStageThresholdsResponse"),
             ["eve_public.sovereignty.mercenaryden.activity.api.GetAllRequest"] = CharacterEmpty("eve_public.sovereignty.mercenaryden.activity.api.GetAllResponse"),
@@ -57,6 +58,19 @@ internal static class ClientReadGateway
         var payload = new ProtoWriter();
         payload.Message(1, currency.ToArray());
         return new GatewayAnswer(200, "", responseType, payload.ToArray());
+    };
+
+    private static GatewayHandler SystemInfo(string responseType, bool suppression) => (request, _) =>
+    {
+        if (request.CharacterId is null)
+            return Task.FromResult(new GatewayAnswer(400, "no active character", responseType, []));
+        var fraction = new ProtoWriter();
+        fraction.Uint(2, 1);
+        var payload = new ProtoWriter();
+        payload.Message(1, fraction.ToArray());
+        payload.Message(suppression ? 3 : 2, fraction.ToArray());
+        payload.Message(suppression ? 4 : 3, fraction.ToArray());
+        return Task.FromResult(new GatewayAnswer(200, "", responseType, payload.ToArray()));
     };
 
     private static GatewayHandler StageThresholds(string responseType) => (request, _) =>

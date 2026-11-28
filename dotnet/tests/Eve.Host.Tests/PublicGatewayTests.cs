@@ -29,7 +29,6 @@ public sealed class PublicGatewayTests
     [InlineData("eve_public.achievement.category.api.GetRequest", "eve_public.achievement.category.api.GetResponse")]
     [InlineData("eve_public.achievement.reward.api.GetUnclaimedRequest", "eve_public.achievement.reward.api.GetUnclaimedResponse")]
     [InlineData("eve_public.corporationgoal.api.GetMineWithRewardsRequest", "eve_public.corporationgoal.api.GetMineWithRewardsResponse")]
-    [InlineData("eve_public.pirate.corruption.api.GetSystemInfoRequest", "eve_public.pirate.corruption.api.GetSystemInfoResponse")]
     [InlineData("eve_public.sovereignty.mercenaryden.activity.api.GetAllRequest", "eve_public.sovereignty.mercenaryden.activity.api.GetAllResponse")]
     [InlineData("eve_public.stargate.lock.api.GetRestrictedSystemsRequest", "eve_public.stargate.lock.api.GetRestrictedSystemsResponse")]
     public async Task Client_read_requests_return_empty_typed_messages_for_an_active_character(string requestType, string responseType)
@@ -42,6 +41,29 @@ public sealed class PublicGatewayTests
 
         var missingCharacter = await handler(new GatewayRequest([], requestType, [], null), CancellationToken.None);
         Assert.Equal(400u, missingCharacter.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("suppression", 2, 3, 4)]
+    [InlineData("corruption", 4, 2, 3)]
+    public async Task Pirate_system_info_returns_zero_stage_and_valid_fractions(string kind, int stage, int eve, int vanguard)
+    {
+        var requestType = $"eve_public.pirate.{kind}.api.GetSystemInfoRequest";
+        var handler = ClientReadGateway.Handlers(3724492)[requestType];
+        var answer = await handler(new GatewayRequest([], requestType, [], 90000001), CancellationToken.None);
+        Assert.Equal(200u, answer.StatusCode);
+        Assert.Equal($"eve_public.pirate.{kind}.api.GetSystemInfoResponse", answer.ResponseTypeName);
+        var fields = ProtoReader.Fields(answer.Payload);
+        Assert.Equal(0L, SkillPlanWire.VarintOf(answer.Payload, stage));
+        Assert.Equal(3, fields.Count);
+        foreach (var number in new[] { 1, eve, vanguard })
+        {
+            var fraction = Assert.Single(fields, field => field.Number == number);
+            Assert.Equal(2, fraction.WireType);
+            Assert.Equal(0L, SkillPlanWire.VarintOf(fraction.Bytes, 1));
+            Assert.Equal(1L, SkillPlanWire.VarintOf(fraction.Bytes, 2));
+        }
+        Assert.Equal(400u, (await handler(new GatewayRequest([], requestType, [], null), CancellationToken.None)).StatusCode);
     }
 
     [Theory]

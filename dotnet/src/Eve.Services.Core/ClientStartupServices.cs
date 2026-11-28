@@ -71,7 +71,7 @@ public sealed partial class AlertService
     {
         if (call.Kwargs is not PyNone || call.Args.Count is < 1 or > 2 ||
             (call.Args.Count == 2 && call.Arg(1) is not (PyNone or PyInt or PyLong)))
-            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+            throw InvalidGroupBeans(call);
 
         var compressed = call.Arg(0) is PyBytes;
         var groups = call.Arg(0) switch
@@ -82,7 +82,7 @@ public sealed partial class AlertService
         };
         if (groups is null || groups.Entries.Count > MaxAlertEntries ||
             groups.Entries.Any(entry => !PositiveInteger(entry.Key) || entry.Value is not PyDict))
-            throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+            throw InvalidGroupBeans(call, groups);
 
         var userCount = 0;
         long totalCount = 0;
@@ -90,12 +90,12 @@ public sealed partial class AlertService
         {
             var users = (PyDict)group.Value;
             if (users.Entries.Count > MaxAlertEntries - userCount)
-                throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+                throw InvalidGroupBeans(call, groups);
             userCount += users.Entries.Count;
             foreach (var user in users.Entries)
             {
                 if (!GroupBeanCountValue(user.Value, out var count))
-                    throw MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+                    throw InvalidGroupBeans(call, groups);
                 totalCount = long.MaxValue - totalCount < count ? long.MaxValue : totalCount + count;
             }
         }
@@ -103,6 +103,42 @@ public sealed partial class AlertService
         Console.Error.WriteLine($"eve-host: client group bean delivery groups={groups.Entries.Count} users={userCount} count={totalCount} compressed={compressed}");
         return PyNone.Instance;
     }
+
+    private static Exception InvalidGroupBeans(ServiceCall call, PyDict? decoded = null)
+    {
+        var args = string.Join(",", call.Args.Take(16).Select(value => DescribeAlertShape(value, 0)));
+        var kwargs = DescribeAlertShape(call.Kwargs, 0);
+        var expanded = decoded is null ? "" : $" decoded={DescribeAlertShape(decoded, 0)}";
+        Console.Error.WriteLine($"eve-host: GroupBeanDelivery invalid args_count={call.Args.Count} args=[{args}] kwargs={kwargs}{expanded}");
+        return MachoErrors.ThrowUserError("ALERT_ARGUMENTS_INVALID");
+    }
+
+    private static string DescribeAlertShape(PyValue value, int depth)
+    {
+        var type = value.GetType().Name;
+        return value switch
+        {
+            PyBytes bytes => $"{type}(len={bytes.Value.Length})",
+            PyBuffer bytes => $"{type}(len={bytes.Value.Length})",
+            PyStr text => $"{type}(len={text.Value.Length})",
+            PyWString text => $"{type}(len={text.Value.Length})",
+            PyTuple tuple when depth < 3 => $"{type}(len={tuple.Items.Count},items=[{string.Join(",", tuple.Items.Take(8).Select(item => DescribeAlertShape(item, depth + 1)))}])",
+            PyList list when depth < 3 => $"{type}(len={list.Items.Count},items=[{string.Join(",", list.Items.Take(8).Select(item => DescribeAlertShape(item, depth + 1)))}])",
+            PyTuple tuple => $"{type}(len={tuple.Items.Count})",
+            PyList list => $"{type}(len={list.Items.Count})",
+            PyDict dict when depth < 2 => $"{type}(len={dict.Entries.Count},keys=[{string.Join(",", dict.Entries.Take(8).Select(entry => DescribeAlertKey(entry.Key) + ":" + DescribeAlertShape(entry.Value, depth + 1)))}])",
+            PyDict dict => $"{type}(len={dict.Entries.Count})",
+            _ => type,
+        };
+    }
+
+    private static string DescribeAlertKey(PyValue key) => key switch
+    {
+        PyInt number => number.Value.ToString(CultureInfo.InvariantCulture),
+        PyLong number => number.Value.ToString(CultureInfo.InvariantCulture),
+        PyStr text => $"str({System.Text.Json.JsonSerializer.Serialize(text.Value[..Math.Min(text.Value.Length, 64)])},len={text.Value.Length})",
+        _ => key.GetType().Name,
+    };
 
     [Method("GetLogModeForError")]
     public PyValue GetLogModeForError(ServiceCall call)

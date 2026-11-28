@@ -226,13 +226,23 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         await identifying.ContinueWith(_ => { }, TaskScheduler.Default);
     }
 
-    private static async Task IdentifyAsync(HttpContext context, NoticeSubscriber subscriber, GatewayAuthority authority, GatewayTokenIdentity identity)
+    internal static async Task IdentifyAsync(HttpContext context, NoticeSubscriber subscriber, GatewayAuthority authority, GatewayTokenIdentity identity)
     {
         var reader = context.Request.BodyReader;
         var pending = new List<byte>();
         while (true)
         {
-            var read = await reader.ReadAsync(context.RequestAborted);
+            System.IO.Pipelines.ReadResult read;
+            try
+            {
+                read = await reader.ReadAsync(context.RequestAborted);
+            }
+            // The client ends this stream by aborting it, which is not a fault of the host: left to escape, the faulted task
+            // was reported once for every stream the client dropped.
+            catch (Exception error) when (error is IOException || (error is OperationCanceledException && context.RequestAborted.IsCancellationRequested))
+            {
+                return;
+            }
             foreach (var segment in read.Buffer)
                 pending.AddRange(segment.ToArray());
             reader.AdvanceTo(read.Buffer.End);

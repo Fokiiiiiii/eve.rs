@@ -25,6 +25,23 @@ public sealed class PublicGatewayTests
     private static string UserToken => GatewayTokens.Issue(1, null, DateTimeOffset.UtcNow);
     private static string OtherUserToken => GatewayTokens.Issue(2, null, DateTimeOffset.UtcNow);
 
+    private sealed class AbortedBody : MemoryStream
+    {
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            throw new IOException("The request stream was aborted.");
+    }
+
+    [Fact]
+    public async Task A_client_dropping_its_notice_stream_is_not_a_failure()
+    {
+        var context = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+        context.Request.Body = new AbortedBody();
+        var notices = new NoticeHub();
+        var authority = new GatewayAuthority((_, _) => Task.FromResult<long?>(null), () => DateTimeOffset.UtcNow);
+
+        await PublicGatewayServer.IdentifyAsync(context, notices.Subscribe(7), authority, new GatewayTokenIdentity(7, null));
+    }
+
     [Fact]
     public void A_token_the_client_made_itself_is_taken_only_when_asked_and_only_from_this_machine()
     {

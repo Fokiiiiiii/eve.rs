@@ -16,7 +16,7 @@ public sealed partial class ItemLockingService(CorporationStore corporations)
     {
         var corporationId = SessionCorporationId(call.Session);
         var locationId = Integral(call.Arg(0));
-        if (corporationId <= 0 || locationId is not > 0) return new PyDict([]);
+        if (corporationId <= 0 || locationId is not > 0 || await IsNpcAsync(call, corporationId)) return new PyDict([]);
         await RequireAssetAuthorityAsync(call, corporationId);
         var items = await corporations.LockedItemsAsync(corporationId, locationId, call.Cancellation);
         return new PyDict([.. items.Select(item => new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(item.ItemId), Py.KeyVal(
@@ -30,7 +30,7 @@ public sealed partial class ItemLockingService(CorporationStore corporations)
     public async ValueTask<PyValue> GetLockedItemLocations(ServiceCall call)
     {
         var corporationId = SessionCorporationId(call.Session);
-        if (corporationId <= 0) return InventoryWire.EmptySet();
+        if (corporationId <= 0 || await IsNpcAsync(call, corporationId)) return InventoryWire.EmptySet();
         await RequireAssetAuthorityAsync(call, corporationId);
         var locations = await corporations.LockedItemLocationsAsync(corporationId, call.Cancellation);
         return InventoryWire.Set(locations.Select(InventoryWire.Id));
@@ -53,6 +53,13 @@ public sealed partial class ItemLockingService(CorporationStore corporations)
             }
         }
     }
+
+    /// <summary>
+    /// An NPC corporation holds no votes, so nothing of it is ever locked. The client asks before it moves an item in a station,
+    /// so refusing here would keep every pilot of an NPC corporation from moving anything.
+    /// </summary>
+    private async ValueTask<bool> IsNpcAsync(ServiceCall call, long corporationId) =>
+        await corporations.GetAsync(corporationId, call.Cancellation) is { IsNpc: true };
 
     private async ValueTask RequireAssetAuthorityAsync(ServiceCall call, long corporationId)
     {

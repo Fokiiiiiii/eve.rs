@@ -66,6 +66,26 @@ public sealed class ItemLockTests
     }
 
     [PgFact]
+    public async Task A_pilot_of_an_npc_corporation_reads_no_locks_instead_of_being_refused()
+    {
+        const long NpcCorporation = 1000044;
+        await using var rig = await Rig.CreateAsync();
+        await rig.SeedNpcCorporationAsync(NpcCorporation);
+        IService service = new ItemLockingService(StoreWithLocks(rig));
+        var pilot = new ClientSession { CharacterId = await rig.CharacterAsync("Rookie") };
+        pilot.Set("corpid", new PyInt(NpcCorporation));
+
+        Assert.Equal(new PyDict([]), await service.CallAsync(new ServiceCall
+        {
+            Method = "GetItemsByLocation", Args = [new PyLong(LocationId)], Session = pilot,
+        }));
+        Assert.Equal(InventoryWire.EmptySet(), await service.CallAsync(new ServiceCall
+        {
+            Method = "GetLockedItemLocations", Args = [], Session = pilot,
+        }));
+    }
+
+    [PgFact]
     public async Task Corporate_lock_reads_require_persisted_accountant_authority()
     {
         await using var rig = await Rig.CreateAsync();

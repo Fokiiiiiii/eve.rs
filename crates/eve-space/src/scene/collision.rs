@@ -464,6 +464,14 @@ pub(super) fn resolve_swept_collisions(
     active: &mut BTreeSet<SessionId>,
     bumped: &mut BTreeSet<SessionId>,
 ) {
+    // In a stationary scene or a second settlement at the same time, no path can hit anything.
+    if !ships.iter().any(|(session, _, ship)| {
+        starts
+            .get(session)
+            .is_some_and(|&(at, start, warping)| at < now && !warping && start != ship.position)
+    }) {
+        return;
+    }
     let mut swept = BTreeSet::new();
     for left_index in 0..ships.len() {
         for right_index in left_index + 1..ships.len() {

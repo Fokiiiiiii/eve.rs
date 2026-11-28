@@ -4918,6 +4918,44 @@ fn movement_warp_and_collision_invariants_hold_over_deterministic_inputs() {
 }
 
 #[test]
+fn polling_a_retained_structure_scene_with_stationary_sentries() {
+    let mut system = (*system()).clone();
+    system.security = 0.9;
+    for index in 0..64 {
+        system.bodies.push(gate(
+            50_001_000 + index,
+            Vec3::new(1.0e8 * (index + 1) as f64, 0.0, 0.0),
+            6_000.0,
+            (OTHER_SYSTEM, ARRIVAL_GATE),
+            None,
+        ));
+    }
+    let mut scene = Scene::new(Arc::new(system));
+    scene.undock(SESSION, spec(), STATION, NOON).unwrap();
+    let mut placement = structure_placement(&scene, NOON);
+    placement.position = [0.0, 1.0e10, 0.0];
+    scene.place_structure(placement, NOON);
+    scene.poll(NOON);
+    scene.leave(SESSION, Departure::LoggedOff, NOON).unwrap();
+    assert!(!scene.is_empty());
+    let sentries = scene.npc_sessions();
+    assert!(sentries.len() >= 512);
+
+    // Exercise the overlap pass too: a stationary pair that overlaps still needs to separate.
+    let (a, b) = (sentries[0], sentries[1]);
+    scene.pilots.get_mut(&a).unwrap().ship.position = scene.pilots[&b].ship.position;
+    scene.poll(NOON + SECOND);
+    assert_ne!(scene.pilots[&a].ship.position, scene.pilots[&b].ship.position);
+
+    let started = std::time::Instant::now();
+    for tick in 1..=32 {
+        let out = scene.poll(NOON + SECOND + tick * (SECOND / 4));
+        assert!(out.is_empty());
+    }
+    eprintln!("32 polls with {} stationary sentries: {:?}", sentries.len(), started.elapsed());
+}
+
+#[test]
 fn a_long_tick_soak_does_not_retain_per_tick_scene_state() {
     let mut scene = scene();
     scene.command(SESSION, Command::Stop, NOON);

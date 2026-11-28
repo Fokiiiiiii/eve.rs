@@ -196,7 +196,7 @@ internal sealed partial class CharacterServicesComposition
                 new StandingCommands(new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), foundations.Relations,
                     (character, owner, standing) => StandingSetNotification.Send(
                         characterSessions.Of(character), character, owner, standing)),
-                spaceSessions is null ? null : new TeleportCommands(new HostGmRelocation(spaceSessions, solarSystems, new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), characterSessions)),
+                spaceSessions is null ? null : new TeleportCommands(new HostGmRelocation(spaceSessions, solarSystems, stations, new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), characterSessions)),
                 missionDungeons is null ? null : new AgentCommands(new HostAgentControl(agentMissionStore, agentId => agentMissionAgentById.GetValueOrDefault(agentId), PickOfferAsync, missionDungeons, () => DateTimeOffset.UtcNow)),
                 new FwCommands(new HostFwControl(factionWarfare, new HostStandingDirectory(dogma, corporations, agentMissionAgentById, characters), () => DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())),
                 planetMgr is null ? null : new PiCommands(new HostPiControl(planetMgr)),

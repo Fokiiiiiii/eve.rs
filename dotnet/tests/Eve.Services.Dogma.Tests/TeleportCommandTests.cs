@@ -41,6 +41,11 @@ public sealed class TeleportCommandTests
         /// <summary>Where an item of the caller's system is, by item ID (missing: the simulation does not know it there).</summary>
         public Dictionary<long, GmDestination> Items { get; } = [];
 
+        public Dictionary<long, GmDestination> Stations { get; } = [];
+
+        public Task<GmDestination?> StationAsync(long stationId, CancellationToken cancellationToken) =>
+            Task.FromResult(Stations.GetValueOrDefault(stationId));
+
         public Task<GmDestination?> ItemPlaceAsync(ClientSession caller, long itemId, CancellationToken cancellationToken) =>
             Task.FromResult(Items.GetValueOrDefault(itemId));
 
@@ -186,6 +191,26 @@ public sealed class TeleportCommandTests
     }
 
     private static GmDestination InSpace(double x, double y, double z) => new(30000142, "Jita", [x, y, z]);
+
+    [Fact]
+    public async Task Tr_station_selects_a_docked_destination()
+    {
+        var relocation = WithJita();
+        relocation.Stations[42] = new GmDestination(30000142, "Jita", StationId: 42);
+        await new TeleportCommands(relocation).TrAsync(Rig.Session(1001, id: 5), "me 42", default);
+        Assert.Equal(42, Assert.Single(relocation.Moves).Destination.StationId);
+    }
+
+    [Fact]
+    public async Task Tr_item_uses_its_position_and_unknown_item_is_refused()
+    {
+        var relocation = WithJita();
+        relocation.Items[99] = InSpace(10, 20, 30);
+        await new TeleportCommands(relocation).TrAsync(Rig.Session(1001, id: 5), "me 99 offset=1,2,3", default);
+        Assert.Equal(new double[] { 11, 22, 33 }, Assert.Single(relocation.Moves).Destination.Position!.ToArray());
+        Assert.Equal("Transport destination not found: 98.", await new TeleportCommands(relocation).TrAsync(Rig.Session(1001, id: 5), "me 98", default));
+        Assert.Single(relocation.Moves);
+    }
 
     [Fact]
     public async Task Tr_without_a_destination_gives_the_usage()

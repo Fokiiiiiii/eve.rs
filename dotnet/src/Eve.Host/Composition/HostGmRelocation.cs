@@ -9,7 +9,7 @@ namespace Eve.Host;
 /// The game master's relocation on this host (<see cref="IGmRelocation"/>): the system names are the solar system catalogue's, the characters are the character
 /// store's (<paramref name="characters"/>, by ID or exact name), the pilot's session is the one that is connected, and the move is the space sessions' relocation.
 /// </summary>
-internal sealed class HostGmRelocation(SpaceSessions space, SolarSystemCatalog systems, IStandingDirectory characters, CharacterSessions sessions) : IGmRelocation
+internal sealed class HostGmRelocation(SpaceSessions space, SolarSystemCatalog systems, StationCatalog stations, IStandingDirectory characters, CharacterSessions sessions) : IGmRelocation
 {
     public Task<GmSolarSystem?> FindSolarSystemAsync(string token, CancellationToken cancellationToken)
     {
@@ -58,6 +58,16 @@ internal sealed class HostGmRelocation(SpaceSessions space, SolarSystemCatalog s
         return new GmDestination(place.SolarSystemId, systems.Get(place.SolarSystemId)?.Name ?? place.SolarSystemId.ToString(), place.Position);
     }
 
+    public Task<GmDestination?> StationAsync(long stationId, CancellationToken cancellationToken)
+    {
+        var station = stations.Get(stationId);
+        return Task.FromResult(station is null ? null : new GmDestination(station.SolarSystemId, station.SolarSystemName, StationId: station.Id));
+    }
+
     public Task<string?> MoveAsync(ClientSession session, GmDestination destination, CancellationToken cancellationToken) =>
-        space.RelocateAsync(session, destination.SolarSystemId, destination.Position, destination.Direction, cancellationToken);
+        destination.StationId is { } stationId
+            ? session.GetInt("shipid") is { } shipId
+                ? space.ReturnTournamentPilotToDockAsync(session, destination.SolarSystemId, stationId, shipId, cancellationToken)
+                : Task.FromResult<string?>("The session has no active ship.")
+            : space.RelocateAsync(session, destination.SolarSystemId, destination.Position, destination.Direction, cancellationToken);
 }

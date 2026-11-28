@@ -12,7 +12,7 @@ public sealed record GmPilot(long CharacterId, ClientSession? Session);
 /// <summary>
 /// Where a relocation takes a pilot: a solar system, with the place in it (<see cref="Position"/> and <see cref="Direction"/>; null for the system's anchor).
 /// </summary>
-public sealed record GmDestination(int SolarSystemId, string SolarSystemName, IReadOnlyList<double>? Position = null, IReadOnlyList<double>? Direction = null);
+public sealed record GmDestination(int SolarSystemId, string SolarSystemName, IReadOnlyList<double>? Position = null, IReadOnlyList<double>? Direction = null, long? StationId = null);
 
 /// <summary>What the teleport commands need from the host: the names the game master gives, the pilots that are connected, and the relocation itself.</summary>
 public interface IGmRelocation
@@ -34,6 +34,8 @@ public interface IGmRelocation
 
     /// <summary>Where an item of the caller's solar system is (a celestial or a pilot's ship), or null when the simulation does not know it there.</summary>
     Task<GmDestination?> ItemPlaceAsync(ClientSession caller, long itemId, CancellationToken cancellationToken);
+
+    Task<GmDestination?> StationAsync(long stationId, CancellationToken cancellationToken);
 
     /// <summary>Moves the session's pilot to the destination; null when it is there, else the words of the refusal.</summary>
     Task<string?> MoveAsync(ClientSession session, GmDestination destination, CancellationToken cancellationToken);
@@ -87,7 +89,8 @@ public sealed class TeleportCommands(IGmRelocation relocation)
     /// <summary>
     /// <c>/tr &lt;me|character&gt; &lt;destination&gt;</c> (EVE.js <c>handleTransportCommand</c>): the pilot is moved to a solar system's anchor, to a place given as
     /// <c>pos=x,y,z</c> (or three numbers) in the pilot's system, to a place offset by <c>offset=x,y,z</c> from the pilot or from a destination, or to another pilot's
-    /// place (<c>me</c> is the caller's). <c>noblock</c> is ignored. The pilot's ship is put in space at the place (no gate, range or timer rule applies).
+    /// place (<c>me</c> is the caller's), a station, or an item in the caller's system. <c>noblock</c> is ignored. A station destination docks the pilot;
+    /// other destinations place the ship in space (no gate, range or timer rule applies).
     /// </summary>
     public async Task<string> TrAsync(ClientSession session, string argument, CancellationToken cancellationToken)
     {
@@ -169,15 +172,19 @@ public sealed class TeleportCommands(IGmRelocation relocation)
         return await relocation.MoveAsync(session, destination, cancellationToken) ?? $"Warped to item {itemId} in {item.SolarSystemName} ({item.SolarSystemId}).";
     }
 
-    /// <summary>The place a destination token names: <c>me</c> (the caller's), a solar system (ID or name), or a connected character's place.</summary>
+    /// <summary>The place a destination token names: the caller, a solar system, station, connected character, or local item.</summary>
     private async Task<GmDestination?> LocationAsync(ClientSession session, string token, CancellationToken cancellationToken)
     {
         if (token.Equals("me", StringComparison.OrdinalIgnoreCase))
             return await relocation.PlaceOfAsync(session, cancellationToken);
         if (await relocation.FindSolarSystemAsync(token, cancellationToken) is { } system)
             return new GmDestination(system.Id, system.Name);
+        if (long.TryParse(token, out var id) && await relocation.StationAsync(id, cancellationToken) is { } station)
+            return station;
         if (await relocation.FindPilotAsync(token, cancellationToken) is { Session: { } other })
             return await relocation.PlaceOfAsync(other, cancellationToken);
+        if (long.TryParse(token, out id))
+            return await relocation.ItemPlaceAsync(session, id, cancellationToken);
         return null;
     }
 

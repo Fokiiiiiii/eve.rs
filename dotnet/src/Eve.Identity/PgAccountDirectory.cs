@@ -103,7 +103,7 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
             return;
         await using (var update = new NpgsqlCommand($"UPDATE {Schema}.accounts SET subscription_end_at = $2 WHERE id = $1", connection, transaction)
         {
-            Parameters = { new() { Value = checked((int)accountId) }, new() { Value = endsAt } },
+            Parameters = { new() { Value = checked((int)accountId) }, new() { Value = endsAt.ToUniversalTime() } },
         })
             await update.ExecuteNonQueryAsync(cancellationToken);
         await using (var delete = new NpgsqlCommand($"DELETE FROM {Schema}.account_omega_training_history WHERE account_id = $1", connection, transaction)
@@ -112,7 +112,7 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
         })
             await delete.ExecuteNonQueryAsync(cancellationToken);
         await InsertSubscriptionHistoryFrameAsync(
-            connection, transaction, accountId, DateTimeOffset.FromFileTime(0), endsAt, cancellationToken);
+            connection, transaction, accountId, DateTimeOffset.FromFileTime(0).ToUniversalTime(), endsAt, cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 
@@ -128,7 +128,7 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
         {
             await using (var update = new NpgsqlCommand($"UPDATE {Schema}.accounts SET subscription_end_at = $2 WHERE id = $1", connection, transaction)
             {
-                Parameters = { new() { Value = checked((int)accountId) }, new() { Value = endsAt } },
+                Parameters = { new() { Value = checked((int)accountId) }, new() { Value = endsAt.ToUniversalTime() } },
             })
                 await update.ExecuteNonQueryAsync(cancellationToken);
             await AppendSubscriptionHistoryAsync(
@@ -320,7 +320,7 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
 
         if (frames.Count == 0)
         {
-            frames.Add((DateTimeOffset.FromFileTime(0), previousExpiry));
+            frames.Add((DateTimeOffset.FromFileTime(0).ToUniversalTime(), previousExpiry));
             await InsertSubscriptionHistoryFrameAsync(
                 connection, transaction, accountId, frames[0].EffectiveAt, frames[0].ExpiryAt, cancellationToken);
         }
@@ -337,8 +337,8 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
                 Parameters =
                 {
                     new() { Value = checked((int)accountId) },
-                    new() { Value = effectiveAt },
-                    new() { Value = nextExpiry },
+                    new() { Value = effectiveAt.ToUniversalTime() },
+                    new() { Value = nextExpiry.ToUniversalTime() },
                 },
             };
             await update.ExecuteNonQueryAsync(cancellationToken);
@@ -360,8 +360,8 @@ public sealed partial class PgAccountDirectory : IAccountDirectory, IAccountLook
             Parameters =
             {
                 new() { Value = checked((int)accountId) },
-                new() { Value = effectiveAt },
-                new() { Value = expiryAt },
+                new() { Value = effectiveAt.ToUniversalTime() },
+                new() { Value = expiryAt.ToUniversalTime() },
             },
         };
         await insert.ExecuteNonQueryAsync(cancellationToken);

@@ -1,3 +1,4 @@
+using Eve.Inventory;
 using Eve.Wallet;
 using Npgsql;
 
@@ -5,6 +6,22 @@ namespace Eve.Market.Tests;
 
 public class TradingTests
 {
+    [PgFact]
+    public async Task Assembled_item_in_hangar_cannot_be_sold()
+    {
+        await using var r=await TradeRig.Create();
+        var seller=await r.Actor("Assembled Seller");
+        long item;
+        await using (var c=await r.Source.OpenConnectionAsync())
+        await using (var tx=await c.BeginTransactionAsync())
+        {
+            item=await r.Items.CreateAsync(c,tx,new NewItem(34,seller,r.Station.Id,ItemFlags.Hangar,Singleton:true));
+            await tx.CommitAsync();
+        }
+        var error=await Assert.ThrowsAsync<MarketError>(() => r.Trading.PlaceAsync(r.Sell(seller,item,10,1,90),"assembled-ask"));
+        Assert.Equal("MARKET_ITEM_ASSEMBLED",error.Code);
+    }
+
     [PgFact]
     public async Task Player_ask_purchase_custody_tax_and_reconstructed_retry_commit_once()
     {

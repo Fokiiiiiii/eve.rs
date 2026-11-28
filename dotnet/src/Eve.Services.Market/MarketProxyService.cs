@@ -97,6 +97,7 @@ public sealed partial class MarketProxyService(MarketStore store,MarketTrading t
         "MARKET_VISIBILITY_REQUIRED" => "Your Visibility skill does not allow a buy order with that range.",
         "MARKET_ORDER_LIMIT" => "You have reached your limit of open market orders.",
         "MARKET_ITEM_CUSTODY_INVALID" => "The items to sell are not in this station's hangar.",
+        "MARKET_ITEM_ASSEMBLED" => "Assembled items cannot be sold. Repackage the item first.",
         "MARKET_ESCROW_INCONSISTENT" => "The order's escrow does not match its book, so nothing was changed.",
         "MARKET_ORDER_NOT_ACTIVE" => "That order is no longer active.",
         "MARKET_ORDER_NOT_FOUND" => "That order does not exist.",

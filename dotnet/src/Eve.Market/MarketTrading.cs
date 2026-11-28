@@ -317,8 +317,9 @@ public sealed class MarketTrading(NpgsqlDataSource source,MarketStore store,PgCh
             var corpStock=stock is not null && stock.OwnerId==account.OwnerId &&
                 HasCorporateHangarTakeRole(corporationRoles,station.Id,stock.Flag);
             if (stock is null || stock.TypeId != request.TypeId || stock.LocationId != station.Id ||
-                (!personalStock && !corpStock) || stock.Singleton || stock.Quantity < request.Quantity)
+                (!personalStock && !corpStock) || stock.Quantity < request.Quantity)
                 throw new MarketError("MARKET_ITEM_CUSTODY_INVALID");
+            if (stock.Singleton) throw new MarketError("MARKET_ITEM_ASSEMBLED");
         }
         var upper = checked(request.Price*request.Quantity);
         if (request.Buying)

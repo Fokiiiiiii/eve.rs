@@ -17,7 +17,7 @@ public sealed partial class ItemLockingService(CorporationStore corporations)
         var corporationId = SessionCorporationId(call.Session);
         var locationId = Integral(call.Arg(0));
         if (corporationId <= 0 || locationId is not > 0 || await IsNpcAsync(call, corporationId)) return new PyDict([]);
-        await RequireAssetAuthorityAsync(call, corporationId);
+        if (!await MayReadLocksAsync(call, corporationId)) return new PyDict([]);
         var items = await corporations.LockedItemsAsync(corporationId, locationId, call.Cancellation);
         return new PyDict([.. items.Select(item => new KeyValuePair<PyValue, PyValue>(InventoryWire.Id(item.ItemId), Py.KeyVal(
             ("itemID", InventoryWire.Id(item.ItemId)),
@@ -31,7 +31,7 @@ public sealed partial class ItemLockingService(CorporationStore corporations)
     {
         var corporationId = SessionCorporationId(call.Session);
         if (corporationId <= 0 || await IsNpcAsync(call, corporationId)) return InventoryWire.EmptySet();
-        await RequireAssetAuthorityAsync(call, corporationId);
+        if (!await MayReadLocksAsync(call, corporationId)) return InventoryWire.EmptySet();
         var locations = await corporations.LockedItemLocationsAsync(corporationId, call.Cancellation);
         return InventoryWire.Set(locations.Select(InventoryWire.Id));
     }
@@ -61,7 +61,12 @@ public sealed partial class ItemLockingService(CorporationStore corporations)
     private async ValueTask<bool> IsNpcAsync(ServiceCall call, long corporationId) =>
         await corporations.GetAsync(corporationId, call.Cancellation) is { IsNpc: true };
 
-    private async ValueTask RequireAssetAuthorityAsync(ServiceCall call, long corporationId)
+    /// <summary>
+    /// Whether the caller sees the corporation's locks: its persisted accountants and junior accountants do. Another member reads
+    /// none rather than being refused, because the client also asks before it moves the member's own items. A caller who is not a
+    /// member is refused.
+    /// </summary>
+    private async ValueTask<bool> MayReadLocksAsync(ServiceCall call, long corporationId)
     {
         var characterId = call.Session.CharacterId;
         if (characterId is not > 0 ||
@@ -73,9 +78,8 @@ public sealed partial class ItemLockingService(CorporationStore corporations)
         var titles = await corporations.TitlesAsync(corporationId, call.Cancellation);
         var roles = Eve.Corporations.CorporationRoles.Session(
             corporation, member, call.Session.GetInt("stationid"), titles).CorpRole;
-        if ((roles & (Eve.Corporations.CorporationRoles.Accountant |
-                      Eve.Corporations.CorporationRoles.JuniorAccountant)) == 0)
-            throw new CorporationError("CORPORATION_ACCESS_DENIED");
+        return (roles & (Eve.Corporations.CorporationRoles.Accountant |
+                         Eve.Corporations.CorporationRoles.JuniorAccountant)) != 0;
     }
 
     private static long SessionCorporationId(ClientSession session)

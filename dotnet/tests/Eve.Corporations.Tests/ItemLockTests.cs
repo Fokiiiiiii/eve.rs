@@ -114,13 +114,25 @@ public sealed class ItemLockTests
         var ordinaryMember = new ClientSession { CharacterId = ordinaryCharacter };
         ordinaryMember.Set("corpid", new PyInt(corporation.Id));
         ordinaryMember.Set("corprole", new PyLong(CorporationRoles.Accountant));
-        await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(new ServiceCall
+        // the session's claimed role is not trusted, and a member without one reads no locks
+        Assert.Equal(new PyDict([]), await service.CallAsync(new ServiceCall
         {
             Method = "GetItemsByLocation", Args = [new PyLong(LocationId)], Session = ordinaryMember,
+        }));
+        Assert.Equal(InventoryWire.EmptySet(), await service.CallAsync(new ServiceCall
+        {
+            Method = "GetLockedItemLocations", Args = [], Session = ordinaryMember,
+        }));
+
+        var stranger = new ClientSession { CharacterId = await rig.CharacterAsync("Lock Stranger") };
+        stranger.Set("corpid", new PyInt(corporation.Id));
+        await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(new ServiceCall
+        {
+            Method = "GetItemsByLocation", Args = [new PyLong(LocationId)], Session = stranger,
         }).AsTask());
         await Assert.ThrowsAsync<CorporationError>(() => service.CallAsync(new ServiceCall
         {
-            Method = "GetLockedItemLocations", Args = [], Session = ordinaryMember,
+            Method = "GetLockedItemLocations", Args = [], Session = stranger,
         }).AsTask());
 
         var persistedMember = Assert.IsType<Member>(await store.MemberAsync(ordinaryCharacter));

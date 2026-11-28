@@ -227,12 +227,14 @@ public sealed class DogmaInfo(DogmaStatic statics)
     }
 
     /// <summary>The state of everything the client keeps a state for: the ship, the character and each module, and the heat of the slots.</summary>
-    private static PyValue ChargeStateRow(long shipId, Eve.Inventory.Item charge) => new PyObject(
-        new PyStr("util.Row"),
-        new PyDict([
-            new(new PyStr("header"), Py.Tuple(new PyStr("instanceID"), new PyStr("flagID"), new PyStr("typeID"), new PyStr("quantity"))),
-            new(new PyStr("line"), Py.Tuple(InventoryWire.Id(shipId), new PyInt(charge.Flag), new PyInt(charge.TypeId), InventoryWire.Id(charge.Quantity))),
-        ]));
+    private static PyValue ChargeStateRow(long shipId, Eve.Inventory.Item charge) => new PyObjectEx(
+        ObjectExKind.Ex2,
+        Py.Tuple(
+            Py.Tuple(new PyToken("util.Row")),
+            Py.Tuple(
+                new PyList([new PyStr("instanceID"), new PyStr("flagID"), new PyStr("typeID"), new PyStr("quantity")]),
+                new PyList([InventoryWire.Id(shipId), new PyInt(charge.Flag), new PyInt(charge.TypeId), InventoryWire.Id(charge.Quantity)]))),
+        [], []);
 
     private PyValue ShipState(ShipSnapshot s, IReadOnlyDictionary<int, double> shipAttributes, long now)
     {

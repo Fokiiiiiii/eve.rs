@@ -171,6 +171,29 @@ public class DogmaServiceTests
     }
 
     [PgFact]
+    public async Task GetAllInfo_encodes_loaded_charge_state_as_a_constructible_row()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var pilot = await rig.NewCharacterAsync("Charge row", shipTypeId: 587);
+        var session = Rig.Session(pilot.CharacterId);
+        Assert.StartsWith("Created and fitted", await rig.SlashAsync(session, "/fit me Light Neutron Blaster I"));
+        Assert.Equal("Loaded 10x Antimatter Charge S into your ship's modules.", await rig.SlashAsync(session, "/load me Antimatter Charge S 10"));
+        var charge = Assert.Single((await rig.Ships.LoadAsync(pilot.CharacterId))!.Charges);
+        var oid = await rig.BindAsync(session);
+        var info = await rig.CallAsync(session, "GetAllInfo", oid, Everything);
+        var state = (PyTuple)Field(info, "shipState");
+        var slots = Dict(Dict(state.Items[1]).Entries.Single().Value);
+        var row = Assert.IsType<PyObjectEx>(slots.Entries.Single().Value);
+        var decoded = Assert.IsType<PyObjectEx>(MarshalCodec.Decode(MarshalCodec.Encode(row)));
+        Assert.Equal(ObjectExKind.Ex2, decoded.Kind);
+        var header = Assert.IsType<PyTuple>(decoded.Header);
+        Assert.Equal(new PyToken("util.Row"), Assert.IsType<PyTuple>(header.Items[0]).Items.Single());
+        var arguments = Assert.IsType<PyTuple>(header.Items[1]);
+        Assert.Equal(new[] { "instanceID", "flagID", "typeID", "quantity" }, Assert.IsType<PyList>(arguments.Items[0]).Items.Select(x => x is PyBytes bytes ? System.Text.Encoding.ASCII.GetString(bytes.Value.Span) : Assert.IsType<PyStr>(x).Value));
+        Assert.Equal(new long[] { pilot.ShipId, charge.Flag, charge.TypeId, charge.Quantity }, Assert.IsType<PyList>(arguments.Items[1]).Items.Select(Id));
+    }
+
+    [PgFact]
     public async Task What_is_left_out_of_the_question_is_left_out_of_the_answer_as_the_reference_leaves_it()
     {
         var (rig, character, session, oid) = await BoundAsync();

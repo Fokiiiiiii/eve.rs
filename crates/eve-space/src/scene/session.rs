@@ -720,10 +720,13 @@ impl Scene {
     }
 
     pub fn poll(&mut self, now: i64) -> Vec<Out> {
+        let mut laps = PollLaps::start();
         self.settle_all(now);
         self.prune_pending_crime_events(now);
+        laps.mark("settle");
         let mut told = self.populate_empire_sentries(now);
         told.extend(self.populate_pochven(now));
+        laps.mark("populate");
         let arrived: Vec<(SessionId, i64)> = self
             .pilots
             .iter()
@@ -770,9 +773,12 @@ impl Scene {
             pending.ready = true;
             told.push(Out::Accepted { session, command: DOCKING_READY_COMMAND, at: station_id });
         }
+        laps.mark("docking");
         told.extend(self.note_drone_threats(now));
         told.extend(self.tick_brains(now));
+        laps.mark("brains");
         told.extend(self.settle_targets(now));
+        laps.mark("targets");
         while let Some(at) = self.next_heat_cycle_boundary(now) {
             let heat = self.prepare_overheating(at);
             told.extend(self.settle_modules(at));
@@ -781,19 +787,69 @@ impl Scene {
         let heat = self.prepare_overheating(now);
         told.extend(self.settle_modules(now));
         told.extend(self.apply_overheating(heat, now));
+        laps.mark("modules");
         told.extend(self.decloak_by_proximity(now));
         told.extend(self.advance_missiles(now));
         told.extend(self.advance_dots(now));
+        laps.mark("decloak, missiles and dots");
         told.extend(self.advance_deployables(now));
+        laps.mark("deployables");
         told.extend(self.advance_drones(now));
         told.extend(self.expire_stargate_jump_cloaks(now));
+        laps.mark("drones");
         told.extend(self.reconcile(now));
         told.extend(self.reconcile_wrecks(now));
         told.extend(self.reconcile_abyssal_traces(now));
         told.extend(self.reconcile_asteroids(now));
         told.extend(self.reconcile_deployables(now));
+        laps.mark("reconcile");
         told.extend(self.expire_wrecks(now));
         told.extend(self.tick_tethers(now));
+        laps.mark("wrecks and tethers");
+        laps.report(|| {
+            format!(
+                "system {}, {} pilots, {} deployables",
+                self.system.id,
+                self.pilots.len(),
+                self.deployables.len()
+            )
+        });
         self.with_backlog(told)
+    }
+}
+
+/// Where the time of a poll went, written to the log only for a poll slow enough to hold up the commands waiting behind it.
+struct PollLaps {
+    started: std::time::Instant,
+    last: std::time::Instant,
+    laps: Vec<(&'static str, std::time::Duration)>,
+}
+
+impl PollLaps {
+    const SLOW: std::time::Duration = std::time::Duration::from_secs(1);
+
+    fn start() -> Self {
+        let now = std::time::Instant::now();
+        Self { started: now, last: now, laps: Vec::new() }
+    }
+
+    fn mark(&mut self, phase: &'static str) {
+        let now = std::time::Instant::now();
+        self.laps.push((phase, now - self.last));
+        self.last = now;
+    }
+
+    fn report(&self, scene: impl FnOnce() -> String) {
+        let took = self.started.elapsed();
+        if took < Self::SLOW {
+            return;
+        }
+        let phases: Vec<String> = self
+            .laps
+            .iter()
+            .filter(|(_, lap)| lap.as_millis() >= 50)
+            .map(|(phase, lap)| format!("{phase} {:.2} s", lap.as_secs_f64()))
+            .collect();
+        eprintln!("eve-sim: a poll of {} took {:.1} s: {}", scene(), took.as_secs_f64(), phases.join(", "));
     }
 }

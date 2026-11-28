@@ -340,9 +340,10 @@ public sealed class PacketDispatcher
     {
         if (method == "GetAllInfo")
             return 10;
-        if (service == "config" && method == "GetMultiOwnersEx")
+        if (service == "config" && method is
+            "GetMultiOwnersEx" or "GetMultiCorpTickerNamesEx" or "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx")
         {
-            // Recordset sends uncapped owner batches; scale the budget with rows rather than charging every batch as one heavy call.
+            // Recordset sends uncapped batches; charge by requested rows with a bounded cost.
             var count = args is { Count: > 0 } ? args[0] switch
             {
                 PyList list => list.Items.Count,
@@ -351,9 +352,6 @@ public sealed class PacketDispatcher
             } : 0;
             return Math.Max(1, (Math.Min(count, 10_000) + 99) / 100);
         }
-        if (service == "config" && method is
-            "GetMultiCorpTickerNamesEx" or "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx")
-            return 10;
         if (service == "marketProxy" && method is
             "GetOrders" or "GetStationAsks" or "GetSystemAsks" or "GetRegionBest" or
             "GetMarketOrderHistory" or "GetOldPriceHistory" or "GetNewPriceHistory" or
@@ -397,7 +395,7 @@ public sealed class PacketDispatcher
         if (service == "kiringMgr" && method is "PerformKiringServerSideAuthenticationFromCode" or "GetSAuthAid" or "PlaceKiringOrder")
             return 10;
         if (service == "eventLog" && method == "LogClientStats")
-            return 10;
+            return 1;
         if (service == "alert" && method == "SendClientStackTraceAlert")
             return 1;
         if (service == "ProjectDiscovery")
@@ -504,7 +502,7 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "account" && method is "GetTransactions" or "GiveCash" or "GiveCashFromCorpAccount")
             return 10;
-        if (service == "config" && method is "GetAverageMarketPrices" or "GetMultiOwnersEx" or "GetMultiCorpTickerNamesEx" or "GetMultiAllianceShortNamesEx" or "GetMultiLocationsEx")
+        if (service == "config" && method == "GetAverageMarketPrices")
             return 10;
         if (service == "LPStoreMgr" && method is "GetAvailableOffersFromCorp" or "TakeOfferForCharacter" or "TakeOfferForCorporation")
             return 10;
@@ -524,7 +522,9 @@ public sealed class PacketDispatcher
             return 10;
         if (service == "warRegistry" && method is "GetWars" or "SetOpenForAllies" or "RetractMutualWar")
             return 10;
-        if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyDockableStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures")
+        if (service == "structureDirectory" && method == "GetMyDockableStructures")
+            return 1;
+        if (service == "structureDirectory" && method is "CheckMyDockingAccessToStructures" or "GetMyCharacterStructures" or "GetMyCorporationStructures")
             return 10;
         if (service == "structureJumpBridgeMgr" && method is "GetJbStructureDestination" or "GetLinkedStructure")
             return 10;

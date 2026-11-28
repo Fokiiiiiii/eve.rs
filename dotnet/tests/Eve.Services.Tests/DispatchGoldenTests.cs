@@ -773,6 +773,92 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Routine_login_travel_and_station_transitions_fit_the_shared_budget()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 918 };
+        var registry = new ServiceRegistry();
+        foreach (var name in new[] { "config", "eventLog", "structureDirectory" })
+            registry.Register(new RpcBudgetScenarioService(name));
+        var now = FixedNowMs;
+        var dispatcher = new PacketDispatcher(registry, () => now);
+        var smallBatch = new PyList([new PyInt(1), new PyInt(2)]);
+
+        async Task Call(string service, string method, params PyValue[] args)
+        {
+            await dispatcher.DispatchAsync(CallRequestPacket(service, method, args), session);
+            Assert.Equal(7, CommandOf(capture.Sent[^1]));
+        }
+
+        foreach (var method in new[] { "GetMultiOwnersEx", "GetMultiLocationsEx", "GetMultiCorpTickerNamesEx", "GetMultiAllianceShortNamesEx" })
+            await Call("config", method, smallBatch);
+
+        for (var jump = 0; jump < 12; jump++)
+        {
+            now = FixedNowMs + jump * 4_000;
+            await Call("eventLog", "LogClientStats");
+            await Call("config", "GetMultiLocationsEx", smallBatch);
+            await Call("structureDirectory", "GetMyDockableStructures");
+        }
+
+        for (var transition = 0; transition < 4; transition++)
+            await Call("eventLog", "LogClientStats");
+
+        // 4 login lookups + 12 * 3 travel calls + 4 dock/undock transitions = 44 units.
+        for (var remaining = 0; remaining < 116; remaining++)
+            await Call("eventLog", "LogClientStats");
+        await dispatcher.DispatchAsync(CallRequestPacket("eventLog", "LogClientStats"), session);
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[^1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[^1])));
+    }
+
+    [Fact]
+    public async Task Routine_rpc_flood_is_still_refused()
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 919 };
+        var registry = new ServiceRegistry();
+        var service = new EventLogBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs);
+
+        for (var i = 0; i < 161; i++)
+            await dispatcher.DispatchAsync(CallRequestPacket("eventLog", "LogClientStats"), session);
+
+        Assert.Equal(160, service.Calls);
+        Assert.All(capture.Sent.Take(160), packet => Assert.Equal(7, CommandOf(packet)));
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[^1]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[^1])));
+    }
+
+    [Theory]
+    [InlineData("GetMultiOwnersEx")]
+    [InlineData("GetMultiLocationsEx")]
+    [InlineData("GetMultiCorpTickerNamesEx")]
+    [InlineData("GetMultiAllianceShortNamesEx")]
+    public async Task Large_config_batches_are_charged_by_size_with_a_cap(string method)
+    {
+        var capture = new Capture();
+        var session = new ClientSession(capture) { SessionId = 920 };
+        var registry = new ServiceRegistry();
+        var service = new ConfigLookupBudgetService();
+        registry.Register(service);
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs);
+        var oversized = new PyList(Enumerable.Range(0, 10_100).Select(i => (PyValue)new PyInt(i)).ToArray());
+        var sixThousand = new PyTuple(Enumerable.Range(0, 6_000).Select(i => (PyValue)new PyInt(i)).ToArray());
+
+        await dispatcher.DispatchAsync(CallRequestPacket("config", method, oversized), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("config", method, sixThousand), session);
+        await dispatcher.DispatchAsync(CallRequestPacket("config", method, new PyList([new PyInt(1)])), session);
+
+        Assert.Equal(2, service.Calls);
+        Assert.Equal(7, CommandOf(capture.Sent[0]));
+        Assert.Equal(7, CommandOf(capture.Sent[1]));
+        Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[2]));
+        Assert.Contains("SessionRpcBudgetExceeded", System.Text.Encoding.Latin1.GetString(Convert.FromHexString(capture.Sent[2])));
+    }
+
+    [Fact]
     public async Task Config_multi_lookups_have_a_named_per_session_budget()
     {
         var capture = new Capture();
@@ -780,7 +866,7 @@ public class DispatchGoldenTests
         var registry = new ServiceRegistry();
         var service = new ConfigLookupBudgetService();
         registry.Register(service);
-        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
 
         await dispatcher.DispatchAsync(CallRequestPacket("config", "GetMultiOwnersEx"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("config", "GetMultiLocationsEx"), session);
@@ -1345,7 +1431,7 @@ public class DispatchGoldenTests
         var registry = new ServiceRegistry();
         var service = new ExpensiveService("config");
         registry.Register(service);
-        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
 
         await dispatcher.DispatchAsync(CallRequestPacket("config", "GetMultiOwnersEx"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("config", "GetMultiLocationsEx"), session);
@@ -2320,7 +2406,7 @@ public class DispatchGoldenTests
         var registry = new ServiceRegistry();
         var service = new EventLogBudgetService();
         registry.Register(service);
-        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+        var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 1 };
 
         await dispatcher.DispatchAsync(CallRequestPacket("eventLog", "LogClientStats"), session);
         await dispatcher.DispatchAsync(CallRequestPacket("eventLog", "LogClientStats"), session);

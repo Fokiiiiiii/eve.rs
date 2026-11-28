@@ -104,9 +104,23 @@ public sealed partial class DogmaIMService(
         var parameters = call.Arg(0) switch { PyTuple t when t.Items.Count > 0 => t.Items[0], PyList l when l.Items.Count > 0 => l.Items[0], var other => other };
         // the place the client is in: the station it is docked at, or, when it is in space, the solar system
         var place = call.Session.DockedLocationId ?? (space is not null ? call.Session.GetInt("solarsystemid") : null);
-        if (IdOf(parameters) is not { } location || place != location)
+        if (IdOf(parameters) is not > 0 || place is not > 0)
         {
             return None;
+        }
+        var location = IdOf(parameters)!.Value;
+        if (place != location)
+        {
+            // A delayed space-prime can arrive after the session has moved again.
+            // Prime the current location, while retaining the normal location checks
+            // for other binds and for docked sessions.
+            if (call.Session.DockedLocationId is not null || space is null
+                || call.Arg(0) is not PyTuple { Items.Count: > 1 } bindParameters
+                || IdOf(bindParameters.Items[1]) != 5
+                || call.Arg(1) is not PyTuple { Items.Count: > 0 } prime
+                || JsSemantics.StringValue(prime.Items[0]) != "GetAllInfo")
+                return None;
+            location = place.Value;
         }
         var bound = Bind(location, call.Session);
         var oid = JsSemantics.StringValue(((PyTuple)((PySubStream)((PySubStruct)bound).Value).Decoded!).Items[0]);

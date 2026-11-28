@@ -44,6 +44,34 @@ public class TargetingTests
     }
 
     [PgFact]
+    public async Task Delayed_space_prime_binds_the_current_system_and_returns_the_nested_info()
+    {
+        var (rig, session, _) = await InSpaceAsync();
+        await using var _ = rig;
+
+        var answer = Assert.IsType<PyTuple>(await rig.CallAsync(session, "MachoBindObject", null,
+            Py.Tuple(new PyInt(30100034), new PyInt(5)),
+            Py.Tuple(new PyStr("GetAllInfo"), Py.Tuple(PyBool.True, PyBool.True, PyNone.Instance), PyNone.Instance)));
+        Assert.Equal(2, answer.Items.Count);
+        var bound = Assert.IsType<PySubStruct>(answer.Items[0]);
+        var handout = Assert.IsType<PyTuple>(Assert.IsType<PySubStream>(bound.Value).Decoded);
+        var oid = JsSemantics.StringValue(handout.Items[0])!;
+        Assert.IsType<PyObject>(answer.Items[1]);
+        Assert.IsType<PyObject>(await rig.CallAsync(session, "GetAllInfo", oid, PyBool.True, PyBool.True, PyNone.Instance));
+
+        var otherSession = Rig.Session(session.CharacterId, station: null, id: 3);
+        Assert.Equal(PyNone.Instance, await rig.CallAsync(otherSession, "GetAllInfo", oid, PyBool.True, PyBool.True, PyNone.Instance));
+
+        var docked = Rig.Session(session.CharacterId, id: 2);
+        Assert.Equal(PyNone.Instance, await rig.CallAsync(docked, "MachoBindObject", null,
+            Py.Tuple(new PyInt(30100034), new PyInt(5)),
+            Py.Tuple(new PyStr("GetAllInfo"), Py.Tuple(), PyNone.Instance)));
+        Assert.Equal(PyNone.Instance, await rig.CallAsync(session, "MachoBindObject", null,
+            Py.Tuple(new PyInt(30100034), new PyInt(15)),
+            Py.Tuple(new PyStr("GetAllInfo"), Py.Tuple(), PyNone.Instance)));
+    }
+
+    [PgFact]
     public async Task Adding_a_target_passes_it_on_and_answers_whether_the_lock_is_going_and_what_is_locked()
     {
         var (rig, session, oid) = await InSpaceAsync();

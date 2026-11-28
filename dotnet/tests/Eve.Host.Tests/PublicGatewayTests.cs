@@ -25,6 +25,37 @@ public sealed class PublicGatewayTests
     private static string UserToken => GatewayTokens.Issue(1, null, DateTimeOffset.UtcNow);
     private static string OtherUserToken => GatewayTokens.Issue(2, null, DateTimeOffset.UtcNow);
 
+    [Theory]
+    [InlineData("eve_public.achievement.category.api.GetRequest", "eve_public.achievement.category.api.GetResponse")]
+    [InlineData("eve_public.achievement.reward.api.GetUnclaimedRequest", "eve_public.achievement.reward.api.GetUnclaimedResponse")]
+    [InlineData("eve_public.corporationgoal.api.GetMineWithRewardsRequest", "eve_public.corporationgoal.api.GetMineWithRewardsResponse")]
+    [InlineData("eve_public.pirate.corruption.api.GetSystemInfoRequest", "eve_public.pirate.corruption.api.GetSystemInfoResponse")]
+    [InlineData("eve_public.pirate.suppression.api.GetStageThresholdsRequest", "eve_public.pirate.suppression.api.GetStageThresholdsResponse")]
+    [InlineData("eve_public.sovereignty.mercenaryden.activity.api.GetAllRequest", "eve_public.sovereignty.mercenaryden.activity.api.GetAllResponse")]
+    [InlineData("eve_public.stargate.lock.api.GetRestrictedSystemsRequest", "eve_public.stargate.lock.api.GetRestrictedSystemsResponse")]
+    public async Task Client_read_requests_return_empty_typed_messages_for_an_active_character(string requestType, string responseType)
+    {
+        var handler = ClientReadGateway.Handlers(3724492)[requestType];
+        var answer = await handler(new GatewayRequest([], requestType, [], 90000001), CancellationToken.None);
+        Assert.Equal(200u, answer.StatusCode);
+        Assert.Equal(responseType, answer.ResponseTypeName);
+        Assert.Empty(answer.Payload);
+
+        var missingCharacter = await handler(new GatewayRequest([], requestType, [], null), CancellationToken.None);
+        Assert.Equal(400u, missingCharacter.StatusCode);
+    }
+
+    [Fact]
+    public async Task An_unavailable_user_license_is_not_found()
+    {
+        const string requestType = "eve_public.user.license.api.GetRequest";
+        var handler = ClientReadGateway.Handlers(3724492)[requestType];
+        var answer = await handler(new GatewayRequest([], requestType, [], null), CancellationToken.None);
+        Assert.Equal(404u, answer.StatusCode);
+        Assert.Equal("eve_public.user.license.api.GetResponse", answer.ResponseTypeName);
+        Assert.Empty(answer.Payload);
+    }
+
     private sealed class AbortedBody : MemoryStream
     {
         public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>

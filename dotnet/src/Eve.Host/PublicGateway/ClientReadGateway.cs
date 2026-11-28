@@ -23,6 +23,16 @@ internal static class ClientReadGateway
             [DailyGoalGetAllWithRewardsRequest] = CharacterEmpty(DailyGoalGetAllWithRewardsResponse),
             [StructurePaintworkGetAllRequest] = CharacterEmpty(StructurePaintworkGetAllResponse),
             [ShipEntitlementGetAllRequest] = CharacterEmpty(ShipEntitlementGetAllResponse),
+            // These services have no authoritative progress, rewards, goals, activities or gate locks in this Host.
+            ["eve_public.achievement.category.api.GetRequest"] = CharacterEmpty("eve_public.achievement.category.api.GetResponse"),
+            ["eve_public.achievement.reward.api.GetUnclaimedRequest"] = CharacterEmpty("eve_public.achievement.reward.api.GetUnclaimedResponse"),
+            ["eve_public.corporationgoal.api.GetMineWithRewardsRequest"] = CharacterEmpty("eve_public.corporationgoal.api.GetMineWithRewardsResponse"),
+            ["eve_public.pirate.corruption.api.GetSystemInfoRequest"] = CharacterEmpty("eve_public.pirate.corruption.api.GetSystemInfoResponse"),
+            ["eve_public.pirate.suppression.api.GetStageThresholdsRequest"] = CharacterEmpty("eve_public.pirate.suppression.api.GetStageThresholdsResponse"),
+            ["eve_public.sovereignty.mercenaryden.activity.api.GetAllRequest"] = CharacterEmpty("eve_public.sovereignty.mercenaryden.activity.api.GetAllResponse"),
+            ["eve_public.stargate.lock.api.GetRestrictedSystemsRequest"] = CharacterEmpty("eve_public.stargate.lock.api.GetRestrictedSystemsResponse"),
+            ["eve_public.user.license.api.GetRequest"] = (_, _) => Task.FromResult(
+                new GatewayAnswer(404, "license not found", "eve_public.user.license.api.GetResponse", [])),
         };
 
         foreach (var (name, handler) in MapTagsGateway.Handlers(clientBuild))

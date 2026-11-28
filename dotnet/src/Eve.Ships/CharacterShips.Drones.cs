@@ -1,9 +1,12 @@
 using Eve.Dogma;
+using Eve.Fitting;
 using Eve.Inventory;
 using Eve.Inventory.Mutation;
 using Npgsql;
 
 namespace Eve.Ships;
+
+public sealed record DroneBayCondition(Item Drone, ModuleCondition Condition, IReadOnlyDictionary<int, double> Attributes);
 
 /// <summary>A drone that has left the bay: the item it is in space (a singleton in the solar system) and what the client is told changed, in order.</summary>
 public sealed record DroneLaunch(Item Drone, IReadOnlyList<ItemChanged> Changes, ItemMutationRecord? Mutation = null);
@@ -148,6 +151,21 @@ public sealed partial class CharacterShips
         var world = new DogmaWorld(statics);
         world.Add(ItemDogma.Of(drone, drone.OwnerId, drone.LocationId, drone.Flag, mutation: provenance));
         return world.Attributes(drone.Id);
+    }
+
+    public async Task<IReadOnlyList<DroneBayCondition>> DroneBayConditionsAsync(long characterId, long shipId, IReadOnlyCollection<long> ids, CancellationToken cancellationToken = default)
+    {
+        var requested = ids.ToHashSet();
+        var candidates = (await items.InLocationAsync(shipId, characterId, cancellationToken))
+            .Where(item => requested.Contains(item.Id) && item.Flag == DroneBayFlag).ToArray();
+        await statics.EnsureTypesAsync(candidates.Select(item => item.TypeId), cancellationToken);
+        var drones = candidates.Where(item => statics.Type(item.TypeId)?.CategoryId == DroneCategory).ToArray();
+        var conditions = await modules.ModuleConditionsAsync(drones.Select(item => item.Id), cancellationToken);
+        var result = new List<DroneBayCondition>(drones.Length);
+        foreach (var drone in drones)
+            if (conditions.TryGetValue(drone.Id, out var condition))
+                result.Add(new DroneBayCondition(drone, condition, await DroneAttributesAsync(drone, cancellationToken)));
+        return result;
     }
 
     /// <summary>A drone is gone (it was destroyed, or let go): its item is deleted. Returns the item as it was, or null when it was not there.</summary>

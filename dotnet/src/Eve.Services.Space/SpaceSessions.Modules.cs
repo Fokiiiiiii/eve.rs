@@ -126,6 +126,15 @@ public sealed partial class SpaceSessions
     /// </summary>
     public Func<ClientSession, long, CancellationToken, Task<bool>>? BatteryControlRefused { get; set; }
 
+    private static void ReportNoCharges(ShipSnapshot snapshot, long moduleId, string source, SimTurretCharge? sent = null)
+    {
+        var module = snapshot.Fitted.FirstOrDefault(item => item.Id == moduleId);
+        var charge = module is null ? null : snapshot.ChargeOf(module);
+        var found = charge is null ? "none" : $"item:{charge.Id},type:{charge.TypeId},quantity:{charge.Quantity}";
+        var packaged = sent is null ? "none" : $"type:{sent.TypeId},quantity:{sent.Rounds},perCycle:{sent.PerCycle}";
+        Console.Error.WriteLine($"eve-host: NoCharges source={source} module={moduleId} slot={module?.Flag} found={found} sent={packaged}");
+    }
+
     public async Task<ModuleResult?> ActivateAsync(ClientSession session, long moduleId, string effectName, long targetId, int repeat, CancellationToken cancellationToken, IReadOnlyList<double>? aim = null, IReadOnlyList<double>? aimEnd = null)
     {
         RequirePublicMoveSettled(session);
@@ -225,6 +234,8 @@ public sealed partial class SpaceSessions
         {
             if (BatteryControlRefused is { } batteryRefused && await batteryRefused(session, moduleId, cancellationToken).ConfigureAwait(false))
                 return ModuleResult.Refusal("STARBASE_CONTROL_REQUIRED");
+            if (made.Reason == "NO_AMMO")
+                ReportNoCharges(snapshot, moduleId, "host");
             return ModuleResult.Refusal(made.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
         }
 
@@ -507,6 +518,8 @@ public sealed partial class SpaceSessions
                 if (structureModuleTrackedHere)
                     pilot.StructureModuleIds.TryRemove(moduleId, out _);
                 UndoProvisional();
+                if (reply.Reason == "NO_AMMO")
+                    ReportNoCharges(snapshot, moduleId, "simulation", package.Turret?.Charge);
                 var refusal = ModuleResult.Refusal(reply.Reason == "ALREADY_ACTIVE" ? "MODULE_ALREADY_ACTIVE" : reply.Reason ?? "REFUSED", made.ModuleType, made.ModuleName);
                 // a target out of reach is told with how far the module reaches and how far the target is
                 return reply.Reason == "TARGET_OUT_OF_RANGE"

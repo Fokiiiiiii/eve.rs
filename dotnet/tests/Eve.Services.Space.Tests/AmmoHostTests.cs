@@ -2,6 +2,7 @@ using Eve.Dogma;
 using Eve.Fitting;
 using Eve.Inventory;
 using Eve.Marshal;
+using Eve.Services.Dogma;
 using Eve.Services.Ships;
 using Eve.Space;
 
@@ -55,6 +56,70 @@ public class AmmoHostTests
         var told = rig.Sim.Heard.OfType<SimActivate>().Last().Effect.OnChanges.Single(c => c.AttributeId == 54);
         Assert.Equal(turret.OptimalRange, told.Value);
         Assert.Equal(snapshot.World.Get(gun, 54), turret.OptimalRange, 3);
+    }
+
+    [PgTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task An_ordinary_laser_crystal_loaded_docked_or_in_space_reaches_the_simulation_as_reusable(bool loadDocked)
+    {
+        const int MultifrequencyS = 246;
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, character.ShipId + 3, character.ShipId, Rig.Station, ItemFlags.Hangar, null));
+        await using (var connection = await rig.Source.OpenConnectionAsync())
+        await using (var transaction = await connection.BeginTransactionAsync())
+        {
+            await rig.Skills.GrantAsync(connection, transaction, character.CharacterId,
+                [new Eve.Skills.CharacterSkill(3303, 1, 0), new Eve.Skills.CharacterSkill(3300, 1, 0)]);
+            await transaction.CommitAsync();
+        }
+        var laser = (await rig.Ships.GrantAsync(character.CharacterId, GatlingPulseLaserI, 1, singleton: true))!.Single().After;
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, laser.Id, Rig.Station, character.ShipId, Slot, 1));
+        Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.SetOnlineAsync(character.CharacterId, character.ShipId, laser.Id, true));
+        var stack = (await rig.Ships.GrantAsync(character.CharacterId, MultifrequencyS, 1, singleton: false))!.Single().After;
+        var ammoLocation = loadDocked ? Rig.Station : character.ShipId;
+        if (!loadDocked)
+            Assert.IsType<Eve.Ships.ShipChanged>(await rig.Ships.MoveAsync(character.CharacterId, stack.Id, Rig.Station, character.ShipId, ItemFlags.Cargo, 1));
+
+        var session = await rig.SessionAsync(character, 1);
+        using var timers = new Eve.Scheduler.LocalTimers(delay: (_, _) => Task.CompletedTask);
+        rig.Registry.Register(new DogmaIMService(rig.Statics, rig.Ships, () => rig.Now,
+            (_, _, _, _, _, _) => ValueTask.FromResult<bool?>(null), space: rig.Space, modules: rig.Space, rounds: rig.Space, localTimers: timers));
+
+        async Task<PyValue> DogmaCallAsync(string method, params PyValue[] args)
+        {
+            var place = session.DockedLocationId ?? session.GetInt("solarsystemid")!.Value;
+            var reply = Assert.IsType<PyTuple>(await rig.RegisteredCallAsync(session, "dogmaIM", "MachoBindObject",
+                Py.Tuple(new PyLong(place), new PyInt(session.DockedLocationId is null ? 5 : 15)),
+                Py.Tuple(new PyStr(method), new PyTuple(args), PyNone.Instance)));
+            return reply.Items[1];
+        }
+
+        async Task LoadAsync()
+        {
+            Assert.IsType<PyNone>(await DogmaCallAsync("LoadAmmo", new PyLong(character.ShipId),
+                new PyLong(laser.Id), new PyList([new PyLong(stack.Id)]), new PyLong(ammoLocation)));
+        }
+
+        if (loadDocked)
+            await LoadAsync();
+        var oid = await rig.BindShipAsync(session);
+        await rig.ShipCallAsync(session, "Undock", oid, new PyLong(character.ShipId), PyBool.False);
+        await rig.BindBeyonceAsync(session);
+        if (!loadDocked)
+        {
+            Events.Of(session);
+            await LoadAsync();
+            await Rig.UntilAsync(() => Events.Of(session).Any(e => e.Name == "OnGodmaPrimeItem"));
+        }
+
+        var snapshot = (await rig.Ships.LoadAsync(character.CharacterId))!;
+        var loaded = Assert.Single(snapshot.Charges);
+        Assert.Equal((stack.Id, MultifrequencyS, Slot, 1L), (loaded.Id, loaded.TypeId, loaded.Flag, loaded.Quantity));
+        Assert.Equal(new PyInt(1), await DogmaCallAsync("Activate", new PyLong(laser.Id), new PyStr("targetAttack"), new PyLong(980050000105), new PyInt(2)));
+        var fired = Assert.Single(rig.Sim.Heard.OfType<SimActivate>());
+        Assert.Equal(new SimTurretCharge(MultifrequencyS, Slot, 1, 0), fired.Effect.Turret!.Charge);
     }
 
     [PgFact]

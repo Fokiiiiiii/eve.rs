@@ -1095,6 +1095,40 @@ fn a_turret_spends_a_round_for_each_shot_and_stops_with_no_charges_when_they_are
 }
 
 #[test]
+fn a_reusable_crystal_fires_without_spending_ammo_but_cannot_fire_empty() {
+    let (mut scene, npc, now) = duel();
+    let mut gun = charged_gun(1);
+    gun.turret.as_mut().unwrap().charge =
+        Some(Charge { type_id: 246, flag: 28, rounds: 1, per_cycle: 0, reloads: false, crystal_wear: None });
+
+    let first = scene.activate(npc, gun.clone(), now);
+    let second = scene.poll(now + 2_500 * SECOND / 1_000 + 1);
+    for cycle in [&first, &second] {
+        assert!(cycle.iter().any(|event| matches!(event, Out::Notify { name: "OnDamageMessage", .. })));
+        assert!(rounds_left(cycle).is_empty());
+        assert!(charge_attribute_changes(cycle, npc).is_empty());
+    }
+    let unloaded = scene.adjust_charge(
+        1,
+        npc,
+        gun.module_id,
+        246,
+        crate::link::ChargeOp::Remove { quantity: 0 },
+        now + 3 * SECOND,
+    );
+    assert!(matches!(unloaded.as_slice(), [Out::ChargeAdjusted { running: true, before: 1, after: 0, .. }]));
+    let stopped = scene.poll(now + 5 * SECOND + 1);
+    assert!(!stopped.iter().any(|event| matches!(event, Out::Notify { name: "OnDamageMessage", .. })));
+    assert!(format!("{stopped:?}").contains("NoCharges"));
+
+    gun.turret.as_mut().unwrap().charge.as_mut().unwrap().rounds = 0;
+    assert!(matches!(
+        scene.activate(npc, gun, now + 6 * SECOND).as_slice(),
+        [Out::Refused { reason: "NO_AMMO", .. }]
+    ));
+}
+
+#[test]
 fn a_laser_crystal_keeps_its_round_wears_after_each_shot_and_is_removed_at_hitpoints() {
     let (mut scene, npc, now) = duel();
     let crystal =

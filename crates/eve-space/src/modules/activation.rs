@@ -508,7 +508,7 @@ impl Scene {
             if !self.turret_target_ok(session, &effect) {
                 return vec![Out::Refused { session, command: CODE, reason: "TARGET_NOT_LOCKED" }];
             }
-            if effect.turret.as_ref().and_then(|t| t.charge).is_some_and(|c| c.rounds < c.per_cycle) {
+            if effect.turret.as_ref().and_then(|t| t.charge).is_some_and(|c| c.rounds < c.per_cycle.max(1)) {
                 return vec![Out::Refused { session, command: CODE, reason: "NO_AMMO" }];
             }
             // A missile launcher may start beyond missile flight range; the missile expires when its flight ends.
@@ -1038,6 +1038,9 @@ impl Scene {
             );
         }
 
+        if per_cycle == 0 {
+            return (Vec::new(), true); // a crystal without volatility stays loaded and unchanged
+        }
         *rounds = new;
         let line = attribute_change_of(
             owner,

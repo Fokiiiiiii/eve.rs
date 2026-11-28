@@ -160,7 +160,7 @@ impl Scene {
                 .as_ref()
                 .and_then(|t| t.charge)
                 .zip(run.rounds)
-                .is_some_and(|(charge, rounds)| rounds < charge.per_cycle)
+                .is_some_and(|(charge, rounds)| rounds < charge.per_cycle.max(1))
         {
             pilot.modules.running.remove(index);
             out.extend(self.effect_ended(session, run, owner, ship_id, at, Ending::NoRounds));

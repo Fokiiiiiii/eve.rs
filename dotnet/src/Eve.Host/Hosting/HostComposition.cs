@@ -328,6 +328,12 @@ internal static class HostComposition
                 gateway[name] = handler;
             // a request's character counts only when the token's account owns it (the login JWT names the account)
             var gatewayCharacters = new Eve.Characters.PgCharacterStore(source, Env("EVE_CHARACTERS_SCHEMA", Eve.Characters.PgCharacterStore.DefaultSchema));
+            gateway["eve_public.plex.vault.api.BalanceRequest"] = PublicGateway.ClientReadGateway.PlexBalance(async (account, token) =>
+            {
+                var characters = await gatewayCharacters.ForAccountAsync(checked((int)account), token);
+                var balances = await skinrWallets.ReadPlexBalancesAsync(characters.Select(character => character.Id).ToArray(), token);
+                return balances.Values.Aggregate(0L, (sum, balance) => checked(sum + balance));
+            });
             var authority = new PublicGateway.GatewayAuthority(
                 async (character, token) => (await gatewayCharacters.GetAsync(character, token))?.AccountId, () => DateTimeOffset.UtcNow,
                 Flag("EVE_DEV_PUBLIC_GATEWAY_CLIENT_TOKENS", false));

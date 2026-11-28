@@ -6,6 +6,7 @@ namespace Eve.Host.PublicGateway;
 /// <summary>A decoded eve_public.Request: the correlation id, the request type (its full name in the Any type url) and the payload.</summary>
 internal sealed record GatewayRequest(byte[] CorrelationUuid, string TypeUrl, byte[] Payload, long? CharacterId, string? PublicHost = null)
 {
+    public long? AuthenticatedAccountId { get; init; }
     /// <summary>The request's full message name (the part of the type url after the last slash).</summary>
     public string TypeName => TypeUrl[(TypeUrl.LastIndexOf('/') + 1)..];
 }

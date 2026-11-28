@@ -28,7 +28,8 @@ internal static class ClientReadGateway
             ["eve_public.achievement.reward.api.GetUnclaimedRequest"] = CharacterEmpty("eve_public.achievement.reward.api.GetUnclaimedResponse"),
             ["eve_public.corporationgoal.api.GetMineWithRewardsRequest"] = CharacterEmpty("eve_public.corporationgoal.api.GetMineWithRewardsResponse"),
             ["eve_public.pirate.corruption.api.GetSystemInfoRequest"] = CharacterEmpty("eve_public.pirate.corruption.api.GetSystemInfoResponse"),
-            ["eve_public.pirate.suppression.api.GetStageThresholdsRequest"] = CharacterEmpty("eve_public.pirate.suppression.api.GetStageThresholdsResponse"),
+            ["eve_public.pirate.suppression.api.GetStageThresholdsRequest"] = StageThresholds("eve_public.pirate.suppression.api.GetStageThresholdsResponse"),
+            ["eve_public.pirate.corruption.api.GetStageThresholdsRequest"] = StageThresholds("eve_public.pirate.corruption.api.GetStageThresholdsResponse"),
             ["eve_public.sovereignty.mercenaryden.activity.api.GetAllRequest"] = CharacterEmpty("eve_public.sovereignty.mercenaryden.activity.api.GetAllResponse"),
             ["eve_public.stargate.lock.api.GetRestrictedSystemsRequest"] = CharacterEmpty("eve_public.stargate.lock.api.GetRestrictedSystemsResponse"),
             ["eve_public.user.license.api.GetRequest"] = (_, _) => Task.FromResult(
@@ -43,6 +44,37 @@ internal static class ClientReadGateway
     private static GatewayHandler CharacterEmpty(string responseType) => (request, _) => request.CharacterId is null
         ? Task.FromResult(new GatewayAnswer(400, "no active character", responseType, []))
         : Empty(responseType);
+
+    public static GatewayHandler PlexBalance(Func<long, CancellationToken, Task<long>> readBalance) => async (request, cancellationToken) =>
+    {
+        const string responseType = "eve_public.plex.vault.api.BalanceResponse";
+        if (request.AuthenticatedAccountId is not { } account || account <= 0)
+            return new GatewayAnswer(401, "no authenticated account", responseType, []);
+        var balance = await readBalance(account, cancellationToken);
+        var cents = checked(balance * 100);
+        var currency = new ProtoWriter();
+        currency.Uint(1, unchecked((ulong)((cents << 1) ^ (cents >> 63))));
+        var payload = new ProtoWriter();
+        payload.Message(1, currency.ToArray());
+        return new GatewayAnswer(200, "", responseType, payload.ToArray());
+    };
+
+    private static GatewayHandler StageThresholds(string responseType) => (request, _) =>
+    {
+        if (request.CharacterId is null)
+            return Task.FromResult(new GatewayAnswer(400, "no active character", responseType, []));
+
+        // The exact fractions are not known; use the reference server's five equal fifths.
+        var payload = new ProtoWriter();
+        for (ulong stage = 1; stage <= 5; stage++)
+        {
+            var fraction = new ProtoWriter();
+            fraction.Uint(1, stage);
+            fraction.Uint(2, 5);
+            payload.Message(1, fraction.ToArray());
+        }
+        return Task.FromResult(new GatewayAnswer(200, "", responseType, payload.ToArray()));
+    };
 
     private static Task<GatewayAnswer> Empty(string responseType) =>
         Task.FromResult(new GatewayAnswer(200, "", responseType, []));

@@ -72,11 +72,63 @@ internal sealed class ShipSkinrSequencingGateway(
             [LicenseApi + "ApplyRequest"] = (request, token) => ApplySkinAsync(request, unapply: false, token),
             [LicenseApi + "UnapplyRequest"] = (request, token) => ApplySkinAsync(request, unapply: true, token),
             [DataApi + "GetRequest"] = GetSkinDataAsync,
+            ["eve_public.cosmetic.ship.api.GetRequest"] = GetShipSkinStateAsync,
         };
         return handlers;
     }
 
     private long NowMs => _clock();
+
+    private async Task<GatewayAnswer> GetShipSkinStateAsync(GatewayRequest request, CancellationToken cancellationToken)
+    {
+        const string responseType = "eve_public.cosmetic.ship.api.GetResponse";
+        if (!ValidCharacter(request)) return Error(400, "no active character", responseType);
+        var identifier = Nested(request.Payload, 1);
+        var shipId = identifier is null ? 0 : Varint(identifier.Value.ToArray(), 1);
+        if (shipId <= 0) return Error(400, "INVALID_SHIP_IDENTIFIER", responseType);
+        if (cosmetics is null) return Error(503, "SKIN_COSMETICS_UNAVAILABLE", responseType);
+        var saved = cosmetics.Read("shipCosmetics", $"/ships/{shipId.ToString(CultureInfo.InvariantCulture)}").Data as JsonObject;
+        if (saved is null) return Error(404, "SHIP_SKIN_STATE_NOT_FOUND", responseType);
+        var character = saved["characterID"]?.GetValue<long>() ?? 0;
+        if (character <= 0) return Error(404, "SHIP_SKIN_STATE_NOT_FOUND", responseType);
+        var hex = saved["skinHex"]?.GetValue<string>();
+        var firstParty = saved["skinID"]?.GetValue<long>() ?? 0;
+        SkinDesign? design = null;
+        if (!string.IsNullOrEmpty(hex))
+        {
+            design = await ReadDesignAsync(character, hex, cancellationToken);
+            if (design is null) return Error(404, "SKIN_DESIGN_NOT_FOUND", responseType);
+        }
+        return Success(responseType, EncodeShipSkinState(shipId, character, firstParty, hex, design?.Layout));
+    }
+
+    internal static byte[] EncodeShipSkinState(long shipId, long character, long firstParty, string? hex, byte[]? layout)
+    {
+        var skin = new ProtoWriter();
+        if (!string.IsNullOrEmpty(hex) && layout is not null)
+        {
+            var id = new ProtoWriter();
+            id.String(1, hex);
+            var thirdParty = new ProtoWriter();
+            thirdParty.Message(1, id.ToArray());
+            thirdParty.Message(2, layout);
+            skin.Message(2, thirdParty.ToArray());
+        }
+        else if (firstParty > 0)
+        {
+            var first = new ProtoWriter();
+            first.Message(1, Sequential(firstParty));
+            skin.Message(1, first.ToArray());
+        }
+        else skin.Bool(3, true);
+        var state = new ProtoWriter();
+        state.Message(1, Sequential(character));
+        state.Message(2, Sequential(shipId));
+        state.Message(3, skin.ToArray());
+        var response = new ProtoWriter();
+        response.Message(1, state.ToArray());
+        return response.ToArray();
+    }
 
     internal static (long PlexCost, long DurationMs) CalculateQuote(int tier, int quantity, int durationBonusPercent)
     {

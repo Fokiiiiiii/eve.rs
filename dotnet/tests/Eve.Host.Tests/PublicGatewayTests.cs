@@ -30,7 +30,6 @@ public sealed class PublicGatewayTests
     [InlineData("eve_public.achievement.reward.api.GetUnclaimedRequest", "eve_public.achievement.reward.api.GetUnclaimedResponse")]
     [InlineData("eve_public.corporationgoal.api.GetMineWithRewardsRequest", "eve_public.corporationgoal.api.GetMineWithRewardsResponse")]
     [InlineData("eve_public.pirate.corruption.api.GetSystemInfoRequest", "eve_public.pirate.corruption.api.GetSystemInfoResponse")]
-    [InlineData("eve_public.pirate.suppression.api.GetStageThresholdsRequest", "eve_public.pirate.suppression.api.GetStageThresholdsResponse")]
     [InlineData("eve_public.sovereignty.mercenaryden.activity.api.GetAllRequest", "eve_public.sovereignty.mercenaryden.activity.api.GetAllResponse")]
     [InlineData("eve_public.stargate.lock.api.GetRestrictedSystemsRequest", "eve_public.stargate.lock.api.GetRestrictedSystemsResponse")]
     public async Task Client_read_requests_return_empty_typed_messages_for_an_active_character(string requestType, string responseType)
@@ -43,6 +42,66 @@ public sealed class PublicGatewayTests
 
         var missingCharacter = await handler(new GatewayRequest([], requestType, [], null), CancellationToken.None);
         Assert.Equal(400u, missingCharacter.StatusCode);
+    }
+
+    [Theory]
+    [InlineData("suppression")]
+    [InlineData("corruption")]
+    public async Task Pirate_stage_thresholds_return_five_fractions(string kind)
+    {
+        var requestType = $"eve_public.pirate.{kind}.api.GetStageThresholdsRequest";
+        var handler = ClientReadGateway.Handlers(3724492)[requestType];
+        var answer = await handler(new GatewayRequest([], requestType, [], 90000001), CancellationToken.None);
+        Assert.Equal(200u, answer.StatusCode);
+        Assert.Equal($"eve_public.pirate.{kind}.api.GetStageThresholdsResponse", answer.ResponseTypeName);
+        var thresholds = ProtoReader.Fields(answer.Payload);
+        Assert.Equal(5, thresholds.Count);
+        for (var i = 0; i < thresholds.Count; i++)
+        {
+            Assert.Equal(1, thresholds[i].Number);
+            Assert.Equal(2, thresholds[i].WireType);
+            var fraction = ProtoReader.Fields(thresholds[i].Bytes);
+            Assert.Equal(2, fraction.Count);
+            Assert.Equal(1, fraction[0].Number);
+            Assert.Equal((ulong)i + 1, fraction[0].Scalar);
+            Assert.Equal(2, fraction[1].Number);
+            Assert.Equal(5ul, fraction[1].Scalar);
+        }
+        var missingCharacter = await handler(new GatewayRequest([], requestType, [], null), CancellationToken.None);
+        Assert.Equal(400u, missingCharacter.StatusCode);
+    }
+
+    [Fact]
+    public async Task Plex_balance_uses_authenticated_account_and_encodes_cents()
+    {
+        var seen = 0L;
+        var handler = ClientReadGateway.PlexBalance((account, _) => { seen = account; return Task.FromResult(37L); });
+        var request = new GatewayRequest([], "eve_public.plex.vault.api.BalanceRequest", [], null)
+            { AuthenticatedAccountId = 42 };
+        var answer = await handler(request, CancellationToken.None);
+        Assert.Equal(42, seen);
+        Assert.Equal(200u, answer.StatusCode);
+        var currency = Assert.Single(ProtoReader.Fields(answer.Payload));
+        var cents = Assert.Single(ProtoReader.Fields(currency.Bytes));
+        Assert.Equal(7400ul, cents.Scalar); // sint64 zigzag encoding of 3700 cents
+        Assert.Equal(401u, (await handler(request with { AuthenticatedAccountId = null }, CancellationToken.None)).StatusCode);
+    }
+
+    [Fact]
+    public void Ship_skin_state_encodes_persisted_third_party_design()
+    {
+        var layout = new ProtoWriter();
+        layout.Uint(1, 123);
+        var payload = ShipSkinrSequencingGateway.EncodeShipSkinState(8001, 9001, 0, "abc", layout.ToArray());
+        var state = ProtoReader.Fields(Assert.Single(ProtoReader.Fields(payload)).Bytes);
+        Assert.Equal(9001ul, Assert.Single(ProtoReader.Fields(state[0].Bytes)).Scalar);
+        Assert.Equal(8001ul, Assert.Single(ProtoReader.Fields(state[1].Bytes)).Scalar);
+        var skin = Assert.Single(ProtoReader.Fields(state[2].Bytes));
+        Assert.Equal(2, skin.Number);
+        var thirdParty = ProtoReader.Fields(skin.Bytes);
+        var id = Assert.Single(ProtoReader.Fields(thirdParty[0].Bytes));
+        Assert.Equal("abc", System.Text.Encoding.UTF8.GetString(id.Bytes.Span));
+        Assert.Equal(123ul, Assert.Single(ProtoReader.Fields(thirdParty[1].Bytes)).Scalar);
     }
 
     [Fact]

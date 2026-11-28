@@ -33,6 +33,7 @@ public sealed class ShipSkinrDispatchTests
         var handlers = gateway.Handlers();
         Assert.Equal(new[]
         {
+            "eve_public.cosmetic.ship.api.GetRequest",
             "eve_public.cosmetic.ship.skin.thirdparty.api.GetRequest",
             "eve_public.cosmetic.ship.skin.thirdparty.component.license.api.GetOwnedRequest",
             "eve_public.cosmetic.ship.skin.thirdparty.component.license.finite.api.GetRequest",

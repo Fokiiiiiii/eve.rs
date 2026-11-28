@@ -1,5 +1,9 @@
 # Deviations from the reference server
 
+## Pirate stage thresholds (2026-11-28)
+
+The V24 client treats stage `>= len(thresholds) - 1` as fully corrupted or suppressed. The exact live threshold fractions are not established. Following EveJS's `insurgencyGatewayService.js`, eve.rs returns five equal fifths (1/5 through 5/5) for both threshold requests; this is an explicit approximation, not a verified live value. The graphical client has not been checked for this change.
+
 ## FW Infrastructure Hub scene placement inference (2026-11-17)
 
 V24.01's only client consumer, `factionWarfareSystemInfoContainer.py:49-60`, asks `GetControlBunkerIDInSystem` for an item ID and then reads its live inventory item and ball; it contains no position rule. The pinned SDE build 3396210 identifies the unpublished group 925 and four faction types (29286, 29302, 29303, 29304), but stores no per-system hub instances or coordinates. CCP's [Inferno patch notes](https://www.eveonline.com/news/view/patch-notes-for-inferno) say the former Control Bunkers were renamed Infrastructure Hubs; the [Factional Warfare guide](https://support.eveonline.com/hc/en-us/articles/203209072-Factional-Warfare) and [EVE University reference](https://wiki.eveuniversity.org/Factional_Warfare) document their gameplay role, not a spawn position. The inspected EveJS v0.12.9 faction service has no FW hub lifecycle producer.

@@ -285,7 +285,7 @@ internal sealed class PublicGatewayServer : IAsyncDisposable
         {
             try
             {
-                answer = await handler(request, cancellationToken);
+                answer = await handler(request with { AuthenticatedAccountId = identity!.Value.AccountId }, cancellationToken);
             }
             catch (Exception error) when (error is not OperationCanceledException)
             {

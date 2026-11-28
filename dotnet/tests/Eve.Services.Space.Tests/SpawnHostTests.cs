@@ -4,7 +4,7 @@ namespace Eve.Services.Space.Tests;
 
 /// <summary>
 /// <c>/spawn</c>, <c>/spawnn</c>, <c>/unspawn</c> and <c>/nuke</c> on the host: the hulls come into space around the pilot's ship as the bare hulls of
-/// <c>/deathtest</c> do, and stay until they are taken out; a taken-out ship leaves the scene (a simulation leave, with no destroy and no wreck).
+/// <c>/deathtest</c> do, and stay until the simulation takes them out without a destroy or wreck.
 /// Database-backed (<see cref="PgFactAttribute"/>).
 /// </summary>
 public class SpawnHostTests
@@ -46,12 +46,45 @@ public class SpawnHostTests
         Assert.Empty(rig.Sim.Heard.OfType<SimDestroy>());
 
         Assert.Equal(2, await spawns.RemoveAsync(made.ShipIds, CancellationToken.None));
-        var leaves = rig.Sim.Heard.OfType<SimLeave>().ToList();
-        Assert.Equal(2, leaves.Count);
-        Assert.All(leaves, leave => Assert.Equal(LeaveWhy.Docked, leave.Why));
+        var removals = rig.Sim.Heard.OfType<SimRemoveSpawnedShip>().ToArray();
+        Assert.Equal(made.ShipIds.ToArray(), removals.Select(removal => removal.ShipId).ToArray());
+        Assert.All(removals, removal => Assert.Equal(spawns1[0].Scene.LocationId, removal.SolarSystemId));
+        Assert.Empty(rig.Sim.Heard.OfType<SimLeave>());
         Assert.Empty(rig.Sim.Heard.OfType<SimDestroy>());
         Assert.Empty((await spawns.SpawnedAsync(session, CancellationToken.None))!.Ships);
         Assert.Equal(0, await spawns.RemoveAsync(made.ShipIds, CancellationToken.None));
+    }
+
+    [PgFact]
+    public async Task A_spawn_the_simulation_no_longer_has_is_not_counted_as_removed()
+    {
+        var (rig, _, session) = await InSpaceAsync();
+        await using var _ = rig;
+        ISpaceSpawns spawns = rig.Space;
+        var made = await spawns.SpawnHullsAsync(session, Ibis, 1, 0, CancellationToken.None);
+        var shipId = Assert.Single(made.ShipIds);
+        rig.Sim.SpawnedShipRemoved = false;
+
+        Assert.Equal(0, await spawns.RemoveAsync(made.ShipIds, CancellationToken.None));
+        Assert.Equal(shipId, Assert.Single(rig.Sim.Heard.OfType<SimRemoveSpawnedShip>()).ShipId);
+        Assert.Empty((await spawns.SpawnedAsync(session, CancellationToken.None))!.Ships);
+    }
+
+    [PgFact]
+    public async Task An_inventory_ship_placed_in_space_is_not_a_gm_spawn()
+    {
+        var (rig, character, session) = await InSpaceAsync();
+        await using var _ = rig;
+        ISpaceSpawns spawns = rig.Space;
+        const long launchedShipId = 90_001;
+        var entered = Assert.Single(rig.Sim.Heard.OfType<SimEnter>());
+        Assert.True(await rig.Space.PlaceLaunchedShipAsync(
+            launchedShipId, character.CharacterId, entered.Scene.LocationId, rig.Statics.Type(Ibis)!,
+            [100, 0, 0], [1, 0, 0], CancellationToken.None));
+
+        Assert.Empty((await spawns.SpawnedAsync(session, CancellationToken.None))!.Ships);
+        Assert.Equal(0, await spawns.RemoveAsync([launchedShipId], CancellationToken.None));
+        Assert.Empty(rig.Sim.Heard.OfType<SimRemoveSpawnedShip>());
     }
 
     [PgFact]

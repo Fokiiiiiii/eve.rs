@@ -121,6 +121,8 @@ public interface ISimulation
     Task<SimRemoveUnpilotedShipReply> RemoveUnpilotedShipAsync(SimRemoveUnpilotedShip request, CancellationToken cancellationToken = default) =>
         Task.FromException<SimRemoveUnpilotedShipReply>(new NotSupportedException("Unpiloted ship removal is unavailable."));
 
+    Task<SimRemoveSpawnedShipReply> RemoveSpawnedShipAsync(SimRemoveSpawnedShip request, CancellationToken cancellationToken = default);
+
     /// <summary>Reads a body from a loaded public solar-system scene.</summary>
     Task<SimGetSceneBodyReply> GetSceneBodyAsync(SimGetSceneBody request, CancellationToken cancellationToken = default) =>
         Task.FromException<SimGetSceneBodyReply>(new NotSupportedException("Scene body queries are unavailable."));

@@ -10,7 +10,7 @@ public sealed class SentryCodecTests
         Assert.Equal((byte)192, SimCodec.Encode(new SimSentryPolicy(1, 2, true, null, null, false, false, 3, 0))[4]);
         Assert.Equal((byte)193, SimCodec.Encode(new SimSentryBattery(1, 2, 3))[4]);
         Assert.Equal((byte)194, SimCodec.Encode(new SimSentryPilot(1, 2, 3, 4, 0, null, 0.0, false))[4]);
-        Assert.Equal(106, SimCodec.ProtocolVersion);
+        Assert.Equal(107, SimCodec.ProtocolVersion);
     }
 
     [Fact]

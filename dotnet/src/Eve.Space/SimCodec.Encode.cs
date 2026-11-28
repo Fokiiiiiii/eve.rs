@@ -1124,6 +1124,15 @@ private static void WriteStructureDamageCorrelation(
                     throw new ArgumentException("Invalid unpiloted ship removal reply.", nameof(message));
                 w.U8(Kind.RemoveUnpilotedShipReply); w.U64(m.RequestId); WriteSceneKey(w, m.Scene); w.I64(m.ShipId);
                 w.U8(m.Error is not null ? (byte)2 : m.Removed ? (byte)1 : (byte)0); w.Text(m.Error ?? string.Empty); break;
+            case SimRemoveSpawnedShip m:
+                if (m.RequestId == 0 || m.SolarSystemId <= 0 || m.ShipId <= 0)
+                    throw new ArgumentException("Invalid spawned ship removal.", nameof(message));
+                w.U8(Kind.RemoveSpawnedShip); w.U64(m.RequestId); w.I32(m.SolarSystemId); w.I64(m.ShipId); break;
+            case SimRemoveSpawnedShipReply m:
+                if (m.RequestId == 0 || m.SolarSystemId <= 0 || m.ShipId <= 0)
+                    throw new ArgumentException("Invalid spawned ship removal reply.", nameof(message));
+                w.U8(Kind.RemoveSpawnedShipReply); w.U64(m.RequestId); w.I32(m.SolarSystemId); w.I64(m.ShipId);
+                w.U8(m.Removed ? (byte)1 : (byte)0); break;
             case SimGetSceneBody m:
                 if (m.RequestId == 0 || !m.Scene.IsValid || m.Scene.InstanceId != 0 || m.ItemId <= 0)
                     throw new ArgumentException("Invalid scene body request.", nameof(message));

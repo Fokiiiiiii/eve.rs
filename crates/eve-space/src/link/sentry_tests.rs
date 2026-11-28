@@ -33,8 +33,8 @@ fn pilot() -> Message {
 }
 
 #[test]
-fn sentry_frames_roundtrip_under_their_kinds_at_protocol_106() {
-    assert_eq!(PROTOCOL_VERSION, 106);
+fn sentry_frames_roundtrip_under_their_kinds_at_protocol_107() {
+    assert_eq!(PROTOCOL_VERSION, 107);
     let messages = [policy(), battery(), pilot()];
     let kinds: Vec<u8> = messages.iter().map(|message| message.encode()[4]).collect();
     assert_eq!(kinds, vec![kind::SENTRY_POLICY, kind::SENTRY_BATTERY, kind::SENTRY_PILOT]);

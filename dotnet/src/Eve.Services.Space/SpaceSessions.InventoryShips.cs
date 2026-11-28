@@ -38,12 +38,11 @@ public sealed partial class SpaceSessions
             "",
             SimNpcIdentity.Default with { Hull = true });
         var reply = await _sim.SpawnAsync(spawn, cancellationToken);
-        if (reply.Session is not { } sessionId)
+        if (reply.Session is null)
         {
             _log?.Invoke($"launched ship {itemId} was not placed: {reply.Error}");
             return false;
         }
-        _spawned[itemId] = new SpawnedNpc(sessionId, solarSystemId, type.TypeId);
         if (boardable && await _ships.CharacterAsync(ownerId, cancellationToken) is { } owner)
         {
             _ejectedShips[itemId] = new EjectedShip(

@@ -475,6 +475,16 @@ impl Message {
                     }
                 }
             }
+            Self::RemoveSpawnedShip { request_id, solar_system_id, ship_id }
+            | Self::RemoveSpawnedShipReply { request_id, solar_system_id, ship_id, .. } => {
+                assert!(*request_id > 0 && *solar_system_id > 0 && *ship_id > 0);
+                out.extend_from_slice(&request_id.to_le_bytes());
+                out.extend_from_slice(&solar_system_id.to_le_bytes());
+                out.extend_from_slice(&ship_id.to_le_bytes());
+                if let Self::RemoveSpawnedShipReply { removed, .. } = self {
+                    out.push(u8::from(*removed));
+                }
+            }
             Self::GetSceneBody { request_id, scene, item_id } => {
                 assert!(*request_id > 0 && scene.is_valid() && scene.instance_id == 0 && *item_id > 0);
                 out.extend_from_slice(&request_id.to_le_bytes());

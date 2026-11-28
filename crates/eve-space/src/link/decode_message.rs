@@ -1031,6 +1031,20 @@ impl Message {
                     outcome: if status == 2 { Err(error) } else { Ok(removed) },
                 }
             }
+            kind::REMOVE_SPAWNED_SHIP | kind::REMOVE_SPAWNED_SHIP_REPLY => {
+                let request_id = r.u64()?;
+                let solar_system_id = r.i32()?;
+                let ship_id = r.i64()?;
+                if request_id == 0 || solar_system_id <= 0 || ship_id <= 0 {
+                    return Err(DecodeError::BadValue("spawned ship removal identity"));
+                }
+                if kind == kind::REMOVE_SPAWNED_SHIP {
+                    Message::RemoveSpawnedShip { request_id, solar_system_id, ship_id }
+                } else {
+                    let removed = read_flag(&mut r, "spawned ship removed")?;
+                    Message::RemoveSpawnedShipReply { request_id, solar_system_id, ship_id, removed }
+                }
+            }
             kind::GET_SCENE_BODY => {
                 let request_id = r.u64()?;
                 let scene = read_scene_key(&mut r)?;

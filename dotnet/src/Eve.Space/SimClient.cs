@@ -59,6 +59,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimQueryTournamentWreckReply>> _tournamentWreckQueries = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRemoveTournamentWreckReply>> _tournamentWreckRemovals = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRemoveUnpilotedShipReply>> _unpilotedShipRemovals = new();
+    private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimRemoveSpawnedShipReply>> _spawnedShipRemovals = new();
     private readonly ConcurrentDictionary<ulong, TaskCompletionSource<SimEnterPublicParticipantReply>> _publicEnters = new();
     private readonly ConcurrentDictionary<ulong, Action<SimEnterPublicParticipantReply>> _publicEnterInOrder = new();
     private readonly ConcurrentDictionary<ulong, Func<SimEnterPublicParticipantReply, Task>> _publicEnterInOrderAsync = new();
@@ -388,6 +389,9 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             case SimRemoveUnpilotedShipReply reply when _unpilotedShipRemovals.TryRemove(reply.RequestId, out var unpilotedRemoval):
                 unpilotedRemoval.TrySetResult(reply); break;
             case SimRemoveUnpilotedShipReply: break;
+            case SimRemoveSpawnedShipReply reply when _spawnedShipRemovals.TryRemove(reply.RequestId, out var spawnedRemoval):
+                spawnedRemoval.TrySetResult(reply); break;
+            case SimRemoveSpawnedShipReply: break;
             case SimEnterPublicParticipantReply reply when _publicEnters.TryRemove(reply.RequestId, out var publicEnter):
                 if (_publicEnterInOrder.TryRemove(reply.RequestId, out var beforeEntryMessages)) beforeEntryMessages(reply);
                 publicEnter.TrySetResult(reply); break;
@@ -624,6 +628,8 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             if (_tournamentWreckRemovals.TryRemove(request, out var removal)) removal.TrySetException(new SimUnavailableException("the link to the simulation broke"));
         foreach (var request in _unpilotedShipRemovals.Keys)
             if (_unpilotedShipRemovals.TryRemove(request, out var removal)) removal.TrySetException(new SimUnavailableException("the link to the simulation broke"));
+        foreach (var request in _spawnedShipRemovals.Keys)
+            if (_spawnedShipRemovals.TryRemove(request, out var removal)) removal.TrySetException(new SimUnavailableException("the link to the simulation broke"));
         foreach (var request in _sceneBodies.Keys)
         {
             if (_sceneBodies.TryRemove(request, out var pending))
@@ -1137,6 +1143,14 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         var reply = await AwaitAsync(_unpilotedShipRemovals, request.RequestId, request, cancellationToken).ConfigureAwait(false);
         if (reply.RequestId != request.RequestId || reply.Scene != request.Scene || reply.ShipId != request.ShipId)
             throw new SimLinkException(SimLinkError.BadValue, "unpiloted ship removal reply does not match its request");
+        return reply;
+    }
+
+    public async Task<SimRemoveSpawnedShipReply> RemoveSpawnedShipAsync(SimRemoveSpawnedShip request, CancellationToken cancellationToken = default)
+    {
+        var reply = await AwaitAsync(_spawnedShipRemovals, request.RequestId, request, cancellationToken).ConfigureAwait(false);
+        if (reply.RequestId != request.RequestId || reply.SolarSystemId != request.SolarSystemId || reply.ShipId != request.ShipId)
+            throw new SimLinkException(SimLinkError.BadValue, "spawned ship removal reply does not match its request");
         return reply;
     }
 

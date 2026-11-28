@@ -54,7 +54,7 @@ use crate::weapons::{Aoe, Arc, Charge, CrystalWear, Spool, Turret};
 use crate::world::StructureStatus;
 use crate::wreck::WreckKind;
 
-pub const PROTOCOL_VERSION: u16 = 106;
+pub const PROTOCOL_VERSION: u16 = 107;
 
 /// A battlefield's capture point the host puts in space (protocol 77): a ball the pilots of its system see. Its factions (the attacker and the
 /// occupier, 0 for none) and its next point time (a FILETIME, 0 for none) are the dynamic slim fields the client reads from it.
@@ -1089,6 +1089,17 @@ pub enum Message {
         ship_id: i64,
         outcome: Result<bool, String>,
     },
+    RemoveSpawnedShip {
+        request_id: u64,
+        solar_system_id: i32,
+        ship_id: i64,
+    },
+    RemoveSpawnedShipReply {
+        request_id: u64,
+        solar_system_id: i32,
+        ship_id: i64,
+        removed: bool,
+    },
     GetSceneBody {
         request_id: u64,
         scene: SceneKey,
@@ -1947,6 +1958,8 @@ impl Message {
             Self::RemoveTournamentWreckReply { .. } => kind::REMOVE_TOURNAMENT_WRECK_REPLY,
             Self::RemoveUnpilotedShip { .. } => kind::REMOVE_UNPILOTED_SHIP,
             Self::RemoveUnpilotedShipReply { .. } => kind::REMOVE_UNPILOTED_SHIP_REPLY,
+            Self::RemoveSpawnedShip { .. } => kind::REMOVE_SPAWNED_SHIP,
+            Self::RemoveSpawnedShipReply { .. } => kind::REMOVE_SPAWNED_SHIP_REPLY,
             Self::GetSceneBody { .. } => kind::GET_SCENE_BODY,
             Self::GetSceneBodyReply { .. } => kind::GET_SCENE_BODY_REPLY,
             Self::GetDeploymentBalls { .. } => kind::GET_DEPLOYMENT_BALLS,

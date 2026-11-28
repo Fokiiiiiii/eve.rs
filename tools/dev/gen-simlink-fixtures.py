@@ -36,7 +36,8 @@ KINDS = {"Hello": 1, "HelloAck": 2, "Enter": 3, "Leave": 4, "Bind": 5, "UpdateSt
          "PlaceForceField": 180, "ForceFieldPlaced": 181, "RemoveForceField": 182, "ForceFieldRemoved": 183,
          "SetForceFieldAccess": 184, "ShipForceFieldPassword": 185, "ShipForceFieldHarmonic": 186,
          "BatteryFire": 190, "BatteryFired": 191,
-          "SentryPolicy": 192, "SentryBattery": 193, "SentryPilot": 194}
+          "SentryPolicy": 192, "SentryBattery": 193, "SentryPilot": 194,
+          "RemoveSpawnedShip": 195, "RemoveSpawnedShipReply": 196}
 
 def slim_value(v):  # a dynamic slim-item field value (protocol 76): a tag (0 none, 1 int, 2 real, 3 bool, 4 text, 5 tuple), then its payload
     tag = v["tag"]
@@ -465,6 +466,11 @@ def build(m):
             body += i64(m["ownerId"]) + i64(m["launcherId"]) + struct.pack("<i4d", m["typeId"], *m["center"], m["radius"])
         if k.endswith("Reply"):
             body += bytes([2 if m.get("error") is not None else int(m["present"])]) + s(m.get("error") or "")
+        return frame(k, body)
+    if k in ("RemoveSpawnedShip", "RemoveSpawnedShipReply"):
+        body = u64(m["requestId"]) + struct.pack("<i", m["solarSystemId"]) + i64(m["shipId"])
+        if k == "RemoveSpawnedShipReply":
+            body += bytes([m["removed"]])
         return frame(k, body)
     if k in ("RemoveUnpilotedShip", "RemoveUnpilotedShipReply"):
         body = u64(m["requestId"]) + scene_key(m) + i64(m["shipId"])
@@ -923,8 +929,8 @@ BARE = dict(IBIS, name="", modules=[], allianceId=99000001, securityStatus=-2.5,
             condition={"damage": 0.0, "armorDamage": 0.0, "shieldCharge": 1.0, "charge": 1.0})
 
 valid = [
-    {"name": "hello", "kind": "Hello", "version": 106},
-    {"name": "hello ack", "kind": "HelloAck", "version": 106, "pollHz": 4},
+    {"name": "hello", "kind": "Hello", "version": 107},
+    {"name": "hello ack", "kind": "HelloAck", "version": 107, "pollHz": 4},
     {"name": "active Crimewatch flag", "kind": "CrimewatchFlagActive", "sessionId": "1001",
      "isCriminal": True, "expiresAtUnixMs": "1800000000000"},
     {"name": "Empire sentry offense", "kind": "EmpireSentryOffense", "sessionId": "1001"},
@@ -1001,6 +1007,12 @@ valid = [
     {"name": "tournament wreck removed", "kind": "RemoveTournamentWreckReply", "requestId": "57", "scene": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "itemId": "400000004", "present": True, "error": None},
     {"name": "remove abandoned unpiloted ship", "kind": "RemoveUnpilotedShip", "requestId": "9", "scene": {"locationId": 30000001, "instanceId": "0", "roomIndex": 0}, "shipId": "9001"},
     {"name": "removed abandoned unpiloted ship", "kind": "RemoveUnpilotedShipReply", "requestId": "9", "scene": {"locationId": 30000001, "instanceId": "0", "roomIndex": 0}, "shipId": "9001", "removed": True, "error": None},
+    {"name": "remove spawned ship", "kind": "RemoveSpawnedShip", "requestId": "10",
+     "solarSystemId": 30000001, "shipId": "4100000000000001"},
+    {"name": "spawned ship removed", "kind": "RemoveSpawnedShipReply", "requestId": "10",
+     "solarSystemId": 30000001, "shipId": "4100000000000001", "removed": True},
+    {"name": "spawned ship absent", "kind": "RemoveSpawnedShipReply", "requestId": "11",
+     "solarSystemId": 30000001, "shipId": "4100000000000001", "removed": False},
     {"name": "move public pilot to explicit pose", "kind": "MovePublicParticipant", "requestId": "58", "operationId": "01234567-89ab-cdef-0123-456789abcdef", "sessionId": "42", "shipId": "9988400001939", "source": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "destination": {"locationId": 30000144, "instanceId": "0", "roomIndex": 0}, "useAnchor": False, "position": [100.0, 200.0, 300.0], "direction": [0.0, 0.0, 1.0]},
     {"name": "move public pilot to anchor", "kind": "MovePublicParticipant", "requestId": "59", "operationId": "00000000-0000-0000-0000-000000000000", "sessionId": "42", "shipId": "9988400001939", "source": {"locationId": 30000142, "instanceId": "0", "roomIndex": 0}, "destination": {"locationId": 30000144, "instanceId": "0", "roomIndex": 0}, "useAnchor": True, "position": [0.0, 0.0, 0.0], "direction": [0.0, 0.0, 0.0]},
     {"name": "public pilot moved", "kind": "MovePublicParticipantReply", "requestId": "58", "error": None},
@@ -2293,6 +2305,11 @@ invalid.append({"name": "force field radius not finite", "reason": "bad-value",
                 "hex": build(dict(named("place a force field for an online tower (protocol 104)"), radius=float("nan"))).hex()})
 invalid.append({"name": "force field position not finite", "reason": "bad-value",
                 "hex": build(dict(named("place a force field for an online tower (protocol 104)"), position=[float("inf"), 2.0, 3.0])).hex()})
+
+invalid.append({"name": "spawned ship removal missing system", "reason": "bad-value",
+                "hex": build(dict(named("remove spawned ship"), solarSystemId=0)).hex()})
+invalid.append({"name": "spawned ship removed flag not a boolean", "reason": "bad-value",
+                "hex": build(dict(named("spawned ship removed"), removed=2)).hex()})
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 with open(OUT, "w", encoding="utf-8") as f:

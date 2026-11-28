@@ -109,9 +109,9 @@ not exist is the scene: which balls a system has, who is where, how commands cha
 - **A library called through FFI**: fastest, but couples lifetimes and memory (ADR 0002 rejected the same for
   the front).
 
-## Current SimLink kinds (protocol 106)
+## Current SimLink kinds (protocol 107)
 
-The current protocol version is 106 (`PROTOCOL_VERSION` in `crates/eve-space/src/link/mod.rs`; `Hello` and `HelloAck` carry it). The kind codes are in `crates/eve-space/src/link/kind.rs`, and `oracle/fixtures/simlink/messages.json` holds a frame for each (checked by name on 2026-11-19). The table gives the protocol version that introduced each kind; the amendments below give the detail.
+The current protocol version is 107 (`PROTOCOL_VERSION` in `crates/eve-space/src/link/mod.rs`; `Hello` and `HelloAck` carry it). The kind codes are in `crates/eve-space/src/link/kind.rs`, and `oracle/fixtures/simlink/messages.json` holds frames for the kinds below. The table gives the protocol version that introduced each kind; the amendments below give the detail.
 
 | Kinds | Messages | Introduced in protocol |
 |---|---|---|
@@ -121,6 +121,9 @@ The current protocol version is 106 (`PROTOCOL_VERSION` in `crates/eve-space/src
 | 186 | `ShipForceFieldHarmonic` | 105 |
 | 190 to 191 | `BatteryFire`, `BatteryFired` | 104 |
 | 192 to 194 | `SentryPolicy`, `SentryBattery`, `SentryPilot` | 106 |
+| 195 to 196 | `RemoveSpawnedShip`, `RemoveSpawnedShipReply` | 107 |
+
+In version 107, `RemoveSpawnedShip` (195) carries a request ID (`u64`), solar system ID (`i32`), and ship ID (`i64`). The simulation resolves the ship in that system and uses normal departure to notify observers without creating a wreck. `RemoveSpawnedShipReply` (196) echoes the same identity and carries a flag byte (1 removed, 0 no eligible ship) after any departure notifications.
 
 ## Amendments
 

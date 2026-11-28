@@ -6,14 +6,13 @@ using Eve.Ships;
 namespace Eve.Services.Space;
 
 /// <summary>
-/// The game master's spawns (<see cref="ISpaceSpawns"/>): the bare hulls of <c>/deathtest</c>'s placement and the NPC ships the host makes, by item ID, each with the
-/// simulation session it is known by, so that it can be taken out.
+/// The host's transient spawned hulls and NPC ships (<see cref="ISpaceSpawns"/>), tracked by item ID and removed from their solar system.
 /// </summary>
 public sealed partial class SpaceSessions : ISpaceSpawns
 {
     private readonly ConcurrentDictionary<long, SpawnedNpc> _spawned = new();
 
-    private sealed record SpawnedNpc(ulong Session, int SolarSystemId, int TypeId);
+    private sealed record SpawnedNpc(int SolarSystemId, int TypeId);
 
     public async Task<SpawnResult> SpawnHullsAsync(ClientSession session, int typeId, int count, double deviationMeters, CancellationToken cancellationToken)
     {
@@ -37,11 +36,11 @@ public sealed partial class SpaceSessions : ISpaceSpawns
             var spawn = new SimSpawn(
                 NextSpawnRequest(), SimSceneKey.SolarSystem(pilot.SolarSystemId), SimShips.OfType(shipId, type), pilot.ShipId, place, [0, 0, 0], RandomDirection(), "",
                 SimNpcIdentity.Default with { Hull = true });
-            if (await SpawnAsync(spawn, "spawn", cancellationToken) is not { } npcSession)
+            if (await SpawnAsync(spawn, "spawn", cancellationToken) is null)
             {
                 break;
             }
-            _spawned[shipId] = new SpawnedNpc(npcSession, pilot.SolarSystemId, typeId);
+            _spawned[shipId] = new SpawnedNpc(pilot.SolarSystemId, typeId);
             ids.Add(shipId);
         }
         return new SpawnResult(ids, ids.Count == 0 ? SpawnResult.SpawnFailed : null);
@@ -65,20 +64,30 @@ public sealed partial class SpaceSessions : ISpaceSpawns
     private async Task<IReadOnlyList<double>?> PlaceAsync(ClientSession session, long shipId, CancellationToken cancellationToken) =>
         await ScenePositionOfAsync(session, shipId, cancellationToken) is { } at ? [at.X, at.Y, at.Z] : null;
 
-    public Task<int> RemoveAsync(IReadOnlyList<long> shipIds, CancellationToken cancellationToken)
+    public async Task<int> RemoveAsync(IReadOnlyList<long> shipIds, CancellationToken cancellationToken)
     {
         var removed = 0;
         foreach (var shipId in shipIds)
         {
-            if (!_spawned.TryRemove(shipId, out var npc))
+            if (!_spawned.TryGetValue(shipId, out var npc))
             {
                 continue;
             }
-            // a ship that leaves the scene for good: the simulation drops it with no wreck (the NPC's own departure)
-            _sim.Leave(npc.Session, LeaveWhy.Docked);
+            SimRemoveSpawnedShipReply reply;
+            try
+            {
+                reply = await _sim.RemoveSpawnedShipAsync(
+                    new SimRemoveSpawnedShip(NextSpawnRequest(), npc.SolarSystemId, shipId), cancellationToken);
+            }
+            catch (SimUnavailableException error)
+            {
+                _log?.Invoke($"spawned ship {shipId} could not be removed: {error.Message}");
+                throw Notify("Space is not available right now. Try again in a moment.");
+            }
+            _spawned.TryRemove(shipId, out _);
             _npcShips.TryRemove(shipId, out _);
-            removed++;
+            if (reply.Removed) removed++;
         }
-        return Task.FromResult(removed);
+        return removed;
     }
 }

@@ -1235,6 +1235,17 @@ fn message_of(case: &Value) -> Message {
                 .and_then(Value::as_str)
                 .map_or_else(|| Ok(case["removed"].as_bool().unwrap()), |error| Err(error.to_owned())),
         },
+        "RemoveSpawnedShip" => Message::RemoveSpawnedShip {
+            request_id: number("requestId"),
+            solar_system_id: case["solarSystemId"].as_i64().unwrap() as i32,
+            ship_id: wide(case, "shipId"),
+        },
+        "RemoveSpawnedShipReply" => Message::RemoveSpawnedShipReply {
+            request_id: number("requestId"),
+            solar_system_id: case["solarSystemId"].as_i64().unwrap() as i32,
+            ship_id: wide(case, "shipId"),
+            removed: case["removed"].as_bool().unwrap(),
+        },
         "MovePublicParticipant" => Message::MovePublicParticipant {
             request_id: number("requestId"),
             operation_id: text(case, "operationId"),

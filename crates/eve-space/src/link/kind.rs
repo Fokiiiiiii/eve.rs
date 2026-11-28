@@ -59,6 +59,8 @@ pub const SENTRY_BATTERY: u8 = 193;
 /// What the host knows of a pilot's ship toward a tower's policy (protocol 106): corporation, alliance, security status (optional), the owner's
 /// standing and war. A ship id of 0 forgets every pilot of the tower. No answer.
 pub const SENTRY_PILOT: u8 = 194;
+pub const REMOVE_SPAWNED_SHIP: u8 = 195;
+pub const REMOVE_SPAWNED_SHIP_REPLY: u8 = 196;
 /// The simulation says a pilot's ship harmonic changed: the tower of the admitted field it is inside, or -1 (simulation to host, protocol 105).
 pub const SHIP_FORCE_FIELD_HARMONIC: u8 = 186;
 pub const REGISTER_TOURNAMENT_CUTOFF: u8 = 142;

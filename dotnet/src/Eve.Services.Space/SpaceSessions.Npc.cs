@@ -586,12 +586,12 @@ public sealed partial class SpaceSessions
             var direction = RandomUnitVector();
             double[] place = [anchor.Origin[0] + direction[0] * distance, anchor.Origin[1] + direction[1] * distance, anchor.Origin[2] + direction[2] * distance];
             var spawn = new SimSpawn(NextSpawnRequest(), SimSceneKey.SolarSystem(anchor.SolarSystemId), ship, anchor.ShipId, place, [0, 0, 0], RandomUnitVector(), NpcBehavior, identity);
-            if (await SpawnAsync(spawn, "npc", cancellationToken, sceneUnavailable) is not { } npcSession)
+            if (await SpawnAsync(spawn, "npc", cancellationToken, sceneUnavailable) is null)
             {
                 break;
             }
             _npcShips[shipId] = new NpcShip(profile, type.TypeId, anchor.SolarSystemId, anchor.BeltId, anchor.Group, anchor.SiteId);
-            _spawned[shipId] = new SpawnedNpc(npcSession, anchor.SolarSystemId, type.TypeId);
+            _spawned[shipId] = new SpawnedNpc(anchor.SolarSystemId, type.TypeId);
             shipIds?.Add(shipId);
             unarmed += weapon is null ? 1 : 0;
             var name = profile.Name.Length > 0 ? profile.Name : profile.Id;

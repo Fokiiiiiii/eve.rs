@@ -23,7 +23,7 @@ public sealed class SimLinkException(SimLinkError error, string message) : Excep
 /// <summary>The wire uses little-endian integers and length-prefixed text and byte strings.</summary>
 public static partial class SimCodec
 {
-    public const ushort ProtocolVersion = 106;
+    public const ushort ProtocolVersion = 107;
 
     /// <summary>The longest name of a dynamic slim-item field, in bytes (protocol 76).</summary>
     public const int SlimFieldNameMax = 64;
@@ -442,6 +442,17 @@ public static partial class SimCodec
                         (status == 2 && error.Length == 0) || (status != 2 && error.Length != 0))
                         throw new SimLinkException(SimLinkError.BadValue, "bad unpiloted ship removal reply");
                     message = new SimRemoveUnpilotedShipReply(id, scene, ship, status == 1, status == 2 ? error : null);
+                    break;
+                }
+            case Kind.RemoveSpawnedShip:
+            case Kind.RemoveSpawnedShipReply:
+                {
+                    var id = r.U64(); var solarSystem = r.I32(); var ship = r.I64();
+                    if (id == 0 || solarSystem <= 0 || ship <= 0)
+                        throw new SimLinkException(SimLinkError.BadValue, "bad spawned ship removal identity");
+                    message = payload.Span[0] == Kind.RemoveSpawnedShip
+                        ? new SimRemoveSpawnedShip(id, solarSystem, ship)
+                        : new SimRemoveSpawnedShipReply(id, solarSystem, ship, ReadFlag(ref r, "spawned ship removed"));
                     break;
                 }
             case Kind.GetSceneBody:

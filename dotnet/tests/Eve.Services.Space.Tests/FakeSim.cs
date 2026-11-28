@@ -138,6 +138,18 @@ internal sealed class FakeSim : ISimulation
             ?? new SimRemoveUnpilotedShipReply(removal.RequestId, removal.Scene, removal.ShipId, true, null));
     }
 
+    public bool SpawnedShipRemoved { get; set; } = true;
+
+    public Task<SimRemoveSpawnedShipReply> RemoveSpawnedShipAsync(
+        SimRemoveSpawnedShip removal, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected) throw new SimUnavailableException("the simulation is not running");
+        Heard.Enqueue(removal);
+        return Task.FromResult(new SimRemoveSpawnedShipReply(
+            removal.RequestId, removal.SolarSystemId, removal.ShipId, SpawnedShipRemoved));
+    }
+
     private Task<string?> RecordAbyssalAsync(SimMessage message, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

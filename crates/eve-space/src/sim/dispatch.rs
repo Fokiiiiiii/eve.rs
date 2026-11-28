@@ -533,6 +533,9 @@ impl Sim {
                 Message::MovePublicParticipant { source, destination, .. } => {
                     Some(vec![*source, *destination])
                 }
+                Message::RemoveSpawnedShip { solar_system_id, .. } => {
+                    Some(vec![SceneKey::solar_system(*solar_system_id)])
+                }
                 _ => None,
             };
             if let Some(affected) = affected {
@@ -829,6 +832,7 @@ impl Sim {
             | Message::QueryTournamentWreck { .. }
             | Message::RemoveTournamentWreck { .. }
             | Message::RemoveUnpilotedShip { .. }
+            | Message::RemoveSpawnedShip { .. }
             | Message::GetSceneBody { .. }
             | Message::GetDeploymentBalls { .. }
             | Message::GetAbyssalParticipantPose { .. }
@@ -1127,6 +1131,24 @@ impl Sim {
             }
             Message::RemoveUnpilotedShip { request_id, scene, ship_id } => {
                 return Ok(self.remove_unpiloted_ship(request_id, scene, ship_id, now));
+            }
+            Message::RemoveSpawnedShip { request_id, solar_system_id, ship_id } => {
+                let outs = self.scenes.get_mut(&SceneKey::solar_system(solar_system_id)).and_then(|scene| {
+                    let session = scene.session_of(ship_id)?;
+                    if !crate::npc::is_npc_session(session) || scene.drones.contains_key(&session) {
+                        return None;
+                    }
+                    scene.leave(session, Departure::Docked, now)
+                });
+                let removed = outs.is_some();
+                let mut messages = Self::messages(outs.unwrap_or_default());
+                messages.push(Message::RemoveSpawnedShipReply {
+                    request_id,
+                    solar_system_id,
+                    ship_id,
+                    removed,
+                });
+                return Ok(messages);
             }
             Message::MovePublicParticipant {
                 request_id,

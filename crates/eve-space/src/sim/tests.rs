@@ -2155,6 +2155,77 @@ fn an_npc_the_host_asks_for_comes_into_the_scene_of_the_system_and_is_answered_w
 }
 
 #[test]
+fn removing_a_spawned_ship_notifies_each_observer_and_only_changes_its_system() {
+    let mut other_system = big_station();
+    other_system.id = SYSTEM + 1;
+    let mut sim = Sim::new(Arc::new(Universe::with_systems([big_station(), other_system])));
+    sim.handle(enter(SESSION, STATION, SYSTEM), NOON).unwrap();
+    place_player_outside_station(&mut sim);
+    let at = beside_the_player(&mut sim);
+    let Message::Enter(mut observer) = other_enter() else { unreachable!() };
+    observer.how = How::InSpace;
+    observer.position = Some(at);
+    observer.direction = Some([1.0, 0.0, 0.0]);
+    sim.handle(Message::Enter(observer), NOON).unwrap();
+    for session_id in [SESSION, OTHER] {
+        sim.handle(Message::Bind { session_id }, NOON).unwrap();
+    }
+
+    let ship_id = 980_050_000_007;
+    for (request_id, solar_system_id, id) in [(1, SYSTEM, ship_id), (2, SYSTEM + 1, ship_id + 1)] {
+        let spawned = sim.handle(spawn(request_id, solar_system_id, id, at), NOON).unwrap();
+        assert!(matches!(spawned.first(), Some(Message::SpawnReply { outcome: Ok(_), .. })));
+    }
+    let scene = SceneKey::solar_system(SYSTEM);
+    let other_scene = SceneKey::solar_system(SYSTEM + 1);
+    let npc_session = sim.scenes[&scene].session_of(ship_id).unwrap();
+    assert_eq!(sim.scenes[&other_scene].session_of(ship_id + 1), Some(npc_session));
+    assert!(!sim.sessions.contains_key(&npc_session));
+    for session in [SESSION, OTHER] {
+        assert!(sim.scenes[&scene].ships_in_view(session).iter().any(|ship| ship.spec.ship_id == ship_id));
+    }
+
+    let remove = |request_id, solar_system_id, ship_id| Message::RemoveSpawnedShip {
+        request_id,
+        solar_system_id,
+        ship_id,
+    };
+    for (request_id, solar_system_id, id) in [(3, SYSTEM + 1, ship_id), (4, SYSTEM, spec().ship_id)] {
+        assert_eq!(
+            sim.handle(remove(request_id, solar_system_id, id), NOON).unwrap(),
+            [Message::RemoveSpawnedShipReply { request_id, solar_system_id, ship_id: id, removed: false }]
+        );
+    }
+    let told = sim.handle(remove(5, SYSTEM, ship_id), NOON + SECOND).unwrap();
+    let (reply, updates) = told.split_last().unwrap();
+    assert_eq!(
+        *reply,
+        Message::RemoveSpawnedShipReply { request_id: 5, solar_system_id: SYSTEM, ship_id, removed: true }
+    );
+    let mut observers = Vec::new();
+    for update in updates {
+        let Message::Notify { session_id, .. } = update else { panic!("unexpected message: {update:?}") };
+        observers.push(*session_id);
+        let actions = destiny_actions(update);
+        let [(name, args)] = actions.as_slice() else { panic!("unexpected Destiny actions: {actions:?}") };
+        assert_eq!(name, "RemoveBalls");
+        let [Value::List(ids)] = args.as_slice() else { panic!("unexpected RemoveBalls args: {args:?}") };
+        assert_eq!(ids.iter().map(wire_integer).collect::<Vec<_>>(), [Some(ship_id)]);
+    }
+    observers.sort_unstable();
+    let mut expected = [SESSION, OTHER];
+    expected.sort_unstable();
+    assert_eq!(observers, expected);
+    assert_eq!(sim.scenes[&scene].session_of(ship_id), None);
+    assert_eq!(sim.scenes[&scene].session_of(spec().ship_id), Some(SESSION));
+    assert_eq!(sim.scenes[&other_scene].session_of(ship_id + 1), Some(npc_session));
+    assert_eq!(
+        sim.handle(remove(6, SYSTEM, ship_id), NOON + SECOND).unwrap(),
+        [Message::RemoveSpawnedShipReply { request_id: 6, solar_system_id: SYSTEM, ship_id, removed: false }]
+    );
+}
+
+#[test]
 fn an_npc_the_host_places_from_a_ship_comes_that_far_from_where_the_ship_is_and_one_placed_from_a_ship_that_is_not_there_is_refused()
  {
     let mut sim = undocked();
@@ -5239,5 +5310,5 @@ fn tether_host_policy_dispatches_to_the_real_scene_and_transitions_return_to_the
         .unwrap_err();
     assert!(wrong_direction.0.contains("kind 81"));
     // The Host and simulation carry Abyssal FOLLOW pose state in SimLink v100.
-    assert_eq!(crate::link::PROTOCOL_VERSION, 106);
+    assert_eq!(crate::link::PROTOCOL_VERSION, 107);
 }

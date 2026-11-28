@@ -67,7 +67,7 @@ internal sealed class HostGmRelocation(SpaceSessions space, SolarSystemCatalog s
     public Task<string?> MoveAsync(ClientSession session, GmDestination destination, CancellationToken cancellationToken) =>
         destination.StationId is { } stationId
             ? session.GetInt("shipid") is { } shipId
-                ? space.ReturnTournamentPilotToDockAsync(session, destination.SolarSystemId, stationId, shipId, cancellationToken)
+                ? space.RelocateToStationAsync(session, destination.SolarSystemId, stationId, shipId, cancellationToken)
                 : Task.FromResult<string?>("The session has no active ship.")
             : space.RelocateAsync(session, destination.SolarSystemId, destination.Position, destination.Direction, cancellationToken);
 }

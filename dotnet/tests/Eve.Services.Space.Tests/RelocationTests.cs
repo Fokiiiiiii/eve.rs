@@ -1,4 +1,6 @@
 using Eve.Inventory;
+using Eve.Fitting;
+using Eve.Marshal;
 using Eve.Ships;
 using Eve.Space;
 using Eve.Universe;
@@ -15,6 +17,61 @@ public class RelocationTests
 {
     /// <summary>A solar system of the static data other than the one the given system is.</summary>
     private static SolarSystemInfo Elsewhere(Rig rig, int system) => rig.Systems.Systems.First(candidate => candidate.Id != system);
+
+    [PgFact]
+    public async Task Gm_station_move_from_space_announces_only_the_final_docked_session()
+    {
+        foreach (var remote in new[] { false, true })
+        {
+            await using var rig = await Rig.CreateAsync();
+            var character = await rig.NewCharacterAsync();
+            var session = await rig.SessionAsync(character);
+            await rig.Space.UndockAsync(session, null, CancellationToken.None);
+            var origin = (int)session.GetInt("solarsystemid2")!.Value;
+            var station = remote ? rig.Stations.All.First(s => s.SolarSystemId != origin) : rig.Stations.Get(Rig.Station)!;
+            rig.Sim.ConditionAnswer = new SimCondition(0.1, 0.4, 0.75, 0.5);
+            rig.Sim.Heard.Clear();
+            ((Sink)session.Sink!).Sent.Clear();
+
+            Assert.Null(await rig.Space.RelocateToStationAsync(session, station.SolarSystemId, station.Id, character.ShipId, CancellationToken.None));
+
+            Assert.Single(Sequence.Of(session, clear: false), "$sessionchange");
+            var changes = Sequence.LastChange(session);
+            Assert.Contains(changes, change => change.Name == "stationid" && Events.Number(change.New) == station.Id);
+            Assert.Contains(changes, change => change.Name == "solarsystemid" && change.New is PyNone);
+            Assert.Contains(changes, change => change.Name == "locationid" && Events.Number(change.New) == station.Id);
+            if (remote)
+                Assert.Contains(changes, change => change.Name == "solarsystemid2" && Events.Number(change.New) == station.SolarSystemId);
+            Assert.Equal((long)station.SolarSystemId, session.GetInt("solarsystemid2"));
+            Assert.Null(session.GetInt("solarsystemid"));
+            Assert.False(rig.Space.IsInSpace(session));
+            Assert.Empty(rig.Sim.Heard.OfType<SimEnter>());
+            Assert.Empty(rig.Sim.Heard.OfType<SimMovePublicParticipant>());
+            Assert.Contains(rig.Sim.Heard.OfType<SimLeave>(), leave => leave.SessionId == (ulong)session.SessionId);
+            var ship = await rig.Items.GetAsync(character.ShipId);
+            Assert.Equal((station.Id, ItemFlags.Hangar), (ship!.LocationId, ship.Flag));
+            var snapshot = await rig.Ships.LoadAsync(character.CharacterId);
+            Assert.Equal((station.SolarSystemId, station.ConstellationId, station.RegionId, station.Id),
+                (snapshot!.Character.SolarSystemId, snapshot.Character.ConstellationId, snapshot.Character.RegionId, snapshot.Character.StationId));
+            Assert.Equal(new ShipCondition(0.1, 0.5, 0.75, 0.4, false), await rig.Modules.ShipConditionAsync(character.ShipId));
+        }
+    }
+
+    [PgFact]
+    public async Task Gm_station_move_refuses_a_docked_pilot_without_a_session_change()
+    {
+        await using var rig = await Rig.CreateAsync();
+        var character = await rig.NewCharacterAsync();
+        var session = await rig.SessionAsync(character);
+        var station = rig.Stations.All.First(s => s.SolarSystemId != session.GetInt("solarsystemid2"));
+        ((Sink)session.Sink!).Sent.Clear();
+
+        Assert.Equal("Station-to-station relocation is not available for a docked pilot.",
+            await rig.Space.RelocateToStationAsync(session, station.SolarSystemId, station.Id, character.ShipId, CancellationToken.None));
+        Assert.DoesNotContain("$sessionchange", Sequence.Of(session));
+        Assert.Equal(Rig.Station, session.GetInt("stationid"));
+        Assert.Empty(rig.Sim.Heard.OfType<SimEnter>());
+    }
 
     [PgFact]
     public async Task A_public_entry_prepares_its_destination_before_the_simulation_enters_it()

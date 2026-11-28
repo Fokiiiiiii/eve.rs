@@ -630,7 +630,8 @@ public sealed partial class SpaceSessions
     /// The ship has docked (or is being brought home): what the reference tells the client at the end of a docking, in its order, with the
     /// ship in the station's hangar and the session in the station.
     /// </summary>
-    private async Task FinishDockingAsync(Pilot pilot, long stationId, SimCondition? condition)
+    private async Task FinishDockingAsync(Pilot pilot, long stationId, SimCondition? condition,
+        (int SolarSystemId, int ConstellationId, int RegionId)? destination = null)
     {
         try
         {
@@ -647,7 +648,9 @@ public sealed partial class SpaceSessions
                     var shipCondition = condition is null
                         ? null
                         : new ShipCondition(condition.Damage, condition.Charge, condition.ShieldCharge, condition.ArmorDamage, false);
-                    var docked = await _ships.DockAsync(pilot.CharacterId, stationId, shipCondition, cancellationToken);
+                    var docked = destination is { } place && shipCondition is not null
+                        ? await _ships.DockAtStationAsync(pilot.CharacterId, stationId, shipCondition, place, cancellationToken)
+                        : await _ships.DockAsync(pilot.CharacterId, stationId, shipCondition, cancellationToken);
                     if (docked.Moved is not null)
                         await CancelShipSelfDestructAsync(pilot.ShipId, cancellationToken);
                     if (docked.Moved is not null && PilotDocked is { } onDocked) await onDocked(pilot.CharacterId, stationId, cancellationToken);
@@ -672,7 +675,9 @@ public sealed partial class SpaceSessions
                             ? Py.Tuple(new PyStr("Structure"), InventoryWire.Id(stationId), new PyStr("StructureShipHangar"))
                             : Py.Tuple(new PyStr("Station"), InventoryWire.Id(stationId), new PyStr("StationHangar")));
 
-                    if (inStructure)
+                    if (destination is { } place)
+                        CharacterSessionRelocation.Docked(session, stationId, place.SolarSystemId, place.ConstellationId, place.RegionId, pilot.ShipId);
+                    else if (inStructure)
                         session.Change(("stationid", None), ("structureid", new PyInt(stationId)), ("locationid", new PyInt(pilot.SolarSystemId)), ("solarsystemid", new PyInt(pilot.SolarSystemId)));
                     else
                         session.Change(("stationid", new PyInt(stationId)), ("locationid", new PyInt(stationId)), ("solarsystemid", None));

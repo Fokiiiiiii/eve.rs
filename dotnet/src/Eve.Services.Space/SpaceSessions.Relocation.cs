@@ -36,6 +36,44 @@ public sealed partial class SpaceSessions
     private readonly System.Collections.Concurrent.ConcurrentDictionary<ulong, PendingDockedEntry> _pendingDockedEntries = new();
     private readonly System.Runtime.CompilerServices.ConditionalWeakTable<ClientSession, SemaphoreSlim> _relocationGates = new();
 
+    public async Task<string?> RelocateToStationAsync(ClientSession session, int solarSystemId, long stationId,
+        long expectedShipId, CancellationToken cancellationToken)
+    {
+        if (_stations.Get(stationId) is not { } station || station.SolarSystemId != solarSystemId)
+            return "The requested station is invalid.";
+        var id = (ulong)session.SessionId;
+        var gate = _relocationGates.GetValue(session, _ => new SemaphoreSlim(1, 1));
+        if (!await gate.WaitAsync(0, cancellationToken)) return "A space relocation is still being resolved.";
+        try
+        {
+            if (_pendingDockedEntries.ContainsKey(id)) return "A space relocation is still being resolved.";
+            if (!_pilots.TryGetValue(id, out var pilot))
+                return "Station-to-station relocation is not available for a docked pilot.";
+            if (!ReferenceEquals(pilot.Session, session) || session.CharacterId != pilot.CharacterId ||
+                session.GetInt("shipid") != expectedShipId || pilot.ShipId != expectedShipId || pilot.SimulationScene.InstanceId != 0)
+                return "The active pilot is not in a public space scene.";
+            if (Interlocked.CompareExchange(ref pilot.PublicMoveInFlight, 1, 0) != 0)
+                return "A space relocation is still being resolved.";
+            try
+            {
+                CommandReply condition;
+                try { condition = await _sim.CommandAsync(id, SimCommands.GetCondition, [], cancellationToken); }
+                catch (SimUnavailableException) { return "Space is not available right now. Try again in a moment."; }
+                if (!condition.Accepted || condition.Condition is null)
+                    return "The ship condition could not be saved.";
+                await FinishDockingAsync(pilot, stationId, condition.Condition,
+                    (station.SolarSystemId, station.ConstellationId, station.RegionId));
+                if (session.GetInt("stationid") != stationId)
+                    return "The pilot could not be moved to the station.";
+                _sim.Leave(id, LeaveWhy.Jumped);
+                if (!_pilots.Values.Any(other => other.SolarSystemId == pilot.SolarSystemId)) ForgetNpcsOf(pilot.SolarSystemId);
+                return null;
+            }
+            finally { Volatile.Write(ref pilot.PublicMoveInFlight, 0); }
+        }
+        finally { gate.Release(); }
+    }
+
     public async Task<string?> RelocateAsync(
         ClientSession session,
         int solarSystemId,

@@ -92,11 +92,19 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
     public Task<SpaceTransition> DockAsync(long characterId, long stationId, CancellationToken cancellationToken = default) =>
         DockAsync(characterId, stationId, null, cancellationToken);
 
-    public async Task<SpaceTransition> DockAsync(
+    public Task<SpaceTransition> DockAsync(
         long characterId,
         long stationId,
         ShipCondition? condition,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        DockCoreAsync(characterId, stationId, condition, null, cancellationToken);
+
+    internal Task<SpaceTransition> DockAtStationAsync(long characterId, long stationId, ShipCondition condition,
+        (int SolarSystemId, int ConstellationId, int RegionId) destination, CancellationToken cancellationToken) =>
+        DockCoreAsync(characterId, stationId, condition, destination, cancellationToken);
+
+    private async Task<SpaceTransition> DockCoreAsync(long characterId, long stationId, ShipCondition? condition,
+        (int SolarSystemId, int ConstellationId, int RegionId)? destination, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -112,6 +120,8 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
             return SpaceTransition.Refused("NOT_IN_SPACE");
         }
         await items.MoveAsync(connection, transaction, ship.Id, stationId, ItemFlags.Hangar, cancellationToken);
+        if (destination is { } place)
+            await characters.SetLocationAsync(connection, transaction, characterId, place.SolarSystemId, place.ConstellationId, place.RegionId, cancellationToken);
         await characters.SetStationAsync(connection, transaction, characterId, stationId, cancellationToken);
         if (condition is not null)
             await modules.SetShipConditionAsync(connection, transaction, ship.Id, condition, cancellationToken);
@@ -123,7 +133,8 @@ public Func<Npgsql.NpgsqlConnection, Npgsql.NpgsqlTransaction, ShipTransitionEve
             ship with { LocationId = stationId, Flag = ItemFlags.Hangar },
             ship.LocationId,
             ship.Flag,
-            character with { StationId = stationId }));
+            character with { StationId = stationId, SolarSystemId = destination?.SolarSystemId ?? character.SolarSystemId,
+                ConstellationId = destination?.ConstellationId ?? character.ConstellationId, RegionId = destination?.RegionId ?? character.RegionId }));
     }
 
     /// <summary>Changes the active ship to another ship in the same station hangar without moving either item.</summary>

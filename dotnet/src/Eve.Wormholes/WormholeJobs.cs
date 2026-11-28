@@ -43,7 +43,7 @@ public sealed class WormholeJobs
     }
 
     /// <summary>Raised for every connection that opens or collapses, unless the caller captures the change (<c>sink</c>).</summary>
-    public event Action<WormholeChange>? Changed;
+    public event Func<WormholeChange, CancellationToken, Task>? Changed;
 
     /// <summary>Post-commit state update after a transit; the Host handles simulator failures without changing the completed jump.</summary>
     public event Func<long, CancellationToken, Task>? StateChanged;
@@ -51,7 +51,13 @@ public sealed class WormholeJobs
     /// <summary>A scheduled slim-state delivery. A failure must escape so the durable job is retried.</summary>
     public event Func<long, CancellationToken, Task>? SlimStateSyncRequested;
 
-    public void Publish(WormholeChange change) => Changed?.Invoke(change);
+    internal async Task PublishAsync(WormholeChange change, CancellationToken cancellationToken)
+    {
+        if (Changed is not { } handlers)
+            return;
+        foreach (var callback in handlers.GetInvocationList().Cast<Func<WormholeChange, CancellationToken, Task>>())
+            await callback(change, cancellationToken).ConfigureAwait(false);
+    }
 
     public async Task PublishStateChangedAsync(long connectionId, CancellationToken cancellationToken = default)
     {
@@ -69,12 +75,12 @@ public sealed class WormholeJobs
             await callback(connectionId, cancellationToken).ConfigureAwait(false);
     }
 
-    private void Raise(WormholeChange change, Action<WormholeChange>? sink)
+    private Task RaiseAsync(WormholeChange change, Action<WormholeChange>? sink, CancellationToken cancellationToken)
     {
-        if (sink is not null)
-            sink(change);
-        else
-            Changed?.Invoke(change);
+        if (sink is null)
+            return PublishAsync(change, cancellationToken);
+        sink(change);
+        return Task.CompletedTask;
     }
 
     /// <summary>Registers the expiry handler with the scheduler (call once at start-up).</summary>
@@ -96,7 +102,7 @@ public sealed class WormholeJobs
         await _scheduler.ScheduleAsync(connection, transaction,
             new JobSpec(ExpireKind, stored.ExpiresMs) { Key = id.ToString(), Payload = new ExpireJob(id, planned.Seed) }, cancellationToken);
         await ScheduleSlimStateAsync(connection, transaction, id, stored.ExpiresMs, nowMs, cancellationToken);
-        Raise(new WormholeChange(id, stored with { Id = id }), sink);
+        await RaiseAsync(new WormholeChange(id, stored with { Id = id }), sink, cancellationToken);
         return id;
     }
 
@@ -193,7 +199,7 @@ public sealed class WormholeJobs
         var changes = new List<WormholeChange>();
         await CollapseAsync(context.Connection, context.Transaction, stored, job.Seed, context.NowMs, cancellationToken, changes.Add);
         if (changes.Count > 0)
-            context.AfterCommit(_ => PublishAsync(changes));
+            context.AfterCommit(token => PublishChangesAsync(changes, token));
     }
 
     private async Task CollapseAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, StoredConnection stored, ulong seed, long nowMs,
@@ -202,7 +208,7 @@ public sealed class WormholeJobs
         await _store.UpdateAsync(connection, transaction, stored with { Active = false }, cancellationToken);
         foreach (var age in new[] { 1, 2, 3 })
             await _scheduler.CancelAsync(connection, transaction, SlimStateKind, SlimStateKey(stored.Id, age), cancellationToken);
-        Raise(new WormholeChange(stored.Id, null), sink);
+        await RaiseAsync(new WormholeChange(stored.Id, null), sink, cancellationToken);
         if (!stored.IsStatic)
         {
             return;
@@ -287,13 +293,12 @@ public sealed class WormholeJobs
         var changes = new List<WormholeChange>();
         await OpenAsync(context.Connection, context.Transaction, replacement, isStatic: true, context.NowMs, cancellationToken, changes.Add);
         if (changes.Count > 0)
-            context.AfterCommit(_ => PublishAsync(changes));
+            context.AfterCommit(token => PublishChangesAsync(changes, token));
     }
 
-    private Task PublishAsync(IReadOnlyList<WormholeChange> changes)
+    private async Task PublishChangesAsync(IReadOnlyList<WormholeChange> changes, CancellationToken cancellationToken)
     {
         foreach (var change in changes)
-            Changed?.Invoke(change);
-        return Task.CompletedTask;
+            await PublishAsync(change, cancellationToken);
     }
 }

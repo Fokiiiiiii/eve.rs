@@ -52,7 +52,7 @@ public sealed class WormholeWorld
     public WormholeJobs Jobs { get; }
 
     /// <summary>Raised for every connection that opens or collapses (not for changes captured by a transit).</summary>
-    public event Action<WormholeChange>? Changed
+    public event Func<WormholeChange, CancellationToken, Task>? Changed
     {
         add => Jobs.Changed += value;
         remove => Jobs.Changed -= value;
@@ -154,7 +154,7 @@ public sealed class WormholeWorld
         foreach (var change in changes)
         {
             if (sink is null)
-                Jobs.Publish(change);
+                await Jobs.PublishAsync(change, CancellationToken.None);
             else
                 sink(change);
         }
@@ -183,7 +183,7 @@ public sealed class WormholeWorld
             acceptInSimulation, cancellationToken, changes.Add);
         await transaction.CommitAsync(cancellationToken);
         foreach (var change in changes)
-            Jobs.Publish(change);
+            await Jobs.PublishAsync(change, CancellationToken.None);
         if (attempt.Accepted && attempt.Transit?.Outcome == TransitOutcome.Passed)
             await Jobs.PublishStateChangedAsync(endId / 2, CancellationToken.None);
         return attempt;

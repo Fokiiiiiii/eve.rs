@@ -250,6 +250,8 @@ public interface ISimulation
 
     /// <summary>Takes a wreck or a can out of space, with the destruction effect <paramref name="effect"/> played first when it is not 0.</summary>
     void RemoveWreck(long wreckId, int effect);
+    /// <summary>Queues a message with no reply, waiting for room. Returns false if the current link closes before admission.</summary>
+    Task<bool> QueueOneWayAsync(SimMessage message, CancellationToken cancellationToken = default);
     /// <summary>Puts a cynosural field back in space after a restart (what is left of its life is <see cref="SimDeployed.LifetimeMs"/>).</summary>
     void RestoreDeployed(SimDeployed deployed);
     /// <summary>Takes a cynosural field out of space (its record's time is up).</summary>

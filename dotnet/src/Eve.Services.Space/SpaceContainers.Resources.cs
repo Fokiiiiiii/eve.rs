@@ -55,10 +55,15 @@ public sealed partial class SpaceContainers
                 {
                     continue;
                 }
-                _placed.TryAdd(stored.Id, 0);
-                _sim.PlaceAsteroid(new SimPlaceAsteroid(
+                var marked = _placed.TryAdd(stored.Id, 0);
+                if (!await _sim.QueueOneWayAsync(new SimPlaceAsteroid(
                     solarSystemId, stored.Id, stored.TypeId, type.GroupId, type.CategoryId, stored.CustomName ?? type.Name ?? "Asteroid", type.GraphicId,
-                    spaceItem.Position, spaceItem.Direction, spaceItem.Radius, stored.Quantity));
+                    spaceItem.Position, spaceItem.Direction, spaceItem.Radius, stored.Quantity)))
+                {
+                    if (marked)
+                        _placed.TryRemove(stored.Id, out _);
+                    return;
+                }
             }
         }
         catch (Exception error) when (error is not OperationCanceledException)

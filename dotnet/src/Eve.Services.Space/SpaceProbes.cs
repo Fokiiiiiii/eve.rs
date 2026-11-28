@@ -65,7 +65,8 @@ public sealed class SpaceProbes : ISpaceProbes
             }
             foreach (var record in records)
             {
-                PlaceBall(record);
+                if (!await _sim.QueueOneWayAsync(BallOf(record), cancellationToken))
+                    return;
             }
         }
         catch (Exception error)
@@ -82,12 +83,14 @@ public sealed class SpaceProbes : ISpaceProbes
     private SemaphoreSlim Gate(int system) => _gates.GetOrAdd(system, _ => new SemaphoreSlim(1, 1));
 
     /// <summary>Puts a probe's ball in space where its record says it is (the type's name and radius, the pilot's ids).</summary>
-    internal void PlaceBall(ScanProbeRecord record)
+    internal void PlaceBall(ScanProbeRecord record) => _sim.PlaceProbe(BallOf(record));
+
+    private SimPlaceProbe BallOf(ScanProbeRecord record)
     {
         var type = _statics.Type(record.TypeId);
-        _sim.PlaceProbe(new SimPlaceProbe(
+        return new SimPlaceProbe(
             record.ProbeId, record.SolarSystemId, type?.Name ?? "Scanner Probe", record.TypeId, record.GroupId, record.Position, RadiusOf(type),
-            record.CharacterId, 0, 0, record.ShipId));
+            record.CharacterId, 0, 0, record.ShipId);
     }
 
     /// <summary>Moves a probe's ball to where its record now says it is (a probe scan moves its probes before it scans).</summary>
@@ -196,7 +199,7 @@ public sealed class SpaceProbes : ISpaceProbes
                 await Forget(record, _space.SessionOfShip(record.ShipId), cancellationToken);
             }
         }
-        catch (Exception error)
+        catch (Exception error) when (error is not OperationCanceledException)
         {
             _log?.Invoke($"the scanner probes whose time ran out were not removed: {error.Message}");
         }
@@ -220,7 +223,7 @@ public sealed class SpaceProbes : ISpaceProbes
         }
         foreach (var record in recovered.Probes)
         {
-            TellRemoved(record, session);
+            await TellRemovedAsync(record, session, CancellationToken.None);
         }
         return recovered.Probes.Select(record => record.ProbeId).ToArray();
     }
@@ -262,12 +265,12 @@ public sealed class SpaceProbes : ISpaceProbes
     {
         if (!await _store.RemoveAsync(record.ProbeId, cancellationToken))
             return;
-        TellRemoved(record, session);
+        await TellRemovedAsync(record, session, cancellationToken);
     }
 
-    private void TellRemoved(ScanProbeRecord record, ClientSession? session)
+    private async Task TellRemovedAsync(ScanProbeRecord record, ClientSession? session, CancellationToken cancellationToken)
     {
-        _sim.RemoveProbe(record.ProbeId);
+        await _sim.QueueOneWayAsync(new SimRemoveProbe(record.ProbeId), cancellationToken);
         session?.SendNotification("OnRemoveProbe", "clientID", new PyLong(record.ProbeId));
     }
 

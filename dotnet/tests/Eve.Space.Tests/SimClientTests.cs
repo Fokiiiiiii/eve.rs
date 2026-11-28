@@ -1016,7 +1016,7 @@ public class SimClientTests
     }
 
     [Fact]
-    public async Task A_full_outbound_queue_fails_pending_requests_and_breaks_the_link()
+    public async Task A_synchronous_overflow_fails_pending_requests_and_breaks_the_link()
     {
         var stream = new BlockingWriteStream();
         await using var client = new SimClient(_ => Task.FromResult<Stream>(stream));
@@ -1037,12 +1037,9 @@ public class SimClientTests
             pending.Add(client.EnterAsync(Enter((ulong)(101 + i))));
         Assert.All(pending, request => Assert.False(request.IsCompleted));
 
-        var overflow = client.EnterAsync(Enter((ulong)(101 + SimClient.OutboundQueueCapacity)));
-        Assert.True(overflow.IsCompleted);
-        var overload = await Assert.ThrowsAsync<SimUnavailableException>(() => Within(overflow));
+        client.UpdateState(199); // synchronous messages cannot wait for room
+        var overload = await Assert.ThrowsAsync<SimUnavailableException>(() => Within(client.EnterAsync(Enter(200))));
         Assert.Contains("outbound queue is full", overload.Message);
-        client.UpdateState(200); // one-way sends stay quiet after the link is marked unavailable
-        await Assert.ThrowsAsync<SimUnavailableException>(() => Within(client.EnterAsync(Enter(200))));
         foreach (var request in pending)
             await Assert.ThrowsAsync<SimUnavailableException>(() => Within(request));
 
@@ -1050,10 +1047,11 @@ public class SimClientTests
     }
 
     [Fact]
-    public async Task A_one_way_send_overflow_breaks_the_link_without_throwing()
+    public async Task A_one_way_send_overflow_reports_the_queued_message_types()
     {
         var stream = new BlockingWriteStream();
-        await using var client = new SimClient(_ => Task.FromResult<Stream>(stream));
+        var logs = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(stream), logs.Enqueue);
         client.RetryAfter = TimeSpan.FromMinutes(1);
         var lost = 0;
         client.Lost += () => Interlocked.Increment(ref lost);
@@ -1062,13 +1060,85 @@ public class SimClientTests
 
         client.UpdateState(200);
         await stream.WriteStarted.Task.WaitAsync(Patience);
-        for (var i = 0; i < SimClient.OutboundQueueCapacity; i++)
+        for (var i = 0; i < SimClient.OutboundQueueCapacity - 1; i++)
             client.UpdateState((ulong)(201 + i));
+        client.RemoveWormhole(400);
 
-        var error = Record.Exception(() => client.UpdateState((ulong)(201 + SimClient.OutboundQueueCapacity)));
+        var error = Record.Exception(() => client.RemoveWreck(500, 0));
 
         Assert.Null(error);
         await Until(() => !client.IsConnected && Volatile.Read(ref lost) == 1);
+        var overflow = Assert.Single(logs, line => line.Contains("outbound queue is full"));
+        Assert.Contains("enqueueing SimRemoveWreck", overflow);
+        Assert.Contains($"SimUpdateState={SimClient.OutboundQueueCapacity - 1}", overflow);
+        Assert.Contains("SimRemoveWormhole=1", overflow);
+    }
+
+    [Fact]
+    public async Task Bulk_scene_updates_and_slim_state_wait_for_room_without_losing_the_link()
+    {
+        var stream = new GatedWriteStream();
+        var logs = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(stream), logs.Enqueue);
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        client.UpdateState(200);
+        await stream.OutboundWriteStarted.Task.WaitAsync(Patience);
+        for (var i = 0; i < SimClient.OutboundQueueCapacity; i++)
+            Assert.True(await client.QueueOneWayAsync(new SimRemoveWormhole(10_000 + i)));
+
+        using var cancel = new CancellationTokenSource();
+        var canceled = client.QueueOneWayAsync(new SimRemoveWormhole(20_000), cancel.Token);
+        var cleanup = client.QueueOneWayAsync(new SimRemoveWreck(20_001, 0));
+        var slim = client.TrySetSlimFieldAsync(20_002, "wormholeAge", new SimSlimInt(1));
+        var enter = client.EnterAsync(Enter(20_003));
+        Assert.False(cleanup.IsCompleted);
+        Assert.False(slim.IsCompleted);
+        Assert.False(enter.IsCompleted);
+        Assert.True(client.IsConnected);
+        var backpressure = Assert.Single(logs, line => line.Contains("waiting for room"));
+        Assert.Contains($"SimRemoveWormhole={SimClient.OutboundQueueCapacity}", backpressure);
+        var lateReplyHandled = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.Received += message => { if (message is SimBind) lateReplyHandled.TrySetResult(true); };
+        stream.Reply(new SimEnterReply(20_003, "LATE_REPLY"));
+        stream.Reply(new SimBind(20_003));
+        await Within(lateReplyHandled.Task);
+        Assert.False(enter.IsCompleted);
+        cancel.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Within(canceled));
+
+        stream.ReleaseWrites();
+
+        Assert.True(await Within(cleanup));
+        Assert.True(await Within(slim));
+        await Until(() => stream.CompletedWrites == SimClient.OutboundQueueCapacity + 5);
+        stream.Reply(new SimEnterReply(20_003, null));
+        Assert.Null(await Within(enter));
+        Assert.True(client.IsConnected);
+    }
+
+    [Fact]
+    public async Task A_bulk_update_waiting_for_room_does_not_survive_link_loss()
+    {
+        var stream = new GatedWriteStream(failOutbound: true);
+        await using var client = new SimClient(_ => Task.FromResult<Stream>(stream));
+        client.RetryAfter = TimeSpan.FromMinutes(1);
+        client.Start();
+        await Until(() => client.IsConnected);
+
+        client.UpdateState(200);
+        await stream.OutboundWriteStarted.Task.WaitAsync(Patience);
+        for (var i = 0; i < SimClient.OutboundQueueCapacity; i++)
+            client.UpdateState((ulong)(201 + i));
+
+        var waiting = client.QueueOneWayAsync(new SimRemoveWreck(20_001, 0));
+        Assert.False(waiting.IsCompleted);
+        stream.ReleaseWrites();
+
+        Assert.False(await Within(waiting));
+        await Until(() => !client.IsConnected);
     }
 
     [Fact]
@@ -1123,17 +1193,19 @@ public class SimClientTests
         new SimStructureHealth(1, 1, 1, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0, [0, 0, 0], [0, 0, 0]),
         new SimStructureStatus(0, 0, null, null, null));
 
-    private sealed class GatedWriteStream : Stream
+    private sealed class GatedWriteStream(bool failOutbound = false) : Stream
     {
-        private readonly byte[] _helloAck = SimCodec.Encode(new SimHelloAck(SimCodec.ProtocolVersion, 4));
+        private byte[] _incoming = SimCodec.Encode(new SimHelloAck(SimCodec.ProtocolVersion, 4));
+        private readonly System.Threading.Channels.Channel<byte[]> _replies = System.Threading.Channels.Channel.CreateUnbounded<byte[]>();
         private readonly TaskCompletionSource _releaseWrites = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _helloAckOffset;
+        private int _incomingOffset;
         private int _writeCount;
         private int _completedWrites;
 
         public TaskCompletionSource OutboundWriteStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public int CompletedWrites => Volatile.Read(ref _completedWrites);
         public void ReleaseWrites() => _releaseWrites.TrySetResult();
+        public void Reply(SimMessage message) => _replies.Writer.TryWrite(SimCodec.Encode(message));
 
         public override bool CanRead => true;
         public override bool CanSeek => false;
@@ -1141,22 +1213,17 @@ public class SimClientTests
         public override long Length => throw new NotSupportedException();
         public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
 
-        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
-            if (_helloAckOffset < _helloAck.Length)
+            if (_incomingOffset == _incoming.Length)
             {
-                var count = Math.Min(buffer.Length, _helloAck.Length - _helloAckOffset);
-                _helloAck.AsMemory(_helloAckOffset, count).CopyTo(buffer);
-                _helloAckOffset += count;
-                return ValueTask.FromResult(count);
+                _incoming = await _replies.Reader.ReadAsync(cancellationToken);
+                _incomingOffset = 0;
             }
-            return WaitForEndAsync(cancellationToken);
-        }
-
-        private static async ValueTask<int> WaitForEndAsync(CancellationToken cancellationToken)
-        {
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            return 0;
+            var count = Math.Min(buffer.Length, _incoming.Length - _incomingOffset);
+            _incoming.AsMemory(_incomingOffset, count).CopyTo(buffer);
+            _incomingOffset += count;
+            return count;
         }
 
         public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
@@ -1168,6 +1235,8 @@ public class SimClientTests
             {
                 OutboundWriteStarted.TrySetResult();
                 await _releaseWrites.Task.WaitAsync(cancellationToken);
+                if (failOutbound)
+                    throw new IOException("the simulated IPC write failed");
             }
             Interlocked.Increment(ref _completedWrites);
         }

@@ -368,6 +368,18 @@ internal sealed class FakeSim : ISimulation
 
     public void RemoveWreck(long wreckId, int effect) => Heard.Enqueue(new SimRemoveWreck(wreckId, effect));
 
+    public Task<bool> QueueOneWayAsync(SimMessage message, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsConnected)
+            return Task.FromResult(false);
+        if (message is SimSetSlimField slim)
+            SetSlimField(slim.ItemId, slim.FieldName, slim.Value);
+        else
+            Heard.Enqueue(message);
+        return Task.FromResult(true);
+    }
+
     public void RestoreDeployed(SimDeployed deployed) => Heard.Enqueue(deployed);
 
     public void RemoveDeployed(long deployableId) => Heard.Enqueue(new SimRemoveDeployed(deployableId));

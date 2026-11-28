@@ -120,9 +120,10 @@ public sealed partial class SpaceContainers
                 if (record.Kind is ControlTowerKind or StarbaseModuleKind)
                 {
                     // POS structures share the persistent ball and state presentation; their association remains in the deployed row.
-                    _sim.PlaceControlTower(new SimPlaceControlTower(
+                    if (!await _sim.QueueOneWayAsync(new SimPlaceControlTower(
                         record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.ActivateAtMs <= now,
-                        record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
+                        record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId)))
+                        return;
                     await RestoreControlTowerSlimStateAsync(record, CancellationToken.None);
                     if (record.Kind == StarbaseModuleKind)
                         await RestoreBatteryHolderlessAsync(record.DeployableId, CancellationToken.None);
@@ -133,32 +134,36 @@ public sealed partial class SpaceContainers
                 }
                 if (record.Kind == InhibitorKind)
                 {
-                    _sim.PlaceInhibitor(new SimPlaceInhibitor(
+                    if (!await _sim.QueueOneWayAsync(new SimPlaceInhibitor(
                         record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.RangeMeters,
-                        record.ActivateAtMs <= now, record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
+                        record.ActivateAtMs <= now, record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId)))
+                        return;
                     continue;
                 }
                 if (record.Kind == DisruptorKind)
                 {
                     // anchored when its record says so; a disruptor still waiting to anchor is anchored by its durable job, which outlives the restart
-                    _sim.PlaceDisruptor(new SimPlaceDisruptor(
+                    if (!await _sim.QueueOneWayAsync(new SimPlaceDisruptor(
                         record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.RangeMeters,
-                        record.ActivateAtMs <= now, record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
+                        record.ActivateAtMs <= now, record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId)))
+                        return;
                     continue;
                 }
                 if (record.Kind == ObservatoryKind)
                 {
                     // anchored when its record says so; its ping job is durable and outlives the restart
-                    _sim.PlaceObservatory(new SimPlaceObservatory(
+                    if (!await _sim.QueueOneWayAsync(new SimPlaceObservatory(
                         record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.ActivateAtMs <= now,
-                        record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
+                        record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId)))
+                        return;
                     continue;
                 }
                 if (record.Kind == BeaconKind)
                 {
-                    _sim.PlaceCynoBeacon(new SimPlaceCynoBeacon(
+                    if (!await _sim.QueueOneWayAsync(new SimPlaceCynoBeacon(
                         record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.ActivateAtMs <= now,
-                        record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId));
+                        record.OwnerId, record.CorporationId, record.AllianceId, record.ShipId)))
+                        return;
                     continue;
                 }
                 if (record.Kind != CynoFieldKind)
@@ -166,9 +171,10 @@ public sealed partial class SpaceContainers
                     _log?.Invoke($"unknown deployed kind {record.Kind} for {record.DeployableId}; not restoring it as a cynosural field");
                     continue;
                 }
-                _sim.RestoreDeployed(new SimDeployed(
+                if (!await _sim.QueueOneWayAsync(new SimDeployed(
                     record.SolarSystemId, record.DeployableId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.OwnerId,
-                    record.CorporationId, record.AllianceId, record.ShipId, record.ExpiresAtMs - now));
+                    record.CorporationId, record.AllianceId, record.ShipId, record.ExpiresAtMs - now)))
+                    return;
             }
         }
         catch (Exception error)
@@ -243,7 +249,7 @@ public sealed partial class SpaceContainers
     /// <summary>A cynosural field whose time is up is taken out of space (the simulation removes it too, at the same time, and this is then a no-op).</summary>
     private async Task ExpireCynoFieldAsync(DeployedRecord due)
     {
-        _sim.RemoveDeployed(due.DeployableId);
+        await _sim.RemoveDeployedAsync(due.DeployableId);
         await AnnounceFieldAsync(due, false);
     }
 }

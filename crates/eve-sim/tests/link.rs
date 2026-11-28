@@ -107,6 +107,39 @@ fn start() -> Host {
     Host { stream: near, clock, served }
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_partial_hello_releases_the_connection_slot() {
+    let mut host = start();
+    host.stream.write_all(&[3, 0]).await.unwrap();
+    let error = tokio::time::timeout(Duration::from_secs(6), host.served)
+        .await
+        .expect("a partial hello must not keep the connection open")
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!(error.to_string().contains("hello"));
+
+    let mut next = start();
+    next.send(Message::Hello { version: PROTOCOL_VERSION }).await;
+    assert!(matches!(next.recv().await, Message::HelloAck { version: PROTOCOL_VERSION, .. }));
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_host_that_does_not_read_replies_releases_the_connection_slot() {
+    let hello = Message::Hello { version: PROTOCOL_VERSION }.encode();
+    let (mut host, peer) = tokio::io::duplex(hello.len());
+    let served = tokio::spawn(serve_connection(peer, universe(), || NOON));
+    host.write_all(&hello).await.unwrap();
+
+    let error = tokio::time::timeout(Duration::from_secs(6), served)
+        .await
+        .expect("a blocked write must not keep the connection open")
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+    assert!(error.to_string().contains("writing"));
+}
+
 impl Host {
     async fn send(&mut self, message: Message) {
         self.stream.write_all(&message.encode()).await.unwrap();

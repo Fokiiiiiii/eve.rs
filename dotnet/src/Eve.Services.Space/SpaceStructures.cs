@@ -83,7 +83,8 @@ public sealed class SpaceStructures
             {
                 if (_statics.Type(record.TypeId) is { } type)
                 {
-                    _sim.PlaceStructure(await PlacementAsync(connection, record, type, cancellationToken));
+                    if (!await _sim.PlaceStructureAsync(await PlacementAsync(connection, record, type, cancellationToken), cancellationToken))
+                        return;
                 }
                 else
                 {

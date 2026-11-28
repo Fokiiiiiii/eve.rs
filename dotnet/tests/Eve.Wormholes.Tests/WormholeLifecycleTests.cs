@@ -56,13 +56,13 @@ public sealed class WormholeLifecycleTests
         var id = await rig.OpenAsync(Planned(31000001, 31000002, "BBB", 1002, 5e8, 3), isStatic: false);
         var changes = new List<WormholeChange>();
         var callbackSawCommittedCollapse = false;
-        rig.Jobs.Changed += change =>
+        rig.Jobs.Changed += async (change, token) =>
         {
             changes.Add(change);
             if (change.ConnectionId != id || change.Opened is not null)
                 return;
-            using var connection = rig.Source.OpenConnection();
-            var stored = rig.Store.GetAsync(connection, null, id, forUpdate: false).GetAwaiter().GetResult();
+            await using var connection = await rig.Source.OpenConnectionAsync(token);
+            var stored = await rig.Store.GetAsync(connection, null, id, forUpdate: false, token);
             callbackSawCommittedCollapse = stored is { Active: false };
         };
 

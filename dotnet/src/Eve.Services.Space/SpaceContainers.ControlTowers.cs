@@ -655,25 +655,25 @@ public sealed partial class SpaceContainers
 
         var towerState = await _deployed.TowerStateAsync(towerId, cancellationToken).ConfigureAwait(false);
         var towerStartedAt = await _deployed.TowerStateStartedAtMsAsync(towerId, cancellationToken).ConfigureAwait(false);
-        SetControlTowerSlimState(towerId, towerState switch
+        await QueueControlTowerSlimStateAsync(towerId, towerState switch
         {
             TowerOnline => StructureOnline,
             TowerOnlining => StructureOnlining,
             TowerUnanchored or TowerUnanchoring => StructureUnanchored,
             _ => StructureAnchored,
-        }, towerStartedAt);
+        }, towerStartedAt, cancellationToken).ConfigureAwait(false);
 
         foreach (var module in await _deployed.ByControlTowerAsync(towerId, cancellationToken).ConfigureAwait(false))
         {
             var moduleState = await _deployed.TowerStateAsync(module.DeployableId, cancellationToken).ConfigureAwait(false);
             var startedAt = await _deployed.TowerStateStartedAtMsAsync(module.DeployableId, cancellationToken).ConfigureAwait(false);
-            SetControlTowerSlimState(module.DeployableId, moduleState switch
+            await QueueControlTowerSlimStateAsync(module.DeployableId, moduleState switch
             {
                 TowerOnline => StructureOnline,
                 TowerOnlining => StructureOnlining,
                 TowerUnanchored or TowerUnanchoring => StructureUnanchored,
                 _ => StructureAnchored,
-            }, startedAt);
+            }, startedAt, cancellationToken).ConfigureAwait(false);
         }
 
         // the sentry pass places every battery of the tower that no pilot holds (online or offline, with no holder): a separate offline sweep placed the same battery twice
@@ -1004,9 +1004,17 @@ public sealed partial class SpaceContainers
     private void SetControlTowerSlimState(long towerId, int state, long? startedAtMs)
     {
         _sim.SetSlimField(towerId, "posState", new SimSlimInt(state));
-        _sim.SetSlimField(towerId, "posTimestamp", startedAtMs is { } started
-            ? new SimSlimInt(Eve.Services.Py.FileTimeFromUnixMs(started))
-            : new SimSlimNone());
+        _sim.SetSlimField(towerId, "posTimestamp", ControlTowerTimestamp(startedAtMs));
+    }
+
+    private static SimSlimValue ControlTowerTimestamp(long? startedAtMs) => startedAtMs is { } started
+        ? new SimSlimInt(Eve.Services.Py.FileTimeFromUnixMs(started))
+        : new SimSlimNone();
+
+    private async Task QueueControlTowerSlimStateAsync(long towerId, int state, long? startedAtMs, CancellationToken cancellationToken)
+    {
+        if (await _sim.QueueOneWayAsync(new SimSetSlimField(towerId, "posState", new SimSlimInt(state)), cancellationToken).ConfigureAwait(false))
+            await _sim.QueueOneWayAsync(new SimSetSlimField(towerId, "posTimestamp", ControlTowerTimestamp(startedAtMs)), cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task RestoreControlTowerSlimStateAsync(DeployedRecord record, CancellationToken cancellationToken)
@@ -1016,27 +1024,25 @@ public sealed partial class SpaceContainers
         switch (state)
         {
             case TowerUnanchored:
-                SetControlTowerSlimState(record.DeployableId, StructureUnanchored, null);
+                await QueueControlTowerSlimStateAsync(record.DeployableId, StructureUnanchored, null, cancellationToken);
                 return;
             case TowerAnchoring:
                 await _statics.EnsureTypesAsync([record.TypeId], cancellationToken);
                 var delayMs = (long)Math.Max(0, _statics.Type(record.TypeId)?.Attributes.GetValueOrDefault(556) ?? 0);
-                SetControlTowerSlimState(record.DeployableId, StructureAnchored, startedAt ?? record.ActivateAtMs - delayMs);
+                await QueueControlTowerSlimStateAsync(record.DeployableId, StructureAnchored, startedAt ?? record.ActivateAtMs - delayMs, cancellationToken);
                 return;
             case TowerOnlining:
-                if (startedAt is { } onlineStartedAt)
-                    SetControlTowerSlimState(record.DeployableId, StructureOnlining, onlineStartedAt);
-                else
-                    SetControlTowerSlimState(record.DeployableId, StructureAnchored, null);
+                await QueueControlTowerSlimStateAsync(record.DeployableId, startedAt is not null ? StructureOnlining : StructureAnchored,
+                    startedAt, cancellationToken);
                 return;
             case TowerOnline:
-                SetControlTowerSlimState(record.DeployableId, StructureOnline, null);
+                await QueueControlTowerSlimStateAsync(record.DeployableId, StructureOnline, null, cancellationToken);
                 return;
             case TowerUnanchoring:
-                SetControlTowerSlimState(record.DeployableId, StructureUnanchored, startedAt);
+                await QueueControlTowerSlimStateAsync(record.DeployableId, StructureUnanchored, startedAt, cancellationToken);
                 return;
             default:
-                SetControlTowerSlimState(record.DeployableId, StructureAnchored, null);
+                await QueueControlTowerSlimStateAsync(record.DeployableId, StructureAnchored, null, cancellationToken);
                 return;
         }
     }

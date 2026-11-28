@@ -46,7 +46,11 @@ public sealed class WormholeWorldTests
         await using var rig = await Rig.CreateAsync(WormholePlannerTests.Types(), WormholePlannerTests.Classes());
         var world = WorldOf(rig);
         var published = new List<WormholeChange>();
-        world.Changed += published.Add;
+        world.Changed += (change, _) =>
+        {
+            published.Add(change);
+            return Task.CompletedTask;
+        };
 
         await world.EnsureWorldAsync(7, rig.Now);
         await world.EnsureWorldAsync(7, rig.Now);

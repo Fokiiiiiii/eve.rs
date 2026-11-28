@@ -74,12 +74,12 @@ public sealed partial class SpaceSessions
             return;
         if (Wormholes is { } previous)
         {
-            previous.Changed -= PublishWormholeChange;
+            previous.Changed -= PublishWormholeChangeAsync;
             previous.StateChanged -= PublishWormholeStateChangeAsync;
             previous.SlimStateSyncRequested -= PublishWormholeStateChangeForRetryAsync;
         }
         Wormholes = world;
-        world.Changed += PublishWormholeChange;
+        world.Changed += PublishWormholeChangeAsync;
         world.StateChanged += PublishWormholeStateChangeAsync;
         world.SlimStateSyncRequested += PublishWormholeStateChangeForRetryAsync;
     }
@@ -96,23 +96,24 @@ public sealed partial class SpaceSessions
         if (Wormholes is null || _sim is null)
             return;
         foreach (var end in await Wormholes.EndsInSystemAsync(systemId, cancellationToken))
-            _sim.PlaceWormhole(ToSim(end));
+            if (!await _sim.QueueOneWayAsync(ToSim(end), cancellationToken))
+                return;
     }
 
     /// <summary>A connection opened: both ends are placed; a connection collapsed: both ends are taken out (the simulation ignores an end it does not have).</summary>
-    public void PublishWormholeChange(WormholeChange change)
+    private async Task PublishWormholeChangeAsync(WormholeChange change, CancellationToken cancellationToken)
     {
         if (_sim is null || Wormholes is null)
             return;
         if (change.Opened is { } stored)
         {
-            _sim.PlaceWormhole(ToSim(Wormholes.EndOf(stored, far: false)));
-            _sim.PlaceWormhole(ToSim(Wormholes.EndOf(stored, far: true)));
+            if (await _sim.QueueOneWayAsync(ToSim(Wormholes.EndOf(stored, far: false)), cancellationToken))
+                await _sim.QueueOneWayAsync(ToSim(Wormholes.EndOf(stored, far: true)), cancellationToken);
         }
         else
         {
-            _sim.RemoveWormhole(change.ConnectionId * 2);
-            _sim.RemoveWormhole(change.ConnectionId * 2 + 1);
+            if (await _sim.QueueOneWayAsync(new SimRemoveWormhole(change.ConnectionId * 2), cancellationToken))
+                await _sim.QueueOneWayAsync(new SimRemoveWormhole(change.ConnectionId * 2 + 1), cancellationToken);
         }
     }
 
@@ -152,8 +153,9 @@ public sealed partial class SpaceSessions
             }
             else
             {
-                _sim.SetSlimField(end.BodyId, "wormholeAge", age);
-                _sim.SetSlimField(end.BodyId, "wormholeSize", size);
+                if (!await _sim.QueueOneWayAsync(new SimSetSlimField(end.BodyId, "wormholeAge", age), cancellationToken) ||
+                    !await _sim.QueueOneWayAsync(new SimSetSlimField(end.BodyId, "wormholeSize", size), cancellationToken))
+                    return;
             }
         }
     }

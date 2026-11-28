@@ -10,10 +10,12 @@ use eve_net::frame::FrameReader;
 use eve_space::link::{Message, PROTOCOL_VERSION};
 use eve_space::sim::{POLL_HZ, Sim, Universe};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::time::{Instant, Interval, MissedTickBehavior};
+use tokio::time::{Instant, Interval, MissedTickBehavior, timeout};
 
 /// The largest frame accepted (a ship's numbers are a few hundred bytes; this is generous).
 const MAX_FRAME: usize = 1 << 20;
+const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// FILETIME ticks (100 ns) since 1601 at the moment of the call.
 pub fn filetime_now() -> i64 {
@@ -28,7 +30,12 @@ async fn write_all<W: AsyncWrite + Unpin>(writer: &mut W, messages: &[Message]) 
     for message in messages {
         message.encode_into(&mut bytes);
     }
-    if bytes.is_empty() { Ok(()) } else { writer.write_all(&bytes).await }
+    if bytes.is_empty() {
+        return Ok(());
+    }
+    timeout(WRITE_TIMEOUT, writer.write_all(&bytes))
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "timed out writing to the host"))?
 }
 
 /// Handles one host stream until it closes or sends an invalid message.
@@ -45,9 +52,12 @@ where
     poll.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     // the host speaks first
-    let hello = reader.next().await?.ok_or_else(|| {
-        io::Error::new(io::ErrorKind::UnexpectedEof, "the host closed before it said hello")
-    })?;
+    let hello = timeout(HELLO_TIMEOUT, reader.next())
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "timed out waiting for the host hello"))??
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::UnexpectedEof, "the host closed before it said hello")
+        })?;
     match Message::decode(&hello) {
         Ok(Message::Hello { version }) if version == PROTOCOL_VERSION => {
             let replies = sim.handle(Message::Hello { version }, clock()).map_err(io::Error::other)?;

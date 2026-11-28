@@ -50,8 +50,9 @@ public sealed partial class SpaceContainers
                 JsonSerializer.Deserialize<PosMgrTowerConfiguration>(raw, PosMgrJson) ?? new PosMgrTowerConfiguration());
             var sentry = configuration.Sentry;
             // An unknown system's security is not guessed: the policy is not online there, so nothing is named.
-            _sim.SetSentryPolicy(new SimSentryPolicy(towerId, system, towerOnline && highSecurity is not null, sentry.Standing, sentry.SecurityStatus,
-                sentry.War, highSecurity ?? true, tower.OwnerId, tower.AllianceId));
+            if (!await _sim.QueueOneWayAsync(new SimSentryPolicy(towerId, system, towerOnline && highSecurity is not null, sentry.Standing, sentry.SecurityStatus,
+                sentry.War, highSecurity ?? true, tower.OwnerId, tower.AllianceId), cancellationToken).ConfigureAwait(false))
+                return;
 
             foreach (var module in await _deployed.ByControlTowerAsync(connection, null, towerId, cancellationToken).ConfigureAwait(false))
             {
@@ -67,7 +68,8 @@ public sealed partial class SpaceContainers
                     // the grant and the online state are read inside the battery gate, which a pilot's grant takes too, so a grant cannot land between this read and the placement
                     if (await _deployed.BatteryControllerAsync(connection, null, module.DeployableId, cancellationToken).ConfigureAwait(false) > 0)
                     {
-                        _sim.SetSentryBattery(new SimSentryBattery(module.DeployableId, system, 0));
+                        if (!await _sim.QueueOneWayAsync(new SimSentryBattery(module.DeployableId, system, 0), cancellationToken).ConfigureAwait(false))
+                            return;
                         continue;
                     }
                     var batteryOnline = towerOnline && await _deployed.TowerStateAsync(connection, null, module.DeployableId, cancellationToken).ConfigureAwait(false) == TowerOnline;
@@ -80,7 +82,8 @@ public sealed partial class SpaceContainers
                         _log?.Invoke($"sentry battery {module.DeployableId} of tower {towerId} was not placed: {placed.Reason}");
                         continue;
                     }
-                    _sim.SetSentryBattery(new SimSentryBattery(module.DeployableId, system, batteryOnline ? towerId : 0));
+                    if (!await _sim.QueueOneWayAsync(new SimSentryBattery(module.DeployableId, system, batteryOnline ? towerId : 0), cancellationToken).ConfigureAwait(false))
+                        return;
                 }
                 finally
                 {
@@ -88,7 +91,8 @@ public sealed partial class SpaceContainers
                 }
             }
 
-            _sim.SetSentryPilot(new SimSentryPilot(towerId, system, 0, 0, 0, null, 0.0, false));
+            if (!await _sim.QueueOneWayAsync(new SimSentryPilot(towerId, system, 0, 0, 0, null, 0.0, false), cancellationToken).ConfigureAwait(false))
+                return;
             if (SentryPilotFactsOf is not null)
             {
                 foreach (var session in _space.SessionsInSystem(system))
@@ -99,9 +103,9 @@ public sealed partial class SpaceContainers
                         continue;
                     var facts = await SentryPilotFactsOf(new SentryFactsRequest(characterId, tower.OwnerId, tower.AllianceId, sentry.UseAllianceStandings),
                         cancellationToken).ConfigureAwait(false);
-                    if (facts is not null)
-                        _sim.SetSentryPilot(new SimSentryPilot(towerId, system, shipId, facts.CorporationId, facts.AllianceId, facts.SecurityStatus,
-                            facts.Standing, facts.AtWar));
+                    if (facts is not null && !await _sim.QueueOneWayAsync(new SimSentryPilot(towerId, system, shipId, facts.CorporationId,
+                        facts.AllianceId, facts.SecurityStatus, facts.Standing, facts.AtWar), cancellationToken).ConfigureAwait(false))
+                        return;
                 }
             }
         }

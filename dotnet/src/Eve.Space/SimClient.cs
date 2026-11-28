@@ -27,9 +27,12 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     internal const int OutboundQueueCapacity = 64;
     private readonly Channel<OutboundFrame> _outbox = Channel.CreateBounded<OutboundFrame>(new BoundedChannelOptions(OutboundQueueCapacity)
     {
-        SingleReader = true,
         FullMode = BoundedChannelFullMode.Wait,
     });
+    // Kept in channel order under _pendingGate so an overflow reports only frames still queued.
+    private readonly Queue<string> _queuedMessageTypes = new(OutboundQueueCapacity);
+    private readonly HashSet<(object Map, object Key)> _requestsWaitingForRoom = new();
+    private bool _reportedBackpressure;
     private CancellationTokenSource? _activeSession;
     private SimUnavailableException? _outboundFailure;
     private bool _overloadedLinkLostPending;
@@ -200,14 +203,19 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     private async Task ServeAsync(Stream stream, CancellationToken cancellationToken)
     {
-        await stream.WriteAsync(SimCodec.Encode(new SimHello(SimCodec.ProtocolVersion)), cancellationToken);
         using (var hello = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
         {
             hello.CancelAfter(HelloTimeout);
-            var ack = await ReadAsync(stream, hello.Token);
-            if (ack is not SimHelloAck { Version: SimCodec.ProtocolVersion })
+            try
             {
-                throw new SimLinkException(SimLinkError.BadValue, $"the simulation answered hello with {ack.GetType().Name}");
+                await stream.WriteAsync(SimCodec.Encode(new SimHello(SimCodec.ProtocolVersion)), hello.Token);
+                var ack = await ReadAsync(stream, hello.Token);
+                if (ack is not SimHelloAck { Version: SimCodec.ProtocolVersion })
+                    throw new SimLinkException(SimLinkError.BadValue, $"the simulation answered hello with {ack.GetType().Name}");
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && hello.IsCancellationRequested)
+            {
+                throw new IOException($"the simulation hello did not complete within {HelloTimeout.TotalSeconds} seconds");
             }
         }
         _log?.Invoke("connected to the simulation");
@@ -218,13 +226,22 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             FailQueuedOutboundsLocked("the simulation link broke before the queued message was written");
             _outboundFailure = null;
             _overloadedLinkLostPending = false;
+            _reportedBackpressure = false;
             _activeSession = session;
             _connected = true;
         }
         var writer = Task.Run(async () =>
         {
-            await foreach (var outbound in _outbox.Reader.ReadAllAsync(session.Token))
+            while (await _outbox.Reader.WaitToReadAsync(session.Token))
             {
+                OutboundFrame? outbound;
+                lock (_pendingGate)
+                {
+                    if (session.IsCancellationRequested)
+                        break;
+                    if (!TryDequeueLocked(out outbound))
+                        continue;
+                }
                 try
                 {
                     await stream.WriteAsync(outbound.Bytes, session.Token);
@@ -262,6 +279,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
             }
             catch (Exception error) when (error is OperationCanceledException or IOException or SocketException or ObjectDisposedException)
             {
+            }
+            finally
+            {
+                lock (_pendingGate)
+                    _activeSession = null;
             }
         }
     }
@@ -548,8 +570,24 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     private void FailQueuedOutboundsLocked(string message)
     {
-        while (_outbox.Reader.TryRead(out var outbound))
+        while (TryDequeueLocked(out var outbound))
             outbound.Written?.TrySetException(new SimUnavailableException(message));
+    }
+
+    private bool TryDequeueLocked([System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out OutboundFrame? outbound)
+    {
+        if (!_outbox.Reader.TryRead(out outbound))
+            return false;
+        _queuedMessageTypes.Dequeue();
+        return true;
+    }
+
+    private bool TryWriteLocked(OutboundFrame outbound, string messageType)
+    {
+        if (!_outbox.Writer.TryWrite(outbound))
+            return false;
+        _queuedMessageTypes.Enqueue(messageType);
+        return true;
     }
 
     private void FailPendingLocked()
@@ -639,31 +677,33 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         return frame;
     }
 
-    private SimUnavailableException? TryEnqueueLocked(
-        SimMessage message,
-        TaskCompletionSource<bool>? written,
-        out CancellationTokenSource? sessionToCancel,
-        out bool overloaded)
+    private string DescribeFullQueueLocked(string messageType)
     {
-        sessionToCancel = null;
-        overloaded = false;
-        if (_outboundFailure is { } failed)
-            return failed;
-        if (_outbox.Writer.TryWrite(new OutboundFrame(EncodeOutbound(message), written)))
-            return null;
-
-        var failure = new SimUnavailableException($"outbound queue is full ({OutboundQueueCapacity} frames)");
-        _outboundFailure = failure;
-        _connected = false;
-        _overloadedLinkLostPending = true;
-        sessionToCancel = _activeSession;
-        overloaded = true;
-        return failure;
+        var queued = string.Join(", ", _queuedMessageTypes.GroupBy(type => type).Select(group => $"{group.Key}={group.Count()}"));
+        return $"outbound queue is full ({OutboundQueueCapacity} frames) while enqueueing {messageType}; queued: {queued}";
     }
 
-    private void FailOverloadedLink(SimUnavailableException failure, CancellationTokenSource? sessionToCancel)
+    private void Send(SimMessage message)
     {
-        FailPending();
+        SimUnavailableException failure;
+        CancellationTokenSource? sessionToCancel;
+        lock (_pendingGate)
+        {
+            if (!_connected)
+                return; // nobody is there to hear it
+            var messageType = message.GetType().Name;
+            if (TryWriteLocked(new OutboundFrame(EncodeOutbound(message), null), messageType))
+                return;
+
+            failure = new SimUnavailableException(DescribeFullQueueLocked(messageType));
+            _outboundFailure = failure;
+            _connected = false;
+            _overloadedLinkLostPending = true;
+            sessionToCancel = _activeSession;
+            FailQueuedOutboundsLocked("the simulation link broke before the queued message was written");
+            FailPendingLocked();
+        }
+        // One-way operations have no result channel; Lost is their recovery signal.
         try
         {
             sessionToCancel?.Cancel();
@@ -674,49 +714,18 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         _log?.Invoke($"the simulation link: {failure.Message}");
     }
 
-    private void Send(SimMessage message)
-    {
-        SimUnavailableException? failure;
-        CancellationTokenSource? sessionToCancel;
-        bool overloaded;
-        lock (_pendingGate)
-        {
-            if (!_connected)
-                return; // nobody is there to hear it
-            failure = TryEnqueueLocked(message, null, out sessionToCancel, out overloaded);
-        }
-        if (failure is null)
-            return;
-        // One-way operations have no result channel; Lost is their recovery signal.
-        if (overloaded)
-            FailOverloadedLink(failure, sessionToCancel);
-    }
-
     private async Task<bool> TrySendOneWayAsync(SimMessage message, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var written = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        SimUnavailableException? failure;
-        CancellationTokenSource? sessionToCancel;
-        bool overloaded;
-        lock (_pendingGate)
-        {
-            if (!_connected)
-                return false;
-            failure = TryEnqueueLocked(message, written, out sessionToCancel, out overloaded);
-        }
-        if (failure is not null)
-        {
-            if (overloaded)
-                FailOverloadedLink(failure, sessionToCancel);
-            return false;
-        }
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_requestTimeout);
         try
         {
-            // the same limit as AwaitAsync: a frame the simulation never takes ends the wait as unavailable, and the caller's cancellation still applies
-            return await written.Task.WaitAsync(_requestTimeout, cancellationToken).ConfigureAwait(false);
+            return await QueueOutboundAsync(message, written, deadline.Token).ConfigureAwait(false)
+                && await written.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
         }
-        catch (TimeoutException)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && deadline.IsCancellationRequested)
         {
             var seconds = _requestTimeout.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
             _log?.Invoke($"{message.GetType().Name} was not written to the simulation within {seconds} seconds; " +
@@ -725,56 +734,65 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         }
     }
 
-    private async Task<bool> SendAsync(SimMessage message, CancellationToken cancellationToken)
+    public Task<bool> QueueOneWayAsync(SimMessage message, CancellationToken cancellationToken = default) =>
+        QueueOutboundAsync(message, null, cancellationToken);
+
+    private async Task<bool> QueueOutboundAsync(
+        SimMessage message, TaskCompletionSource<bool>? written, CancellationToken cancellationToken, Action? registerReply = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var frame = EncodeOutbound(message);
-        while (true)
+        var outbound = new OutboundFrame(EncodeOutbound(message), written);
+        var messageType = message.GetType().Name;
+        CancellationTokenSource session;
+        CancellationToken sessionToken;
+        string? backpressure = null;
+        lock (_pendingGate)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            CancellationToken sessionToken;
-            lock (_pendingGate)
+            if (!_connected || _activeSession is not { IsCancellationRequested: false } active)
+                return false;
+            if (TryAdmitLocked())
+                return true;
+            session = active;
+            sessionToken = active.Token;
+            if (!_reportedBackpressure && _log is not null)
             {
-                if (_outboundFailure is { } failure)
-                    throw failure;
-                var session = _activeSession;
-                if (!_connected || session is null || session.IsCancellationRequested)
-                    return false;
-                if (_outbox.Writer.TryWrite(new OutboundFrame(frame, null)))
-                    return true;
-                sessionToken = session.Token;
-            }
-
-            using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, sessionToken);
-            try
-            {
-                if (!await _outbox.Writer.WaitToWriteAsync(wait.Token).ConfigureAwait(false))
-                    return false;
-            }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
-            {
-                // Recheck the link; it may have reconnected while this send was waiting.
+                _reportedBackpressure = true;
+                backpressure = DescribeFullQueueLocked(messageType);
             }
         }
-    }
 
-    private static void TryEnqueue<T>(
-        object gate,
-        CancellationToken cancellationToken,
-        TaskCompletionSource<T> completion,
-        Action cancelPending,
-        Action enqueue)
-    {
-        lock (gate)
+        if (backpressure is not null)
+            _log?.Invoke($"the simulation link: waiting for room; {backpressure}");
+        using var wait = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, sessionToken);
+        try
         {
-            if (completion.Task.IsCompleted) return;
-            if (cancellationToken.IsCancellationRequested)
+            while (await _outbox.Writer.WaitToWriteAsync(wait.Token).ConfigureAwait(false))
             {
-                cancelPending();
-                return;
+                lock (_pendingGate)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!_connected || _activeSession != session || sessionToken.IsCancellationRequested)
+                        return false;
+                    if (TryAdmitLocked())
+                        return true;
+                }
             }
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            // A queued update belongs to this simulation session only.
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return false;
 
-            enqueue();
+        bool TryAdmitLocked()
+        {
+            if (_queuedMessageTypes.Count == OutboundQueueCapacity)
+                return false;
+            registerReply?.Invoke();
+            cancellationToken.ThrowIfCancellationRequested();
+            return TryWriteLocked(outbound, messageType);
         }
     }
 
@@ -793,7 +811,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         where TKey : notnull =>
         ((ICollection<KeyValuePair<TKey, TValue>>)pending).Remove(new KeyValuePair<TKey, TValue>(key, expected));
 
-    private async Task<T> AwaitAsync<TKey, T>(
+    private Task<T> AwaitAsync<TKey, T>(
         ConcurrentDictionary<TKey, TaskCompletionSource<T>> pending,
         TKey session,
         SimMessage request,
@@ -802,71 +820,80 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
         where TKey : notnull
     {
         var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
+        return AwaitReplyAsync(pending, session, completion, completion, request, cancellationToken,
+            duplicateRequestMessage ?? $"session {session} already has a request of this kind waiting");
+    }
+
+    private async Task<T> AwaitReplyAsync<TKey, TValue, T>(
+        ConcurrentDictionary<TKey, TValue> pending, TKey key, TValue entry, TaskCompletionSource<T> completion,
+        SimMessage request, CancellationToken cancellationToken, string duplicateRequestMessage) where TKey : notnull
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(_requestTimeout);
         CancellationTokenRegistration registration = default;
-        SimUnavailableException? failure = null;
-        CancellationTokenSource? sessionToCancel = null;
-        var overloaded = false;
+        var reservation = (Map: (object)pending, Key: (object)key);
+        var reserved = false;
+        var queued = false;
         try
         {
+            Task<bool> enqueue;
+            CancellationTokenSource session;
             lock (_pendingGate)
             {
                 if (_outboundFailure is { } linkFailure)
                     throw linkFailure;
-                if (!_connected)
-                {
+                if (!_connected || _activeSession is not { IsCancellationRequested: false } active)
                     throw new SimUnavailableException("the simulation is not running");
-                }
-                _afterConnectionCheck?.Invoke();
-                if (!pending.TryAdd(session, completion))
+                session = active;
+            }
+            _afterConnectionCheck?.Invoke();
+            lock (_pendingGate)
+            {
+                if (!_connected || _activeSession != session || session.IsCancellationRequested)
+                    throw new SimUnavailableException("the link to the simulation broke before the request was registered");
+                if (pending.ContainsKey(key) || !_requestsWaitingForRoom.Add(reservation))
+                    throw new InvalidOperationException(duplicateRequestMessage);
+                reserved = true;
+                enqueue = QueueOutboundAsync(request, null, deadline.Token, () =>
                 {
-                    throw new InvalidOperationException(duplicateRequestMessage ?? $"session {session} already has a request of this kind waiting");
-                }
-                try
-                {
+                    // A late reply must not match a request that is still waiting for room.
+                    _requestsWaitingForRoom.Remove(reservation);
+                    reserved = false;
+                    if (!pending.TryAdd(key, entry))
+                        throw new InvalidOperationException(duplicateRequestMessage);
                     registration = cancellationToken.Register(() =>
-                        CancelPending(_pendingGate, pending, session, completion, completion, cancellationToken));
-                    TryEnqueue(
-                        _pendingGate,
-                        cancellationToken,
-                        completion,
-                        () => CancelPending(_pendingGate, pending, session, completion, completion, cancellationToken),
-                        () =>
-                        {
-                            failure = TryEnqueueLocked(request, null, out sessionToCancel, out overloaded);
-                            if (failure is not null)
-                                TryRemoveExact(pending, session, completion);
-                        });
-                }
-                catch
-                {
-                    TryRemoveExact(pending, session, completion);
-                    throw;
-                }
+                        CancelPending(_pendingGate, pending, key, entry, completion, cancellationToken));
+                    cancellationToken.ThrowIfCancellationRequested();
+                });
             }
-            if (failure is not null)
-            {
-                if (overloaded)
-                    FailOverloadedLink(failure, sessionToCancel);
-                throw failure;
-            }
-            try
-            {
-                // only the limit is timed here: a caller's cancellation still reaches the request through its registration, as before
-                return await completion.Task.WaitAsync(_requestTimeout).ConfigureAwait(false);
-            }
-            catch (TimeoutException)
-            {
-                // no answer within the limit: the request leaves the pending map as a cancel does, and the wait ends as unavailable
-                CancelPending(_pendingGate, pending, session, completion, completion, cancellationToken);
-                var seconds = _requestTimeout.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
-                _log?.Invoke($"{request.GetType().Name} for session {session} got no answer within {seconds} seconds; " +
-                    $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}; read loop: {ReadLoopState()}");
-                throw new SimUnavailableException($"{request.GetType().Name} got no answer from the simulation within {seconds} seconds");
-            }
+
+            queued = await enqueue.ConfigureAwait(false);
+            if (!queued)
+                completion.TrySetException(new SimUnavailableException("the link to the simulation broke before the request was queued"));
+            return await completion.Task.WaitAsync(deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException(cancellationToken);
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            CancelPending(_pendingGate, pending, key, entry, completion, cancellationToken);
+            var seconds = _requestTimeout.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+            var state = queued ? "got no answer from the simulation" : "could not enter the outbound queue";
+            _log?.Invoke($"{request.GetType().Name} for {key} {state} within {seconds} seconds; " +
+                $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}; read loop: {ReadLoopState()}");
+            throw new SimUnavailableException($"{request.GetType().Name} {state} within {seconds} seconds");
         }
         finally
         {
             registration.Dispose();
+            lock (_pendingGate)
+            {
+                if (reserved)
+                    _requestsWaitingForRoom.Remove(reservation);
+                TryRemoveExact(pending, key, entry);
+            }
         }
     }
 
@@ -1225,70 +1252,11 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public Task<CommandReply> ActivateAsync(ulong sessionId, SimEffect effect, CancellationToken cancellationToken = default) =>
         AwaitAsync(_answered, (sessionId, SimCommands.Activate), new SimActivate(sessionId, effect), cancellationToken);
 
-    public async Task<SimChargeAdjusted> AdjustChargeAsync(SimAdjustCharge request, Action<SimChargeAdjusted>? inOrder = null, CancellationToken cancellationToken = default)
+    public Task<SimChargeAdjusted> AdjustChargeAsync(SimAdjustCharge request, Action<SimChargeAdjusted>? inOrder = null, CancellationToken cancellationToken = default)
     {
         var completion = new TaskCompletionSource<SimChargeAdjusted>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var pending = (Completion: completion, InOrder: inOrder);
-        CancellationTokenRegistration registration = default;
-        SimUnavailableException? failure = null;
-        CancellationTokenSource? sessionToCancel = null;
-        var overloaded = false;
-        try
-        {
-            lock (_pendingGate)
-            {
-                if (_outboundFailure is { } linkFailure) throw linkFailure;
-                if (!_connected) throw new SimUnavailableException("the simulation is not running");
-                _afterConnectionCheck?.Invoke();
-                if (!_adjusting.TryAdd(request.RequestId, pending))
-                    throw new InvalidOperationException($"request {request.RequestId} is already waiting");
-                try
-                {
-                    registration = cancellationToken.Register(() =>
-                        CancelPending(_pendingGate, _adjusting, request.RequestId, pending, completion, cancellationToken));
-                    TryEnqueue(
-                        _pendingGate,
-                        cancellationToken,
-                        completion,
-                        () => CancelPending(_pendingGate, _adjusting, request.RequestId, pending, completion, cancellationToken),
-                        () =>
-                        {
-                            failure = TryEnqueueLocked(request, null, out sessionToCancel, out overloaded);
-                            if (failure is not null)
-                                TryRemoveExact(_adjusting, request.RequestId, pending);
-                        });
-                }
-                catch
-                {
-                    TryRemoveExact(_adjusting, request.RequestId, pending);
-                    throw;
-                }
-            }
-            if (failure is not null)
-            {
-                if (overloaded)
-                    FailOverloadedLink(failure, sessionToCancel);
-                throw failure;
-            }
-            try
-            {
-                // the same limit as AwaitAsync: a caller's cancellation still reaches the request through its registration
-                return await completion.Task.WaitAsync(_requestTimeout).ConfigureAwait(false);
-            }
-            catch (TimeoutException)
-            {
-                // no answer within the limit: the request leaves the pending map as a cancel does, and the wait ends as unavailable
-                CancelPending(_pendingGate, _adjusting, request.RequestId, pending, completion, cancellationToken);
-                var seconds = _requestTimeout.TotalSeconds.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
-                _log?.Invoke($"{request.GetType().Name} for request {request.RequestId} got no answer within {seconds} seconds; " +
-                    $"{PendingRequestCount()} requests pending; last answer with no pending request: {_lastUnmatchedAnswer ?? "none"}; read loop: {ReadLoopState()}");
-                throw new SimUnavailableException($"{request.GetType().Name} got no answer from the simulation within {seconds} seconds");
-            }
-        }
-        finally
-        {
-            registration.Dispose();
-        }
+        return AwaitReplyAsync(_adjusting, request.RequestId, (completion, inOrder), completion, request, cancellationToken,
+            $"request {request.RequestId} is already waiting");
     }
 
     public Task<SimSpawnReply> SpawnAsync(SimSpawn spawn, CancellationToken cancellationToken = default) =>
@@ -1339,7 +1307,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public void RemoveDeployed(long deployableId) => Send(new SimRemoveDeployed(deployableId));
 
     public Task<bool> RemoveDeployedAsync(long deployableId, CancellationToken cancellationToken = default) =>
-        SendAsync(new SimRemoveDeployed(deployableId), cancellationToken);
+        QueueOneWayAsync(new SimRemoveDeployed(deployableId), cancellationToken);
 
     public void PlaceProbe(SimPlaceProbe probe) => Send(probe);
 
@@ -1347,7 +1315,7 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
 
     public void PlaceStructure(SimPlaceStructure structure) => Send(structure);
     public Task<bool> PlaceStructureAsync(SimPlaceStructure structure, CancellationToken cancellationToken = default) =>
-        SendAsync(structure, cancellationToken);
+        QueueOneWayAsync(structure, cancellationToken);
 
     public void PlaceWormhole(SimPlaceWormhole wormhole) => Send(wormhole);
 
@@ -1386,10 +1354,10 @@ public sealed class SimClient : ISimulation, IAsyncDisposable
     public void PlaceControlTower(SimPlaceControlTower tower) => Send(tower);
     public void PlaceDeadspacePocket(SimPlaceDeadspacePocket pocket) => Send(pocket);
     public Task<bool> PlaceDeadspacePocketAsync(SimPlaceDeadspacePocket pocket, CancellationToken cancellationToken = default) =>
-        SendAsync(pocket, cancellationToken);
+        QueueOneWayAsync(pocket, cancellationToken);
     public void PlaceAccelerationGate(SimPlaceAccelerationGate gate) => Send(gate);
     public Task<bool> PlaceAccelerationGateAsync(SimPlaceAccelerationGate gate, CancellationToken cancellationToken = default) =>
-        SendAsync(gate, cancellationToken);
+        QueueOneWayAsync(gate, cancellationToken);
     public void PlaceCapturePoint(SimPlaceCapturePoint point) => Send(point);
     public void PlaceBattlefieldScoreboard(SimPlaceBattlefieldScoreboard scoreboard) => Send(scoreboard);
 

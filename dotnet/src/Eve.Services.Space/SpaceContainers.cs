@@ -575,21 +575,21 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
     // ── time running out ─────────────────────────────────────────────────────
 
     /// <summary>Takes out of space what has run out of time (a periodic job: the host schedules it on the shared scheduler). A failure is logged, not thrown: the next run tries again.</summary>
-    public async Task SweepAsync()
+    public async Task SweepAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            await ExpireDueAsync(_nowUnixMs());
+            await ExpireDueAsync(_nowUnixMs(), cancellationToken);
             await ExpireBuffsAsync(_nowUnixMs());
         }
-        catch (Exception error)
+        catch (Exception error) when (error is not OperationCanceledException)
         {
             _log?.Invoke($"the cans whose time ran out were not removed: {error.Message}");
         }
     }
 
     /// <summary>What is due to go by <paramref name="nowUnixMs"/> (the cans whose two hours are up, the wrecks) is taken out of the world with what is in it and out of space.</summary>
-    internal async Task ExpireDueAsync(long nowUnixMs)
+    internal async Task ExpireDueAsync(long nowUnixMs, CancellationToken cancellationToken = default)
     {
         foreach (var due in await _spaceItems.DueAsync(nowUnixMs))
         {
@@ -603,7 +603,7 @@ public sealed partial class SpaceContainers : ISpaceContainers, IDisposable
             }
             await _ships.RemoveContainerAsync(due.ItemId, withContents: true);
             await ForgetAsync(due.ItemId);
-            _sim.RemoveWreck(due.ItemId, 0);
+            await _sim.QueueOneWayAsync(new SimRemoveWreck(due.ItemId, 0), cancellationToken);
         }
         await ExpireDeployedAsync(nowUnixMs);
     }
@@ -759,10 +759,14 @@ private void OnReceived(SimMessage message)
                         {
                             continue;
                         }
-                        _sim.PlaceAsteroid(new SimPlaceAsteroid(
+                        if (!await _sim.QueueOneWayAsync(new SimPlaceAsteroid(
                             system, item.ItemId, stored.TypeId, type.GroupId, type.CategoryId, stored.CustomName ?? type.Name ?? "",
                             item.MoonGraphicId > 0 ? item.MoonGraphicId : type.GraphicId,
-                            item.Position, item.Direction, item.Radius, stored.Quantity));
+                            item.Position, item.Direction, item.Radius, stored.Quantity)))
+                        {
+                            _placed.TryRemove(item.ItemId, out _);
+                            return;
+                        }
                         continue;
                     }
                     if (type is not null && _statics.CategoryName(type.CategoryId) == "Ship")
@@ -791,11 +795,15 @@ private void OnReceived(SimMessage message)
                         }
                     }
                     var empty = (await _items.InContainerAsync(item.ItemId)).Count == 0;
-                    _sim.PlaceWreck(new SimPlaceWreck(
+                    if (!await _sim.QueueOneWayAsync(new SimPlaceWreck(
                         SimSceneKey.SolarSystem(system), item.ItemId, item.GroupId,
                         new SimWreckKind(stored.TypeId, stored.CustomName ?? type?.Name ?? "", type?.GraphicId ?? 0),
                         item.Position, item.Direction, item.Radius, item.LauncherId,
-                        new SimCredit(item.CharacterId, item.CorporationId, item.AllianceId, item.WarFactionId), empty));
+                        new SimCredit(item.CharacterId, item.CorporationId, item.AllianceId, item.WarFactionId), empty)))
+                    {
+                        _placed.TryRemove(item.ItemId, out _);
+                        return;
+                    }
                 }
                 catch
                 {

@@ -557,7 +557,7 @@ public sealed class AnalysisBeaconDirector
         {
             _spawner.Remove(drones);
         }
-        _sim.RemoveDeployed(due.DeployableId);
+        await _sim.RemoveDeployedAsync(due.DeployableId);
         await _ships.DeleteDisruptorAsync(due.DeployableId);
     }
 
@@ -573,7 +573,7 @@ public sealed class AnalysisBeaconDirector
         {
             return;
         }
-        _sim.PlaceAnalysisBeacon(new SimPlaceAnalysisBeacon(
+        await _sim.QueueOneWayAsync(new SimPlaceAnalysisBeacon(
             record.DeployableId, record.SolarSystemId, record.Name, record.TypeId, record.GroupId, record.Position, record.Radius, record.OwnerId, record.CorporationId,
             record.AllianceId, record.ShipId, StateOf(row)));
     }

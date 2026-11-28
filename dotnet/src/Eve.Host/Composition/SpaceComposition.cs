@@ -714,10 +714,10 @@ internal sealed partial class CharacterServicesComposition
             foundations.Scheduler.Register("scanMgr.signal-tracker.refresh", async (_, token) =>
                 await signalTrackerRegistrationProvider.RefreshAsync(token));
             await foundations.Scheduler.EnsureRecurringAsync("scanMgr.signal-tracker.refresh", "refresh", TimeSpan.FromSeconds(5));
-            foundations.Scheduler.Register("space.probes.sweep", async (_, _) => await probes.SweepAsync());
+            foundations.Scheduler.Register("space.probes.sweep", (_, token) => probes.SweepAsync(token));
             await foundations.Scheduler.EnsureRecurringAsync("space.probes.sweep", "sweep", TimeSpan.FromSeconds(30));
             spaceDrones = new SpaceDrones(sim, ships, dogma, spaceSessions, now, message => Console.Error.WriteLine($"eve-host: {message}"));
-            foundations.Scheduler.Register("space.containers.sweep", async (_, _) => await containers.SweepAsync());
+            foundations.Scheduler.Register("space.containers.sweep", (_, token) => containers.SweepAsync(token));
             await foundations.Scheduler.EnsureRecurringAsync("space.containers.sweep", "sweep", TimeSpan.FromSeconds(30));
             // the pockets of the running dungeons follow the dungeons: placed when one runs, taken out when it does not (every ten seconds)
             if (dungeonWavesDirector is { } pocketDirector)

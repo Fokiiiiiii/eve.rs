@@ -436,7 +436,7 @@ public sealed partial class SpaceContainers
         {
             return;
         }
-        _sim.RemoteDecloakPing(record.SolarSystemId, deployableId);
+        await _sim.QueueOneWayAsync(new SimRemoteDecloakPing(record.SolarSystemId, deployableId), cancellationToken);
         var next = now + (long)ObservatoryPingInterval.TotalMilliseconds;
         if (next < record.ExpiresAtMs)
         {
@@ -492,10 +492,10 @@ public sealed partial class SpaceContainers
             if (towerState != TowerAnchoring || record.ActivateAtMs == NeverAnchored || record.ActivateAtMs > _nowUnixMs())
                 return;
             await _deployed.SetTowerStateAsync(deployableId, TowerOffline, cancellationToken);
-            SetControlTowerSlimState(deployableId, StructureAnchored, null);
+            await QueueControlTowerSlimStateAsync(deployableId, StructureAnchored, null, cancellationToken);
             return;
         }
-        _sim.SetDisruptorActive(deployableId, true);
+        await _sim.QueueOneWayAsync(new SimSetDisruptorActive(deployableId, true), cancellationToken);
         if (record.Kind == ObservatoryKind && _scheduler is not null)
         {
 
@@ -555,7 +555,7 @@ public sealed partial class SpaceContainers
     /// <summary>A mobile deployable whose time is up leaves space and its item is deleted (the sweep's entry for its kind).</summary>
     private async Task ExpireDisruptorAsync(DeployedRecord due)
     {
-        _sim.RemoveDeployed(due.DeployableId);
+        await _sim.RemoveDeployedAsync(due.DeployableId);
         await _ships.DeleteDisruptorAsync(due.DeployableId);
     }
 

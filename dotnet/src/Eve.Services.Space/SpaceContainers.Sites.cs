@@ -25,9 +25,10 @@ public sealed partial class SpaceContainers
                 {
                     continue;
                 }
-                _sim.RestoreDeployed(new SimDeployed(
+                if (!await _sim.QueueOneWayAsync(new SimDeployed(
                     container.SolarSystemId, container.ContainerId, "Site container", container.TypeId, container.GroupId, container.Position, container.Radius,
-                    0, 0, 0, 0, container.ExpiresAtMs - now));
+                    0, 0, 0, 0, container.ExpiresAtMs - now)))
+                    return;
             }
         }
         catch (Exception error) when (error is not OperationCanceledException)

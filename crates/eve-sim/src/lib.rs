@@ -4,7 +4,7 @@
 
 use std::io;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use eve_net::frame::FrameReader;
 use eve_space::link::{Message, PROTOCOL_VERSION};
@@ -79,14 +79,32 @@ where
                         format!("the host said hello again with version {version} after the handshake"),
                     ));
                 }
+                let (kind, started) = (message.kind(), Instant::now());
                 let replies = sim.handle_with_frame_len(message, clock(), payload.len() + 4).map_err(io::Error::other)?;
+                note_slow(started, || format!("handling a message of kind {kind}"));
+                let started = Instant::now();
                 write_all(&mut writer, &replies).await?;
+                note_slow(started, || format!("writing the replies to kind {kind}"));
             }
             _ = poll.tick() => {
+                let started = Instant::now();
                 let due = sim.poll(clock());
+                note_slow(started, || "the poll".to_owned());
+                let started = Instant::now();
                 write_all(&mut writer, &due).await?;
+                note_slow(started, || "writing the poll's messages".to_owned());
             }
         }
+    }
+}
+
+/// One loop does all the work, so a step this long keeps every waiting request waiting; it is written to the log.
+const SLOW_STEP: Duration = Duration::from_secs(2);
+
+fn note_slow(started: Instant, what: impl FnOnce() -> String) {
+    let took = started.elapsed();
+    if took >= SLOW_STEP {
+        eprintln!("eve-sim: {} took {:.1} s", what(), took.as_secs_f64());
     }
 }
 

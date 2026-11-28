@@ -462,6 +462,32 @@ public class DispatchGoldenTests
     }
 
     [Fact]
+    public async Task Refused_rpc_logs_its_budget_usage()
+    {
+        var priorError = Console.Error;
+        using var log = new StringWriter();
+        try
+        {
+            Console.SetError(log);
+            var capture = new Capture();
+            var session = new ClientSession(capture) { SessionId = 910 };
+            var registry = new ServiceRegistry();
+            registry.Register(new CharacterKillmailBudgetService());
+            var dispatcher = new PacketDispatcher(registry, () => FixedNowMs) { MaxExpensiveRpcUnitsPerMinute = 10 };
+
+            await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "List"), session);
+            await dispatcher.DispatchAsync(CallRequestPacket("charMgr", "ListStations"), session);
+
+            Assert.Equal(ErrorResponseCommand, CommandOf(capture.Sent[^1]));
+            Assert.Equal("[rpc-budget] refused service=charMgr method=ListStations cost=10 group=shared used=10 limit=10", log.ToString().Trim());
+        }
+        finally
+        {
+            Console.SetError(priorError);
+        }
+    }
+
+    [Fact]
     public async Task Character_global_asset_calls_have_a_named_per_session_budget()
     {
         var capture = new Capture();

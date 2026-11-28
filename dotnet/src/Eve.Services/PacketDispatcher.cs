@@ -188,17 +188,17 @@ public sealed class PacketDispatcher
         if (call.Method == "MachoBindObject" && call.Args.Count > 1 &&
             NestedBoundMethod(call.Args[1]) is { } nestedMethod)
             cost = Math.Max(cost, ExpensiveRpcCost(service.Name, nestedMethod));
-        var budget = service.Name switch
+        var (budgetGroup, budget) = service.Name switch
         {
-            "invbroker" => _inventoryBudgets,
-            "industryManager" => _industryBudgets,
-            "marketProxy" => _marketBudgets,
-            "corpStationMgr" => _corpStationBudgets,
-            "corpRegistry" or "corporation" => _corporationBudgets,
-            "contractProxy" => _contractBudgets,
-            "dogmaIM" => _dogmaBudgets,
-            "station" or "stationSvc" => _stationBudgets,
-            _ => _expensiveBudgets,
+            "invbroker" => ("inventory", _inventoryBudgets),
+            "industryManager" => ("industry", _industryBudgets),
+            "marketProxy" => ("market", _marketBudgets),
+            "corpStationMgr" => ("corpStation", _corpStationBudgets),
+            "corpRegistry" or "corporation" => ("corporation", _corporationBudgets),
+            "contractProxy" => ("contract", _contractBudgets),
+            "dogmaIM" => ("dogma", _dogmaBudgets),
+            "station" or "stationSvc" => ("station", _stationBudgets),
+            _ => ("shared", _expensiveBudgets),
         };
         var budgetLimit = service.Name switch
         {
@@ -207,8 +207,9 @@ public sealed class PacketDispatcher
             _ => MaxExpensiveRpcUnitsPerMinute,
         };
         if (cost > 0 && !budget.GetValue(session, _ => new ExpensiveRpcBudget())
-                .TryConsume(_nowUnixMs(), cost, budgetLimit))
+                .TryConsume(_nowUnixMs(), cost, budgetLimit, out var used))
         {
+            Console.Error.WriteLine($"[rpc-budget] refused service={service.Name} method={call.Method} cost={cost} group={budgetGroup} used={used} limit={budgetLimit}");
             SendError(packet, MachoErrors.UserError("SessionRpcBudgetExceeded"), session, serviceName);
             return true;
         }
@@ -558,7 +559,7 @@ public sealed class PacketDispatcher
         private long _windowStartedAt;
         private int _used;
 
-        public bool TryConsume(long now, int cost, int limit)
+        public bool TryConsume(long now, int cost, int limit, out int used)
         {
             lock (_gate)
             {
@@ -567,6 +568,7 @@ public sealed class PacketDispatcher
                     _windowStartedAt = now;
                     _used = 0;
                 }
+                used = _used;
                 if (limit <= 0 || cost > limit - _used)
                     return false;
                 _used += cost;

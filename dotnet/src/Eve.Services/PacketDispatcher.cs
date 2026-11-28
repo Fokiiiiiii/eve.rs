@@ -220,8 +220,8 @@ public sealed class PacketDispatcher
             var result = await service.CallAsync(new ServiceCall
             {
                 Method = call.Method,
-                Args = call.Args,
-                Kwargs = ApplicationKwargs(call.Kwargs),
+                Args = WideIntegers.Narrow(call.Args),
+                Kwargs = WideIntegers.Narrow(ApplicationKwargs(call.Kwargs)),
                 Session = session,
                 CallId = packet.CallId,
                 BoundObjectId = session.CurrentBoundObjectId,

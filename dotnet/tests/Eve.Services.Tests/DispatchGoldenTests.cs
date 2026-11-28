@@ -276,6 +276,40 @@ public class DispatchGoldenTests
         public ValueTask<PyValue> CallAsync(ServiceCall call) => ValueTask.FromResult<PyValue>(PyNone.Instance);
     }
 
+    private sealed class RecordingService : IService
+    {
+        public IReadOnlyList<PyValue> Args { get; private set; } = [];
+
+        public string Name => "knownSvc";
+
+        public bool HasMethod(string method) => true;
+
+        public ValueTask<PyValue> CallAsync(ServiceCall call)
+        {
+            Args = call.Args;
+            return ValueTask.FromResult<PyValue>(PyNone.Instance);
+        }
+    }
+
+    [Fact]
+    public async Task A_file_time_the_client_sends_reaches_the_service_as_a_long()
+    {
+        const long FileTime = 134_403_048_000_000_000L;
+        var wide = new PyBigUnsigned(new System.Numerics.BigInteger(FileTime).ToByteArray(isUnsigned: true, isBigEndian: false));
+        var beyondLong = new PyBigUnsigned([0, 0, 0, 0, 0, 0, 0, 0, 1]);
+        var registry = new ServiceRegistry();
+        var service = new RecordingService();
+        registry.Register(service);
+
+        await new PacketDispatcher(registry, () => FixedNowMs).DispatchAsync(
+            CallRequestPacket("knownSvc", "Known", wide, new PyList([new PyTuple([wide, new PyStr("a")])]), beyondLong),
+            new ClientSession(new Capture()) { SessionId = 91 });
+
+        Assert.Equal(new PyLong(FileTime), service.Args[0]);
+        Assert.Equal(new PyList([new PyTuple([new PyLong(FileTime), new PyStr("a")])]), service.Args[1]);
+        Assert.Equal(beyondLong, service.Args[2]);
+    }
+
     [Fact]
     public async Task Market_region_and_plex_browse_calls_keep_native_rows_through_a_mixed_session()
     {
